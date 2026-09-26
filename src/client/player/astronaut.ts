@@ -250,8 +250,16 @@ export class Astronaut {
     L: { point: new THREE.Vector3(), normal: new THREE.Vector3(), finger: new THREE.Vector3(0, 1, 0) },
     R: { point: new THREE.Vector3(), normal: new THREE.Vector3(), finger: new THREE.Vector3(0, 1, 0) },
   };
+  private restBend: Partial<Record<'L' | 'R', number>> = {};
+  private restTwist: Partial<Record<'L' | 'R', number>> = {};
   private calibrateHands() {
     this.model.updateMatrixWorld(true);
+    for (const side of ['L', 'R'] as const) {
+      const fq = this.rig[`forearm${side}`].bone.getWorldQuaternion(new THREE.Quaternion());
+      const hq = this.rig[`hand${side}`].bone.getWorldQuaternion(new THREE.Quaternion());
+      this.restBend[side] = new THREE.Vector3(0, 1, 0).applyQuaternion(fq).angleTo(new THREE.Vector3(0, 1, 0).applyQuaternion(hq));
+      this.restTwist[side] = twistAngle(fq.invert().multiply(hq), new THREE.Vector3(0, 1, 0));
+    }
     const hw = { L: this.rig.handL.bone.getWorldPosition(new THREE.Vector3()), R: this.rig.handR.bone.getWorldPosition(new THREE.Vector3()) };
     const verts: Record<'L' | 'R', { pad: THREE.Vector3[]; all: THREE.Vector3[] }> = { L: { pad: [], all: [] }, R: { pad: [], all: [] } };
     this.model.traverse((o) => {
@@ -575,7 +583,6 @@ export class Astronaut {
     if (!this.weapon || !this.weaponDef || w < 0.01) return;
     this.model.updateMatrixWorld(true);
     const prop = this.weapon.children[0];
-    const fwdW = _fw.set(0, 0, 1).transformDirection(prop.matrixWorld);
     const modelQ = this.model.getWorldQuaternion(_mq);
     const arms: Array<[BoneName, BoneName, BoneName, Grip, number]> = [
       ['upperarmR', 'forearmR', 'handR', this.weaponDef.rightGrip, -1],
@@ -585,45 +592,122 @@ export class Astronaut {
       const U = this.rig[ua].bone;
       const F = this.rig[fa].bone;
       const H = this.rig[ha].bone;
-      const palm = this.palm[side > 0 ? 'L' : 'R'];
-      // grasp geometry in world space: handle axis, approach side
-      const gc = prop.localToWorld(_t.copy(grip.pos));
-      const axis = _ga.copy(grip.axis).transformDirection(prop.matrixWorld);
-      const out = _gs.copy(grip.side).transformDirection(prop.matrixWorld);
-      out.addScaledVector(axis, -out.dot(axis)).normalize();
-      // target hand frame: fingers wrap across the handle (perpendicular to axis and to the
-      // approach side), palm faces the handle. Wrap direction goes over the top of the handle.
-      const fingerW = _hd.crossVectors(axis, out);
-      if (fingerW.dot(fwdW) + fingerW.y * 0.1 < 0) fingerW.negate(); // knuckles toward the muzzle
-      const palmW = _pw.copy(out).negate();
-      const handQ = frameQuat(palm.finger, palm.normal, fingerW, palmW, _hq);
-      // wrist target so the measured palm point sits on the handle surface
-      const scale = H.getWorldScale(_sc).x;
-      const T = _tw.copy(palm.point).multiplyScalar(scale).applyQuaternion(handQ).negate().add(gc).addScaledVector(out, grip.radius);
-      const S = U.getWorldPosition(_s);
-      const E0 = F.getWorldPosition(_e0);
-      const H0 = H.getWorldPosition(_h0);
-      const L1 = S.distanceTo(E0);
-      const L2 = E0.distanceTo(H0);
-      const toT = _d.subVectors(T, S);
-      const dist = Math.min(toT.length(), L1 + L2 - 0.002);
-      const dir = toT.normalize();
-      const pole = _p.set(side > 0 ? 0.25 : -0.8, -1, side > 0 ? 0.1 : -0.2).applyQuaternion(modelQ).normalize();
-      const perp = pole.addScaledVector(dir, -pole.dot(dir)).normalize();
-      const a = (L1 * L1 - L2 * L2 + dist * dist) / (2 * dist);
-      const h = Math.sqrt(Math.max(0, L1 * L1 - a * a));
-      const E = _e.copy(S).addScaledVector(dir, a).addScaledVector(perp, h);
-      const Hn = _hn.copy(S).addScaledVector(dir, dist);
-      this.aimBone(U, E0, E, S, w);
+      const key = side > 0 ? 'L' : 'R';
+      const start = [U.quaternion.clone(), F.quaternion.clone(), H.quaternion.clone()];
+      // A handle can be gripped two ways (fingers wrapping one way or the other). Solve both and
+      // keep the one with the most natural wrist, like a person would.
+      const pick = this.bestGrasp(U, F, H, grip, prop, modelQ, key);
+      U.quaternion.copy(start[0]);
+      F.quaternion.copy(start[1]);
+      H.quaternion.copy(start[2]);
       this.model.updateMatrixWorld(true);
-      this.aimBone(F, H.getWorldPosition(_h0), Hn, F.getWorldPosition(_s2), w);
-      this.model.updateMatrixWorld(true);
-      // full hand orientation (direction + twist), not just pointing
+      this.solveArm(U, F, H, grip, prop, modelQ, key, pick.sign, pick.roll, w);
+    }
+  }
+
+  /**
+   * Choose how to hold a handle: which way the fingers wrap (sign) and where around the
+   * cylinder the palm sits (roll). Pure vector maths on the current shoulder/limb lengths:
+   * for each candidate, place wrist and elbow and score how bent the wrist would be.
+   */
+  private bestGrasp(U: THREE.Bone, F: THREE.Bone, H: THREE.Bone, grip: Grip, prop: THREE.Object3D, modelQ: THREE.Quaternion, key: 'L' | 'R') {
+    const palm = this.palm[key];
+    const gc = prop.localToWorld(new THREE.Vector3().copy(grip.pos));
+    const axis = new THREE.Vector3().copy(grip.axis).transformDirection(prop.matrixWorld);
+    const out0 = new THREE.Vector3().copy(grip.side).transformDirection(prop.matrixWorld);
+    out0.addScaledVector(axis, -out0.dot(axis)).normalize();
+    const S = U.getWorldPosition(new THREE.Vector3());
+    const L1 = S.distanceTo(F.getWorldPosition(new THREE.Vector3()));
+    const L2 = F.getWorldPosition(new THREE.Vector3()).distanceTo(H.getWorldPosition(new THREE.Vector3()));
+    const scale = H.getWorldScale(new THREE.Vector3()).x;
+    const down = new THREE.Vector3(0, -1, 0).applyQuaternion(modelQ);
+    const restBend = this.restBend[key] ?? 0;
+    const out = new THREE.Vector3(), fingerW = new THREE.Vector3(), q = new THREE.Quaternion(), T = new THREE.Vector3();
+    const hAx = new THREE.Vector3(), ideal = new THREE.Vector3(), dir = new THREE.Vector3(), E = new THREE.Vector3();
+    let best = { sign: 1, roll: 0, cost: Infinity };
+    for (const sign of [1, -1]) {
+      for (let roll = -1.2; roll <= 1.201; roll += 0.15) {
+        out.copy(out0).applyAxisAngle(axis, roll);
+        fingerW.crossVectors(axis, out).multiplyScalar(sign);
+        frameQuat(palm.finger, palm.normal, fingerW, _pw.copy(out).negate(), q);
+        T.copy(palm.point).multiplyScalar(scale).applyQuaternion(q).negate().add(gc).addScaledVector(out, grip.radius);
+        hAx.set(0, 1, 0).applyQuaternion(q);
+        dir.subVectors(T, S);
+        const need = dir.length();
+        const dist = Math.min(need, L1 + L2 - 0.002);
+        dir.normalize();
+        ideal.copy(T).addScaledVector(hAx, -L2).sub(S).addScaledVector(down, 0.05);
+        ideal.addScaledVector(dir, -ideal.dot(dir)).normalize();
+        const a = (L1 * L1 - L2 * L2 + dist * dist) / (2 * dist);
+        const h = Math.sqrt(Math.max(0, L1 * L1 - a * a));
+        E.copy(S).addScaledVector(dir, a).addScaledVector(ideal, h);
+        const fore = _v2.subVectors(T, E).normalize();
+        const bend = Math.abs(fore.angleTo(hAx) - restBend);
+        // elbows up/out look wrong: penalise an elbow above the shoulder
+        const elbowUp = Math.max(0, -_v1.subVectors(E, S).dot(down));
+        const cost = bend + Math.max(0, need - (L1 + L2)) * 20 + elbowUp * 4 + Math.abs(roll) * 0.1;
+        if (cost < best.cost) best = { sign, roll, cost };
+      }
+    }
+    return best;
+  }
+
+  /**
+   * One arm onto one grip. Order: hand frame from the grip → wrist target → elbow placed so the
+   * forearm continues the hand's line (straight wrist) → two-bone IK → hand orientation → wrist
+   * roll shared with the forearm (pronation/supination). Returns a wrist discomfort cost.
+   */
+  private solveArm(U: THREE.Bone, F: THREE.Bone, H: THREE.Bone, grip: Grip, prop: THREE.Object3D, modelQ: THREE.Quaternion, key: 'L' | 'R', sign: number, roll0: number, w: number) {
+    const palm = this.palm[key];
+    const gc = prop.localToWorld(_t.copy(grip.pos));
+    const axis = _ga.copy(grip.axis).transformDirection(prop.matrixWorld);
+    const out = _gs.copy(grip.side).transformDirection(prop.matrixWorld);
+    out.addScaledVector(axis, -out.dot(axis)).normalize().applyAxisAngle(axis, roll0);
+    const fingerW = _hd.crossVectors(axis, out).multiplyScalar(sign);
+    const palmW = _pw.copy(out).negate();
+    const handQ = frameQuat(palm.finger, palm.normal, fingerW, palmW, _hq);
+    const scale = H.getWorldScale(_sc).x;
+    const T = _tw.copy(palm.point).multiplyScalar(scale).applyQuaternion(handQ).negate().add(gc).addScaledVector(out, grip.radius);
+    const S = U.getWorldPosition(_s);
+    const E0 = F.getWorldPosition(_e0);
+    const H0 = H.getWorldPosition(_h0);
+    const L1 = S.distanceTo(E0);
+    const L2 = E0.distanceTo(H0);
+    const toT = _d.subVectors(T, S);
+    const dist = Math.min(toT.length(), L1 + L2 - 0.002);
+    const dir = toT.normalize();
+    // ideal elbow: straight back from the wrist along the hand's own axis (bone Y)
+    const handAxis = _ha.set(0, 1, 0).applyQuaternion(handQ);
+    const ideal = _p.copy(T).addScaledVector(handAxis, -L2).sub(S);
+    // keep the elbow below the arm line (never flips up)
+    ideal.addScaledVector(_up.set(0, -1, 0).applyQuaternion(modelQ), 0.05);
+    const perp = ideal.addScaledVector(dir, -ideal.dot(dir));
+    if (perp.lengthSq() < 1e-8) perp.set(0, -1, 0);
+    perp.normalize();
+    const a = (L1 * L1 - L2 * L2 + dist * dist) / (2 * dist);
+    const h = Math.sqrt(Math.max(0, L1 * L1 - a * a));
+    const E = _e.copy(S).addScaledVector(dir, a).addScaledVector(perp, h);
+    const Hn = _hn.copy(S).addScaledVector(dir, dist);
+    this.aimBone(U, E0, E, S, w);
+    this.model.updateMatrixWorld(true);
+    this.aimBone(F, H.getWorldPosition(_h0), Hn, F.getWorldPosition(_s2), w);
+    this.model.updateMatrixWorld(true);
+    // hand: full orientation; then move part of the wrist roll into the forearm
+    const setHand = () => {
       const parentQ = H.parent!.getWorldQuaternion(_q6).invert();
       H.quaternion.slerp(parentQ.multiply(handQ), w);
       this.model.updateMatrixWorld(true);
-      this.grasp[side > 0 ? 'L' : 'R'] = { gc: gc.clone(), axis: axis.clone(), out: out.clone(), radius: grip.radius };
-    }
+    };
+    setHand();
+    const roll = wrapPi(twistAngle(H.quaternion, _Y) - (this.restTwist[key] ?? 0));
+    F.quaternion.multiply(_q3.setFromAxisAngle(_Y, roll * 0.9));
+    this.model.updateMatrixWorld(true);
+    setHand();
+    const fy = _v1.set(0, 1, 0).applyQuaternion(F.getWorldQuaternion(_q4));
+    const bend = Math.abs(fy.angleTo(handAxis) - (this.restBend[key] ?? 0));
+    const twist = Math.abs(wrapPi(twistAngle(H.quaternion, _Y) - (this.restTwist[key] ?? 0)));
+    this.grasp[key] = { gc: gc.clone(), axis: axis.clone(), out: out.clone(), radius: grip.radius };
+    return bend + twist + Math.abs(roll) * 0.3;
   }
 
   /** Last grasp targets (world), for diagnostics: see graspReport(). */
@@ -636,7 +720,7 @@ export class Astronaut {
   graspReport() {
     // Independent of the IK's own assumptions: measure the skinned glove mesh as rendered.
     this.model.updateMatrixWorld(true);
-    const r: Record<string, { gapCm: number; palmFacingDeg: number; fingerCrossDeg: number; ok: boolean }> = {};
+    const r: Record<string, { wristBendDeg: number; wristTwistDeg: number; gapCm: number; palmFacingDeg: number; fingerCrossDeg: number; ok: boolean }> = {};
     const verts: Record<'L' | 'R', { pad: THREE.Vector3[]; all: THREE.Vector3[] }> = { L: { pad: [], all: [] }, R: { pad: [], all: [] } };
     const hw = { L: this.rig.handL.bone.getWorldPosition(new THREE.Vector3()), R: this.rig.handR.bone.getWorldPosition(new THREE.Vector3()) };
     this.model.traverse((o) => {
@@ -672,7 +756,18 @@ export class Astronaut {
       const palmDir = pc.clone().sub(handC).normalize();
       const facing = THREE.MathUtils.radToDeg(palmDir.angleTo(radial.clone().negate().normalize()));
       const cross = THREE.MathUtils.radToDeg(Math.asin(Math.min(1, Math.abs(finger.dot(g.axis)))));
-      r[side] = { gapCm: +(gap * 100).toFixed(1), palmFacingDeg: +facing.toFixed(0), fingerCrossDeg: +cross.toFixed(0), ok: Math.abs(gap) < 0.035 && facing < 50 && cross < 30 };
+      // wrist: angle between forearm axis and hand axis (bend) and roll of the hand about the forearm (twist)
+      const Fb = this.rig[`forearm${side}`].bone;
+      const Hb = this.rig[`hand${side}`].bone;
+      const fq = Fb.getWorldQuaternion(new THREE.Quaternion());
+      const hq = Hb.getWorldQuaternion(new THREE.Quaternion());
+      const fy = new THREE.Vector3(0, 1, 0).applyQuaternion(fq);
+      const hy = new THREE.Vector3(0, 1, 0).applyQuaternion(hq);
+      const bend = Math.abs(THREE.MathUtils.radToDeg(fy.angleTo(hy) - (this.restBend[side] ?? 0)));
+      const local = fq.clone().invert().multiply(hq);
+      const tw = twistAngle(local, new THREE.Vector3(0, 1, 0));
+      const twist = Math.abs(THREE.MathUtils.radToDeg(wrapPi(tw - (this.restTwist[side] ?? 0))));
+      r[side] = { wristBendDeg: +bend.toFixed(0), wristTwistDeg: +twist.toFixed(0), gapCm: +(gap * 100).toFixed(1), palmFacingDeg: +facing.toFixed(0), fingerCrossDeg: +cross.toFixed(0), ok: Math.abs(gap) < 0.035 && facing < 50 && cross < 30 && bend < 45 && twist < 45 };
     }
     return r;
   }
@@ -720,7 +815,6 @@ const _wq = new THREE.Quaternion();
 const _wq2 = new THREE.Quaternion();
 const _we = new THREE.Euler();
 const _fwd = new THREE.Vector3();
-const _fw = new THREE.Vector3();
 const _ga = new THREE.Vector3();
 const _gs = new THREE.Vector3();
 const _hd = new THREE.Vector3();
@@ -742,6 +836,10 @@ const _q4 = new THREE.Quaternion();
 const _q5 = new THREE.Quaternion();
 const _q6 = new THREE.Quaternion();
 const _pw = new THREE.Vector3();
+const _ha = new THREE.Vector3();
+const _up = new THREE.Vector3();
+const _Y = new THREE.Vector3(0, 1, 0);
+const wrapPi = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
 const _hq = new THREE.Quaternion();
 const _sc = new THREE.Vector3();
 const _b1 = new THREE.Matrix4();
@@ -749,6 +847,12 @@ const _b2 = new THREE.Matrix4();
 const _bx = new THREE.Vector3();
 const _by = new THREE.Vector3();
 const _bz = new THREE.Vector3();
+
+/** Signed rotation angle of q about `axis` (swing-twist decomposition). */
+function twistAngle(q: THREE.Quaternion, axis: THREE.Vector3) {
+  const d = q.x * axis.x + q.y * axis.y + q.z * axis.z;
+  return 2 * Math.atan2(d, q.w);
+}
 
 /** Which hand bone dominates a skinned vertex (by skin weight), if any. */
 function handOfVertex(m: THREE.SkinnedMesh, i: number, hl: THREE.Bone, hr: THREE.Bone): 'L' | 'R' | null {

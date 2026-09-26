@@ -41,7 +41,7 @@ for (const p of poses) {
     return g.me.graspReport();
   }, p);
   for (const [side, r] of Object.entries(rep)) {
-    console.log(`${r.ok ? 'OK  ' : 'FAIL'} ${p.name.padEnd(9)} ${side}  gap ${String(r.gapCm).padStart(5)} cm  palm-facing ${String(r.palmFacingDeg).padStart(3)}°  finger-cross ${String(r.fingerCrossDeg).padStart(3)}°`);
+    console.log(`${r.ok ? 'OK  ' : 'FAIL'} ${p.name.padEnd(9)} ${side}  gap ${String(r.gapCm).padStart(5)} cm  palm-facing ${String(r.palmFacingDeg).padStart(3)}°  finger-cross ${String(r.fingerCrossDeg).padStart(3)}°  wrist bend ${String(r.wristBendDeg).padStart(3)}° twist ${String(r.wristTwistDeg).padStart(3)}°`);
     if (!r.ok) fail++;
   }
   // close-ups from the right and left front

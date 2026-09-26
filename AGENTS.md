@@ -39,7 +39,7 @@ Este archivo es el punto de entrada para un agente de IA que vaya a desarrollar 
 ```bash
 npm run typecheck
 npm run dev                  # en otra terminal
-npm run diag:grasp           # agarre del arma: mide palma/dedos contra la empuñadura (falla con exit 1) + primeros planos
+npm run diag:grasp           # agarre del arma: mide palma/dedos contra la empuñadura y muñecas (flexión y giro), falla con exit 1, + primeros planos
 npm run diag:pose            # capturas del astronauta desde varias cámaras
 npm run diag:terrain         # capturas del terreno
 ```
