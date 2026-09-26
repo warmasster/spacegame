@@ -6,13 +6,22 @@ import * as THREE from 'three';
  * astronaut rig places the weapon from `carry`, and the hands IK onto the grip sockets, so new
  * weapons need no animation work.
  */
+/** A graspable handle: cylinder centre, handle axis (unit) and radius, in weapon space. */
+export interface Grip {
+  pos: THREE.Vector3;
+  axis: THREE.Vector3;
+  radius: number;
+  /** Which side the hand approaches from (weapon space), e.g. -X for the right hand. */
+  side: THREE.Vector3;
+}
+
 export interface WeaponDef {
   id: string;
   name: string;
   carry: 'shoulder' | 'hip';
-  /** Grip for the right hand / support point for the left hand (local space). */
-  rightGrip: THREE.Vector3;
-  leftGrip: THREE.Vector3;
+  /** Handles for the right (trigger) hand and the left (support) hand. */
+  rightGrip: Grip;
+  leftGrip: Grip;
   muzzle: THREE.Vector3;
   /** Where it hangs when holstered (model space offset + euler), on the PLSS. */
   holster: { pos: THREE.Vector3; rot: THREE.Euler };
@@ -42,8 +51,9 @@ export const LAUNCHER: WeaponDef = {
   id: 'launcher',
   name: 'Lanzacohetes',
   carry: 'shoulder',
-  rightGrip: new THREE.Vector3(0, -0.13, 0.3),
-  leftGrip: new THREE.Vector3(0, -0.1, 0.66),
+  // pistol grip raked back 0.25 rad, fore-grip raked forward 0.15 rad (see build())
+  rightGrip: { pos: new THREE.Vector3(0, -0.075, 0.31), axis: new THREE.Vector3(0, -Math.cos(0.25), -Math.sin(0.25)), radius: 0.02, side: new THREE.Vector3(-1, 0, 0) },
+  leftGrip: { pos: new THREE.Vector3(0, -0.05, 0.66), axis: new THREE.Vector3(0, -Math.cos(0.15), Math.sin(0.15)), radius: 0.02, side: new THREE.Vector3(1, 0, 0) },
   muzzle: new THREE.Vector3(0, 0.065, 0.86),
   holster: { pos: new THREE.Vector3(0.03, 1.36, -0.47), rot: new THREE.Euler(-1.35, 0, 0.62) },
   recoil: 70,

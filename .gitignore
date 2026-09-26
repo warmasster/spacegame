@@ -5,3 +5,4 @@ dist/
 tools/**/__pycache__/
 tools/.cache/
 tools/blender/patch.png
+tools/diag/out/

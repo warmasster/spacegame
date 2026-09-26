@@ -5,7 +5,7 @@ import type { TerrainWorkerPool } from './workerPool';
 
 const TILE = 32;
 const TILE_RES = 64; // 0.5 m — identical sampling to the finest render LOD
-const RADIUS = 1; // tiles around the player (3x3)
+const RADIUS = 2; // tiles around the player (5x5 = 160 m: debris and explosions nearby have ground)
 
 interface Tile {
   key: string;

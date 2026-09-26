@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import type { CSM } from 'three/addons/csm/CSM.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
-import type { WeaponDef } from '../fx/weapons';
+import type { Grip, WeaponDef } from '../fx/weapons';
 
 /** Layer used for helmet meshes: hidden from the first-person camera, still casts shadows. */
 export const HELMET_LAYER = 1;
@@ -522,26 +522,33 @@ export class Astronaut {
   private armIK(w: number) {
     if (!this.weapon || !this.weaponDef || w < 0.01) return;
     this.model.updateMatrixWorld(true);
-    const grips: Array<[BoneName, BoneName, BoneName, THREE.Vector3, number]> = [
-      ['upperarmR', 'forearmR', 'handR', _g1.copy(this.weaponDef.rightGrip), -1],
-      ['upperarmL', 'forearmL', 'handL', _g2.copy(this.weaponDef.leftGrip), 1],
-    ];
+    const prop = this.weapon.children[0];
+    const fwdW = _fw.set(0, 0, 1).transformDirection(prop.matrixWorld);
     const modelQ = this.model.getWorldQuaternion(_mq);
-    for (const [ua, fa, ha, grip, side] of grips) {
+    const arms: Array<[BoneName, BoneName, BoneName, Grip, number]> = [
+      ['upperarmR', 'forearmR', 'handR', this.weaponDef.rightGrip, -1],
+      ['upperarmL', 'forearmL', 'handL', this.weaponDef.leftGrip, 1],
+    ];
+    for (const [ua, fa, ha, grip, side] of arms) {
       const U = this.rig[ua].bone;
       const F = this.rig[fa].bone;
       const H = this.rig[ha].bone;
+      // grasp geometry in world space: handle axis, approach side, palm direction
+      const gc = prop.localToWorld(_t.copy(grip.pos));
+      const axis = _ga.copy(grip.axis).transformDirection(prop.matrixWorld);
+      const out = _gs.copy(grip.side).transformDirection(prop.matrixWorld);
+      // the hand runs across the handle (knuckles forward), palm against its side
+      const handDir = _hd.copy(fwdW).addScaledVector(axis, -fwdW.dot(axis)).normalize();
       const S = U.getWorldPosition(_s);
       const E0 = F.getWorldPosition(_e0);
       const H0 = H.getWorldPosition(_h0);
       const L1 = S.distanceTo(E0);
       const L2 = E0.distanceTo(H0);
-      const T = this.weapon.children[0].localToWorld(_t.copy(grip));
+      // wrist sits behind the handle by ~palm length, offset out by the handle radius
+      const T = _tw.copy(gc).addScaledVector(handDir, -0.075).addScaledVector(out, grip.radius + 0.018);
       const toT = _d.subVectors(T, S);
       const dist = Math.min(toT.length(), L1 + L2 - 0.002);
       const dir = toT.normalize();
-      // elbow hangs down and out
-      // elbows down under the tube, right one out to the side, left tucked under
       const pole = _p.set(side > 0 ? 0.25 : -0.8, -1, side > 0 ? 0.1 : -0.2).applyQuaternion(modelQ).normalize();
       const perp = pole.addScaledVector(dir, -pole.dot(dir)).normalize();
       const a = (L1 * L1 - L2 * L2 + dist * dist) / (2 * dist);
@@ -552,7 +559,17 @@ export class Astronaut {
       this.model.updateMatrixWorld(true);
       this.aimBone(F, H.getWorldPosition(_h0), Hn, F.getWorldPosition(_s2), w);
       this.model.updateMatrixWorld(true);
+      // orient the hand along the handle crossing direction
+      const hp = H.getWorldPosition(_s2);
+      const tail = this.handTip(H, _h0);
+      this.aimBone(H, tail, _e.copy(hp).add(handDir), hp, w);
+      this.model.updateMatrixWorld(true);
     }
+  }
+
+  /** A point along the hand bone (toward the fingers), world space. */
+  private handTip(H: THREE.Bone, out: THREE.Vector3) {
+    return out.set(0, 0.12, 0).applyMatrix4(H.matrixWorld);
   }
 
   /** Rotate `bone` (pivot P) so its child currently at `from` points toward `to`, blended by w. */
@@ -596,9 +613,12 @@ const _wp = new THREE.Vector3();
 const _wq = new THREE.Quaternion();
 const _wq2 = new THREE.Quaternion();
 const _we = new THREE.Euler();
-const _g1 = new THREE.Vector3();
 const _fwd = new THREE.Vector3();
-const _g2 = new THREE.Vector3();
+const _fw = new THREE.Vector3();
+const _ga = new THREE.Vector3();
+const _gs = new THREE.Vector3();
+const _hd = new THREE.Vector3();
+const _tw = new THREE.Vector3();
 const _mq = new THREE.Quaternion();
 const _s = new THREE.Vector3();
 const _s2 = new THREE.Vector3();

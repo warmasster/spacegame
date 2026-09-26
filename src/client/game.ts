@@ -4,6 +4,9 @@ import { StateFlags, type PlayerInfo, type TerrainEdit, type Vec3 } from '../sha
 import { LANDMARK, LunarTerrain } from '../shared/terrain';
 import { Particles } from './fx/particles';
 import { Rockets } from './fx/rockets';
+import { FixedLoop } from '../engine/loop';
+import { Debris } from '../engine/debris';
+import { DebugOverlay } from '../engine/debug';
 import { LAUNCHER } from './fx/weapons';
 import { NetClient, type Welcome } from './net/netClient';
 import { RemotePlayer } from './net/remotePlayer';
@@ -50,7 +53,7 @@ export class Game {
   private lighting!: Lighting;
   private sky!: Sky;
   private asset!: AstronautAsset;
-  private me!: Astronaut;
+  me!: Astronaut;
   private ctl!: PlayerController;
   private rig!: CameraRig;
   private remotes = new Map<number, RemotePlayer>();
@@ -65,6 +68,11 @@ export class Game {
   private lamps = false;
   private startTime = performance.now();
   private particles!: Particles;
+  private loop = new FixedLoop(1 / 60);
+  private debris!: Debris;
+  private diag!: DebugOverlay;
+  private pendingHits: THREE.Vector3[] = [];
+  private offline = false;
   private rockets!: Rockets;
   private hp = 100;
   private dead = false;
@@ -98,7 +106,8 @@ export class Game {
     onProgress('Conectando con el servidor…');
     const params = new URLSearchParams(location.search);
     // ?offline: no server — terrain/lighting inspection and solo testing
-    this.welcome = params.has('offline')
+    this.offline = params.has('offline');
+    this.welcome = this.offline
       ? { type: 'welcome', id: 1, variant: 0, players: [], spawn: [0, 0, 0], worldSeed: 1969, serverTime: 0, edits: [], health: [] }
       : await this.net.connect(this.opts.name);
 
@@ -138,6 +147,10 @@ export class Game {
     this.scene.add(this.particles.group);
     this.rockets = new Rockets(this.terrain, this.particles);
     this.scene.add(this.rockets.group);
+    const debrisMat = RockField.material(loader, csm);
+    this.debris = new Debris(this.physics.rapier, this.physics.world, MOON.gravity, debrisMat);
+    this.scene.add(this.debris.mesh);
+    this.diag = new DebugOverlay(this.opts.ui, this.scene);
     for (const h of this.welcome.health) this.pendingHealth.set(h.id, h.hp);
     window.addEventListener('mousedown', (e) => {
       if (e.button === 0 && this.input.locked) this.fireQueued = true;
@@ -237,6 +250,7 @@ export class Game {
     this.physics.invalidate(edit.x, edit.z, edit.r);
     this.rocks.invalidate(edit.x, edit.z, edit.r);
     this.rockets.explode(id, at);
+    if (this.physics.readyAt(at.x, at.z)) this.debris.burst(at, 8 + Math.floor(Math.random() * 6));
     // blast wave: push me away (the server decides damage)
     const c = this.ctl.position.clone().add(new THREE.Vector3(0, 0.9, 0));
     const dist = c.distanceTo(at);
@@ -296,10 +310,10 @@ export class Game {
     origin.addScaledVector(dir, 0.1);
     const target = this.camera.position.clone().addScaledVector(dir, 80);
     const aim = target.sub(origin).normalize();
-    this.net.sendFire(
-      [round(origin.x, 3), round(origin.y, 3), round(origin.z, 3)],
-      [round(aim.x, 4), round(aim.y, 4), round(aim.z, 4)],
-    );
+    const o: Vec3 = [round(origin.x, 3), round(origin.y, 3), round(origin.z, 3)];
+    const d: Vec3 = [round(aim.x, 4), round(aim.y, 4), round(aim.z, 4)];
+    if (this.offline) this.onFire(this.welcome.id, o, d);
+    else this.net.sendFire(o, d);
     // recoil kick
     // momentum conservation on a ~180 kg suited astronaut, plus the body/arm springs
     this.me.applyRecoil(LAUNCHER.recoil);
@@ -356,10 +370,19 @@ export class Game {
     this.me.setLamps(this.lamps);
     this.ctl.look(input, this.rig.mode === 'third' && !this.debugOrbit ? this.rig : undefined);
     this.physics.update(this.ctl.position.x, this.ctl.position.z);
-    if (this.physics.readyAt(this.ctl.position.x, this.ctl.position.z)) {
-      this.physics.step(dt);
-      this.ctl.update(dt, input);
-    }
+    // fixed-step simulation: physics, character, debris, projectiles
+    this.loop.advance(dt, (h) => {
+      if (!this.physics.readyAt(this.ctl.position.x, this.ctl.position.z)) return;
+      this.physics.step(h);
+      this.ctl.update(h, input);
+      this.debris.update(h);
+      const targets = [...this.remotes.values()]
+        .filter((r) => !r.dead)
+        .map((r) => ({ id: r.info.id, pos: r.position.clone().add(new THREE.Vector3(0, 0.95, 0)) }));
+      targets.push({ id: this.welcome.id, pos: this.ctl.position.clone().add(new THREE.Vector3(0, 0.95, 0)) });
+      this.pendingHits.push(...this.rockets.update(h, this.welcome.id, targets));
+    });
+    this.debris.sync();
     // safety net: never fall through the world
     const ground = this.terrain.height(this.ctl.position.x, this.ctl.position.z);
     if (this.ctl.position.y < ground - 2) this.ctl.teleport(new THREE.Vector3(this.ctl.position.x, ground + 0.3, this.ctl.position.z));
@@ -401,11 +424,13 @@ export class Game {
     for (const r of this.remotes.values()) r.update(dt, serverNow);
 
     // --- combat & effects ------------------------------------------------------------------------
-    const targets = [...this.remotes.values()]
-      .filter((r) => !r.dead)
-      .map((r) => ({ id: r.info.id, pos: r.position.clone().add(new THREE.Vector3(0, 0.95, 0)) }));
-    targets.push({ id: this.welcome.id, pos: this.ctl.position.clone().add(new THREE.Vector3(0, 0.95, 0)) });
-    for (const hit of this.rockets.update(dt, this.welcome.id, targets)) this.net.sendHit([round(hit.x, 2), round(hit.y, 2), round(hit.z, 2)]);
+    for (const hit of this.pendingHits) {
+      const p: Vec3 = [round(hit.x, 2), round(hit.y, 2), round(hit.z, 2)];
+      // offline: act as our own server (crater, no damage bookkeeping)
+      if (this.offline) this.onExplode(this.welcome.id, p, { x: p[0], z: p[2], r: 2.4, d: 1 });
+      else this.net.sendHit(p);
+    }
+    this.pendingHits.length = 0;
     if (this.ctl.jetting) this.emitJet(this.me);
     for (const r of this.remotes.values()) if (r.jetting && !r.dead) this.emitJet(r.astronaut);
     this.particles.update(dt);
@@ -460,8 +485,21 @@ export class Game {
       markers,
     });
 
+    this.diag.frame(dt * 1000);
+    this.terrainSys.material.wireframe = this.diag.wireframe;
+    this.diag.setPhysicsLines(this.diag.physicsLines ? this.physics.world.debugRender() : null);
+    this.diag.update(this.pipeline.renderer, {
+      'sim steps/frame': this.loop.lastSteps,
+      'terrain jobs': this.terrainSys.pendingJobs,
+      'rigid bodies': this.physics.world.bodies.len(),
+      colliders: this.physics.world.colliders.len(),
+      debris: this.debris.count,
+      'player pos': `${this.ctl.position.x.toFixed(1)}, ${this.ctl.position.y.toFixed(1)}, ${this.ctl.position.z.toFixed(1)}`,
+      grounded: this.ctl.grounded ? 'sí' : 'no',
+      'rtt ms': Math.round(this.net.rtt),
+    });
     if (render) this.pipeline.render(dt);
-    input.endFrame();
+    if (this.loop.lastSteps > 0) input.endFrame();
   }
 }
 

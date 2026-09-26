@@ -15,7 +15,7 @@ export class CameraRig {
   private smoothEye = new THREE.Vector3();
   private thirdPos = new THREE.Vector3();
   private initialized = false;
-  private zoom = 3.4;
+  zoom = 3.4;
 
   constructor(
     private camera: THREE.PerspectiveCamera,

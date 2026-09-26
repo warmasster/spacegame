@@ -185,3 +185,12 @@ html, body { margin: 0; height: 100%; background: #000; overflow: hidden; color:
 .pause .sc-pause small { font-size: 10px; letter-spacing: 0.3em; color: var(--holo); }
 .pause .sc-pause p { margin: 4px 0 0; font-size: 10px; line-height: 1.6; color: var(--holo-dim); }
 @media (max-width: 760px) { .sc-frame { grid-template-columns: 1fr; } .sc-panel { border-left: 0; } }
+
+/* ---------- diagnostics (F3) ---------- */
+.debug-overlay { position: absolute; left: 28px; top: 200px; width: 260px; padding: 10px 12px; font: 11px/1.6 var(--mono);
+  color: #d8f6ff; background: rgba(0, 10, 16, 0.78); border: 1px solid var(--holo-dim); pointer-events: none; }
+.debug-overlay b { display: block; margin-bottom: 4px; letter-spacing: 0.25em; color: var(--holo); }
+.debug-overlay div { display: flex; justify-content: space-between; gap: 10px; }
+.debug-overlay span { color: var(--holo-dim); }
+.debug-overlay i { font-style: normal; }
+.debug-overlay small { display: block; margin-top: 6px; color: var(--holo-dim); }
