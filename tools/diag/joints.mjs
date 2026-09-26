@@ -8,16 +8,15 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { boot, progress } from './progress.mjs';
+
 const pw = await import('playwright').catch(() => import('/opt/node22/lib/node_modules/playwright/index.mjs'));
 const OUT = join(dirname(fileURLToPath(import.meta.url)), 'out');
 mkdirSync(OUT, { recursive: true });
 const browser = await pw.chromium.launch({ args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
 const page = await browser.newPage({ viewport: { width: 640, height: 400 } });
 page.on('pageerror', (e) => console.log('pageerror:', e.message));
-await page.goto(`${process.env.GAME_URL ?? 'http://localhost:3000'}/?manual&offline`);
-await page.fill('#name', 'diag');
-await page.click('button[type=submit]');
-await page.waitForFunction(() => document.querySelector('.menu')?.classList.contains('hidden'), null, { timeout: 180000 });
+await boot(page, `${process.env.GAME_URL ?? 'http://localhost:3000'}/?manual&offline`);
 await page.evaluate(() => (document.querySelector('#ui').style.display = 'none'));
 
 // Each frame = 1/30 s of game time (software GL in headless Chromium is slow, ~1 s per frame).
@@ -44,6 +43,7 @@ const script = [
 const series = [];
 // worst value per bone and axis, and the phase where it happened
 const worst = {};
+const P = progress('articulaciones', script.length + 1);
 for (const [name, frames, setup, perFrame = ''] of script) {
   const rows = await page.evaluate(({ frames, setup, perFrame }) => {
     const g = window.game, d = g.debug;
@@ -64,6 +64,7 @@ for (const [name, frames, setup, perFrame = ''] of script) {
       for (const [k, v] of [['flex', Math.abs(flex)], ['twist', Math.abs(twist)], ['side', Math.abs(side)], ['speed', speed]])
         if (!(worst[bone][k]?.v >= v)) worst[bone][k] = { v, phase: name };
     }
+  P.step(name);
 }
 const summary = await page.evaluate(() => window.game.joints.summary());
 // snapshot with axis gizmos and joint panel
@@ -83,6 +84,7 @@ await page.evaluate(() => {
 await page.setViewportSize({ width: 1280, height: 720 });
 await page.evaluate(() => window.game.step(2));
 await page.screenshot({ path: join(OUT, 'joints_gizmos.png') });
+P.step('captura con ejes');
 await browser.close();
 
 writeFileSync(join(OUT, 'joints.json'), JSON.stringify({ axes: 'flex=X twist=Y side=Z (model axes, degrees vs rest); speed=world °/s', series }, null, 0));

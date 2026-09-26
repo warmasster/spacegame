@@ -8,16 +8,15 @@ import { mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { boot, progress } from './progress.mjs';
+
 const pw = await import('playwright').catch(() => import('/opt/node22/lib/node_modules/playwright/index.mjs'));
 const OUT = join(dirname(fileURLToPath(import.meta.url)), 'out');
 mkdirSync(OUT, { recursive: true });
 const browser = await pw.chromium.launch({ args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
 const page = await browser.newPage({ viewport: { width: 640, height: 400 } });
 page.on('pageerror', (e) => console.log('pageerror:', e.message));
-await page.goto(`${process.env.GAME_URL ?? 'http://localhost:3000'}/?manual&offline`);
-await page.fill('#name', 'diag');
-await page.click('button[type=submit]');
-await page.waitForFunction(() => document.querySelector('.menu')?.classList.contains('hidden'), null, { timeout: 180000 });
+await boot(page, `${process.env.GAME_URL ?? 'http://localhost:3000'}/?manual&offline`);
 await page.evaluate(() => (document.querySelector('#ui').style.display = 'none'));
 
 const poses = [
@@ -28,6 +27,7 @@ const poses = [
 ];
 let fail = 0;
 let n = 0;
+const P = progress('agarre', poses.length + 2);
 const files = [];
 for (const p of poses) {
   const rep = await page.evaluate(({ pitch, walk }) => {
@@ -54,6 +54,7 @@ for (const p of poses) {
     files.push(f);
   }
   await page.evaluate(() => (window.game.focusCam = null));
+  P.step(`pose ${p.name}`);
 }
 // a single frame can land between two bad ones: while walking, check every frame of two strides
 const cycle = await page.evaluate(() => {
@@ -72,10 +73,12 @@ const cycle = await page.evaluate(() => {
 });
 console.log(`${cycle.length ? 'FAIL' : 'OK  '} walk-cycle  ${cycle.length}/120 hand-frames off the grip${cycle.length ? ': ' + cycle.slice(0, 8).join(' ') : ''}`);
 if (cycle.length) fail++;
+P.step('dos zancadas fotograma a fotograma');
 const { readFileSync } = await import('node:fs');
 const sheet = await browser.newPage({ viewport: { width: 1280, height: 200 * Math.ceil(files.length / 4) } });
 await sheet.setContent(`<body style="margin:0;display:flex;flex-wrap:wrap;width:1280px">${files.map((f) => `<img src="data:image/png;base64,${readFileSync(f).toString('base64')}" width=320 height=200>`).join('')}</body>`);
 await sheet.screenshot({ path: join(OUT, 'grasp_sheet.png') });
+P.step('hoja de contactos');
 await browser.close();
 console.log(fail ? `${fail} grasp check(s) failed` : 'all grasp checks passed');
 process.exit(fail ? 1 : 0);

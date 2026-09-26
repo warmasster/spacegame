@@ -8,6 +8,8 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { boot, progress } from './progress.mjs';
+
 const pw = await import('playwright').catch(() => import('/opt/node22/lib/node_modules/playwright/index.mjs'));
 const mode = process.argv[2] ?? 'all';
 const OUT = join(dirname(fileURLToPath(import.meta.url)), 'out');
@@ -26,11 +28,10 @@ page.on('console', (m) => {
   errors.push(m.text().slice(0, 300));
   console.log('console:', m.text().slice(0, 1500));
 });
-await page.goto(`${url}/?manual&offline`);
-await page.fill('#name', 'diag');
-await page.selectOption('#quality', 'high');
-await page.click('button[type=submit]');
-await page.waitForFunction(() => document.querySelector('.menu')?.classList.contains('hidden'), null, { timeout: 240000 });
+const CHECK_BLOCKS = 11;
+const VIEWS = 14;
+const P = progress('nave', (mode === 'views' ? 0 : CHECK_BLOCKS) + (mode === 'checks' ? 0 : VIEWS));
+await boot(page, `${url}/?manual&offline`);
 
 // helpers inside the page
 await page.evaluate(() => {
@@ -89,7 +90,7 @@ const shot = async (name, setup, hud = false) => {
   const f = join(OUT, `ship_${name}.png`);
   await page.screenshot({ path: f, timeout: 240000 });
   shots.push(f);
-  console.log('shot', f);
+  P.step(`captura ${name}`);
 };
 
 if (mode === 'checks' || mode === 'all') {
@@ -149,6 +150,7 @@ if (mode === 'checks' || mode === 'all') {
     else check(`control ${a.id}`, !a.reason && a.after !== a.before, a.reason ?? `${a.key}: ${a.before} → ${a.after}`);
   }
 
+  P.step('controles');
   // --- power: reactor off → buses dead, doors refuse, emergency lighting --------------------------
   const p = await page.evaluate(() => {
     const g = window.game;
@@ -175,6 +177,7 @@ if (mode === 'checks' || mode === 'all') {
   check('breaker isolates one bus', !p.hyd && p.others && !!p.ramp, `rampa: ${p.ramp}`);
   check('breaker closed → ramp works again', p.rampOk);
 
+  P.step('energía');
   // --- movers: doors, ramp, shield travel + colliders follow ---------------------------------------
   const m = await page.evaluate(() => {
     const g = window.game;
@@ -210,6 +213,7 @@ if (mode === 'checks' || mode === 'all') {
   check('movers return', m.door2 === 1 && m.ramp2 === 1 && m.shield2 === 0, `${m.door2} ${m.ramp2} ${m.shield2}`);
   check('open ramp lets you in', m.rampOpen);
 
+  P.step('puertas y rampa');
   // --- damage: blasts blow a wall panel out; its collider goes; conduit cut kills its bus ------------
   const d = await page.evaluate(() => {
     const g = window.game;
@@ -247,6 +251,7 @@ if (mode === 'checks' || mode === 'all') {
   check('breach latches master caution', d.caution === 1);
   check(`conduit cut (${d.trunk}) kills hydraulics`, !d.hyd && /conducto/.test(d.hydReason ?? ''), d.hydReason);
 
+  P.step('daño');
   // --- repair with the tool: aim at the hole, hold E ---------------------------------------------------
   const rp = await page.evaluate(() => {
     const g = window.game;
@@ -285,6 +290,7 @@ if (mode === 'checks' || mode === 'all') {
   check('repaired conduit restores hydraulics', rp.hyd, `corte: ${rp.cut}`);
   check('master caution reset', rp.caution === 0);
 
+  P.step('soldadura');
   // --- click a real control through the crosshair ---------------------------------------------------
   const ck = await page.evaluate(() => {
     const g = window.game;
@@ -308,6 +314,7 @@ if (mode === 'checks' || mode === 'all') {
   check('crosshair click toggles cargo lights', ck.used && ck.after !== ck.before, `${ck.t} (quiero ${ck.want}) ${ck.before}→${ck.after}`);
   await page.evaluate(() => window.game.shipControl('cg.ramp/light.cargo'));
 
+  P.step('clic por la mirilla');
   // --- welding needs the welder: with the launcher nothing happens ------------------------------------
   const nt = await page.evaluate(() => {
     const g = window.game;
@@ -328,6 +335,7 @@ if (mode === 'checks' || mode === 'all') {
   });
   check('launcher does not weld', nt.hp1 === nt.hp0, `${nt.hp0} → ${nt.hp1}`);
 
+  P.step('solo la soldadora repara');
   // --- cargo: loose boxes fall, get shoved by a blast ------------------------------------------------
   const cg = await page.evaluate(() => {
     const g = window.game;
@@ -342,6 +350,7 @@ if (mode === 'checks' || mode === 'all') {
   });
   check('blast throws a crate', cg.moved > 0.3, `${cg.moved.toFixed(2)} m`);
 
+  P.step('cajas');
   // --- seats ----------------------------------------------------------------------------------------
   const st = await page.evaluate(() => {
     const g = window.game;
@@ -374,6 +383,7 @@ if (mode === 'checks' || mode === 'all') {
   check('seated eye height', st.eyeY > 1.0 && st.eyeY < 1.4, `${st.eyeY.toFixed(2)} m`);
   check('stands up at the exit', st.standing && Math.abs(st.after[2] + 6.95) < 0.2, `local ${st.after.map((v) => v.toFixed(2))}`);
 
+  P.step('asientos');
   // --- zoom -----------------------------------------------------------------------------------------
   const zm = await page.evaluate(() => {
     const g = window.game;
@@ -387,6 +397,7 @@ if (mode === 'checks' || mode === 'all') {
   });
   check('right mouse zooms in', zm.held < 30 && zm.released > 65, `fov ${zm.held.toFixed(1)} → ${zm.released.toFixed(1)}`);
 
+  P.step('zoom');
   // --- walk up the ramp into the cargo bay ------------------------------------------------------------
   const wk = await page.evaluate(() => {
     const g = window.game;
@@ -409,6 +420,7 @@ if (mode === 'checks' || mode === 'all') {
   });
   check('walks up the ramp onto the deck', Math.abs(wk.y) < 0.12 && wk.z < 5.4, `local ${wk.x.toFixed(2)}, ${wk.y.toFixed(2)}, ${wk.z.toFixed(2)} · ${wk.zone}`);
   check('ends inside the cargo bay', wk.zone === 'cargo' || wk.zone === 'corridor');
+  P.step('subir la rampa andando');
 }
 
 if (mode === 'views' || mode === 'all') {
@@ -469,6 +481,7 @@ if (shots.length > 1) {
   await sheet.setContent(`<body style="margin:0;display:flex;flex-wrap:wrap;width:${640 * cols}px">${imgs.map((s) => `<img src="${s}" width=640 height=400>`).join('')}</body>`);
   await sheet.screenshot({ path: join(OUT, 'ship_sheet.png') });
   console.log('sheet', join(OUT, 'ship_sheet.png'));
+  P.step('hoja de contactos');
 }
 if (errors.length) check('no page errors', false, errors.slice(0, 3).join(' | '));
 writeFileSync(join(OUT, 'ship_report.txt'), report.join('\n') + '\n');

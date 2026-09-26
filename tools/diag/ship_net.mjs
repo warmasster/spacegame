@@ -8,6 +8,8 @@ import { writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { boot, progress } from './progress.mjs';
+
 const pw = await import('playwright').catch(() => import('/opt/node22/lib/node_modules/playwright/index.mjs'));
 const OUT = join(dirname(fileURLToPath(import.meta.url)), 'out');
 mkdirSync(OUT, { recursive: true });
@@ -17,11 +19,7 @@ const browser = await pw.chromium.launch({ args: ['--use-gl=angle', '--use-angle
 async function joinGame(name) {
   const page = await browser.newPage({ viewport: { width: 640, height: 400 } });
   page.on('pageerror', (e) => console.log(`[${name}] pageerror:`, e.message));
-  await page.goto(`${url}/?manual`);
-  await page.fill('#name', name);
-  await page.selectOption('#quality', 'low');
-  await page.click('button[type=submit]');
-  await page.waitForFunction(() => document.querySelector('.menu')?.classList.contains('hidden'), null, { timeout: 240000 });
+  await boot(page, `${url}/?manual`, { name, quality: 'low', label: name });
   await page.evaluate(() => {
     const g = window.game;
     window.diag = {
@@ -50,8 +48,11 @@ const run = async (ms, pages, minFrames = 0) => {
   }
 };
 
+const P = progress('red', 6);
 const A = await joinGame('netA');
+P.step('cliente A dentro');
 const B = await joinGame('netB');
+P.step('cliente B dentro');
 await run(1500, [A, B]);
 check('both clients see the ship', await B.evaluate(() => window.game.ships.length === 1) && (await A.evaluate(() => window.game.ships.length === 1)));
 
@@ -70,6 +71,7 @@ const after = await B.evaluate(() => window.game.ships[0].sim.sw.ramp);
 check('A presses the ramp button, B sees the ramp switch', !reason && after !== before, reason ?? `${before} → ${after}`);
 await A.evaluate(() => window.game.shipControl('ext.ramp/ramp'));
 await run(600, [A, B]);
+P.step('mando por red');
 
 // --- a rocket hit reported by A: server blast damages the hull for both ------------------------------
 const hit = await A.evaluate(() => {
@@ -86,6 +88,7 @@ const hit = await A.evaluate(() => {
 await run(800, [A, B]);
 const hpB = await B.evaluate((i) => window.game.ships[0].sim.hp[i], hit.index);
 const hpA = await A.evaluate((i) => window.game.ships[0].sim.hp[i], hit.index);
+P.step('impacto por red');
 check('server blast damages the panel for both clients', hpB < hit.hpA && Math.abs(hpA - hpB) < 0.2, `hp ${hit.hpA} → A ${hpA} / B ${hpB}`);
 
 // --- A welds it back; B sees the integrity rise ------------------------------------------------------
@@ -121,9 +124,11 @@ const welding = await B.evaluate(() => [...window.game.debug.remotes.values()].s
 await A.evaluate(() => window.game.debug.input.setKey('Mouse0', false));
 await run(500, [A, B]);
 const hp1 = await B.evaluate((i) => window.game.ships[0].sim.hp[i], hit.index);
+P.step('soldadura por red');
 check('A welds, B sees the panel repaired', hp1 > hp0 + 15, `${aimed} · hp ${hp0.toFixed(1)} → ${hp1.toFixed(1)}`);
 check('B sees A welding (sparks on its side)', welding);
 
+P.step('fin');
 writeFileSync(join(OUT, 'ship_net_report.txt'), report.join('\n') + '\n');
 await browser.close();
 console.log(failed ? `\n${failed} comprobación(es) fallida(s)` : '\ntodo OK');
