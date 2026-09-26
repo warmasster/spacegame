@@ -6,7 +6,7 @@ import type { ShipSim } from '../../shared/ship/sim';
 import type { Physics } from '../world/physics';
 import type { ShipAnimState } from './screens';
 
-type Owner = { kind: 'panel'; index: number } | { kind: 'solid' };
+type Owner = { kind: 'panel'; index: number } | { kind: 'solid'; seat?: boolean };
 
 const q = (e: THREE.Euler) => {
   const t = new THREE.Quaternion().setFromEuler(e);
@@ -42,9 +42,10 @@ export class ShipPhysics {
     this.syncPanels();
 
     const def = sim.def;
+    let seat = false;
     const solid = (d: RAPIER.ColliderDesc) => {
       const c = world.createCollider(d.setFriction(0.8), this.body);
-      this.owners.set(c.handle, { kind: 'solid' });
+      this.owners.set(c.handle, { kind: 'solid', seat });
       return c;
     };
     const box = (hx: number, hy: number, hz: number, pos: V3, e?: THREE.Euler) => {
@@ -87,12 +88,14 @@ export class ShipPhysics {
     // cockpit props, crates, consoles
     box(1.43, 0.31, 0.29, [0, 0.31, -9.27]);
     box(0.17, 0.35, 0.4, [0, 0.35, -8.3]);
+    seat = true;
     for (const st of def.seats) {
       for (const b of Object.values(SEAT_BOXES)) {
         const f = seatFrame(st, b);
         box(f.half[0], f.half[1], f.half[2], f.c, new THREE.Euler(0, st.yaw, 0));
       }
     }
+    seat = false;
     box(0.25, 0.9, 0.3, [2.25, 0.9, 0.4]);
     for (const con of def.consoles) {
       const basis = new THREE.Matrix4().makeBasis(new THREE.Vector3(...con.u), new THREE.Vector3(...con.v), new THREE.Vector3(...con.n));
@@ -174,9 +177,13 @@ export class ShipPhysics {
   }
 
   /** Closest ship surface along a world ray (panel index or -1 for other parts). */
-  castRay(o: THREE.Vector3, d: THREE.Vector3, max: number, also?: (handle: number) => boolean): { t: number; panel: number } | null {
+  castRay(o: THREE.Vector3, d: THREE.Vector3, max: number, also?: (handle: number) => boolean, skipSeats = false): { t: number; panel: number } | null {
     const ray = new this.R.Ray({ x: o.x, y: o.y, z: o.z }, { x: d.x, y: d.y, z: d.z });
-    const hit = this.world.castRay(ray, max, true, undefined, undefined, undefined, undefined, (c) => this.owners.has(c.handle) || !!also?.(c.handle));
+    const hit = this.world.castRay(ray, max, true, undefined, undefined, undefined, undefined, (c) => {
+      const own = this.owners.get(c.handle);
+      if (own) return !(skipSeats && own.kind === 'solid' && own.seat);
+      return !!also?.(c.handle);
+    });
     if (!hit) return null;
     const own = this.owners.get(hit.collider.handle);
     return { t: hit.timeOfImpact, panel: own?.kind === 'panel' ? own.index : -1 };

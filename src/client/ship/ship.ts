@@ -197,10 +197,10 @@ export class ShipClient {
    * What the crosshair ray hits on this ship: a control (within its hit box, in front of any
    * surface), a solid panel, or a blown-out panel's footprint (for rebuilding).
    */
-  pick(origin: THREE.Vector3, dir: THREE.Vector3, max: number): ShipHit | null {
+  pick(origin: THREE.Vector3, dir: THREE.Vector3, max: number, ignoreSeats = false): ShipHit | null {
     const sim = this.sim;
     const def = sim.def;
-    const occ = this.physics.castRay(origin, dir, max);
+    const occ = this.physics.castRay(origin, dir, max, undefined, ignoreSeats);
     const tOcc = occ ? occ.t : max;
     const o = this.local(origin, _o);
     const d = _d.copy(dir).transformDirection(this.toShip);
@@ -216,7 +216,7 @@ export class ShipClient {
       if (t < 0 || t > tOcc + 0.04 || (best && t >= best.dist)) continue;
       best = { kind: 'control', index: c.index, hole: false, point: world(t), normal: new THREE.Vector3(...c.n).transformDirection(M), dist: t };
     }
-    for (let i = 0; i < def.seats.length; i++) {
+    for (let i = 0; i < (ignoreSeats ? 0 : def.seats.length); i++) {
       // hit box around the whole seat (pan, wings, headrest)
       const f = seatFrame(def.seats[i], SEAT_PICK);
       const t = rayBox(f, f.half, O, D, max);

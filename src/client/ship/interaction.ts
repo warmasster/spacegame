@@ -79,7 +79,7 @@ export class Interaction {
     if (!ctx.disabled) {
       for (const ship of ships) {
         if (ship.position.distanceTo(eye) > 40) continue;
-        const h = ship.pick(origin, dir, max);
+        const h = ship.pick(origin, dir, max, ctx.seated);
         if (h && (!best || h.dist < best.dist)) best = { ...h, ship, inReach: false };
       }
     }
