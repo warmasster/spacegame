@@ -12,6 +12,7 @@
     "share": "cloudflared tunnel --url http://localhost:3000",
     "typecheck": "tsc --noEmit -p .",
     "diag:terrain": "node tools/diag/shots.mjs terrain \"0,0,1.57,-0.25,1.8;0,0,2.5,-0.1,1.8;10,10,0.8,-0.75,25\"",
+    "diag:joints": "node tools/diag/joints.mjs",
     "diag:grasp": "node tools/diag/grasp.mjs",
     "diag:pose": "node tools/diag/shots.mjs pose \"2.9,2;1.6,2;0.4,2;1.3,2.2,1\""
   },

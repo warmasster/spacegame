@@ -36,9 +36,12 @@ Este archivo es el punto de entrada para un agente de IA que vaya a desarrollar 
 
 ## Bucle de verificación (obligatorio antes de hacer commit)
 
+Detalle de todas las herramientas: [`docs/DIAGNOSTICS.md`](docs/DIAGNOSTICS.md).
+
 ```bash
 npm run typecheck
 npm run dev                  # en otra terminal
+npm run diag:joints          # articulaciones: ángulos por eje y velocidades angulares en un guion de movimientos
 npm run diag:grasp           # agarre del arma: mide palma/dedos contra la empuñadura y muñecas (flexión y giro), falla con exit 1, + primeros planos
 npm run diag:pose            # capturas del astronauta desde varias cámaras
 npm run diag:terrain         # capturas del terreno

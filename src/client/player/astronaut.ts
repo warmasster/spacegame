@@ -121,14 +121,14 @@ export interface AnimInput {
   crouch: boolean;
 }
 
-type BoneName =
+export type BoneName =
   | 'pelvis' | 'spine' | 'chest' | 'neck'
   | 'clavicleL' | 'upperarmL' | 'forearmL' | 'handL'
   | 'clavicleR' | 'upperarmR' | 'forearmR' | 'handR'
   | 'thighL' | 'shinL' | 'footL' | 'toeL'
   | 'thighR' | 'shinR' | 'footR' | 'toeR';
 
-interface BoneRig {
+export interface BoneRig {
   bone: THREE.Bone;
   rest: THREE.Quaternion;
   restPos: THREE.Vector3;
@@ -149,7 +149,7 @@ const _m = new THREE.Matrix4();
 export class Astronaut {
   readonly root = new THREE.Group();
   private model: THREE.Object3D;
-  private rig = {} as Record<BoneName, BoneRig>;
+  readonly rig = {} as Record<BoneName, BoneRig>;
   private materials: THREE.MeshStandardMaterial[] = [];
   private lamp: THREE.SpotLight;
   private lampTarget = new THREE.Object3D();
@@ -250,6 +250,8 @@ export class Astronaut {
     L: { point: new THREE.Vector3(), normal: new THREE.Vector3(), finger: new THREE.Vector3(0, 1, 0) },
     R: { point: new THREE.Vector3(), normal: new THREE.Vector3(), finger: new THREE.Vector3(0, 1, 0) },
   };
+  private armPrev: Partial<Record<'L' | 'R', THREE.Quaternion[]>> = {};
+  private frameDt = 1 / 60;
   private restBend: Partial<Record<'L' | 'R', number>> = {};
   private restTwist: Partial<Record<'L' | 'R', number>> = {};
   private calibrateHands() {
@@ -443,6 +445,7 @@ export class Astronaut {
   }
 
   update(dt: number, input: AnimInput) {
+    this.frameDt = dt;
     this.time += dt;
     // death: topple onto the back (low g → slow fall), limbs splayed
     this.deadBlend += ((this.dead ? 1 : 0) - this.deadBlend) * Math.min(1, dt * (this.dead ? 1.6 : 6));
@@ -580,7 +583,10 @@ export class Astronaut {
    * so the arms follow every weapon motion — gait bob, aim pitch, recoil — like the legs do.
    */
   private armIK(w: number) {
-    if (!this.weapon || !this.weaponDef || w < 0.01) return;
+    if (!this.weapon || !this.weaponDef || w < 0.01) {
+      this.armPrev = {};
+      return;
+    }
     this.model.updateMatrixWorld(true);
     const prop = this.weapon.children[0];
     const modelQ = this.model.getWorldQuaternion(_mq);
@@ -602,6 +608,15 @@ export class Astronaut {
       H.quaternion.copy(start[2]);
       this.model.updateMatrixWorld(true);
       this.solveArm(U, F, H, grip, prop, modelQ, key, pick.sign, pick.roll, w);
+      // temporal filter on the solved arm: switching between grasp solutions or a sudden aim
+      // change eases in over ~35 ms instead of popping in one frame
+      const prev = this.armPrev[key];
+      const k = prev ? 1 - Math.exp(-this.frameDt * 30) : 1;
+      for (const [i, b] of [U, F, H].entries()) {
+        if (prev) b.quaternion.copy(prev[i].slerp(b.quaternion, k));
+      }
+      this.armPrev[key] = [U.quaternion.clone(), F.quaternion.clone(), H.quaternion.clone()];
+      this.model.updateMatrixWorld(true);
     }
   }
 
@@ -610,46 +625,52 @@ export class Astronaut {
    * cylinder the palm sits (roll). Pure vector maths on the current shoulder/limb lengths:
    * for each candidate, place wrist and elbow and score how bent the wrist would be.
    */
+
   private bestGrasp(U: THREE.Bone, F: THREE.Bone, H: THREE.Bone, grip: Grip, prop: THREE.Object3D, modelQ: THREE.Quaternion, key: 'L' | 'R') {
-    const palm = this.palm[key];
-    const gc = prop.localToWorld(new THREE.Vector3().copy(grip.pos));
-    const axis = new THREE.Vector3().copy(grip.axis).transformDirection(prop.matrixWorld);
-    const out0 = new THREE.Vector3().copy(grip.side).transformDirection(prop.matrixWorld);
-    out0.addScaledVector(axis, -out0.dot(axis)).normalize();
-    const S = U.getWorldPosition(new THREE.Vector3());
-    const L1 = S.distanceTo(F.getWorldPosition(new THREE.Vector3()));
-    const L2 = F.getWorldPosition(new THREE.Vector3()).distanceTo(H.getWorldPosition(new THREE.Vector3()));
-    const scale = H.getWorldScale(new THREE.Vector3()).x;
-    const down = new THREE.Vector3(0, -1, 0).applyQuaternion(modelQ);
-    const restBend = this.restBend[key] ?? 0;
-    const out = new THREE.Vector3(), fingerW = new THREE.Vector3(), q = new THREE.Quaternion(), T = new THREE.Vector3();
-    const hAx = new THREE.Vector3(), ideal = new THREE.Vector3(), dir = new THREE.Vector3(), E = new THREE.Vector3();
     let best = { sign: 1, roll: 0, cost: Infinity };
     for (const sign of [1, -1]) {
-      for (let roll = -1.2; roll <= 1.201; roll += 0.15) {
-        out.copy(out0).applyAxisAngle(axis, roll);
-        fingerW.crossVectors(axis, out).multiplyScalar(sign);
-        frameQuat(palm.finger, palm.normal, fingerW, _pw.copy(out).negate(), q);
-        T.copy(palm.point).multiplyScalar(scale).applyQuaternion(q).negate().add(gc).addScaledVector(out, grip.radius);
-        hAx.set(0, 1, 0).applyQuaternion(q);
-        dir.subVectors(T, S);
-        const need = dir.length();
-        const dist = Math.min(need, L1 + L2 - 0.002);
-        dir.normalize();
-        ideal.copy(T).addScaledVector(hAx, -L2).sub(S).addScaledVector(down, 0.05);
-        ideal.addScaledVector(dir, -ideal.dot(dir)).normalize();
-        const a = (L1 * L1 - L2 * L2 + dist * dist) / (2 * dist);
-        const h = Math.sqrt(Math.max(0, L1 * L1 - a * a));
-        E.copy(S).addScaledVector(dir, a).addScaledVector(ideal, h);
-        const fore = _v2.subVectors(T, E).normalize();
-        const bend = Math.abs(fore.angleTo(hAx) - restBend);
-        // elbows up/out look wrong: penalise an elbow above the shoulder
-        const elbowUp = Math.max(0, -_v1.subVectors(E, S).dot(down));
-        const cost = bend + Math.max(0, need - (L1 + L2)) * 20 + elbowUp * 4 + Math.abs(roll) * 0.1;
+      for (let roll = -Math.PI; roll < Math.PI; roll += 0.2) {
+        const cost = this.graspCost(U, F, H, grip, prop, modelQ, key, sign, roll);
         if (cost < best.cost) best = { sign, roll, cost };
       }
     }
     return best;
+  }
+
+  /** Wrist discomfort of holding `grip` with wrap `sign` and palm `roll` (pure maths, no scene edits). */
+  private graspCost(U: THREE.Bone, F: THREE.Bone, H: THREE.Bone, grip: Grip, prop: THREE.Object3D, modelQ: THREE.Quaternion, key: 'L' | 'R', sign: number, rollAround: number) {
+    const palm = this.palm[key];
+    const gc = prop.localToWorld(_c1.copy(grip.pos));
+    const axis = _c2.copy(grip.axis).transformDirection(prop.matrixWorld);
+    const out = _c3.copy(grip.side).transformDirection(prop.matrixWorld);
+    out.addScaledVector(axis, -out.dot(axis)).normalize().applyAxisAngle(axis, rollAround);
+    const S = U.getWorldPosition(_c4);
+    const Epos = F.getWorldPosition(_c5);
+    const L1 = S.distanceTo(Epos);
+    const L2 = Epos.distanceTo(H.getWorldPosition(_c6));
+    const scale = H.getWorldScale(_c6).x;
+    const down = _c7.set(0, -1, 0).applyQuaternion(modelQ);
+    const fingerW = _c8.crossVectors(axis, out).multiplyScalar(sign);
+    const q = frameQuat(palm.finger, palm.normal, fingerW, _pw.copy(out).negate(), _cq);
+    const T = _c9.copy(palm.point).multiplyScalar(scale).applyQuaternion(q).negate().add(gc).addScaledVector(out, grip.radius);
+    const hAx = _c10.set(0, 1, 0).applyQuaternion(q);
+    const dir = _c11.subVectors(T, S);
+    const need = dir.length();
+    const dist = Math.min(need, L1 + L2 - 0.002);
+    dir.normalize();
+    const ideal = _c12.copy(T).addScaledVector(hAx, -L2).sub(S).addScaledVector(down, 0.05);
+    ideal.addScaledVector(dir, -ideal.dot(dir)).normalize();
+    const a = (L1 * L1 - L2 * L2 + dist * dist) / (2 * dist);
+    const h = Math.sqrt(Math.max(0, L1 * L1 - a * a));
+    const E = _c5.copy(S).addScaledVector(dir, a).addScaledVector(ideal, h);
+    const bend = Math.abs(_v2.subVectors(T, E).normalize().angleTo(hAx) - (this.restBend[key] ?? 0));
+    const elbowUp = Math.max(0, -_v1.subVectors(E, S).dot(down));
+    // wrist roll this grasp needs: forearm swung onto E→T, hand frame q relative to it
+    const Fq = F.getWorldQuaternion(_cq2);
+    const curDir = _c4.subVectors(H.getWorldPosition(_c6), F.getWorldPosition(_c7)).normalize();
+    const fq = _cq3.setFromUnitVectors(curDir, _c7.subVectors(T, E).normalize()).multiply(Fq);
+    const roll = Math.abs(wrapPi(twistAngle(fq.invert().multiply(q), _Y) - (this.restTwist[key] ?? 0)));
+    return roll * 0.25 + Math.max(0, roll - 1.4) * 3 + bend + Math.max(0, need - (L1 + L2)) * 20 + elbowUp * 4 + Math.abs(rollAround) * 0.1;
   }
 
   /**
@@ -700,7 +721,7 @@ export class Astronaut {
     };
     setHand();
     const roll = wrapPi(twistAngle(H.quaternion, _Y) - (this.restTwist[key] ?? 0));
-    F.quaternion.multiply(_q3.setFromAxisAngle(_Y, roll * 0.9));
+    F.quaternion.multiply(_q3.setFromAxisAngle(_Y, THREE.MathUtils.clamp(roll * 0.9, -1.5, 1.5))); // pronation range ≈ ±85°
     this.model.updateMatrixWorld(true);
     setHand();
     const fy = _v1.set(0, 1, 0).applyQuaternion(F.getWorldQuaternion(_q4));
@@ -837,6 +858,21 @@ const _q5 = new THREE.Quaternion();
 const _q6 = new THREE.Quaternion();
 const _pw = new THREE.Vector3();
 const _ha = new THREE.Vector3();
+const _c1 = new THREE.Vector3();
+const _c2 = new THREE.Vector3();
+const _c3 = new THREE.Vector3();
+const _c4 = new THREE.Vector3();
+const _c5 = new THREE.Vector3();
+const _c6 = new THREE.Vector3();
+const _c7 = new THREE.Vector3();
+const _c8 = new THREE.Vector3();
+const _c9 = new THREE.Vector3();
+const _c10 = new THREE.Vector3();
+const _c11 = new THREE.Vector3();
+const _c12 = new THREE.Vector3();
+const _cq = new THREE.Quaternion();
+const _cq2 = new THREE.Quaternion();
+const _cq3 = new THREE.Quaternion();
 const _up = new THREE.Vector3();
 const _Y = new THREE.Vector3(0, 1, 0);
 const wrapPi = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));

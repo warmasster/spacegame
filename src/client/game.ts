@@ -4,6 +4,7 @@ import { StateFlags, type PlayerInfo, type TerrainEdit, type Vec3 } from '../sha
 import { LANDMARK, LunarTerrain } from '../shared/terrain';
 import { Particles } from './fx/particles';
 import { Rockets } from './fx/rockets';
+import { JointDiagnostics, JointGizmos } from './player/jointDiag';
 import { Scheduler } from '../engine/systems';
 import { FixedLoop } from '../engine/loop';
 import { Debris } from '../engine/debris';
@@ -72,6 +73,12 @@ export class Game {
   private prevPos = new THREE.Vector3();
   /** Registered game systems (see src/engine/systems.ts); `game.systems.list()` from the console. */
   readonly systems = new Scheduler();
+  /** Joint angles / angular speeds of the local astronaut (F6 panel + axis gizmos). */
+  joints!: JointDiagnostics;
+  private jointGizmos!: JointGizmos;
+  private jointPanel!: HTMLPreElement;
+  /** Automation: sample joints every frame even with the panel closed. */
+  jointsRecording = false;
   private loop = new FixedLoop(1 / 60);
   private debris!: Debris;
   private diag!: DebugOverlay;
@@ -158,6 +165,19 @@ export class Game {
     this.scene.add(this.debris.mesh);
     this.diag = new DebugOverlay(this.opts.ui, this.scene);
     this.registerSystems();
+    this.joints = new JointDiagnostics(this.me);
+    this.jointGizmos = new JointGizmos(this.me);
+    this.scene.add(this.jointGizmos.group);
+    this.jointPanel = document.createElement('pre');
+    this.jointPanel.className = 'debug-overlay joints-panel hidden';
+    this.opts.ui.appendChild(this.jointPanel);
+    window.addEventListener('keydown', (e) => {
+      if (e.code !== 'F6') return;
+      e.preventDefault();
+      const on = this.jointPanel.classList.toggle('hidden') === false;
+      this.jointGizmos.group.visible = on;
+      if (on) this.joints.reset();
+    });
     for (const h of this.welcome.health) this.pendingHealth.set(h.id, h.hp);
     window.addEventListener('mousedown', (e) => {
       if (e.button === 0 && this.input.locked) this.fireQueued = true;
@@ -427,6 +447,11 @@ export class Game {
       crouch: this.ctl.crouch,
     });
     this.me.root.updateMatrixWorld(true);
+    if (this.jointsRecording || this.jointGizmos.group.visible) {
+      this.joints.sample(dt);
+      this.jointGizmos.update();
+      if (this.jointGizmos.group.visible) this.jointPanel.textContent = `ARTICULACIONES (F6) — grados vs reposo, ejes del modelo\n${this.joints.table()}`;
+    }
     this.evaTime += dt;
 
     // --- network -------------------------------------------------------------------------------

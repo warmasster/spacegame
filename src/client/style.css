@@ -194,3 +194,4 @@ html, body { margin: 0; height: 100%; background: #000; overflow: hidden; color:
 .debug-overlay span { color: var(--holo-dim); }
 .debug-overlay i { font-style: normal; }
 .debug-overlay small { display: block; margin-top: 6px; color: var(--holo-dim); }
+.joints-panel { left: auto; right: 28px; top: 90px; width: auto; margin: 0; white-space: pre; font-size: 10.5px; line-height: 1.45; }
