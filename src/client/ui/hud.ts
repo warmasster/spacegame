@@ -16,6 +16,8 @@ export interface HudData {
   fps: number;
   hp: number;
   fuel: number;
+  /** Suit oxygen 0..1. */
+  o2: number;
   /** 0 = just fired, 1 = ready. */
   reload: number;
   tool: 'none' | 'launcher' | 'welder' | 'welding';
@@ -153,6 +155,7 @@ export class Hud {
       `<div class="vital ${cls}"><span>${label}</span><i><em style="width:${Math.round(Math.max(0, Math.min(1, v)) * 100)}%"></em></i></div>`;
     this.vitals.innerHTML =
       bar('TRAJE', d.hp / 100, d.hp < 35 ? 'crit' : 'hp') +
+      bar('O2', d.o2, d.o2 < 0.2 ? 'crit' : 'fuel') +
       bar('JET', d.fuel, 'fuel') +
       (d.tool === 'welder' || d.tool === 'welding'
         ? bar(d.tool === 'welding' ? 'SOLDANDO' : 'SOLDADORA LISTA', 1, 'fuel')

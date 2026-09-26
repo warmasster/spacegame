@@ -21,6 +21,9 @@ export interface NetEvents {
   respawn(id: number, spawn: Vec3): void;
   ship(ship: number, sw: Record<string, number> | undefined, hp: Array<[number, number]> | undefined, by?: number): void;
   shipDenied(ship: number, ctl: number, reason: string): void;
+  shipState(ship: number, d: number[]): void;
+  say(ship: number, text: string): void;
+  vitals(o2: number, cabin: boolean): void;
 }
 
 /** WebSocket session: handshake, state upload, snapshot delivery and server-clock estimate. */
@@ -95,6 +98,15 @@ export class NetClient {
           case 'shipDenied':
             this.events.shipDenied(msg.ship, msg.ctl, msg.reason);
             break;
+          case 'shipSt':
+            this.events.shipState(msg.ship, msg.d);
+            break;
+          case 'say':
+            this.events.say(msg.ship, msg.text);
+            break;
+          case 'vitals':
+            this.events.vitals(msg.o2, msg.cabin);
+            break;
           case 'pong': {
             const now = performance.now();
             this.rtt = now - msg.t;
@@ -128,8 +140,8 @@ export class NetClient {
     this.send({ type: 'hit', p });
   }
 
-  sendInteract(ship: number, ctl: number) {
-    this.send({ type: 'interact', ship, ctl });
+  sendInteract(ship: number, ctl: number, dir = 0) {
+    this.send({ type: 'interact', ship, ctl, dir: dir || undefined });
   }
 
   sendRepair(ship: number, panel: number) {

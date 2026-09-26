@@ -2,7 +2,8 @@ import * as THREE from 'three';
 import { MAX_PLAYERS, MOON, CLIENT_SEND_RATE, SHIP_SPAWNS, SUIT_STRIPES } from '../shared/constants';
 import { StateFlags, type PlayerInfo, type TerrainEdit, type Vec3 } from '../shared/protocol';
 import { LANDMARK, LunarTerrain } from '../shared/terrain';
-import { placeShip, REPAIR_RATE, SHIP_DEFS, ShipSim, type ShipSnapshot } from '../shared/ship/sim';
+import { placeShip, REPAIR_RATE, SHIP_DEFS, ShipSim, SYSTEMS_HZ, type ShipSnapshot } from '../shared/ship/sim';
+import { crewContext, SUIT } from '../shared/ship/crew';
 import { Interaction } from './ship/interaction';
 import { updateInteriorLights } from './ship/interiorLights';
 import { litMaterial } from './ship/materials';
@@ -105,6 +106,9 @@ export class Game {
   /** Seat the local astronaut sits in. */
   seat: { ship: ShipClient; index: number } | null = null;
   private welding = false;
+  /** Suit oxygen reserve 0..1 (from the server, or local offline). */
+  suitO2 = 1;
+  private sysAcc = 0;
   /** ?cam=x,z,yaw,pitch[,h] free inspection camera. */
   private inspectCam = new URLSearchParams(location.search).get('cam')?.split(',').map(Number) ?? null;
   /** Automation: keep a fixed third-person orbit (no easing back). */
@@ -126,6 +130,9 @@ export class Game {
       respawn: (id, spawn) => this.onRespawn(id, spawn),
       ship: (ship, sw, hp, by) => this.onShip(ship, sw, hp, by),
       shipDenied: (ship, ctl, reason) => this.interaction?.deny(ship, ctl, reason, performance.now() / 1000),
+      shipState: (ship, d) => this.ships.find((s) => s.id === ship)?.sim.applyState(d),
+      say: (_ship, text) => this.hud?.toast(text),
+      vitals: (o2) => (this.suitO2 = o2),
     });
     window.addEventListener('resize', () => this.resize());
     this.resize();
@@ -271,6 +278,7 @@ export class Game {
       update: (h) => {
         const bodies = [this.ctl.position, ...[...this.remotes.values()].map((r) => r.position)];
         for (const ship of this.ships) ship.fixed(h, bodies);
+        if (this.offline) this.offlineSystems(h);
       },
     });
     S.add({
@@ -387,6 +395,36 @@ export class Game {
     });
   }
 
+  /** Offline: this client runs the ship machinery and its own suit, like the server would. */
+  private offlineSystems(h: number) {
+    this.sysAcc += h;
+    const step = 1 / SYSTEMS_HZ;
+    while (this.sysAcc >= step) {
+      this.sysAcc -= step;
+      const p = this.ctl.position;
+      let cabin = false;
+      for (const [id, sim] of this.shipAuthority) {
+        const crew = crewContext(sim, [{ p: [p.x, p.y, p.z], seated: !!this.seat }]);
+        const r = sim.tick(step, { crew: crew.counts, docked: crew.docked, bodies: crew.bodies });
+        const mirror = this.ships.find((s) => s.id === id);
+        if (mirror && mirror.sim !== sim) mirror.sim.st.set(sim.st);
+        if (Object.keys(r.sw).length) this.onShip(id, r.sw);
+        for (const e of r.events) {
+          if (e.type === 'say') this.hud.toast(e.text);
+          else if (e.type === 'explode') {
+            const w = sim.toWorld(e.at);
+            this.onExplode(0, [w[0], w[1], w[2]]);
+            this.hud.toast(e.cause);
+          }
+        }
+        const m = crew.members[0];
+        if (m.breathable) cabin = true;
+        if (m.breathable || m.docked) this.suitO2 = Math.min(1, this.suitO2 + (m.breathable ? SUIT.refill : SUIT.dockRefill) * step);
+      }
+      if (!cabin) this.suitO2 = Math.max(0, this.suitO2 - SUIT.use * step);
+    }
+  }
+
   private localInteract(ship: number, ctl: number) {
     const sim = this.shipAuthority.get(ship);
     if (!sim) return;
@@ -438,6 +476,12 @@ export class Game {
 
   lockPointer() {
     this.input.lock();
+  }
+
+  /** Close the connection (failed start) so the server frees the slot. */
+  dispose() {
+    this.running = false;
+    this.net.close();
   }
 
   /** Automation hook (tests / screenshots). */
@@ -790,6 +834,7 @@ export class Game {
       fps: this.fps,
       hp: this.hp,
       fuel: this.ctl.fuel,
+      o2: this.suitO2,
       reload: !this.me.isArmed ? 0 : this.me.equipped === 'welder' ? 1 : Math.min(1, (performance.now() / 1000 - this.lastFire) / LAUNCHER.cooldown),
       tool: !this.me.isArmed ? 'none' : this.me.equipped === 'welder' ? (this.welding ? 'welding' : 'welder') : 'launcher',
       zoom: this.rig.magnification,

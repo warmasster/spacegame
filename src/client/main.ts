@@ -102,6 +102,7 @@ menu.querySelector('#join')!.addEventListener('submit', async (e) => {
     status.textContent = err instanceof Error ? err.message : String(err);
     status.classList.add('error');
     (menu.querySelector('.sc-cta') as HTMLButtonElement).disabled = false;
+    game?.dispose();
     game = null;
   }
 });

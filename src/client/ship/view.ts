@@ -344,7 +344,7 @@ export class ShipView {
     // reactor core window + three greens on the consoles
     for (const con of def.consoles) {
       const F = frameMatrix(con.c, con.u, con.v, con.n);
-      if (con.id === 'cr.rct') {
+      if (con.id === 'cg.rct') {
         const at = F.clone().multiply(new THREE.Matrix4().makeTranslation(-0.34, 0.22, 0.006));
         lamp('reactor-core', new THREE.CircleGeometry(0.055, 24), at);
         P.add('chrome', new THREE.TorusGeometry(0.062, 0.008, 6, 24).applyMatrix4(at));
@@ -487,7 +487,7 @@ export class ShipView {
     // control LEDs live in the lamp mesh; hide the ones whose console is gone
     for (const c of def.controls) this.lampMat.levels[this.lampIds.get(`led:${c.index}`)!].w = this.hostHidden(c.host) ? 0 : 1;
     for (const name of ['reactor-core', 'gear-greens']) {
-      const con = def.consoles.find((c) => c.id === (name === 'reactor-core' ? 'cr.rct' : 'ck.main'))!;
+      const con = def.consoles.find((c) => c.id === (name === 'reactor-core' ? 'cg.rct' : 'ck.main'))!;
       this.lampMat.levels[this.lampIds.get(name)!].w = this.hostHidden(con.host) ? 0 : 1;
     }
     for (const m of [this.consoleMesh, this.labelMesh]) {
