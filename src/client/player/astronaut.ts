@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import type { CSM } from 'three/addons/csm/CSM.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import type { Grip, WeaponDef } from '../fx/weapons';
 import { patchInteriorLights } from '../ship/interiorLights';
 
@@ -330,7 +331,7 @@ export class Astronaut {
     }
   }
 
-  /** Mount a weapon: carried on the right shoulder when armed, slung on the PLSS when holstered. */
+  /** Mount a weapon: carried on the right shoulder when armed, clamped to the PLSS when holstered. */
   attachWeapon(def: WeaponDef) {
     const prop = def.build();
     prop.traverse((o) => {
@@ -349,7 +350,79 @@ export class Astronaut {
       this.weapon = obj;
       this.weaponDef = def;
     }
+    this.addHolsterClamps(def);
     this.placeWeapon();
+  }
+
+  /** Holster pose of a tool as model-space position + rotation. */
+  private holsterPose(def: WeaponDef, q: THREE.Quaternion) {
+    const h = def.holster;
+    const z = _hz.copy(h.dir).normalize();
+    const x = _hx.crossVectors(h.up, z).normalize();
+    const y = _hy.crossVectors(z, x);
+    return q.setFromRotationMatrix(_m.makeBasis(x, y, z));
+  }
+
+  /**
+   * Clamps that hold a stowed tool on the pack, measured on the suit mesh: from every mount point a
+   * ray goes `toward` the PLSS; a bracket bridges the gap and a band wraps the tool. They belong to
+   * the pack (chest bone), so they stay when the tool is drawn.
+   */
+  private addHolsterClamps(def: WeaponDef) {
+    const h = def.holster;
+    const q = this.holsterPose(def, new THREE.Quaternion());
+    const toModel = new THREE.Matrix4().compose(h.pos, q, new THREE.Vector3(1, 1, 1));
+    const modelW = this.model.matrixWorld;
+    const modelInv = new THREE.Matrix4().copy(modelW).invert();
+    const targets: THREE.Object3D[] = [];
+    this.model.traverse((o) => {
+      const name = ((o as THREE.Mesh).material as THREE.Material | undefined)?.name;
+      if ((o as THREE.SkinnedMesh).isSkinnedMesh && (name === 'SuitHard' || name === 'MetalDark' || name === 'Metal')) targets.push(o);
+    });
+    const ray = new THREE.Raycaster();
+    const mat = new THREE.MeshStandardMaterial({ color: 0x1b1c1e, roughness: 0.5, metalness: 0.7 });
+    patchInteriorLights(mat);
+    const parts: THREE.BufferGeometry[] = [];
+    const axis = new THREE.Vector3(0, 0, 1).applyQuaternion(q);
+    for (const m of h.mounts) {
+      const at = m.at.clone().applyMatrix4(toModel);
+      const toward = h.toward.clone().normalize();
+      ray.set(at.clone().applyMatrix4(modelW), toward.clone().transformDirection(modelW));
+      ray.far = 0.3;
+      const hit = ray.intersectObjects(targets, false)[0];
+      if (!hit) continue;
+      const base = hit.point.applyMatrix4(modelInv);
+      // band around the tool, in the plane across its axis
+      const bandQ = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), axis);
+      const reach = 'r' in m.band ? m.band.r : Math.abs(toward.dot(new THREE.Vector3(1, 0, 0).applyQuaternion(q))) > 0.5 ? m.band.w / 2 : m.band.h / 2;
+      if ('r' in m.band) parts.push(new THREE.TorusGeometry(m.band.r, 0.007, 6, 24).applyQuaternion(bandQ).translate(at.x, at.y, at.z));
+      else {
+        const { w, h: bh } = m.band;
+        const frame = [
+          new THREE.BoxGeometry(w + 0.014, 0.014, 0.024).translate(0, bh / 2, 0),
+          new THREE.BoxGeometry(w + 0.014, 0.014, 0.024).translate(0, -bh / 2, 0),
+          new THREE.BoxGeometry(0.014, bh, 0.024).translate(w / 2, 0, 0),
+          new THREE.BoxGeometry(0.014, bh, 0.024).translate(-w / 2, 0, 0),
+        ];
+        for (const g of frame) parts.push(g.applyQuaternion(q).translate(at.x, at.y, at.z));
+      }
+      // bracket from the pack surface to the band
+      const from = base.clone().addScaledVector(toward, -0.004);
+      const to = at.clone().addScaledVector(toward, reach);
+      const len = from.distanceTo(to);
+      if (len > 0.004) {
+        const g = new THREE.BoxGeometry(0.03, 0.03, len + 0.008);
+        const bq = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), to.clone().sub(from).normalize());
+        parts.push(g.applyQuaternion(bq).translate((from.x + to.x) / 2, (from.y + to.y) / 2, (from.z + to.z) / 2));
+      }
+      parts.push(new THREE.BoxGeometry(0.05, 0.05, 0.008).applyQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), toward)).translate(from.x, from.y, from.z));
+    }
+    if (!parts.length) return;
+    const mesh = new THREE.Mesh(mergeGeometries(parts.map((g) => g.toNonIndexed()))!, mat);
+    mesh.castShadow = true;
+    mesh.name = `holster-${def.id}`;
+    mesh.applyMatrix4(this.weaponInv!);
+    this.rig.chest.bone.add(mesh);
   }
 
   /** Switch the tool in hand (the other one goes back on the PLSS). */
@@ -411,7 +484,7 @@ export class Astronaut {
     _wp.set(-0.21, 1.47, 0.06).addScaledVector(_fwd.set(0, 0, -1).applyQuaternion(_wq), this.kick);
     if (def.carry === 'hip') _wp.set(-0.2, 1.05, 0.25);
     _wp.lerp(def.holster.pos, 1 - w);
-    _wq.slerp(_wq2.setFromEuler(def.holster.rot), 1 - w);
+    _wq.slerp(this.holsterPose(def, _wq2), 1 - w);
     obj.position.copy(_wp).applyMatrix4(this.weaponInv);
     obj.quaternion.copy(this.weaponInvQ!).multiply(_wq);
   }
@@ -589,7 +662,11 @@ export class Astronaut {
 
     // ---- weapon (placed first; arms reach for it after the body pose) ------------------------------
     const hold = this.armed && !this.dead && !input.seated;
-    for (const t of this.tools) t.blend += ((hold && t.obj === this.weapon ? 1 : 0) - t.blend) * Math.min(1, dt * 5);
+    for (const t of this.tools) {
+      t.blend += ((hold && t.obj === this.weapon ? 1 : 0) - t.blend) * Math.min(1, dt * 5);
+      // seated, the pack sits in the seat's PLSS well: stowed tools are racked on the seat
+      t.obj.visible = !(input.seated && sb > 0.3 && t.blend < 0.05);
+    }
     this.armBlend = this.tools.find((t) => t.obj === this.weapon)?.blend ?? 0;
     // recoil springs (critically-ish damped)
     const sub = 4;
@@ -895,6 +972,9 @@ function findBone(root: THREE.Object3D, name: string): THREE.Bone | null {
 
 /** How much better (grasp cost units ≈ radians of wrist discomfort) another grasp must be to switch. */
 const GRASP_SWITCH = 0.45;
+const _hx = new THREE.Vector3();
+const _hy = new THREE.Vector3();
+const _hz = new THREE.Vector3();
 const _wp = new THREE.Vector3();
 const _wq = new THREE.Quaternion();
 const _wq2 = new THREE.Quaternion();

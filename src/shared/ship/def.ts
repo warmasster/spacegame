@@ -142,6 +142,39 @@ export interface SeatDef {
   exit: V3;
 }
 
+/** A box in seat space (x right, y up, z toward the backrest), for colliders and picking. */
+export interface SeatBox {
+  c: V3;
+  half: V3;
+}
+
+/**
+ * Crew seat for a suited astronaut, measured on the seated rig (hips 0.6 m, PLSS back 0.48 m behind
+ * the root, helmet back 0.25 m): pan under the thighs, a PLSS well between two side wings, the
+ * dock plate behind the pack and a headrest on the top bar that meets the helmet above the pack.
+ * Shared by the ship view, its colliders and the crosshair pick so they can never disagree.
+ */
+export const SEAT_BOXES: Record<'pan' | 'dock' | 'wingL' | 'wingR' | 'head', SeatBox> = {
+  pan: { c: [0, 0.43, 0.02], half: [0.3, 0.05, 0.47] },
+  dock: { c: [0, 0.98, 0.535], half: [0.335, 0.5, 0.035] },
+  wingL: { c: [-0.3, 0.95, 0.36], half: [0.035, 0.47, 0.17] },
+  wingR: { c: [0.3, 0.95, 0.36], half: [0.035, 0.47, 0.17] },
+  head: { c: [0, 1.46, 0.385], half: [0.16, 0.1, 0.13] },
+};
+
+/** Whole-seat box for the crosshair (seat space). */
+export const SEAT_PICK: SeatBox = { c: [0, 0.78, 0.06], half: [0.34, 0.78, 0.51] };
+
+/** Seat-space box → ship-space frame (u = seat right, v = up, n = toward the backrest). */
+export function seatFrame(seat: SeatDef, b: SeatBox): Frame & { half: V3 } {
+  const cs = Math.cos(seat.yaw);
+  const sn = Math.sin(seat.yaw);
+  const u: V3 = [cs, 0, -sn];
+  const n: V3 = [sn, 0, cs];
+  const c: V3 = [seat.root[0] + u[0] * b.c[0] + n[0] * b.c[2], seat.root[1] + b.c[1], seat.root[2] + u[2] * b.c[0] + n[2] * b.c[2]];
+  return { c, u, v: [0, 1, 0], n, half: b.half };
+}
+
 /** Loose cargo: a dynamic box (centre, half extents, yaw, mass). */
 export interface CargoDef {
   pos: V3;
@@ -153,7 +186,11 @@ export interface CargoDef {
 
 export interface ExtLightDef {
   kind: 'nav-red' | 'nav-green' | 'strobe' | 'beacon' | 'landing';
+  /** Point on the hull surface the fixture sits on (ship space). */
   pos: V3;
+  /** Outward surface normal there: the fixture's base lies on the surface, the lens stands along it. */
+  n: V3;
+  /** Beam direction (landing lights). */
   dir?: V3;
 }
 

@@ -356,8 +356,8 @@ function buildDef(): ShipDef {
       { id: 'cargo', label: 'BODEGA', min: [-2.6, 0, Z_CR], max: [2.6, 3.0, Z_TAIL], lights: [[0, 2.8, -0.4], [0, 2.8, 3.6]], lightKey: 'light.cargo' },
     ],
     seats: [
-      { id: 'ck.pilot', name: 'Asiento del piloto', root: [-0.72, 0, -7.66], yaw: 0, exit: [-0.72, 0, -6.95] },
-      { id: 'ck.copilot', name: 'Asiento del copiloto', root: [0.72, 0, -7.66], yaw: 0, exit: [0.72, 0, -6.95] },
+      { id: 'ck.pilot', name: 'Asiento del piloto', root: [-0.72, 0, -7.78], yaw: 0, exit: [-0.72, 0, -6.8] },
+      { id: 'ck.copilot', name: 'Asiento del copiloto', root: [0.72, 0, -7.78], yaw: 0, exit: [0.72, 0, -6.8] },
     ],
     cargo: [
       { pos: [-1.95, 0.38, -1.7], half: [0.45, 0.375, 0.45], yaw: 0, mass: 70, paint: 'orange' },
@@ -368,14 +368,17 @@ function buildDef(): ShipDef {
       { pos: [-1.6, 0.3, 3.2], half: [0.3, 0.3, 0.3], yaw: 0.3, mass: 25, paint: 'grey' },
       { pos: [1.3, 0.3, 2.4], half: [0.3, 0.3, 0.3], yaw: -0.2, mass: 25, paint: 'orange' },
     ],
+    // every fixture sits on a surface (checked by diag:ship): nav lights on the outboard flank of the
+    // nacelles, strobe on the fin top, beacons on the dorsal spine and the keel, floodlights in the
+    // raked front face of the chin
     extLights: [
-      { kind: 'nav-red', pos: [-4.2, 1.2, -1.9] },
-      { kind: 'nav-green', pos: [4.2, 1.2, -1.9] },
-      { kind: 'strobe', pos: [0, 3.95, 5.3] },
-      { kind: 'beacon', pos: [0, 2.56, -6.9] },
-      { kind: 'beacon', pos: [0, -0.5, -1.0] },
-      { kind: 'landing', pos: [-0.9, -0.42, -8.9], dir: norm([-0.1, -0.55, -1]) },
-      { kind: 'landing', pos: [0.9, -0.42, -8.9], dir: norm([0.1, -0.55, -1]) },
+      { kind: 'nav-red', pos: [-4.19, 1.15, -0.3], n: [-1, 0, 0] },
+      { kind: 'nav-green', pos: [4.19, 1.15, -0.3], n: [1, 0, 0] },
+      { kind: 'strobe', pos: [0, 3.92, 4.9], n: [0, 1, 0] },
+      { kind: 'beacon', pos: [0, 3.33, 3.0], n: [0, 1, 0] },
+      { kind: 'beacon', pos: [0, -0.45, -1.0], n: [0, -1, 0] },
+      { kind: 'landing', pos: [-0.9, -0.29, -10.14], n: norm([0, -0.524, -0.852]), dir: norm([-0.1, -0.55, -1]) },
+      { kind: 'landing', pos: [0.9, -0.29, -10.14], n: norm([0, -0.524, -0.852]), dir: norm([0.1, -0.55, -1]) },
     ],
     subsystems: SUBSYSTEMS,
     defaults: {

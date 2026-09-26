@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import type { CSM } from 'three/addons/csm/CSM.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import type { ControlDef, ControlKind, PanelDef, SubsystemId } from '../../shared/ship/def';
+import { SEAT_BOXES, type ControlDef, type ControlKind, type PanelDef, type SeatBox, type SeatDef, type SubsystemId } from '../../shared/ship/def';
 import type { V2, V3 } from '../../shared/ship/geom';
 import type { ShipSim } from '../../shared/ship/sim';
 import { buildFrames, buildPanels, Parts, strip, type PanelMatKey, type PanelRange } from './geometry';
@@ -58,6 +58,8 @@ export class ShipView {
   private lastShield = -1;
   /** Number of static decor meshes (diagnostics). */
   decorCount = 0;
+  /** Seats with someone in them (set by the game): their umbilical port lights up. */
+  readonly seatOccupied: boolean[] = [];
 
   constructor(
     private sim: ShipSim,
@@ -88,6 +90,7 @@ export class ShipView {
       paintDark: inside(litMaterial(csm, { color: lin(0.06, 0.062, 0.066), roughness: 0.6, metalness: 0.2 })),
       accent: inside(litMaterial(csm, { color: lin(0.5, 0.26, 0.02), roughness: 0.55, metalness: 0.1 })),
       dark: inside(litMaterial(csm, { color: lin(0.035, 0.037, 0.04), roughness: 0.45, metalness: 0.7, envMapIntensity: 0.6 })),
+      strap: inside(litMaterial(csm, { color: lin(0.3, 0.12, 0.02), roughness: 0.85, envMapIntensity: 0.2 })),
       chrome: inside(litMaterial(csm, { color: lin(0.62, 0.62, 0.64), roughness: 0.16, metalness: 1 })),
       seat: inside(litMaterial(csm, { color: lin(0.045, 0.05, 0.058), roughness: 0.92, envMapIntensity: 0.2 })),
       crate: inside(litMaterial(csm, { color: lin(0.32, 0.2, 0.05), roughness: 0.72, metalness: 0.1, envMapIntensity: 0.3 })),
@@ -101,6 +104,7 @@ export class ShipView {
 
     // ---- lamps: register every emitter first (the shader needs the count) -------------------------
     const lampNames = ['zone:cockpit', 'zone:corridor', 'zone:cargo', 'emergency', 'nav-red', 'nav-green', 'strobe', 'beacon', 'landing', 'nozzle', 'reactor-core', 'gear-greens', 'caution-lens'];
+    for (const st of def.seats) lampNames.push(`seat:${st.id}`);
     for (const c of def.controls) lampNames.push(`led:${c.index}`);
     lampNames.forEach((n, i) => this.lampIds.set(n, i));
     this.lampMat = new LampMaterial(lampNames.length);
@@ -270,14 +274,8 @@ export class ShipView {
     }
 
     // ---- interior -----------------------------------------------------------------------------------
-    // flight deck: two seats, centre pedestal, console body under the dash board
-    for (const sx of [-0.72, 0.72]) {
-      P.rod('dark', [sx, 0, -7.75], [sx, 0.4, -7.75], 0.07, 10);
-      P.box('seat', 0.58, 0.12, 0.54, [sx, 0.46, -7.8]);
-      P.box('seat', 0.58, 0.82, 0.12, [sx, 0.93, -7.47], new THREE.Euler(-0.2, 0, 0));
-      P.box('seat', 0.32, 0.22, 0.12, [sx, 1.47, -7.35], new THREE.Euler(-0.2, 0, 0));
-      for (const ax of [-0.31, 0.31]) P.box('dark', 0.06, 0.06, 0.42, [sx + ax, 0.66, -7.82]);
-    }
+    // flight deck: crew seats (see SEAT_BOXES), centre pedestal, console body under the dash board
+    for (const st of def.seats) this.buildSeat(P, st, lamp);
     P.box('console', 0.34, 0.7, 0.8, [0, 0.35, -8.3]);
     P.rod('chrome', [0.06, 0.7, -8.35], [0.06, 0.82, -8.45], 0.012, 8);
     P.box('dark', 0.05, 0.03, 0.06, [0.06, 0.83, -8.46]);
@@ -315,21 +313,32 @@ export class ShipView {
       }
     }
 
-    // exterior lights
+    // exterior lights: every fixture stands on its surface point `pos` along the outward normal `n`
+    const Y = new THREE.Vector3(0, 1, 0);
     for (const l of def.extLights) {
-      const [x, y, z] = l.pos;
+      const at = new THREE.Vector3(...l.pos);
+      const n = new THREE.Vector3(...l.n);
+      const qn = new THREE.Quaternion().setFromUnitVectors(Y, n);
+      const on = (h: number) => at.clone().addScaledVector(n, h);
       if (l.kind === 'landing') {
+        // recessed floodlight: bezel ring flush with the face, reflector cup behind the lens
         const d = new THREE.Vector3(...l.dir!);
-        const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), d);
-        P.add('dark', new THREE.CylinderGeometry(0.13, 0.11, 0.1, 16).rotateX(Math.PI / 2), [x, y, z], q);
-        lamp('landing', new THREE.CircleGeometry(0.1, 16), new THREE.Matrix4().compose(new THREE.Vector3(x, y, z).addScaledVector(d, 0.052), q, new THREE.Vector3(1, 1, 1)));
+        const qd = new THREE.Quaternion().setFromUnitVectors(Y, d);
+        const bezel = on(0.012);
+        P.add('dark', new THREE.CylinderGeometry(0.135, 0.145, 0.024, 20), [bezel.x, bezel.y, bezel.z], qn);
+        const cup = on(-0.03);
+        P.add('chrome', new THREE.CylinderGeometry(0.1, 0.06, 0.08, 16, 1, true), [cup.x, cup.y, cup.z], qd);
+        lamp('landing', new THREE.CircleGeometry(0.1, 16).rotateX(-Math.PI / 2), new THREE.Matrix4().compose(on(0.022), qd, new THREE.Vector3(1, 1, 1)));
       } else if (l.kind === 'beacon') {
-        const down = y < 0;
-        P.add('dark', new THREE.CylinderGeometry(0.09, 0.1, 0.05, 14), [x, y + (down ? 0.03 : -0.03), z]);
-        lamp('beacon', new THREE.SphereGeometry(0.075, 14, 8, 0, Math.PI * 2, down ? Math.PI / 2 : 0, Math.PI / 2), new THREE.Matrix4().makeTranslation(x, y, z));
+        // rotating beacon: flat base on the skin, red dome on top
+        const base = on(0.02);
+        P.add('dark', new THREE.CylinderGeometry(0.1, 0.11, 0.04, 16), [base.x, base.y, base.z], qn);
+        lamp('beacon', new THREE.SphereGeometry(0.075, 14, 8, 0, Math.PI * 2, 0, Math.PI / 2), new THREE.Matrix4().compose(on(0.04), qn, new THREE.Vector3(1, 1, 1)));
       } else {
-        lamp(l.kind, new THREE.SphereGeometry(0.055, 12, 8), new THREE.Matrix4().makeTranslation(x, y, z));
-        P.add('dark', new THREE.CylinderGeometry(0.04, 0.05, 0.08, 10), [x, y - 0.06, z]);
+        // position / strobe light: streamlined blister, lens on its tip
+        const base = on(0.015);
+        P.add('dark', new THREE.CylinderGeometry(0.05, 0.065, 0.03, 14), [base.x, base.y, base.z], qn);
+        lamp(l.kind, new THREE.SphereGeometry(0.048, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2), new THREE.Matrix4().compose(on(0.028), qn, new THREE.Vector3(1, 1, 1.25)));
       }
     }
     // reactor core window + three greens on the consoles
@@ -384,6 +393,50 @@ export class ShipView {
     lampMesh.name = 'lamps';
     lampMesh.frustumCulled = false;
     this.root.add(lampMesh);
+  }
+
+  /**
+   * Crew seat for a suited astronaut (dimensions: SEAT_BOXES): swivel pedestal on a floor track,
+   * cushioned pan with thigh bolsters, two padded wings either side of the PLSS well, the dock
+   * plate behind the pack with its umbilical port, the top bar and the helmet headrest, harness.
+   */
+  private buildSeat(P: Parts, st: SeatDef, lamp: (name: string, g: THREE.BufferGeometry, m?: THREE.Matrix4) => void) {
+    const F = new THREE.Matrix4().compose(new THREE.Vector3(...st.root), new THREE.Quaternion().setFromEuler(new THREE.Euler(0, st.yaw, 0)), new THREE.Vector3(1, 1, 1));
+    // seat space: x right, y up, z toward the backrest (+Z of the root frame)
+    const put = (mat: string, g: THREE.BufferGeometry, x: number, y: number, z: number, rx = 0) => {
+      if (rx) g.rotateX(rx);
+      g.translate(x, y, z).applyMatrix4(F);
+      P.add(mat, g);
+    };
+    const box = (mat: string, b: SeatBox, grow: V3 = [0, 0, 0], off: V3 = [0, 0, 0]) =>
+      put(mat, new THREE.BoxGeometry((b.half[0] + grow[0]) * 2, (b.half[1] + grow[1]) * 2, (b.half[2] + grow[2]) * 2), b.c[0] + off[0], b.c[1] + off[1], b.c[2] + off[2]);
+    const B = SEAT_BOXES;
+    // floor track + pedestal
+    put('dark', new THREE.BoxGeometry(0.42, 0.03, 0.9), 0, 0.015, 0.05);
+    for (const x of [-0.16, 0.16]) put('chrome', new THREE.BoxGeometry(0.03, 0.02, 0.86), x, 0.035, 0.05);
+    put('dark', new THREE.CylinderGeometry(0.075, 0.09, 0.36, 14), 0, 0.2, 0.05);
+    put('dark', new THREE.BoxGeometry(0.5, 0.03, 0.7), 0, 0.37, 0.02);
+    // pan: frame + cushion + bolsters
+    box('dark', B.pan, [0.01, -0.02, 0.01], [0, -0.025, 0]);
+    box('seat', B.pan, [-0.04, -0.015, -0.03], [0, 0.02, -0.01]);
+    for (const x of [-0.27, 0.27]) put('seat', new THREE.BoxGeometry(0.07, 0.07, 0.72), x, 0.5, -0.06);
+    // PLSS well: dock plate behind the pack, padded wings either side
+    box('dark', B.dock);
+    put('seat', new THREE.BoxGeometry(0.44, 0.62, 0.02), 0, 0.98, B.dock.c[2] - B.dock.half[2] - 0.01);
+    box('dark', B.wingL, [0, 0, 0], [0, 0, 0]);
+    box('dark', B.wingR);
+    for (const b of [B.wingL, B.wingR]) put('seat', new THREE.BoxGeometry(0.02, b.half[1] * 1.8, b.half[2] * 1.7), b.c[0] - Math.sign(b.c[0]) * (b.half[0] + 0.01), b.c[1], b.c[2] - 0.01);
+    // top bar + headrest (meets the back of the helmet above the pack)
+    put('dark', new THREE.BoxGeometry(0.67, 0.07, 0.07), 0, B.head.c[1] - 0.02, B.dock.c[2]);
+    box('seat', B.head);
+    // umbilical port on the dock plate: lit when a pack is docked (see update)
+    const port = new THREE.Vector3(0.12, 1.05, B.dock.c[2] - B.dock.half[2] - 0.006).applyMatrix4(F);
+    P.add('chrome', new THREE.TorusGeometry(0.03, 0.007, 6, 16).applyQuaternion(new THREE.Quaternion().setFromEuler(new THREE.Euler(0, st.yaw, 0))), [port.x, port.y, port.z]);
+    lamp(`seat:${st.id}`, new THREE.CircleGeometry(0.022, 12).rotateY(Math.PI), new THREE.Matrix4().compose(port, new THREE.Quaternion().setFromEuler(new THREE.Euler(0, st.yaw, 0)), new THREE.Vector3(1, 1, 1)));
+    // harness: shoulder straps from the top bar down the wings, lap belt across the pan
+    for (const x of [-0.2, 0.2]) put('strap', new THREE.BoxGeometry(0.05, 0.6, 0.012), x, 1.1, 0.2, -0.08);
+    put('strap', new THREE.BoxGeometry(0.58, 0.05, 0.012), 0, 0.52, -0.2);
+    put('chrome', new THREE.BoxGeometry(0.07, 0.06, 0.018), 0, 0.52, -0.21);
   }
 
   // ------------------------------------------------------------------------------------------------
@@ -699,6 +752,11 @@ export class ShipView {
     const av = sim.powered('avionics');
     L.set(id('gear-greens'), 0, av && sw.gear ? 5 : 0.03, av && sw.gear ? 1 : 0);
     L.set(id('caution-lens'), sw.caution && blink(2) ? 9 : 0.15, sw.caution && blink(2) ? 5 : 0.08, 0);
+    // seat umbilical port: green while a pack is docked
+    def.seats.forEach((st, i) => {
+      const docked = this.seatOccupied[i];
+      L.set(id(`seat:${st.id}`), docked ? 0 : 0.6, docked ? 4 : 0.35, docked ? 1 : 0);
+    });
     for (const c of def.controls) this.setLed(c, time, anim);
 
     // cabin lights (shader lights; emergency = dim red)

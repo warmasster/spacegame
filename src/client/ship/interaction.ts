@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { SEAT_PICK, seatFrame } from '../../shared/ship/def';
 import { REACH, SOLID_HP } from '../../shared/ship/sim';
 import type { Particles } from '../fx/particles';
 import type { ShipClient, ShipHit } from './ship';
@@ -158,7 +159,8 @@ export class Interaction {
     const deniedHere = this.denied && this.denied.until > now && this.denied.key === `${t.ship.id}:${t.index}`;
     if (t.kind === 'seat') {
       const st = t.ship.sim.def.seats[t.index];
-      const F = new THREE.Matrix4().compose(new THREE.Vector3(st.root[0], 0.72, st.root[2]), new THREE.Quaternion().setFromEuler(new THREE.Euler(0, st.yaw, 0)), new THREE.Vector3(0.62, 0.95, 0.66));
+      const f = seatFrame(st, SEAT_PICK);
+      const F = new THREE.Matrix4().compose(new THREE.Vector3(...f.c), new THREE.Quaternion().setFromEuler(new THREE.Euler(0, st.yaw, 0)), new THREE.Vector3(f.half[0] * 2, f.half[1] * 2, f.half[2] * 2));
       this.box.matrix.multiplyMatrices(M, F);
       this.box.matrixWorld.copy(this.box.matrix);
       (this.box.material as THREE.LineBasicMaterial).color.set(t.inReach ? 0x4fd8f0 : 0x2a6f80);

@@ -492,7 +492,9 @@ def build_glove(mats, side, sx):
     m = Matrix((x, y, z)).transposed().to_4x4()
     m.translation = h + down * 0.012
     for ob in parts:
-        if sx < 0:
+        # The glove above is modelled as a right hand (palm +Y = +X world, toward the body only on
+        # the right side): mirror it for the left hand so both palms face the thighs.
+        if sx > 0:
             ob.data.transform(Matrix.Scale(-1, 4, V(0, 1, 0)))
             ob.data.flip_normals()
         ob.data.transform(m)

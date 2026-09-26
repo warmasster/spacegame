@@ -3,7 +3,7 @@ import type { CSM } from 'three/addons/csm/CSM.js';
 import type { Debris } from '../../engine/debris';
 import { SHIP_DEFS, ShipSim, placeShip, type ShipSnapshot } from '../../shared/ship/sim';
 import { rayBox, rayPrism, type V3 } from '../../shared/ship/geom';
-import type { SubsystemId } from '../../shared/ship/def';
+import { SEAT_PICK, seatFrame, type SubsystemId } from '../../shared/ship/def';
 import type { Particles } from '../fx/particles';
 import type { Physics } from '../world/physics';
 import { ShipCargo } from './cargo';
@@ -217,12 +217,9 @@ export class ShipClient {
       best = { kind: 'control', index: c.index, hole: false, point: world(t), normal: new THREE.Vector3(...c.n).transformDirection(M), dist: t };
     }
     for (let i = 0; i < def.seats.length; i++) {
-      const st = def.seats[i];
-      const cs = Math.cos(st.yaw);
-      const sn = Math.sin(st.yaw);
-      // hit box around the seat pan and backrest (a little behind the root, toward the backrest)
-      const f = { c: [st.root[0] + sn * 0.05, 0.75, st.root[2] + cs * 0.05] as V3, u: [cs, 0, -sn] as V3, v: [0, 1, 0] as V3, n: [sn, 0, cs] as V3 };
-      const t = rayBox(f, [0.32, 0.5, 0.36], O, D, max);
+      // hit box around the whole seat (pan, wings, headrest)
+      const f = seatFrame(def.seats[i], SEAT_PICK);
+      const t = rayBox(f, f.half, O, D, max);
       if (t < 0 || t > tOcc + 0.05 || (best && t >= best.dist)) continue;
       best = { kind: 'seat', index: i, hole: false, point: world(t), normal: new THREE.Vector3(0, 1, 0), dist: t };
     }

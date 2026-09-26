@@ -15,6 +15,23 @@ export interface Grip {
   side: THREE.Vector3;
 }
 
+/**
+ * Where a tool rests on the PLSS when put away (astronaut model space: +Z forward, +Y up, +X the
+ * astronaut's left). The clamps that hold it are measured from the suit mesh: from each mount point
+ * the astronaut casts a ray `toward` the pack and bridges the gap it finds (see Astronaut.attachWeapon).
+ */
+export interface Holster {
+  /** Weapon origin. */
+  pos: THREE.Vector3;
+  /** Weapon +Z (muzzle) and +Y (top) axes. */
+  dir: THREE.Vector3;
+  up: THREE.Vector3;
+  /** From the weapon toward the pack surface it is clamped to. */
+  toward: THREE.Vector3;
+  /** Clamp points on the weapon (weapon space) and the band drawn around it there. */
+  mounts: Array<{ at: THREE.Vector3; band: { r: number } | { w: number; h: number } }>;
+}
+
 export interface WeaponDef {
   id: string;
   name: string;
@@ -23,8 +40,7 @@ export interface WeaponDef {
   rightGrip: Grip;
   leftGrip: Grip;
   muzzle: THREE.Vector3;
-  /** Where it hangs when holstered (model space offset + euler), on the PLSS. */
-  holster: { pos: THREE.Vector3; rot: THREE.Euler };
+  holster: Holster;
   /** Momentum given to the shooter per shot (N·s): drives body, arm and camera recoil. */
   recoil: number;
   cooldown: number;
@@ -55,7 +71,18 @@ export const LAUNCHER: WeaponDef = {
   rightGrip: { pos: new THREE.Vector3(0, -0.075, 0.2), axis: new THREE.Vector3(0, -Math.cos(0.25), -Math.sin(0.25)), radius: 0.02, side: new THREE.Vector3(-1, 0, 0) },
   leftGrip: { pos: new THREE.Vector3(0, -0.05, 0.4), axis: new THREE.Vector3(0, -Math.cos(0.15), Math.sin(0.15)), radius: 0.02, side: new THREE.Vector3(1, 0, 0) },
   muzzle: new THREE.Vector3(0, 0.065, 0.86),
-  holster: { pos: new THREE.Vector3(0.03, 1.36, -0.47), rot: new THREE.Euler(-1.35, 0, 0.62) },
+  // diagonally across the back of the PLSS, muzzle over the right shoulder (where it is drawn to),
+  // grips hanging toward the right hip; the tube axis crosses the pack centre 6 cm off its panels
+  holster: {
+    pos: new THREE.Vector3(-0.0039, 1.1547, -0.48),
+    dir: new THREE.Vector3(-0.42, 0.9, 0).normalize(),
+    up: new THREE.Vector3(0.9, 0.42, 0).normalize(),
+    toward: new THREE.Vector3(0, 0, 1),
+    mounts: [
+      { at: new THREE.Vector3(0, 0.065, -0.3), band: { r: 0.063 } },
+      { at: new THREE.Vector3(0, 0.065, 0.35), band: { r: 0.057 } },
+    ],
+  },
   recoil: 70,
   cooldown: 1.2,
   build() {
@@ -82,7 +109,7 @@ export const LAUNCHER: WeaponDef = {
 
 /**
  * Plasma welder / repair tool: a short shoulder-braced gun with a gas bottle. Same handle layout
- * as the launcher, so the same arm IK holds it; slung on the left side of the PLSS when stowed.
+ * as the launcher, so the same arm IK holds it; clamped to the left side of the PLSS when stowed.
  * Fires nothing: held trigger + aim at a hull panel = weld (see ship/interaction.ts).
  */
 export const WELDER: WeaponDef = {
@@ -92,7 +119,17 @@ export const WELDER: WeaponDef = {
   rightGrip: LAUNCHER.rightGrip,
   leftGrip: LAUNCHER.leftGrip,
   muzzle: new THREE.Vector3(0, 0.05, 0.66),
-  holster: { pos: new THREE.Vector3(0.34, 1.05, -0.36), rot: new THREE.Euler(-1.2, 0.2, 0.25) },
+  // upright against the left side of the PLSS, nozzle down, gas bottle outboard
+  holster: {
+    pos: new THREE.Vector3(0.31, 1.41, -0.312),
+    dir: new THREE.Vector3(0, -1, 0),
+    up: new THREE.Vector3(0, 0, 1),
+    toward: new THREE.Vector3(-1, 0, 0),
+    mounts: [
+      { at: new THREE.Vector3(0, 0.05, -0.1), band: { w: 0.112, h: 0.102 } },
+      { at: new THREE.Vector3(0, 0.05, 0.15), band: { w: 0.112, h: 0.102 } },
+    ],
+  },
   recoil: 0,
   cooldown: 0,
   build() {

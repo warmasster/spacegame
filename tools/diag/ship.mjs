@@ -66,7 +66,17 @@ await page.evaluate(() => {
     local(p) {
       return g.ships[0].local(p);
     },
+    /** seat collision boxes in ship space (seats face the nose: yaw 0) */
+    seatBoxes(i) {
+      const st = g.ships[0].sim.def.seats[i];
+      const out = {};
+      for (const [k, b] of Object.entries(window.__SEAT_BOXES ?? {})) out[k] = { c: [st.root[0] + b.c[0], st.root[1] + b.c[1], st.root[2] + b.c[2]], half: b.half };
+      return out;
+    },
   };
+});
+await page.evaluate(async () => {
+  window.__SEAT_BOXES = (await import('/src/shared/ship/def.ts')).SEAT_BOXES;
 });
 
 const report = [];
@@ -143,6 +153,19 @@ if (mode === 'checks' || mode === 'all') {
   check('walking into a crate pushes it', push > 0.5, `${push.toFixed(2)} m`);
   check('crates rest where they are stowed', rest.every((d) => Math.abs(d) < 0.06), rest.map((d) => d.toFixed(3)).join(' '));
   check('ship loaded', r.panels > 100 && r.controls > 20, `${r.panels} paneles, ${r.controls} mandos`);
+  // exterior lights sit on the hull: a ray from 0.25 m out along the fixture normal meets a ship surface at the fixture
+  const lights = await page.evaluate(() => {
+    const g = window.game;
+    const s = g.ships[0];
+    return s.sim.def.extLights.map((l) => {
+      const from = window.diag.w(l.pos[0] + l.n[0] * 0.25, l.pos[1] + l.n[1] * 0.25, l.pos[2] + l.n[2] * 0.25);
+      const to = window.diag.w(...l.pos);
+      const d = to.clone().sub(from).normalize();
+      const hit = s.physics.castRay(from, d, 0.6);
+      return { kind: l.kind, gap: hit ? hit.t - 0.25 : null };
+    });
+  });
+  for (const l of lights) check(`ext light ${l.kind} mounted on the hull`, l.gap !== null && Math.abs(l.gap) < 0.06, l.gap === null ? 'flota: ninguna superficie detrás' : `${(l.gap * 100).toFixed(1)} cm`);
   check('every panel has a collider', r.colliders === r.panels, `${r.colliders}/${r.panels}`);
   for (const a of r.acts) {
     if (a.key === 'gear') check(`interlock ${a.id}`, !!a.reason && a.after === a.before, a.reason ?? 'no refusal');
@@ -398,14 +421,32 @@ if (mode === 'checks' || mode === 'all') {
     const sat = window.diag.local(g.debug.controller.position);
     const seated = !!g.seat;
     const eyeY = window.diag.local(g.me.eyePosition(g.debug.camera.position.clone())).y;
+    // the seated suit (PLSS, helmet) must not cut into the seat frame: sample the hard-shell meshes
+    // as rendered and test them against the seat boxes (a 1.5 cm tolerance for the padding)
+    const V = (x, y, z) => g.debug.camera.position.clone().set(x, y, z);
+    let worst = { d: 0, part: '-' };
+    g.me.root.updateMatrixWorld(true);
+    g.me.root.traverse((o) => {
+      if (!o.isSkinnedMesh || !['SuitHard', 'Helmet', 'MetalDark'].includes(o.material.name)) return;
+      const pos = o.geometry.getAttribute('position');
+      for (let i = 0; i < pos.count; i += 5) {
+        const l = s.local(o.getVertexPosition(i, V(0, 0, 0)).applyMatrix4(o.matrixWorld));
+        for (const [name, b] of Object.entries(window.diag.seatBoxes(0))) {
+          const q = [l.x - b.c[0], l.y - b.c[1], l.z - b.c[2]];
+          const pen = Math.min(b.half[0] - Math.abs(q[0]), b.half[1] - Math.abs(q[1]), b.half[2] - Math.abs(q[2]));
+          if (pen > worst.d) worst = { d: pen, part: `${o.material.name}→${name}` };
+        }
+      }
+    });
     g.standUp();
     g.step(10, 1 / 30);
-    return { aimed, seated, sat: sat.toArray(), eyeY, after: window.diag.local(g.debug.controller.position).toArray(), standing: !g.seat };
+    return { aimed, seated, sat: sat.toArray(), eyeY, root: seat.root, exit: seat.exit, after: window.diag.local(g.debug.controller.position).toArray(), standing: !g.seat, clear: worst.d < 0.015, clearDetail: worst.d > 0 ? `peor ${worst.part} ${(worst.d * 100).toFixed(1)} cm` : 'sin contacto' };
   });
   check('crosshair finds the seat', /^seat:0:true$/.test(st.aimed), st.aimed);
-  check('sits down and stays put', st.seated && Math.hypot(st.sat[0] + 0.72, st.sat[2] + 7.66) < 0.05, `local ${st.sat.map((v) => v.toFixed(2))}`);
+  check('sits down and stays put', st.seated && Math.hypot(st.sat[0] - st.root[0], st.sat[2] - st.root[2]) < 0.05, `local ${st.sat.map((v) => v.toFixed(2))}`);
   check('seated eye height', st.eyeY > 1.0 && st.eyeY < 1.4, `${st.eyeY.toFixed(2)} m`);
-  check('stands up at the exit', st.standing && Math.abs(st.after[2] + 6.95) < 0.2, `local ${st.after.map((v) => v.toFixed(2))}`);
+  check('stands up at the exit', st.standing && Math.abs(st.after[2] - st.exit[2]) < 0.2, `local ${st.after.map((v) => v.toFixed(2))}`);
+  check('seat holds the pack: PLSS clear of the seat frame', st.clear, st.clearDetail);
 
   P.step('asientos');
   // --- zoom -----------------------------------------------------------------------------------------

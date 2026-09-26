@@ -311,7 +311,14 @@ export class Game {
       phase: 'frame',
       order: 90,
       update: (dt) => {
-        for (const ship of this.ships) ship.frame(dt);
+        for (const ship of this.ships) {
+          // docked packs light the seat's umbilical port
+          ship.sim.def.seats.forEach((_, i) => {
+            const at = ship.seatPose(i).pos;
+            ship.view.seatOccupied[i] = (this.seat?.ship === ship && this.seat.index === i) || [...this.remotes.values()].some((r) => r.seated && r.position.distanceTo(at) < 0.35);
+          });
+          ship.frame(dt);
+        }
         for (const r of this.remotes.values()) if (r.welding && !r.dead) this.remoteWeld(r, dt);
         updateInteriorLights(this.camera);
         // eyes adapt inside: the regolith glow of the environment map is outside

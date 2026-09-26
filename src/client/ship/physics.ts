@@ -1,5 +1,6 @@
 import type RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
+import { SEAT_BOXES, seatFrame } from '../../shared/ship/def';
 import type { V3 } from '../../shared/ship/geom';
 import type { ShipSim } from '../../shared/ship/sim';
 import type { Physics } from '../world/physics';
@@ -70,6 +71,9 @@ export class ShipPhysics {
     }
     const zt = def.modules[def.modules.length - 1].z1;
     box(0.06, 0.45, 1.15, [0, 3.5, zt - 1.1]);
+    // dorsal spine fairing over the cargo roof (the top beacon stands on it)
+    const zc0 = def.modules[def.modules.length - 1].z0;
+    box(0.22, 0.125, 2.7, [0, 3.205, zc0 + 3.3]);
     // gear
     const m = new THREE.Matrix4().compose(new THREE.Vector3(p.x, p.y, p.z), new THREE.Quaternion().setFromEuler(new THREE.Euler(0, p.yaw, 0)), new THREE.Vector3(1, 1, 1));
     const inv = m.clone().invert();
@@ -83,9 +87,11 @@ export class ShipPhysics {
     // cockpit props, crates, consoles
     box(1.43, 0.31, 0.29, [0, 0.31, -9.27]);
     box(0.17, 0.35, 0.4, [0, 0.35, -8.3]);
-    for (const sx of [-0.72, 0.72]) {
-      box(0.29, 0.26, 0.27, [sx, 0.26, -7.8]);
-      box(0.29, 0.5, 0.06, [sx, 1.05, -7.45], new THREE.Euler(-0.2, 0, 0));
+    for (const st of def.seats) {
+      for (const b of Object.values(SEAT_BOXES)) {
+        const f = seatFrame(st, b);
+        box(f.half[0], f.half[1], f.half[2], f.c, new THREE.Euler(0, st.yaw, 0));
+      }
     }
     box(0.25, 0.9, 0.3, [2.25, 0.9, 0.4]);
     for (const con of def.consoles) {
