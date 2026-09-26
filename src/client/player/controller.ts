@@ -11,6 +11,8 @@ const CROUCH_HALF_HEIGHT = 0.3;
 const MAX_CLIMB = THREE.MathUtils.degToRad(36);
 /** Contact normals steeper than this (y component) are walls, not ground. */
 const WALKABLE_NY = Math.cos(MAX_CLIMB) - 0.01;
+/** Max horizontal force an astronaut can push loose objects with (N). */
+const PUSH_FORCE = 380;
 
 export const MOVE = {
   walk: 1.55,
@@ -50,6 +52,8 @@ export class PlayerController {
   fuel = 1;
   /** Inputs ignored (dead). */
   disabled = false;
+  /** Sitting: pinned to this spot (feet), no walking; set/cleared by the game. */
+  seat: { pos: THREE.Vector3; yaw: number } | null = null;
   private body: RAPIER.RigidBody;
   private collider: RAPIER.Collider;
   private kcc: RAPIER.KinematicCharacterController;
@@ -111,6 +115,15 @@ export class PlayerController {
   }
 
   update(dt: number, input: Input) {
+    if (this.seat) {
+      this.position.copy(this.seat.pos);
+      this.velocity.set(0, 0, 0);
+      this.body.setNextKinematicTranslation({ x: this.position.x, y: this.position.y, z: this.position.z });
+      this.grounded = true;
+      this.jetting = this.running = false;
+      this.fuel = Math.min(1, this.fuel + dt / MOVE.jetRecharge);
+      return;
+    }
     const off = this.disabled;
     // --- intent --------------------------------------------------------------------------
     let f = off ? 0 : (input.down('KeyW') ? 1 : 0) - (input.down('KeyS') ? 1 : 0);
@@ -178,8 +191,15 @@ export class PlayerController {
     // slopes (a ship's ramp) keep it: clamping to the achieved motion compounded every step on a
     // slope, and clamping per world axis skewed the heading on slopes not aligned with X/Z.
     for (let i = 0; i < this.kcc.numComputedCollisions(); i++) {
-      const n = this.kcc.computedCollision(i)?.normal1;
-      if (!n || n.y > WALKABLE_NY) continue;
+      const hit = this.kcc.computedCollision(i);
+      const n = hit?.normal1;
+      if (!hit || !n || n.y > WALKABLE_NY) continue;
+      // loose objects (cargo): shove them instead of stopping dead
+      const other = hit.collider?.parent();
+      if (other && other.isDynamic()) {
+        this.push(other, n, dt);
+        continue;
+      }
       const hl = Math.hypot(n.x, n.z);
       if (hl < 1e-4) continue;
       const nx = n.x / hl;
@@ -192,6 +212,21 @@ export class PlayerController {
     }
     this.airTime = this.grounded ? 0 : this.airTime + dt;
     void wasGrounded;
+  }
+
+  /** A suited astronaut (~180 kg, boots on regolith) leaning into a loose body: bounded force. */
+  private push(body: RAPIER.RigidBody, n: { x: number; y: number; z: number }, dt: number) {
+    const hl = Math.hypot(n.x, n.z);
+    if (hl < 1e-4) return;
+    const dx = -n.x / hl;
+    const dz = -n.z / hl;
+    const want = Math.max(0, this.velocity.x * dx + this.velocity.z * dz);
+    if (want <= 0) return;
+    const bv = body.linvel();
+    const gap = want - (bv.x * dx + bv.z * dz);
+    if (gap <= 0) return;
+    const j = Math.min(gap * body.mass() * 0.5, PUSH_FORCE * dt);
+    body.applyImpulse({ x: dx * j, y: 0, z: dz * j }, true);
   }
 
   private setCrouch(on: boolean) {

@@ -14,7 +14,7 @@ import { Scheduler } from '../engine/systems';
 import { FixedLoop } from '../engine/loop';
 import { Debris } from '../engine/debris';
 import { DebugOverlay } from '../engine/debug';
-import { LAUNCHER } from './fx/weapons';
+import { LAUNCHER, WELDER } from './fx/weapons';
 import { NetClient, type Welcome } from './net/netClient';
 import { RemotePlayer } from './net/remotePlayer';
 import { Astronaut, AstronautAsset } from './player/astronaut';
@@ -102,6 +102,9 @@ export class Game {
   interaction!: Interaction;
   private scrap!: Debris;
   private envInside = 0;
+  /** Seat the local astronaut sits in. */
+  seat: { ship: ShipClient; index: number } | null = null;
+  private welding = false;
   /** ?cam=x,z,yaw,pitch[,h] free inspection camera. */
   private inspectCam = new URLSearchParams(location.search).get('cam')?.split(',').map(Number) ?? null;
   /** Automation: keep a fixed third-person orbit (no easing back). */
@@ -169,6 +172,7 @@ export class Game {
     this.me.setLocal(true);
     this.me.setStripeColor(SUIT_STRIPES[this.welcome.variant % SUIT_STRIPES.length]);
     this.me.attachWeapon(LAUNCHER);
+    this.me.attachWeapon(WELDER);
     this.me.setArmed(true);
     this.particles = new Particles(renderer.getPixelRatio());
     this.scene.add(this.particles.group);
@@ -185,13 +189,14 @@ export class Game {
     // ships stand on the pristine surface, like on the server
     const pristine = new LunarTerrain(this.welcome.worldSeed);
     for (const snap of this.welcome.ships ?? []) {
-      const ship = new ShipClient(snap, { physics: this.physics, csm, ground: pristine, particles: this.particles, debris: this.scrap });
+      const ship = new ShipClient(snap, { physics: this.physics, csm, ground: pristine, particles: this.particles, debris: this.scrap, gravity: MOON.gravity });
       this.ships.push(ship);
-      this.scene.add(ship.view.root);
+      this.scene.add(ship.view.root, ship.cargo.group);
     }
     this.interaction = new Interaction(this.scene, this.particles, {
       interact: (ship, ctl) => (this.offline ? this.localInteract(ship.id, ctl) : this.net.sendInteract(ship.id, ctl)),
       repair: (ship, panel, dt) => (this.offline ? this.localRepair(ship.id, panel, dt) : this.net.sendRepair(ship.id, panel)),
+      sit: (ship, index) => this.sitDown(ship, index),
     });
     this.diag = new DebugOverlay(this.opts.ui, this.scene);
     this.registerSystems();
@@ -289,13 +294,16 @@ export class Game {
         const prompt = this.interaction.update(dt, {
           camera: this.camera,
           eye,
-          hand: this.me.partPosition('handR', new THREE.Vector3()),
+          hand: this.me.muzzle(new THREE.Vector3()) ?? this.me.partPosition('handR', new THREE.Vector3()),
           ships: this.ships,
-          holdRepair: this.input.down('KeyE') && !this.dead,
+          tool: this.me.equipped === 'welder' && this.me.isArmed && !this.seat,
+          holdRepair: this.input.down('Mouse0') && !this.dead,
+          seated: !!this.seat,
           now: performance.now() / 1000,
           disabled: this.dead || !!this.inspectCam,
         });
         this.hud.setPrompt(prompt);
+        this.welding = this.interaction.repairing;
       },
     });
     S.add({
@@ -304,6 +312,7 @@ export class Game {
       order: 90,
       update: (dt) => {
         for (const ship of this.ships) ship.frame(dt);
+        for (const r of this.remotes.values()) if (r.welding && !r.dead) this.remoteWeld(r, dt);
         updateInteriorLights(this.camera);
         // eyes adapt inside: the regolith glow of the environment map is outside
         const inside = this.ships.some((s) => s.zoneAt(this.camera.position));
@@ -311,6 +320,44 @@ export class Game {
         this.scene.environmentIntensity = 1 - 0.65 * this.envInside;
       },
     });
+  }
+
+  /** Another astronaut welding: sparks where its tool points (the panel HP comes from the server). */
+  private remoteWeld(r: RemotePlayer, dt: number) {
+    const from = r.astronaut.muzzle(new THREE.Vector3());
+    if (!from || Math.random() > dt * 30) return;
+    const dir = new THREE.Vector3(-Math.sin(r.yaw) * Math.cos(r.pitch), Math.sin(r.pitch), -Math.cos(r.yaw) * Math.cos(r.pitch));
+    for (const ship of this.ships) {
+      const h = ship.pick(from, dir, 3.5);
+      if (!h || h.kind !== 'panel') continue;
+      for (let k = 0; k < 4; k++) {
+        this.particles.emit('glow', { pos: h.point, vel: new THREE.Vector3().randomDirection().multiplyScalar(0.6 + Math.random() * 2).addScaledVector(h.normal, 1), color: [2.4, 3, 4.5], life: 0.1 + Math.random() * 0.3, size: 0.015, gravity: 1.62 });
+      }
+      return;
+    }
+  }
+
+  /** Sit in a ship seat: pinned to it, tool slung, head free to look around. */
+  sitDown(ship: ShipClient, index: number) {
+    if (this.dead || this.seat) return;
+    const pose = ship.seatPose(index);
+    // someone already there?
+    for (const r of this.remotes.values()) if (r.seated && r.position.distanceTo(pose.pos) < 0.35) return this.hud.toast('Asiento ocupado');
+    this.seat = { ship, index };
+    if (this.ctl.crouch) this.input.setKey('KeyC', false);
+    this.ctl.seat = { pos: pose.pos, yaw: pose.yaw };
+    this.ctl.teleport(pose.pos);
+    this.prevPos.copy(pose.pos);
+    this.ctl.yaw = pose.yaw;
+  }
+
+  standUp() {
+    if (!this.seat) return;
+    const pose = this.seat.ship.seatPose(this.seat.index);
+    this.seat = null;
+    this.ctl.seat = null;
+    this.ctl.teleport(pose.exit.add(new THREE.Vector3(0, 0.03, 0)));
+    this.prevPos.copy(this.ctl.position);
   }
 
   /** Rocket sweep against every ship hull. */
@@ -416,6 +463,7 @@ export class Game {
     if (this.remotes.has(p.id) || !this.asset) return;
     const r = new RemotePlayer(p, this.asset);
     r.astronaut.attachWeapon(LAUNCHER);
+    r.astronaut.attachWeapon(WELDER);
     const hp = this.pendingHealth.get(p.id);
     if (hp !== undefined) {
       r.hp = hp;
@@ -445,6 +493,7 @@ export class Game {
       this.rocks.invalidate(edit.x, edit.z, edit.r);
     }
     this.rockets.explode(id, at);
+    for (const ship of this.ships) ship.cargo.blast(at);
     if (edit && this.physics.readyAt(at.x, at.z)) this.debris.burst(at, 8 + Math.floor(Math.random() * 6));
     // offline: we are the ship authority too
     if (this.offline) {
@@ -467,6 +516,7 @@ export class Game {
       if (hp < this.hp) this.hud.damage(this.hp - hp);
       this.hp = hp;
       if (dead) {
+        this.standUp();
         this.dead = true;
         this.ctl.disabled = true;
         this.me.setDead(true);
@@ -503,7 +553,7 @@ export class Game {
 
   private tryFire() {
     const now = performance.now() / 1000;
-    if (this.dead || !this.me.isArmed || now - this.lastFire < LAUNCHER.cooldown) return;
+    if (this.dead || !this.me.isArmed || this.me.equipped !== 'launcher' || this.seat || now - this.lastFire < LAUNCHER.cooldown) return;
     this.lastFire = now;
     const dir = new THREE.Vector3();
     this.camera.getWorldDirection(dir);
@@ -563,18 +613,37 @@ export class Game {
     if (input.consume('KeyV')) this.rig.toggle();
     if (input.consume('KeyH')) this.hud.toggleHelp();
     if (input.consume('KeyL')) this.lamps = !this.lamps;
-    if (input.consume('KeyX') || input.consume('Digit1')) {
-      this.me.setArmed(!this.me.isArmed);
-      this.hud.toast(this.me.isArmed ? 'Lanzacohetes en mano' : 'Lanzacohetes a la espalda');
+    // tools: 1 launcher, 2 welder (press again / X to put it away)
+    for (const [code, tool] of [['Digit1', 'launcher'], ['Digit2', 'welder']] as const) {
+      if (!input.consume(code)) continue;
+      if (this.me.equipped === tool && this.me.isArmed) this.me.setArmed(false);
+      else {
+        this.me.equip(tool);
+        this.me.setArmed(true);
+      }
+      this.hud.toast(this.me.isArmed ? `${tool === 'welder' ? WELDER.name : LAUNCHER.name} en mano` : 'Herramienta a la espalda');
     }
-    // click: a ship control under the crosshair takes it, otherwise it fires
+    if (input.consume('KeyX')) {
+      this.me.setArmed(!this.me.isArmed);
+      this.hud.toast(this.me.isArmed ? `${this.me.equipped === 'welder' ? WELDER.name : LAUNCHER.name} en mano` : 'Herramienta a la espalda');
+    }
+    // click: a ship control / seat under the crosshair takes it, otherwise the tool in hand acts
     const now = performance.now() / 1000;
     if (this.fireQueued && !this.interaction.use(now)) this.tryFire();
     if (input.consume('KeyF')) this.tryFire();
-    if (input.consume('KeyE')) this.interaction.use(now);
+    if (input.consume('KeyE') && !this.interaction.use(now) && this.seat) this.standUp();
+    if (this.seat && input.consume('Space')) this.standUp();
     this.fireQueued = false;
+    this.rig.zoomHeld = input.down('Mouse2');
+    this.input.sensitivity = 0.0022 / this.rig.magnification;
     this.me.setLamps(this.lamps);
     this.ctl.look(input, this.rig.mode === 'third' && !this.debugOrbit ? this.rig : undefined);
+    if (this.ctl.seat) {
+      // seated: turn the head, not the seat
+      let d = this.ctl.yaw - this.ctl.seat.yaw;
+      d = Math.atan2(Math.sin(d), Math.cos(d));
+      this.ctl.yaw = this.ctl.seat.yaw + THREE.MathUtils.clamp(d, -1.7, 1.7);
+    }
     this.physics.update(this.ctl.position.x, this.ctl.position.z);
     // fixed-step simulation: physics, character, debris, projectiles
     this.loop.advance(dt, (h) => {
@@ -590,13 +659,15 @@ export class Game {
     if (this.prevPos.distanceToSquared(this.ctl.position) > 25) this.prevPos.copy(this.ctl.position);
     this.ctl.renderPosition.lerpVectors(this.prevPos, this.ctl.position, this.loop.alpha);
     this.me.root.position.copy(this.ctl.renderPosition);
-    this.me.root.rotation.y = this.ctl.yaw;
+    const bodyYaw = this.ctl.seat ? this.ctl.seat.yaw : this.ctl.yaw;
+    this.me.root.rotation.y = bodyYaw;
     this.me.update(dt, {
       velocity: this.ctl.velocity,
-      yaw: this.ctl.yaw,
+      yaw: bodyYaw,
       pitch: this.ctl.pitch,
       grounded: this.ctl.grounded,
       crouch: this.ctl.crouch,
+      seated: !!this.ctl.seat,
     });
     this.me.root.updateMatrixWorld(true);
     if (this.jointsRecording || this.jointGizmos.group.visible) {
@@ -615,7 +686,7 @@ export class Game {
       this.net.sendState({
         p: [round(p.x, 3), round(p.y, 3), round(p.z, 3)],
         v: [round(v.x, 2), round(v.y, 2), round(v.z, 2)],
-        yaw: round(this.ctl.yaw, 3),
+        yaw: round(bodyYaw, 3),
         pitch: round(this.ctl.pitch, 3),
         f:
           (this.ctl.grounded ? StateFlags.Grounded : 0) |
@@ -624,7 +695,10 @@ export class Game {
           (this.lamps ? StateFlags.Lamps : 0) |
           (this.ctl.jetting ? StateFlags.Jetpack : 0) |
           (this.dead ? StateFlags.Dead : 0) |
-          (this.me.isArmed ? StateFlags.Armed : 0),
+          (this.me.isArmed ? StateFlags.Armed : 0) |
+          (this.me.equipped === 'welder' ? StateFlags.Welder : 0) |
+          (this.welding ? StateFlags.Welding : 0) |
+          (this.ctl.seat ? StateFlags.Seated : 0),
       });
     }
     const serverNow = this.net.serverNow();
@@ -655,6 +729,8 @@ export class Game {
       const [x, z, yaw, pitch, hgt = 1.8] = this.inspectCam;
       this.camera.position.set(x, this.terrain.height(x, z) + hgt, z);
       this.camera.quaternion.setFromEuler(new THREE.Euler(pitch, yaw, 0, 'YXZ'));
+      // an outside view: show our own helmet too (first person hides it on its layer)
+      this.camera.layers.enableAll();
       this.camera.updateMatrixWorld();
     }
     if (this.focusCam) {
@@ -673,7 +749,7 @@ export class Game {
       this.camera.rotateX(this.me.recoilPitch * 0.8);
       this.camera.updateMatrixWorld();
     }
-    this.me.setEyeClip(this.rig.mode === 'first' ? this.camera.position : null);
+    this.me.setEyeClip(this.rig.mode === 'first' && !this.inspectCam && !this.focusCam ? this.camera.position : null);
     this.systems.run('frame', dt);
     this.terrainSys.update(this.camera.position, new THREE.Frustum());
     this.rocks.update(this.ctl.position);
@@ -707,7 +783,9 @@ export class Game {
       fps: this.fps,
       hp: this.hp,
       fuel: this.ctl.fuel,
-      reload: this.me.isArmed ? Math.min(1, (performance.now() / 1000 - this.lastFire) / LAUNCHER.cooldown) : 0,
+      reload: !this.me.isArmed ? 0 : this.me.equipped === 'welder' ? 1 : Math.min(1, (performance.now() / 1000 - this.lastFire) / LAUNCHER.cooldown),
+      tool: !this.me.isArmed ? 'none' : this.me.equipped === 'welder' ? (this.welding ? 'welding' : 'welder') : 'launcher',
+      zoom: this.rig.magnification,
       dead: this.dead,
       markers,
     });

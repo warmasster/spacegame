@@ -87,11 +87,6 @@ export class ShipPhysics {
       box(0.29, 0.26, 0.27, [sx, 0.26, -7.8]);
       box(0.29, 0.5, 0.06, [sx, 1.05, -7.45], new THREE.Euler(-0.2, 0, 0));
     }
-    box(0.45, 0.375, 0.45, [-1.95, 0.375, -1.7]);
-    box(0.45, 0.375, 0.45, [-1.95, 0.375, -0.75]);
-    box(0.4, 0.3, 0.4, [-1.95, 1.05, -1.65]);
-    box(0.55, 0.25, 0.35, [1.9, 0.25, -1.8]);
-    box(0.35, 0.35, 0.35, [2.0, 0.85, -1.8]);
     box(0.25, 0.9, 0.3, [2.25, 0.9, 0.4]);
     for (const con of def.consoles) {
       const basis = new THREE.Matrix4().makeBasis(new THREE.Vector3(...con.u), new THREE.Vector3(...con.v), new THREE.Vector3(...con.n));
@@ -173,9 +168,9 @@ export class ShipPhysics {
   }
 
   /** Closest ship surface along a world ray (panel index or -1 for other parts). */
-  castRay(o: THREE.Vector3, d: THREE.Vector3, max: number): { t: number; panel: number } | null {
+  castRay(o: THREE.Vector3, d: THREE.Vector3, max: number, also?: (handle: number) => boolean): { t: number; panel: number } | null {
     const ray = new this.R.Ray({ x: o.x, y: o.y, z: o.z }, { x: d.x, y: d.y, z: d.z });
-    const hit = this.world.castRay(ray, max, true, undefined, undefined, undefined, undefined, (c) => this.owners.has(c.handle));
+    const hit = this.world.castRay(ray, max, true, undefined, undefined, undefined, undefined, (c) => this.owners.has(c.handle) || !!also?.(c.handle));
     if (!hit) return null;
     const own = this.owners.get(hit.collider.handle);
     return { t: hit.timeOfImpact, panel: own?.kind === 'panel' ? own.index : -1 };

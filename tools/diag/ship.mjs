@@ -113,6 +113,34 @@ if (mode === 'checks' || mode === 'all') {
     }
     return out;
   });
+  // loose cargo settles on the deck before anything blows up
+  const rest = await page.evaluate(() => {
+    const g = window.game;
+    const s = g.ships[0];
+    g.step(60, 1 / 30, false);
+    return s.cargo.bodies.map((b, i) => {
+      const t = b.translation();
+      return window.diag.local(g.debug.camera.position.clone().set(t.x, t.y, t.z)).y - s.sim.def.cargo[i].pos[1];
+    });
+  });
+  // walking into a crate shoves it
+  const push = await page.evaluate(() => {
+    const g = window.game;
+    const s = g.ships[0];
+    const b = s.cargo.bodies[6];
+    const t0 = b.translation();
+    const l0 = window.diag.local(g.debug.camera.position.clone().set(t0.x, t0.y, t0.z));
+    window.diag.stand([l0.x, 0.02, l0.z + 1.2], [l0.x, 0.3, l0.z - 3]);
+    g.step(5, 1 / 30, false);
+    g.debug.input.setKey('KeyW', true);
+    g.step(60, 1 / 30, false);
+    g.debug.input.setKey('KeyW', false);
+    g.step(20, 1 / 30, false);
+    const t1 = b.translation();
+    return Math.hypot(t1.x - t0.x, t1.z - t0.z);
+  });
+  check('walking into a crate pushes it', push > 0.5, `${push.toFixed(2)} m`);
+  check('crates rest where they are stowed', rest.every((d) => Math.abs(d) < 0.06), rest.map((d) => d.toFixed(3)).join(' '));
   check('ship loaded', r.panels > 100 && r.controls > 20, `${r.panels} paneles, ${r.controls} mandos`);
   check('every panel has a collider', r.colliders === r.panels, `${r.colliders}/${r.panels}`);
   for (const a of r.acts) {
@@ -229,13 +257,18 @@ if (mode === 'checks' || mode === 'all') {
     g.step(10, 1 / 30);
     const tgt = g.interaction.target;
     const o = { aimed: tgt ? `${tgt.kind}:${s.sim.def.panels[tgt.index]?.id}:${tgt.hole}:${tgt.inReach}` : 'none' };
-    g.debug.input.setKey('KeyE', true);
+    // repair tool: welder in hand, trigger held
+    g.me.equip('welder');
+    g.me.setArmed(true);
+    g.step(20, 1 / 30);
+    o.noToolBlocked = true;
+    g.debug.input.setKey('Mouse0', true);
     g.step(45, 1 / 30);
     o.mid = s.sim.hp[target.index];
     o.midSolid = !s.sim.hole(target.index);
     o.collider = s.physics.hasPanel(target.index);
     g.step(150, 1 / 30);
-    g.debug.input.setKey('KeyE', false);
+    g.debug.input.setKey('Mouse0', false);
     o.final = s.sim.hp[target.index];
     // fix the trunk too
     const trunk = s.sim.def.panels.find((p) => p.conduits.includes('hyd') && p.kind === 'floor' && p.zone === 'cargo');
@@ -247,7 +280,7 @@ if (mode === 'checks' || mode === 'all') {
     return o;
   });
   check('crosshair finds the hole', /^panel:CG-R2-3:true:true$/.test(rp.aimed), rp.aimed);
-  check('holding E rebuilds the panel', rp.midSolid && rp.collider, `hp ${rp.mid?.toFixed?.(1)} a los 1.5 s`);
+  check('welder + held click rebuilds the panel', rp.midSolid && rp.collider, `hp ${rp.mid?.toFixed?.(1)} a los 1.5 s`);
   check('repair reaches full integrity', rp.final >= 99.9, `hp ${rp.final?.toFixed?.(1)}`);
   check('repaired conduit restores hydraulics', rp.hyd, `corte: ${rp.cut}`);
   check('master caution reset', rp.caution === 0);
@@ -274,6 +307,85 @@ if (mode === 'checks' || mode === 'all') {
   });
   check('crosshair click toggles cargo lights', ck.used && ck.after !== ck.before, `${ck.t} (quiero ${ck.want}) ${ck.before}→${ck.after}`);
   await page.evaluate(() => window.game.shipControl('cg.ramp/light.cargo'));
+
+  // --- welding needs the welder: with the launcher nothing happens ------------------------------------
+  const nt = await page.evaluate(() => {
+    const g = window.game;
+    const s = g.ships[0];
+    const p = s.sim.def.panels.find((q) => q.id === 'CG-L1-4');
+    g.blast(window.diag.w(p.c[0] + p.n[0] * 0.2, p.c[1] + p.n[1] * 0.2, p.c[2] + p.n[2] * 0.2));
+    const hp0 = s.sim.hp[p.index];
+    window.diag.stand([-1.3, 0.05, p.c[2]], p.c);
+    g.me.equip('launcher');
+    g.me.setArmed(true);
+    g.step(15, 1 / 30);
+    g.debug.input.setKey('Mouse0', true);
+    g.step(30, 1 / 30);
+    g.debug.input.setKey('Mouse0', false);
+    const hp1 = s.sim.hp[p.index];
+    for (let i = 0; i < 20; i++) g.debug.game.localRepair(s.id, p.index, 0.25);
+    return { hp0, hp1 };
+  });
+  check('launcher does not weld', nt.hp1 === nt.hp0, `${nt.hp0} → ${nt.hp1}`);
+
+  // --- cargo: loose boxes fall, get shoved by a blast ------------------------------------------------
+  const cg = await page.evaluate(() => {
+    const g = window.game;
+    const s = g.ships[0];
+    g.step(30, 1 / 30, false);
+    const b = s.cargo.bodies[5];
+    const p0 = b.translation();
+    g.blast(g.debug.camera.position.clone().set(p0.x + 0.8, p0.y + 0.2, p0.z));
+    g.step(60, 1 / 30, false);
+    const p1 = b.translation();
+    return { moved: Math.hypot(p1.x - p0.x, p1.z - p0.z) };
+  });
+  check('blast throws a crate', cg.moved > 0.3, `${cg.moved.toFixed(2)} m`);
+
+  // --- seats ----------------------------------------------------------------------------------------
+  const st = await page.evaluate(() => {
+    const g = window.game;
+    const s = g.ships[0];
+    const seat = s.sim.def.seats[0];
+    window.diag.stand([seat.root[0], 0.02, -6.9], [seat.root[0], 0.7, seat.root[2]]);
+    for (let k = 0; k < 3; k++) {
+      g.step(4, 1 / 30);
+      const cam = g.debug.camera.getWorldPosition(g.debug.camera.position.clone());
+      const d = window.diag.w(seat.root[0], 0.7, seat.root[2]).sub(cam);
+      g.debug.controller.yaw = Math.atan2(-d.x, -d.z);
+      g.debug.controller.pitch = Math.atan2(d.y, Math.hypot(d.x, d.z));
+    }
+    g.step(2, 1 / 30);
+    const t = g.interaction.target;
+    const aimed = t ? `${t.kind}:${t.index}:${t.inReach}` : 'none';
+    g.interaction.use(performance.now() / 1000);
+    g.debug.input.setKey('KeyW', true);
+    g.step(40, 1 / 30);
+    g.debug.input.setKey('KeyW', false);
+    const sat = window.diag.local(g.debug.controller.position);
+    const seated = !!g.seat;
+    const eyeY = window.diag.local(g.me.eyePosition(g.debug.camera.position.clone())).y;
+    g.standUp();
+    g.step(10, 1 / 30);
+    return { aimed, seated, sat: sat.toArray(), eyeY, after: window.diag.local(g.debug.controller.position).toArray(), standing: !g.seat };
+  });
+  check('crosshair finds the seat', /^seat:0:true$/.test(st.aimed), st.aimed);
+  check('sits down and stays put', st.seated && Math.hypot(st.sat[0] + 0.72, st.sat[2] + 7.66) < 0.05, `local ${st.sat.map((v) => v.toFixed(2))}`);
+  check('seated eye height', st.eyeY > 1.0 && st.eyeY < 1.4, `${st.eyeY.toFixed(2)} m`);
+  check('stands up at the exit', st.standing && Math.abs(st.after[2] + 6.95) < 0.2, `local ${st.after.map((v) => v.toFixed(2))}`);
+
+  // --- zoom -----------------------------------------------------------------------------------------
+  const zm = await page.evaluate(() => {
+    const g = window.game;
+    const cam = g.debug.camera;
+    g.debug.input.setKey('Mouse2', true);
+    g.step(30, 1 / 30);
+    const held = cam.fov;
+    g.debug.input.setKey('Mouse2', false);
+    g.step(30, 1 / 30);
+    return { held, released: cam.fov };
+  });
+  check('right mouse zooms in', zm.held < 30 && zm.released > 65, `fov ${zm.held.toFixed(1)} → ${zm.released.toFixed(1)}`);
 
   // --- walk up the ramp into the cargo bay ------------------------------------------------------------
   const wk = await page.evaluate(() => {
@@ -316,6 +428,29 @@ if (mode === 'views' || mode === 'all') {
   await shot('int_cockpit', () => window.diag.look([0.3, 1.6, -6.9], [0, 0.9, -9.4]));
   await shot('int_breakers', () => window.diag.look([0.6, 1.5, -4.4], [-1.5, 1.3, -4.4]));
   await shot('int_reactor', () => window.diag.look([-0.6, 1.5, -4.2], [1.5, 1.3, -4.3]));
+  await shot('seated', () => {
+    const g = window.game;
+    const s = g.ships[0];
+    g.sitDown(s, 0);
+    window.diag.look([0.5, 1.45, -9.0], [-0.72, 0.8, -7.6]);
+  });
+  await shot('welder', () => {
+    const g = window.game;
+    g.standUp();
+    g.me.equip('welder');
+    g.me.setArmed(true);
+    window.diag.stand([0.2, 0.02, 1.2], [2.6, 1.2, 1.2]);
+    g.step(20, 1 / 30);
+    window.diag.look([1.6, 1.4, 0.0], [0.3, 1.1, 1.2]);
+  });
+  await shot('slung', () => {
+    const g = window.game;
+    g.me.equip('launcher');
+    g.me.setArmed(true);
+    window.diag.stand([0.2, 0.02, 1.2], [2.6, 1.2, 1.2]);
+    g.step(20, 1 / 30);
+    window.diag.look([-1.3, 1.5, 2.4], [0.3, 1.1, 1.2]);
+  });
   await shot('damage', () => {
     const g = window.game;
     const s = g.ships[0];

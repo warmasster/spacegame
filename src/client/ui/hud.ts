@@ -18,6 +18,9 @@ export interface HudData {
   fuel: number;
   /** 0 = just fired, 1 = ready. */
   reload: number;
+  tool: 'none' | 'launcher' | 'welder' | 'welding';
+  /** Camera magnification (1 = none). */
+  zoom: number;
   dead: boolean;
   markers: Array<{ label: string; bearing: number; distance: number; color: string }>;
 }
@@ -57,9 +60,11 @@ export class Hud {
       ['Mayús', 'correr (trote lunar)'],
       ['Espacio', 'saltar'],
       ['C / Ctrl', 'agacharse'],
-      ['Clic izq.', 'disparar · pulsar botón'],
-      ['E', 'accionar · mantener: reparar'],
-      ['X / 1', 'sacar / guardar arma'],
+      ['Clic izq.', 'disparar / soldar · pulsar botón'],
+      ['E', 'accionar · sentarse / levantarse'],
+      ['1 / 2', 'lanzacohetes / soldadora'],
+      ['Rueda · Clic der.', 'zoom'],
+      ['X', 'sacar / guardar herramienta'],
       ['Espacio (aire)', 'jetpack'],
       ['L', 'luces del casco'],
       ['V', 'primera / tercera persona'],
@@ -143,13 +148,15 @@ export class Hud {
       <div class="row"><span>ALT</span><b>${d.altitude >= 0 ? '+' : ''}${d.altitude.toFixed(1)} m</b></div>
       <div class="row"><span>POS</span><b>${fmtCoord(d.position.x)} ${fmtCoord(-d.position.z)}</b></div>
       <div class="row"><span>LUCES</span><b class="${d.lamps ? 'on' : ''}">${d.lamps ? 'ON' : 'OFF'}</b></div>
-      <div class="row dim"><span>CÁM</span><b>${d.cameraMode === 'first' ? '1ª persona' : '3ª persona'}</b></div>`;
+      <div class="row dim"><span>CÁM</span><b>${d.cameraMode === 'first' ? '1ª persona' : '3ª persona'}${d.zoom > 1.05 ? ` · ×${d.zoom.toFixed(1)}` : ''}</b></div>`;
     const bar = (label: string, v: number, cls: string) =>
       `<div class="vital ${cls}"><span>${label}</span><i><em style="width:${Math.round(Math.max(0, Math.min(1, v)) * 100)}%"></em></i></div>`;
     this.vitals.innerHTML =
       bar('TRAJE', d.hp / 100, d.hp < 35 ? 'crit' : 'hp') +
       bar('JET', d.fuel, 'fuel') +
-      bar(d.reload >= 1 ? 'COHETE LISTO' : d.reload <= 0 ? 'ARMA GUARDADA' : 'RECARGANDO', d.reload, d.reload >= 1 ? 'ready' : 'reload');
+      (d.tool === 'welder' || d.tool === 'welding'
+        ? bar(d.tool === 'welding' ? 'SOLDANDO' : 'SOLDADORA LISTA', 1, 'fuel')
+        : bar(d.tool === 'none' ? 'HERRAMIENTA GUARDADA' : d.reload >= 1 ? 'COHETE LISTO' : 'RECARGANDO', d.reload, d.reload >= 1 ? 'ready' : 'reload'));
     this.deathScreen.classList.toggle('hidden', !d.dead);
     this.net.innerHTML = `
       <div class="row"><i class="dot ${d.online ? 'ok' : 'bad'}"></i><b>${d.online ? 'EN LÍNEA' : 'SIN CONEXIÓN'}</b></div>

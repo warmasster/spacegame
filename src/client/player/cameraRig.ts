@@ -16,6 +16,11 @@ export class CameraRig {
   private thirdPos = new THREE.Vector3();
   private initialized = false;
   zoom = 3.4;
+  /** First-person optical zoom (wheel), ×1..×4. */
+  fpZoom = 1;
+  /** Right mouse held: extra ×3 on top, in either mode. */
+  zoomHeld = false;
+  static readonly BASE_FOV = 72;
 
   constructor(
     private camera: THREE.PerspectiveCamera,
@@ -23,6 +28,7 @@ export class CameraRig {
   ) {
     window.addEventListener('wheel', (e) => {
       if (this.mode === 'third') this.zoom = THREE.MathUtils.clamp(this.zoom + Math.sign(e.deltaY) * 0.4, 1.6, 9);
+      else this.fpZoom = THREE.MathUtils.clamp(this.fpZoom * (e.deltaY < 0 ? 1.25 : 0.8), 1, 4);
     });
   }
 
@@ -32,6 +38,11 @@ export class CameraRig {
   }
 
   /** Third person: `occlude(from, to)` returns the distance to the first solid surface (ship hulls). */
+  /** Current magnification (for the HUD and mouse sensitivity). */
+  get magnification() {
+    return CameraRig.BASE_FOV / this.camera.fov;
+  }
+
   update(dt: number, ctl: PlayerController, astronaut: Astronaut, occlude?: (from: THREE.Vector3, to: THREE.Vector3) => number | null) {
     const cam = this.camera;
     astronaut.eyePosition(this.eye);
@@ -68,6 +79,9 @@ export class CameraRig {
       cam.position.copy(this.thirdPos);
       cam.lookAt(target.clone().addScaledVector(right, 0.55));
     }
+    // zoom = narrower field of view (eases in/out)
+    const fov = CameraRig.BASE_FOV / ((this.mode === 'first' ? this.fpZoom : 1) * (this.zoomHeld ? 3 : 1));
+    cam.fov += (fov - cam.fov) * Math.min(1, dt * 10);
     cam.updateProjectionMatrix();
     cam.updateMatrixWorld();
     this.initialized = true;

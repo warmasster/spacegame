@@ -1,4 +1,5 @@
-// Grasp self-check: loads the game headless, draws the weapon, walks/aims through several poses and
+// Grasp self-check: loads the game headless, draws the weapon, walks/aims through several poses (and
+// every frame of two walking strides) and
 // measures each hand against its grip (palm gap, palm facing, finger crossing). Exits 1 on failure
 // and saves close-up shots of the hands to tools/diag/out/grasp_*.png for visual review.
 //
@@ -54,6 +55,23 @@ for (const p of poses) {
   }
   await page.evaluate(() => (window.game.focusCam = null));
 }
+// a single frame can land between two bad ones: while walking, check every frame of two strides
+const cycle = await page.evaluate(() => {
+  const g = window.game, d = g.debug;
+  d.controller.yaw = -Math.PI / 2;
+  d.controller.pitch = 0;
+  d.input.setKey('KeyW', true);
+  g.me.setArmed(true);
+  const bad = [];
+  for (let i = 0; i < 60; i++) {
+    g.step(1, 1 / 30, false);
+    for (const [side, r] of Object.entries(g.me.graspReport())) if (!r.ok) bad.push(`${i}${side}:${r.gapCm}cm/${r.palmFacingDeg}°`);
+  }
+  d.input.setKey('KeyW', false);
+  return bad;
+});
+console.log(`${cycle.length ? 'FAIL' : 'OK  '} walk-cycle  ${cycle.length}/120 hand-frames off the grip${cycle.length ? ': ' + cycle.slice(0, 8).join(' ') : ''}`);
+if (cycle.length) fail++;
 const { readFileSync } = await import('node:fs');
 const sheet = await browser.newPage({ viewport: { width: 1280, height: 200 * Math.ceil(files.length / 4) } });
 await sheet.setContent(`<body style="margin:0;display:flex;flex-wrap:wrap;width:1280px">${files.map((f) => `<img src="data:image/png;base64,${readFileSync(f).toString('base64')}" width=320 height=200>`).join('')}</body>`);

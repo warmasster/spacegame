@@ -21,6 +21,17 @@ export class Input {
       this.locked = document.pointerLockElement === this.element;
       if (!this.locked) this.keys.clear();
     });
+    // mouse buttons as pseudo keys: Mouse0 (left), Mouse2 (right)
+    window.addEventListener('mousedown', (e) => {
+      if (!this.locked) return;
+      const code = `Mouse${e.button}`;
+      if (!this.keys.has(code)) this.pressed.add(code);
+      this.keys.add(code);
+    });
+    window.addEventListener('mouseup', (e) => this.keys.delete(`Mouse${e.button}`));
+    window.addEventListener('contextmenu', (e) => {
+      if (this.locked) e.preventDefault();
+    });
     document.addEventListener('mousemove', (e) => {
       if (!this.locked) return;
       // clamp spikes some browsers produce when locking

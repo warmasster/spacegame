@@ -4,6 +4,7 @@ import { placeShip, REACH, REPAIR_RATE, SHIP_DEFS, ShipSim } from '../shared/shi
 import { LunarTerrain } from '../shared/terrain.js';
 import {
   PROTOCOL_VERSION,
+  StateFlags,
   type ClientMessage,
   type PlayerInfo,
   type PlayerState,
@@ -254,6 +255,9 @@ export class Room {
     const ship = this.ships.find((s) => s.id === shipId);
     const eye = this.eye(m);
     if (m.info.id === 0 || m.dead || !ship || !eye || !Number.isInteger(panel) || !ship.def.panels[panel as number]) return;
+    // only with the welder in hand
+    const f = m.state?.f ?? 0;
+    if (!(f & StateFlags.Welder) || !(f & StateFlags.Armed)) return;
     const i = panel as number;
     const t = now();
     // the tool works at a fixed rate whatever the message rate: credit the time since the last tick

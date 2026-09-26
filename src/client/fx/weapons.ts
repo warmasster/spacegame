@@ -80,4 +80,43 @@ export const LAUNCHER: WeaponDef = {
   },
 };
 
-export const WEAPONS: Record<string, WeaponDef> = { launcher: LAUNCHER };
+/**
+ * Plasma welder / repair tool: a short shoulder-braced gun with a gas bottle. Same handle layout
+ * as the launcher, so the same arm IK holds it; slung on the left side of the PLSS when stowed.
+ * Fires nothing: held trigger + aim at a hull panel = weld (see ship/interaction.ts).
+ */
+export const WELDER: WeaponDef = {
+  id: 'welder',
+  name: 'Soldadora',
+  carry: 'shoulder',
+  rightGrip: LAUNCHER.rightGrip,
+  leftGrip: LAUNCHER.leftGrip,
+  muzzle: new THREE.Vector3(0, 0.05, 0.66),
+  holster: { pos: new THREE.Vector3(0.34, 1.05, -0.36), rot: new THREE.Euler(-1.2, 0.2, 0.25) },
+  recoil: 0,
+  cooldown: 0,
+  build() {
+    const yellow = new THREE.MeshStandardMaterial({ color: 0xc9951c, roughness: 0.5, metalness: 0.25 });
+    const dark = new THREE.MeshStandardMaterial({ color: 0x1b1c1e, roughness: 0.45, metalness: 0.7 });
+    const copper = new THREE.MeshStandardMaterial({ color: 0xb86a3a, roughness: 0.3, metalness: 1 });
+    const g = new THREE.Group();
+    const ax = 0.05;
+    // body: squat housing over the shoulder, cooling fins, barrel, copper tip
+    g.add(part(new THREE.BoxGeometry(0.1, 0.09, 0.42), yellow, 0, ax, 0.02));
+    for (let i = 0; i < 5; i++) g.add(part(new THREE.BoxGeometry(0.112, 0.006, 0.05), dark, 0, ax + 0.03, -0.1 + i * 0.045));
+    g.add(part(lathe([[0.03, 0.2], [0.032, 0.22], [0.026, 0.5], [0.02, 0.58], [0.014, 0.64]]), dark, 0, ax, 0));
+    g.add(part(lathe([[0.014, 0.6], [0.011, 0.66], [0.004, 0.67]]), copper, 0, ax, 0));
+    // gas bottle under the body, hose
+    g.add(part(lathe([[0, -0.2], [0.03, -0.19], [0.035, -0.15], [0.035, 0.06], [0.02, 0.1], [0, 0.11]]), dark, 0.075, 0.0, -0.05));
+    g.add(part(new THREE.TorusGeometry(0.05, 0.006, 6, 12, Math.PI), dark, 0.05, 0.02, 0.12, Math.PI / 2));
+    // shoulder pad, pistol grip + guard, fore-grip (same places as the launcher's)
+    g.add(part(new THREE.BoxGeometry(0.07, 0.03, 0.18), dark, 0, 0.0, -0.1));
+    g.add(part(new THREE.BoxGeometry(0.032, 0.11, 0.045), dark, 0, -0.07, 0.2, 0.25));
+    g.add(part(new THREE.BoxGeometry(0.012, 0.04, 0.07), dark, 0, -0.005, 0.16));
+    g.add(part(new THREE.BoxGeometry(0.03, 0.1, 0.04), dark, 0, -0.045, 0.4, -0.15));
+    g.add(part(new THREE.BoxGeometry(0.03, 0.02, 0.2), yellow, 0, 0.0, 0.34));
+    return g;
+  },
+};
+
+export const WEAPONS: Record<string, WeaponDef> = { launcher: LAUNCHER, welder: WELDER };

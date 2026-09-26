@@ -355,6 +355,19 @@ function buildDef(): ShipDef {
       { id: 'corridor', label: 'PASILLO', min: [-1.6, 0, Z_CK], max: [1.6, 2.4, Z_CR], lights: [[0, 2.2, -4.4]], lightKey: 'light.corridor' },
       { id: 'cargo', label: 'BODEGA', min: [-2.6, 0, Z_CR], max: [2.6, 3.0, Z_TAIL], lights: [[0, 2.8, -0.4], [0, 2.8, 3.6]], lightKey: 'light.cargo' },
     ],
+    seats: [
+      { id: 'ck.pilot', name: 'Asiento del piloto', root: [-0.72, 0, -7.66], yaw: 0, exit: [-0.72, 0, -6.95] },
+      { id: 'ck.copilot', name: 'Asiento del copiloto', root: [0.72, 0, -7.66], yaw: 0, exit: [0.72, 0, -6.95] },
+    ],
+    cargo: [
+      { pos: [-1.95, 0.38, -1.7], half: [0.45, 0.375, 0.45], yaw: 0, mass: 70, paint: 'orange' },
+      { pos: [-1.95, 0.38, -0.75], half: [0.45, 0.375, 0.45], yaw: 0.04, mass: 70, paint: 'orange' },
+      { pos: [-1.95, 1.07, -1.65], half: [0.4, 0.3, 0.4], yaw: -0.08, mass: 45, paint: 'grey' },
+      { pos: [1.9, 0.26, -1.8], half: [0.55, 0.25, 0.35], yaw: 0, mass: 55, paint: 'grey' },
+      { pos: [2.0, 0.87, -1.8], half: [0.35, 0.35, 0.35], yaw: 0.1, mass: 35, paint: 'orange' },
+      { pos: [-1.6, 0.3, 3.2], half: [0.3, 0.3, 0.3], yaw: 0.3, mass: 25, paint: 'grey' },
+      { pos: [1.3, 0.3, 2.4], half: [0.3, 0.3, 0.3], yaw: -0.2, mass: 25, paint: 'orange' },
+    ],
     extLights: [
       { kind: 'nav-red', pos: [-4.2, 1.2, -1.9] },
       { kind: 'nav-green', pos: [4.2, 1.2, -1.9] },

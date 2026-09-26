@@ -35,7 +35,7 @@ export class ShipView {
   readonly screens: ShipScreens;
   /** Per-panel heat after a blast (0..1, decays). */
   readonly heat: Float32Array;
-  private mats: Record<string, THREE.Material>;
+  readonly mats: Record<string, THREE.Material>;
   private panelMeshes = new Map<PanelMatKey, THREE.Mesh>();
   private ranges: PanelRange[][] = [];
   private lampMat: LampMaterial;
@@ -78,7 +78,7 @@ export class ShipView {
     const hullColor = lin(0.3, 0.305, 0.31);
     this.mats = {
       hull: panelMaterial('hull', csm, { color: hullColor, roughness: 0.62, metalness: 0.15 }),
-      lining: inside(panelMaterial('lining', csm, { color: lin(0.26, 0.27, 0.28), roughness: 0.82, metalness: 0.05, envMapIntensity: 0.15 })),
+      lining: inside(panelMaterial('lining', csm, { color: lin(0.2, 0.21, 0.22), roughness: 0.82, metalness: 0.05, envMapIntensity: 0.15 })),
       deck: inside(panelMaterial('deck', csm, { color: lin(0.11, 0.115, 0.12), roughness: 0.42, metalness: 0.85, envMapIntensity: 0.2 })),
       under: litMaterial(csm, { color: lin(0.05, 0.05, 0.05), roughness: 0.85 }),
       glass: glassMaterial(csm),
@@ -219,8 +219,11 @@ export class ShipView {
     // engine nacelles on short pylons along the cargo bay
     for (const sx of [-1, 1]) {
       const x = sx * 3.45;
-      const prof: V2[] = [[0, 0], [0.3, 0.03], [0.55, 0.18], [0.68, 0.5], [0.74, 1.1], [0.74, 6.7], [0.7, 7.0], [0.6, 7.2], [0.67, 8.2], [0.61, 8.22], [0.52, 7.4], [0, 7.4]];
-      P.lathe('paint', prof, [x, 1.15, -1.9], new THREE.Euler(Math.PI / 2, 0, 0), 32);
+      const body: V2[] = [[0, 0], [0.3, 0.03], [0.55, 0.18], [0.68, 0.5], [0.74, 1.1], [0.74, 6.7], [0.7, 7.0], [0.6, 7.2]];
+      P.lathe('paint', body, [x, 1.15, -1.9], new THREE.Euler(Math.PI / 2, 0, 0), 32);
+      // nozzle bell: burnt dark metal inside and out
+      P.lathe('dark', [[0.6, 7.2], [0.67, 8.2], [0.61, 8.22], [0.52, 7.4], [0, 7.4]], [x, 1.15, -1.9], new THREE.Euler(Math.PI / 2, 0, 0), 32);
+      P.lathe('dark', [[0, 0], [0.16, 0.012], [0.3, 0.03], [0.29, 0.05], [0, 0.03]], [x, 1.15, -1.92], new THREE.Euler(Math.PI / 2, 0, 0), 24);
       P.lathe('dark', [[0.745, 0.6], [0.752, 0.62], [0.752, 0.9], [0.745, 0.92]], [x, 1.15, -1.9], new THREE.Euler(Math.PI / 2, 0, 0), 32);
       P.lathe('dark', [[0.745, 5.9], [0.752, 5.92], [0.752, 6.3], [0.745, 6.32]], [x, 1.15, -1.9], new THREE.Euler(Math.PI / 2, 0, 0), 32);
       P.box('paint', 0.32, 0.36, 5.2, [sx * 2.78, 1.15, 2.1]);
@@ -237,6 +240,15 @@ export class ShipView {
     // dorsal fin + strobe mast
     const zt = def.modules[def.modules.length - 1].z1;
     P.extrudeX('paint', [[zt - 2.3, 3.05], [zt + 0.05, 3.05], [zt + 0.05, 3.55], [zt - 0.35, 3.92], [zt - 1.05, 3.92]], -0.06, 0.06, 0.01);
+    // dorsal spine along the cargo roof: equipment fairing and radiator fins
+    const zc0 = def.modules[def.modules.length - 1].z0;
+    P.box('paintDark', 0.44, 0.2, 5.4, [0, 3.18, zc0 + 3.3]);
+    P.box('paint', 0.3, 0.06, 5.2, [0, 3.3, zc0 + 3.3]);
+    for (let i = 0; i < 4; i++) {
+      for (const sx of [-1, 1]) P.box('dark', 0.7, 0.025, 0.9, [sx * 0.55, 3.2, zc0 + 1.3 + i * 1.15], new THREE.Euler(0, 0, sx * 0.18));
+    }
+    // sensor dome over the cockpit
+    P.lathe('paintDark', [[0, 0], [0.34, 0], [0.34, 0.06], [0.3, 0.15], [0.18, 0.24], [0, 0.27]], [0, 2.5, -7.2], undefined, 24);
     // antenna on the corridor roof edge
     P.rod('dark', [1.05, 2.45, -4.4], [1.05, 2.95, -4.4], 0.025, 8);
     P.lathe('paint', [[0, 0], [0.18, 0.03], [0.26, 0.09], [0.25, 0.1], [0.17, 0.05], [0, 0.03]], [1.05, 2.95, -4.4], new THREE.Euler(0.5, 0, -0.6), 20);
@@ -273,17 +285,7 @@ export class ShipView {
     P.box('console', 2.86, 0.1, 0.08, [0, 0.66, -9.0]);
     // corridor: grab rails along the ribs
     for (const sx of [-1, 1]) P.rod('chrome', [sx * 1.52, 1.05, -6.1], [sx * 1.52, 1.05, -5.0], 0.018, 8);
-    // cargo bay: crates strapped at the front corners, an equipment rack
-    const crate = (mat: string, w: number, h: number, d: number, x: number, y: number, z: number, ry = 0) => {
-      P.box(mat, w, h, d, [x, y + h / 2, z], new THREE.Euler(0, ry, 0));
-      P.box('dark', w + 0.01, 0.04, d + 0.01, [x, y + h * 0.25, z], new THREE.Euler(0, ry, 0));
-      P.box('dark', w + 0.01, 0.04, d + 0.01, [x, y + h * 0.75, z], new THREE.Euler(0, ry, 0));
-    };
-    crate('crate', 0.9, 0.75, 0.9, -1.95, 0, -1.7);
-    crate('crate', 0.9, 0.75, 0.9, -1.95, 0, -0.75, 0.04);
-    crate('crate2', 0.8, 0.6, 0.8, -1.95, 0.75, -1.65, -0.08);
-    crate('crate2', 1.1, 0.5, 0.7, 1.9, 0, -1.8);
-    crate('crate', 0.7, 0.7, 0.7, 2.0, 0.5, -1.8, 0.1);
+    // cargo bay: equipment rack (the crates are loose physics bodies, see cargo.ts)
     P.box('console', 0.5, 1.8, 0.6, [2.25, 0.9, 0.4]);
     P.box('dark', 0.52, 0.04, 0.62, [2.25, 1.2, 0.4]);
     P.box('dark', 0.52, 0.04, 0.62, [2.25, 0.6, 0.4]);
@@ -691,7 +693,8 @@ export class ShipView {
     this.landing.intensity = landing ? 900 : 0;
     const reactor = sw.reactor === 1;
     const flick = 1 + Math.sin(time * 9.1) * 0.05 + Math.sin(time * 23.7) * 0.03;
-    L.set(id('nozzle'), reactor ? 0.03 * flick : 0.005, reactor ? 0.07 * flick : 0.005, reactor ? 0.26 * flick : 0.008);
+    // engines are cold on the pad; the throat only shows a faint warm-up glow with the reactor on
+    L.set(id('nozzle'), reactor ? 0.006 * flick : 0, reactor ? 0.012 * flick : 0, reactor ? 0.04 * flick : 0);
     L.set(id('reactor-core'), reactor ? 1.5 * flick : 0.02, reactor ? 4 * flick : 0.02, reactor ? 7 * flick : 0.03);
     const av = sim.powered('avionics');
     L.set(id('gear-greens'), 0, av && sw.gear ? 5 : 0.03, av && sw.gear ? 1 : 0);

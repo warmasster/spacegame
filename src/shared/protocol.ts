@@ -17,6 +17,11 @@ export const StateFlags = {
   Jetpack: 1 << 4,
   Dead: 1 << 5,
   Armed: 1 << 6,
+  /** Tool in hand is the welder (else the launcher). */
+  Welder: 1 << 7,
+  /** Welder trigger held. */
+  Welding: 1 << 8,
+  Seated: 1 << 9,
 } as const;
 
 /** Kinematic state of an astronaut, sent by its owner ~20 times per second. */

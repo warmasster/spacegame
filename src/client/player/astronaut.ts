@@ -121,7 +121,12 @@ export interface AnimInput {
   pitch: number;
   grounded: boolean;
   crouch: boolean;
+  /** Sitting in a seat (legs folded, hips on the seat pan at SEAT_HIP_Y). */
+  seated?: boolean;
 }
+
+/** Hip height above the floor when seated (m). */
+export const SEAT_HIP_Y = 0.6;
 
 export type BoneName =
   | 'pelvis' | 'spine' | 'chest' | 'neck'
@@ -175,6 +180,9 @@ export class Astronaut {
   private dead = false;
   private deadBlend = 0;
   private weapon: THREE.Object3D | null = null;
+  /** Every carried tool (the active one is `weapon` / `weaponDef`); inactive ones stay slung. */
+  private tools: Array<{ def: WeaponDef; obj: THREE.Object3D; blend: number }> = [];
+  private seatBlend = 0;
   private weaponInv: THREE.Matrix4 | null = null;
   private weaponInvQ: THREE.Quaternion | null = null;
   private armed = false;
@@ -253,6 +261,8 @@ export class Astronaut {
     R: { point: new THREE.Vector3(), normal: new THREE.Vector3(), finger: new THREE.Vector3(0, 1, 0) },
   };
   private armPrev: Partial<Record<'L' | 'R', THREE.Quaternion[]>> = {};
+  /** Grasp chosen last frame per hand (wrap sign + palm roll), for hysteresis. */
+  private graspPick: Partial<Record<'L' | 'R', { sign: number; roll: number }>> = {};
   private frameDt = 1 / 60;
   private restBend: Partial<Record<'L' | 'R', number>> = {};
   private restTwist: Partial<Record<'L' | 'R', number>> = {};
@@ -327,15 +337,34 @@ export class Astronaut {
       const m = (o as THREE.Mesh).material;
       if (m instanceof THREE.MeshStandardMaterial) patchInteriorLights(m);
     });
-    this.weaponDef = def;
     const chest = this.rig.chest.bone;
     this.model.updateMatrixWorld(true);
     this.weaponInv = new THREE.Matrix4().copy(chest.matrixWorld).invert().multiply(this.model.matrixWorld);
     this.weaponInvQ = new THREE.Quaternion().setFromRotationMatrix(this.weaponInv);
-    this.weapon = new THREE.Object3D();
-    this.weapon.add(prop);
-    chest.add(this.weapon);
+    const obj = new THREE.Object3D();
+    obj.add(prop);
+    chest.add(obj);
+    this.tools.push({ def, obj, blend: 0 });
+    if (!this.weapon) {
+      this.weapon = obj;
+      this.weaponDef = def;
+    }
     this.placeWeapon();
+  }
+
+  /** Switch the tool in hand (the other one goes back on the PLSS). */
+  equip(id: string) {
+    const t = this.tools.find((x) => x.def.id === id);
+    if (!t || t.obj === this.weapon) return;
+    this.weapon = t.obj;
+    this.weaponDef = t.def;
+    this.armPrev = {};
+    this.graspPick = {};
+  }
+
+  /** Id of the tool in hand (or on its way). */
+  get equipped() {
+    return this.weaponDef?.id ?? '';
   }
 
   /** Draw / holster. */
@@ -370,9 +399,12 @@ export class Astronaut {
   }
 
   private placeWeapon() {
-    if (!this.weapon || !this.weaponInv || !this.weaponDef) return;
-    const w = smooth(this.armBlend);
-    const def = this.weaponDef;
+    for (const t of this.tools) this.placeTool(t.obj, t.def, t.blend);
+  }
+
+  private placeTool(obj: THREE.Object3D, def: WeaponDef, blend: number) {
+    if (!this.weaponInv) return;
+    const w = smooth(blend);
     // shoulder carry (like a real bazooka gunner): contact on the right shoulder, tube beside the helmet
     const aim = this.lookPitch * 0.74 - this.torsoAng * 0.6;
     _wq.setFromEuler(_we.set(aim, 0.02, 0));
@@ -380,8 +412,8 @@ export class Astronaut {
     if (def.carry === 'hip') _wp.set(-0.2, 1.05, 0.25);
     _wp.lerp(def.holster.pos, 1 - w);
     _wq.slerp(_wq2.setFromEuler(def.holster.rot), 1 - w);
-    this.weapon.position.copy(_wp).applyMatrix4(this.weaponInv);
-    this.weapon.quaternion.copy(this.weaponInvQ!).multiply(_wq);
+    obj.position.copy(_wp).applyMatrix4(this.weaponInv);
+    obj.quaternion.copy(this.weaponInvQ!).multiply(_wq);
   }
 
   /** Hide suit geometry within `radius` of `eye` (first-person body awareness without clipping). */
@@ -474,6 +506,8 @@ export class Astronaut {
     this.runBlend += (run - this.runBlend) * Math.min(1, dt * 3);
     this.airBlend += ((input.grounded ? 0 : 1) - this.airBlend) * Math.min(1, dt * (input.grounded ? 10 : 4));
     this.crouchBlend += ((input.crouch ? 1 : 0) - this.crouchBlend) * Math.min(1, dt * 6);
+    this.seatBlend += ((input.seated ? 1 : 0) - this.seatBlend) * Math.min(1, dt * 5);
+    const sb = smooth(this.seatBlend);
 
     // landing spring
     if (input.grounded && !this.wasGrounded) this.landingVel += Math.min(3.5, Math.max(0, -this.lastVy)) * 1.2;
@@ -497,7 +531,8 @@ export class Astronaut {
     const breathe = Math.sin(this.time * 1.7) * 0.004;
     const lopeLift = this.runBlend * g * 0.11 * Math.max(0, Math.sin(this.phase * 2 - 0.6));
     const walkDip = (1 - this.runBlend) * g * (0.028 + 0.012 * Math.cos(this.phase * 2));
-    const pelvisDrop = walkDip + this.crouchBlend * 0.36 + this.landing * 0.55 + g * 0.02 - lopeLift - breathe;
+    let pelvisDrop = walkDip + this.crouchBlend * 0.36 + this.landing * 0.55 + g * 0.02 - lopeLift - breathe;
+    pelvisDrop += (HIP_Y - SEAT_HIP_Y - pelvisDrop) * sb;
 
     // ---- legs (two-bone IK in the body frame) ----------------------------------------------
     const legPhase = [0, THREE.MathUtils.lerp(Math.PI, Math.PI * 0.28, this.runBlend)];
@@ -524,8 +559,11 @@ export class Astronaut {
       const down = hipY - (ANKLE_Y + footUp);
       const reach = Math.hypot(fz, down);
       const d = Math.min(reach, THIGH + SHIN - 0.004);
-      const knee = Math.PI - Math.acos(clampCos((THIGH * THIGH + SHIN * SHIN - d * d) / (2 * THIGH * SHIN)));
-      const hip = Math.atan2(fz, down) + Math.acos(clampCos((THIGH * THIGH + d * d - SHIN * SHIN) / (2 * THIGH * d)));
+      let knee = Math.PI - Math.acos(clampCos((THIGH * THIGH + SHIN * SHIN - d * d) / (2 * THIGH * SHIN)));
+      let hip = Math.atan2(fz, down) + Math.acos(clampCos((THIGH * THIGH + d * d - SHIN * SHIN) / (2 * THIGH * d)));
+      // seated: thighs level on the seat pan, shins down to the deck
+      hip += (1.42 - hip) * sb;
+      knee += (1.5 - knee) * sb;
       const abduct = Math.atan2(fx, down) * (li === 0 ? 1 : 1);
       // swing forward = rotation about -X; knee flexion = +X; foot keeps level (+ toe-off)
       this.pose(`thigh${L}` as BoneName, -hip, 0, -abduct * 0.9);
@@ -543,13 +581,16 @@ export class Astronaut {
     const sway = Math.sin(this.phase) * 0.035 * g * (1 - this.runBlend);
     const targetLean = THREE.MathUtils.clamp(fwd * 0.07, -0.12, 0.22) + this.crouchBlend * 0.28 + this.airBlend * 0.05;
     this.lean += (targetLean - this.lean) * Math.min(1, dt * 4);
+    this.lean += (-0.12 - this.lean) * sb;
     this.pose('pelvis', this.lean * 0.4, sway * 0.5, 0);
     const look = THREE.MathUtils.clamp(-input.pitch, -0.9, 1.1);
     this.pose('spine', this.lean * 0.5 + look * 0.16 - this.torsoAng * 0.5, -sway * 0.8, 0);
     this.pose('chest', this.lean * 0.3 + look * 0.26 + breathe * 2 - this.torsoAng, -sway * 0.6, Math.sin(this.phase) * 0.02 * g);
 
     // ---- weapon (placed first; arms reach for it after the body pose) ------------------------------
-    this.armBlend += ((this.armed && !this.dead ? 1 : 0) - this.armBlend) * Math.min(1, dt * 5);
+    const hold = this.armed && !this.dead && !input.seated;
+    for (const t of this.tools) t.blend += ((hold && t.obj === this.weapon ? 1 : 0) - t.blend) * Math.min(1, dt * 5);
+    this.armBlend = this.tools.find((t) => t.obj === this.weapon)?.blend ?? 0;
     // recoil springs (critically-ish damped)
     const sub = 4;
     for (let i = 0; i < sub; i++) {
@@ -591,6 +632,7 @@ export class Astronaut {
   private armIK(w: number) {
     if (!this.weapon || !this.weaponDef || w < 0.01) {
       this.armPrev = {};
+      this.graspPick = {};
       return;
     }
     this.model.updateMatrixWorld(true);
@@ -640,6 +682,20 @@ export class Astronaut {
         if (cost < best.cost) best = { sign, roll, cost };
       }
     }
+    // Hysteresis: keep last frame's grasp (following its optimum as it drifts) unless another
+    // is clearly better. Two grasps of similar cost used to trade places twice per stride, and
+    // while the arm eased from one to the other the hand was off the handle (up to 16 cm).
+    const prev = this.graspPick[key];
+    if (prev) {
+      let keep = { sign: prev.sign, roll: prev.roll, cost: this.graspCost(U, F, H, grip, prop, modelQ, key, prev.sign, prev.roll) };
+      for (const dr of [-0.07, 0.07]) {
+        const roll = wrapPi(prev.roll + dr);
+        const cost = this.graspCost(U, F, H, grip, prop, modelQ, key, prev.sign, roll);
+        if (cost < keep.cost) keep = { sign: prev.sign, roll, cost };
+      }
+      if (best.cost > keep.cost - GRASP_SWITCH) best = keep;
+    }
+    this.graspPick[key] = { sign: best.sign, roll: best.roll };
     return best;
   }
 
@@ -837,6 +893,8 @@ function findBone(root: THREE.Object3D, name: string): THREE.Bone | null {
   return found;
 }
 
+/** How much better (grasp cost units ≈ radians of wrist discomfort) another grasp must be to switch. */
+const GRASP_SWITCH = 0.45;
 const _wp = new THREE.Vector3();
 const _wq = new THREE.Quaternion();
 const _wq2 = new THREE.Quaternion();

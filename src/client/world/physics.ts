@@ -31,7 +31,9 @@ export class Physics {
     private pool: TerrainWorkerPool,
     private terrain: LunarTerrain,
   ) {
-    this.world = new RAPIER.World({ x: 0, y: 0, z: 0 });
+    // Earth-standard world gravity; dynamic bodies scale it to their celestial body (Debris,
+    // ship cargo use gravityScale = g / 9.81). Characters are kinematic and do their own gravity.
+    this.world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
   }
 
   get rapier() {

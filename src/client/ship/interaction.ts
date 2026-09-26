@@ -8,6 +8,8 @@ export interface InteractionSink {
   interact(ship: ShipClient, ctl: number): void;
   /** Repair tool tick on a panel (dt seconds of welding). */
   repair(ship: ShipClient, panel: number, dt: number): void;
+  /** Sit in a seat. */
+  sit(ship: ShipClient, seat: number): void;
 }
 
 export interface PromptInfo {
@@ -38,6 +40,8 @@ export class Interaction {
   private outlineKey = '';
   private tick = 0;
   private sparkT = 0;
+  private tool = false;
+  private seated = false;
 
   constructor(
     scene: THREE.Scene,
@@ -59,7 +63,12 @@ export class Interaction {
   }
 
   /** Aim, highlight, weld. Returns what the helmet HUD should say about the target. */
-  update(dt: number, ctx: { camera: THREE.Camera; eye: THREE.Vector3; hand: THREE.Vector3; ships: ShipClient[]; holdRepair: boolean; now: number; disabled: boolean }): PromptInfo | null {
+  /**
+   * `tool`: the welder is in hand (its tip is `hand`); `holdRepair`: its trigger is held.
+   */
+  update(dt: number, ctx: { camera: THREE.Camera; eye: THREE.Vector3; hand: THREE.Vector3; ships: ShipClient[]; tool: boolean; holdRepair: boolean; now: number; disabled: boolean; seated: boolean }): PromptInfo | null {
+    this.tool = ctx.tool;
+    this.seated = ctx.seated;
     const { camera, eye, ships } = ctx;
     const origin = camera.getWorldPosition(new THREE.Vector3());
     const dir = camera.getWorldDirection(new THREE.Vector3());
@@ -73,12 +82,12 @@ export class Interaction {
         if (h && (!best || h.dist < best.dist)) best = { ...h, ship, inReach: false };
       }
     }
-    if (best) best.inReach = best.point.distanceTo(eye) <= (best.kind === 'control' ? REACH.control : REACH.repair);
+    if (best) best.inReach = best.point.distanceTo(eye) <= (best.kind === 'panel' ? REACH.repair : REACH.control);
     this.target = best;
 
     // welding
     const t = best;
-    const canWeld = !!t && t.kind === 'panel' && t.inReach && ctx.holdRepair && t.ship.sim.hp[t.index] < t.ship.sim.def.panels[t.index].maxHp;
+    const canWeld = !!t && t.kind === 'panel' && t.inReach && ctx.tool && ctx.holdRepair && t.ship.sim.hp[t.index] < t.ship.sim.def.panels[t.index].maxHp;
     this.repairing = canWeld;
     if (canWeld) {
       this.tick += dt;
@@ -96,7 +105,13 @@ export class Interaction {
   /** Click / E. True when it acted on a control (so the click does not also fire). */
   use(now: number): boolean {
     const t = this.target;
-    if (!t || t.kind !== 'control' || !t.inReach) return false;
+    if (!t || !t.inReach) return false;
+    if (t.kind === 'seat') {
+      if (this.seated) return false;
+      this.sink.sit(t.ship, t.index);
+      return true;
+    }
+    if (t.kind !== 'control') return false;
     const c = t.ship.sim.def.controls[t.index];
     const reason = t.ship.sim.blocked(c);
     t.ship.view.pressed(t.index);
@@ -141,6 +156,15 @@ export class Interaction {
     if (!t) return;
     const M = t.ship.view.root.matrixWorld;
     const deniedHere = this.denied && this.denied.until > now && this.denied.key === `${t.ship.id}:${t.index}`;
+    if (t.kind === 'seat') {
+      const st = t.ship.sim.def.seats[t.index];
+      const F = new THREE.Matrix4().compose(new THREE.Vector3(st.root[0], 0.72, st.root[2]), new THREE.Quaternion().setFromEuler(new THREE.Euler(0, st.yaw, 0)), new THREE.Vector3(0.62, 0.95, 0.66));
+      this.box.matrix.multiplyMatrices(M, F);
+      this.box.matrixWorld.copy(this.box.matrix);
+      (this.box.material as THREE.LineBasicMaterial).color.set(t.inReach ? 0x4fd8f0 : 0x2a6f80);
+      this.box.visible = !this.seated;
+      return;
+    }
     if (t.kind === 'control') {
       const c = t.ship.sim.def.controls[t.index];
       const F = new THREE.Matrix4().makeBasis(new THREE.Vector3(...c.u), new THREE.Vector3(...c.v), new THREE.Vector3(...c.n)).setPosition(...c.c);
@@ -184,6 +208,10 @@ export class Interaction {
   private prompt(t: Target, now: number): PromptInfo {
     const sim = t.ship.sim;
     const denied = this.denied && this.denied.until > now && this.denied.key === `${t.ship.id}:${t.index}` ? this.denied.text : null;
+    if (t.kind === 'seat') {
+      const st = sim.def.seats[t.index];
+      return { title: st.name, state: this.seated ? 'SENTADO' : 'LIBRE', tone: 'on', hint: this.seated ? '[E] / [ESPACIO] levantarse' : t.inReach ? '[E] / [CLIC] sentarse' : 'Acércate para sentarte' };
+    }
     if (t.kind === 'control') {
       const c = sim.def.controls[t.index];
       const v = sim.sw[c.key] ?? 0;
@@ -196,7 +224,7 @@ export class Interaction {
     const r = hp / p.maxHp;
     const conduits = p.conduits.map((id) => sim.def.subsystems.find((s) => s.id === id)!.label).join(', ');
     const state = t.hole ? (hp > 0 ? `RECONSTRUYENDO ${Math.round((hp / SOLID_HP) * 100)}%` : 'DESTRUIDO') : `${Math.round(r * 100)}%`;
-    const hint = !t.inReach ? 'Acércate para reparar' : hp >= p.maxHp ? 'Íntegro' : this.repairing ? 'Soldando…' : '[MANTÉN E] reparar';
+    const hint = !t.inReach ? 'Acércate para reparar' : hp >= p.maxHp ? 'Íntegro' : this.repairing ? 'Soldando…' : this.tool ? '[MANTÉN CLIC] soldar' : 'Saca la soldadora [2] para reparar';
     return {
       title: `Panel ${p.id} · ${KIND[p.kind]}${conduits ? ` · conducto ${conduits}` : ''}`,
       state,

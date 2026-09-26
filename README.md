@@ -44,6 +44,10 @@ terminal. Alternativas: redirigir el puerto TCP 3000 del router, o una VPN tipo 
 | Mayús | trote lunar |
 | Espacio | saltar (≈1,3 m, 2,5 s en el aire) |
 | C / Ctrl | agacharse |
+| 1 / 2 | lanzacohetes / soldadora (otra vez: guardarla) · X sacar / guardar |
+| Clic izq. | disparar · con la soldadora, mantener sobre un panel: repararlo |
+| E (o clic) | accionar el mando que miras · sentarse / levantarse en un asiento |
+| Clic der. (mantener) · Rueda | zoom (la rueda en 1ª persona; en 3ª, distancia) |
 | L | luces del casco (el otro jugador las ve) |
 | V | primera / tercera persona |
 | Alt + ratón | mirar alrededor en tercera persona |
@@ -54,6 +58,15 @@ terminal. Alternativas: redirigir el puerto TCP 3000 del router, o una VPN tipo 
 Si va lento, elige **Calidad: Baja** en la pantalla de inicio.
 
 ## Qué hay dentro
+
+- **Nave de carga *Selene* (SLN-01)** aparcada junto al punto de aterrizaje, con la rampa bajada: cabina,
+  pasillo de sistemas y bodega. **Cada pared, ventana, suelo y mamparo es un panel** con su integridad: los
+  cohetes lo abollan y lo revientan (hueco real, se puede pasar), la **soldadora** lo reconstruye. **Cada
+  botón funciona**: reactor, 6 disyuntores, luces por zona, navegación, baliza, focos, rampa, puertas,
+  escudo térmico (persianas sobre el cristal), tren (con enclavamiento), alarma general; pantallas con el
+  estado de sistemas, mapa del casco y distribución de energía. Los conductos pasan por detrás de paneles
+  concretos: si revienta uno, su subsistema se queda sin energía hasta repararlo. Cajas sueltas con física,
+  asientos. El servidor es autoritativo y sincroniza todo entre los jugadores.
 
 - **Astronauta** modelado, riggeado y texturizado por código en Blender headless
   (`tools/blender/astronaut.py`): traje con fuelles en codos y rodillas, costuras y arrugas horneadas

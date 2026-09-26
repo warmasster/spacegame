@@ -6,6 +6,7 @@ import { rayBox, rayPrism, type V3 } from '../../shared/ship/geom';
 import type { SubsystemId } from '../../shared/ship/def';
 import type { Particles } from '../fx/particles';
 import type { Physics } from '../world/physics';
+import { ShipCargo } from './cargo';
 import { ShipPhysics } from './physics';
 import type { ShipAnimState } from './screens';
 import { ShipView } from './view';
@@ -18,7 +19,7 @@ const MOVERS: Record<string, { rate: number; bus: SubsystemId }> = {
 };
 
 export interface ShipHit {
-  kind: 'control' | 'panel';
+  kind: 'control' | 'panel' | 'seat';
   index: number;
   /** Panel is a hole (target for rebuilding). */
   hole: boolean;
@@ -33,6 +34,7 @@ export interface ShipDeps {
   ground: { height(x: number, z: number): number };
   particles: Particles;
   debris: Debris;
+  gravity: number;
 }
 
 const _o = new THREE.Vector3();
@@ -47,6 +49,7 @@ export class ShipClient {
   readonly view: ShipView;
   readonly physics: ShipPhysics;
   readonly anim: ShipAnimState;
+  readonly cargo: ShipCargo;
   private time = 0;
   private sparkT = 0;
   private toShip = new THREE.Matrix4();
@@ -61,6 +64,8 @@ export class ShipClient {
     const ground = (x: number, z: number) => deps.ground.height(x, z);
     this.view = new ShipView(this.sim, deps.csm, ground);
     this.physics = new ShipPhysics(deps.physics, this.sim, ground);
+    const m = this.view.mats;
+    this.cargo = new ShipCargo(deps.physics, def.cargo, this.view.root.matrixWorld, snap.yaw, deps.gravity, { orange: m.crate, grey: m.crate2, strap: m.dark });
     const sw = this.sim.sw;
     // late joiners see things where they already are, no replayed travel
     this.anim = { doors: Object.fromEntries(def.doors.map((d) => [d.key, sw[d.key] ?? 0])), ramp: sw[def.ramp.key] ?? 0, shield: sw[def.shield.key] ?? 0 };
@@ -89,6 +94,7 @@ export class ShipClient {
     });
     if (flipped.length) {
       this.physics.syncPanels();
+      this.cargo.wake();
       this.view.rebuildPanels();
       for (const i of flipped) {
         if (!this.sim.hole(i)) continue;
@@ -153,6 +159,7 @@ export class ShipClient {
   /** Once per frame: visuals and ambient effects. */
   frame(dt: number) {
     this.time += dt;
+    this.cargo.sync();
     this.view.update(dt, this.time, { ...this.anim, ramp: smooth(this.anim.ramp) });
     // damaged panels spit sparks now and then; cut conduits arc
     this.sparkT -= dt;
@@ -209,6 +216,16 @@ export class ShipClient {
       if (t < 0 || t > tOcc + 0.04 || (best && t >= best.dist)) continue;
       best = { kind: 'control', index: c.index, hole: false, point: world(t), normal: new THREE.Vector3(...c.n).transformDirection(M), dist: t };
     }
+    for (let i = 0; i < def.seats.length; i++) {
+      const st = def.seats[i];
+      const cs = Math.cos(st.yaw);
+      const sn = Math.sin(st.yaw);
+      // hit box around the seat pan and backrest (a little behind the root, toward the backrest)
+      const f = { c: [st.root[0] + sn * 0.05, 0.75, st.root[2] + cs * 0.05] as V3, u: [cs, 0, -sn] as V3, v: [0, 1, 0] as V3, n: [sn, 0, cs] as V3 };
+      const t = rayBox(f, [0.32, 0.5, 0.36], O, D, max);
+      if (t < 0 || t > tOcc + 0.05 || (best && t >= best.dist)) continue;
+      best = { kind: 'seat', index: i, hole: false, point: world(t), normal: new THREE.Vector3(0, 1, 0), dist: t };
+    }
     if (best) return best;
     if (occ && occ.panel >= 0) {
       const p = def.panels[occ.panel];
@@ -233,7 +250,7 @@ export class ShipClient {
     const len = d.length();
     if (len < 1e-6) return null;
     d.divideScalar(len);
-    const h = this.physics.castRay(a, d, len);
+    const h = this.physics.castRay(a, d, len, (handle) => this.cargo.handles.has(handle));
     return h ? a.clone().addScaledVector(d, h.t) : null;
   }
 
@@ -244,6 +261,12 @@ export class ShipClient {
     if (len < 1e-4) return null;
     const h = this.physics.castRay(from, d.divideScalar(len), len);
     return h ? h.t : null;
+  }
+
+  /** Seat pose in the world: root position (feet) and body yaw. */
+  seatPose(i: number) {
+    const st = this.sim.def.seats[i];
+    return { pos: new THREE.Vector3(...st.root).applyMatrix4(this.view.root.matrixWorld), yaw: this.sim.place.yaw + st.yaw, exit: new THREE.Vector3(...st.exit).applyMatrix4(this.view.root.matrixWorld) };
   }
 
   /** Compartment containing a world point, if any. */

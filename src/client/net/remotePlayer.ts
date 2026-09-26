@@ -24,6 +24,8 @@ export class RemotePlayer {
   jetting = false;
   dead = false;
   hp = 100;
+  seated = false;
+  welding = false;
   private buffer: Sample[] = [];
   private hasState = false;
 
@@ -73,7 +75,10 @@ export class RemotePlayer {
     this.lamps = (s.f & StateFlags.Lamps) !== 0;
     this.jetting = (s.f & StateFlags.Jetpack) !== 0;
     this.astronaut.setDead(this.dead);
+    this.astronaut.equip((s.f & StateFlags.Welder) !== 0 ? 'welder' : 'launcher');
     this.astronaut.setArmed((s.f & StateFlags.Armed) !== 0);
+    this.seated = (s.f & StateFlags.Seated) !== 0;
+    this.welding = (s.f & StateFlags.Welding) !== 0;
 
     const root = this.astronaut.root;
     root.visible = true;
@@ -90,6 +95,7 @@ export class RemotePlayer {
       pitch: this.pitch,
       grounded: this.grounded,
       crouch: this.crouch,
+      seated: this.seated,
     });
   }
 

@@ -133,6 +133,24 @@ export interface ZoneDef {
   lightKey: string;
 }
 
+/** A seat: where the astronaut's feet/root go when sitting, facing (ship yaw), and where it stands up. */
+export interface SeatDef {
+  id: string;
+  name: string;
+  root: V3;
+  yaw: number;
+  exit: V3;
+}
+
+/** Loose cargo: a dynamic box (centre, half extents, yaw, mass). */
+export interface CargoDef {
+  pos: V3;
+  half: V3;
+  yaw: number;
+  mass: number;
+  paint: 'orange' | 'grey';
+}
+
 export interface ExtLightDef {
   kind: 'nav-red' | 'nav-green' | 'strobe' | 'beacon' | 'landing';
   pos: V3;
@@ -154,6 +172,8 @@ export interface ShipDef {
   shield: { key: string; plates: ShieldPlate[] };
   gear: { key: string; legs: V3[] };
   zones: ZoneDef[];
+  seats: SeatDef[];
+  cargo: CargoDef[];
   extLights: ExtLightDef[];
   subsystems: SubsystemDef[];
   defaults: Record<string, number>;

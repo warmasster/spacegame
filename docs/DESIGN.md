@@ -160,6 +160,12 @@ Decisiones tomadas para el MVP:
 Incluido: dos astronautas con animación procedural, FPV con cuerpo visible y 3ª persona, gravedad lunar,
 física, terreno con LOD, sombras, cielo real, HUD de casco, luces del casco sincronizadas, nombres.
 
+**v0.3 — nave caminable (fase 1, en tierra):** nave de carga modular definida por datos
+(`src/shared/ship/`): 126 paneles rompibles y reparables, 26 mandos, energía reactor → disyuntores →
+subsistemas con conductos, puertas, rampa, escudo térmico visible desde fuera, tren con enclavamiento,
+asientos, carga suelta con física, pantallas. Servidor autoritativo del estado de la nave. Falta: vuelo
+(fase 2), marco de referencia móvil, presión por compartimento, replicar la física de la carga.
+
 ## 12. Decisiones abiertas
 
 1. **Motor / plataforma** (web, Godot, Unity, Unreal).

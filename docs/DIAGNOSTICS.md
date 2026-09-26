@@ -46,6 +46,8 @@ Salida en `tools/diag/out/` (ignorada por git).
 | `npm run diag:grasp` | Agarre del arma en 4 poses: separación palma–empuñadura, orientación de la palma, dedos cruzando el mango, **flexión y giro de muñeca**, medidos sobre la malla renderizada del guante. Primeros planos de cada mano + `grasp_sheet.png` | palma > 3,5 cm, mal orientada, o muñeca > 45° |
 | `npm run diag:pose` | Capturas del astronauta desde cámaras en órbita (`orbit,zoom,andar,armado;…`, `orbit -10` = primera persona) | — (revisión visual) |
 | `npm run diag:terrain` | Capturas de terreno desde cámaras libres (`x,z,yaw,pitch,altura;…`) | — (revisión visual) |
+| `npm run diag:ship` | Nave (`?offline`): cada mando hace lo suyo o se niega con motivo (enclavamiento del tren), reactor/disyuntores cortan sus buses, puertas/rampa/escudo viajan y sus colisiones siguen, explosiones abren brechas (sin colisión, abiertas a rayos, alarma), conducto cortado deja sin energía, soldadora + clic reconstruye el panel (el lanzacohetes no), cajas dinámicas en reposo y lanzadas por una explosión, sentarse/levantarse, zoom, clic por la mirilla, **subir la rampa andando**. Capturas `ship_*.png` + `ship_sheet.png`, informe `ship_report.txt`. `node tools/diag/ship.mjs views\|checks` para una parte | alguna comprobación falla o hay errores de página/shader |
+| `npm run diag:ship:net` | Dos clientes reales contra el servidor (**reinícialo** si cambió `src/server`): A pulsa la rampa → B la ve; impacto de cohete de A → el servidor daña el panel para ambos; A suelda (con la soldadora en mano) → B ve subir la integridad y chispas | alguna comprobación falla |
 
 ## API de automatización (consola / Playwright, con `?manual&offline`)
 
@@ -60,6 +62,10 @@ game.debug                               // controlador, cámara, input (setKey)
 ```
 
 URL: `?cam=x,z,yaw,pitch,h` (cámara libre), `?nobaked`, `?nomorph`, `?skirts`, `?ao`.
+
+Naves: `game.ships[0].sim` (estado autoritativo espejado: `sw`, `hp`, `powered(bus)`, `blocked(ctl)`),
+`game.shipControl(id)`, `game.blast(p)` (offline), `game.ships[0].physics.castRay(o, d, max)`,
+`game.sitDown(ship, i)` / `game.standUp()`, `game.me.equip('welder' | 'launcher')`.
 
 ## Añadir un diagnóstico nuevo
 

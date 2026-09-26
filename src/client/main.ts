@@ -41,7 +41,7 @@ menu.innerHTML = `
     <section class="sc-panel hidden" data-panel="controls">
       <h2><span>02</span>CONTROLES</h2>
       <div class="sc-keys">
-        ${[['W A S D','moverse'],['Mayús','trote lunar'],['Espacio','saltar · mantener en el aire: jetpack'],['Clic izq. / F','disparar · clic en un mando: pulsarlo'],['E','accionar mando · mantener sobre un panel: reparar'],['X / 1','sacar / guardar arma'],['C / Ctrl','agacharse'],['L','luces del casco'],['V','primera / tercera persona'],['Alt + ratón','mirar alrededor (3ª)'],['H','ayuda en pantalla'],['Esc','menú']].map(([k, v]) => `<div><kbd>${k}</kbd><span>${v}</span></div>`).join('')}
+        ${[['W A S D','moverse'],['Mayús','trote lunar'],['Espacio','saltar · mantener en el aire: jetpack'],['Clic izq. / F','disparar · con la soldadora: mantener sobre un panel para repararlo'],['E / clic en un mando','accionarlo · en un asiento: sentarse / levantarse'],['1 / 2','lanzacohetes / soldadora'],['X','sacar / guardar herramienta'],['Rueda · clic der.','zoom (1ª persona) · zoom mantenido'],['C / Ctrl','agacharse'],['L','luces del casco'],['V','primera / tercera persona'],['Alt + ratón','mirar alrededor (3ª)'],['H','ayuda en pantalla'],['Esc','menú']].map(([k, v]) => `<div><kbd>${k}</kbd><span>${v}</span></div>`).join('')}
       </div>
     </section>
     <section class="sc-panel hidden" data-panel="about">
@@ -65,7 +65,7 @@ pause.innerHTML = `<div class="sc-pause">
   <small>EVA EN PAUSA · CONTROL LOCAL</small>
   <button type="button" class="sc-cta" id="resume"><span>REANUDAR</span><b>▸</b></button>
   <button type="button" class="sc-ghost" id="leave">ABANDONAR EVA</button>
-  <p>WASD moverse · Espacio saltar/jetpack · Clic disparar/pulsar · E accionar/reparar · X arma · V cámara · L luces · H ayuda</p>
+  <p>WASD moverse · Espacio saltar/jetpack · Clic disparar/soldar · E accionar/sentarse · 1/2 herramienta · clic der. zoom · V cámara · L luces · H ayuda</p>
 </div>`;
 ui.appendChild(pause);
 
