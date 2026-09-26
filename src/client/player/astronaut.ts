@@ -238,6 +238,55 @@ export class Astronaut {
     chest.add(this.lamp, this.lampTarget);
     this.eyeLocal.copy(EYE).applyMatrix4(chestInv);
     this.addNeckSeal();
+    this.calibrateHands();
+  }
+
+  /**
+   * Measure each glove in its bone's local space from the mesh itself (no hand-tuned numbers):
+   * the palm pad (GloveGrip material) centroid gives the palm contact point and palm normal, the
+   * bone axis gives the finger direction. Grasp IK then places this frame onto any grip.
+   */
+  readonly palm: Record<'L' | 'R', { point: THREE.Vector3; normal: THREE.Vector3; finger: THREE.Vector3 }> = {
+    L: { point: new THREE.Vector3(), normal: new THREE.Vector3(), finger: new THREE.Vector3(0, 1, 0) },
+    R: { point: new THREE.Vector3(), normal: new THREE.Vector3(), finger: new THREE.Vector3(0, 1, 0) },
+  };
+  private calibrateHands() {
+    this.model.updateMatrixWorld(true);
+    const hw = { L: this.rig.handL.bone.getWorldPosition(new THREE.Vector3()), R: this.rig.handR.bone.getWorldPosition(new THREE.Vector3()) };
+    const verts: Record<'L' | 'R', { pad: THREE.Vector3[]; all: THREE.Vector3[] }> = { L: { pad: [], all: [] }, R: { pad: [], all: [] } };
+    this.model.traverse((o) => {
+      const m = o as THREE.SkinnedMesh;
+      const name = (m.material as THREE.Material | undefined)?.name;
+      if (!m.isSkinnedMesh || (name !== 'GloveGrip' && name !== 'Glove')) return;
+      m.skeleton.update();
+      const pos = m.geometry.getAttribute('position');
+      for (let i = 0; i < pos.count; i++) {
+        const v = m.getVertexPosition(i, new THREE.Vector3()).applyMatrix4(m.matrixWorld);
+        const side = handOfVertex(m, i, this.rig.handL.bone, this.rig.handR.bone);
+        if (!side) continue;
+        verts[side].all.push(v);
+        if (name === 'GloveGrip') verts[side].pad.push(v);
+      }
+    });
+    const mean = (a: THREE.Vector3[]) => a.reduce((s, v) => s.add(v), new THREE.Vector3()).divideScalar(Math.max(1, a.length));
+    for (const side of ['L', 'R'] as const) {
+      const vs = verts[side];
+      if (!vs.all.length) continue;
+      const wrist = hw[side];
+      const bone = this.rig[`hand${side}`].bone;
+      const inv = new THREE.Matrix4().copy(bone.matrixWorld).invert();
+      const p = this.palm[side];
+      const sorted = vs.all.slice().sort((a, b) => b.distanceTo(wrist) - a.distanceTo(wrist));
+      const tips = mean(sorted.slice(0, Math.max(1, Math.floor(sorted.length * 0.15))));
+      const pad = vs.pad.filter((v) => v.distanceTo(wrist) < 0.09);
+      const pc = mean(pad.length ? pad : vs.pad);
+      const core = mean(vs.all.filter((v) => v.distanceTo(wrist) < 0.09));
+      // local frame measured from the mesh: finger axis, palm normal, palm contact point
+      p.finger.copy(tips).applyMatrix4(inv).normalize();
+      p.point.copy(pc).applyMatrix4(inv);
+      p.normal.copy(pc).sub(core).transformDirection(inv);
+      p.normal.addScaledVector(p.finger, -p.normal.dot(p.finger)).normalize();
+    }
   }
 
   private addNeckSeal() {
@@ -374,6 +423,11 @@ export class Astronaut {
   }
 
   /** Eye position in world space (inside the helmet), following the chest. */
+  /** World position of a rig bone (diagnostics / camera framing). */
+  partPosition(part: BoneName, out: THREE.Vector3) {
+    return this.rig[part].bone.getWorldPosition(out);
+  }
+
   eyePosition(out: THREE.Vector3) {
     const chest = this.rig.chest.bone;
     chest.updateWorldMatrix(true, false);
@@ -531,19 +585,26 @@ export class Astronaut {
       const U = this.rig[ua].bone;
       const F = this.rig[fa].bone;
       const H = this.rig[ha].bone;
-      // grasp geometry in world space: handle axis, approach side, palm direction
+      const palm = this.palm[side > 0 ? 'L' : 'R'];
+      // grasp geometry in world space: handle axis, approach side
       const gc = prop.localToWorld(_t.copy(grip.pos));
       const axis = _ga.copy(grip.axis).transformDirection(prop.matrixWorld);
       const out = _gs.copy(grip.side).transformDirection(prop.matrixWorld);
-      // the hand runs across the handle (knuckles forward), palm against its side
-      const handDir = _hd.copy(fwdW).addScaledVector(axis, -fwdW.dot(axis)).normalize();
+      out.addScaledVector(axis, -out.dot(axis)).normalize();
+      // target hand frame: fingers wrap across the handle (perpendicular to axis and to the
+      // approach side), palm faces the handle. Wrap direction goes over the top of the handle.
+      const fingerW = _hd.crossVectors(axis, out);
+      if (fingerW.dot(fwdW) + fingerW.y * 0.1 < 0) fingerW.negate(); // knuckles toward the muzzle
+      const palmW = _pw.copy(out).negate();
+      const handQ = frameQuat(palm.finger, palm.normal, fingerW, palmW, _hq);
+      // wrist target so the measured palm point sits on the handle surface
+      const scale = H.getWorldScale(_sc).x;
+      const T = _tw.copy(palm.point).multiplyScalar(scale).applyQuaternion(handQ).negate().add(gc).addScaledVector(out, grip.radius);
       const S = U.getWorldPosition(_s);
       const E0 = F.getWorldPosition(_e0);
       const H0 = H.getWorldPosition(_h0);
       const L1 = S.distanceTo(E0);
       const L2 = E0.distanceTo(H0);
-      // wrist sits behind the handle by ~palm length, offset out by the handle radius
-      const T = _tw.copy(gc).addScaledVector(handDir, -0.075).addScaledVector(out, grip.radius + 0.018);
       const toT = _d.subVectors(T, S);
       const dist = Math.min(toT.length(), L1 + L2 - 0.002);
       const dir = toT.normalize();
@@ -557,18 +618,65 @@ export class Astronaut {
       this.model.updateMatrixWorld(true);
       this.aimBone(F, H.getWorldPosition(_h0), Hn, F.getWorldPosition(_s2), w);
       this.model.updateMatrixWorld(true);
-      // orient the hand along the handle crossing direction
-      const hp = H.getWorldPosition(_s2);
-      const tail = this.handTip(H, _h0);
-      this.aimBone(H, tail, _e.copy(hp).add(handDir), hp, w);
+      // full hand orientation (direction + twist), not just pointing
+      const parentQ = H.parent!.getWorldQuaternion(_q6).invert();
+      H.quaternion.slerp(parentQ.multiply(handQ), w);
       this.model.updateMatrixWorld(true);
+      this.grasp[side > 0 ? 'L' : 'R'] = { gc: gc.clone(), axis: axis.clone(), out: out.clone(), radius: grip.radius };
     }
   }
 
-  /** A point along the hand bone (toward the fingers), world space. */
-  private handTip(H: THREE.Bone, out: THREE.Vector3) {
-    return out.set(0, 0.12, 0).applyMatrix4(H.matrixWorld);
+  /** Last grasp targets (world), for diagnostics: see graspReport(). */
+  private grasp: Partial<Record<'L' | 'R', { gc: THREE.Vector3; axis: THREE.Vector3; out: THREE.Vector3; radius: number }>> = {};
+
+  /**
+   * Self-check of the weapon hold: for each hand, how far the palm is from the handle surface
+   * (cm), how well it faces the handle and whether the fingers cross it. Used by diag tools.
+   */
+  graspReport() {
+    // Independent of the IK's own assumptions: measure the skinned glove mesh as rendered.
+    this.model.updateMatrixWorld(true);
+    const r: Record<string, { gapCm: number; palmFacingDeg: number; fingerCrossDeg: number; ok: boolean }> = {};
+    const verts: Record<'L' | 'R', { pad: THREE.Vector3[]; all: THREE.Vector3[] }> = { L: { pad: [], all: [] }, R: { pad: [], all: [] } };
+    const hw = { L: this.rig.handL.bone.getWorldPosition(new THREE.Vector3()), R: this.rig.handR.bone.getWorldPosition(new THREE.Vector3()) };
+    this.model.traverse((o) => {
+      const m = o as THREE.SkinnedMesh;
+      const name = (m.material as THREE.Material | undefined)?.name;
+      if (!m.isSkinnedMesh || (name !== 'GloveGrip' && name !== 'Glove')) return;
+      const pos = m.geometry.getAttribute('position');
+      for (let i = 0; i < pos.count; i += 2) {
+        const v = m.getVertexPosition(i, new THREE.Vector3()).applyMatrix4(m.matrixWorld);
+        const side = handOfVertex(m, i, this.rig.handL.bone, this.rig.handR.bone);
+        if (!side) continue;
+        verts[side].all.push(v);
+        if (name === 'GloveGrip') verts[side].pad.push(v);
+      }
+    });
+    const mean = (a: THREE.Vector3[]) => a.reduce((s, v) => s.add(v), new THREE.Vector3()).divideScalar(Math.max(1, a.length));
+    for (const side of ['L', 'R'] as const) {
+      const g = this.grasp[side];
+      if (!g || !verts[side].all.length) continue;
+      const wrist = hw[side];
+      // fingertips = the 15% of glove vertices farthest from the wrist
+      const sorted = verts[side].all.slice().sort((a, b) => b.distanceTo(wrist) - a.distanceTo(wrist));
+      const tips = mean(sorted.slice(0, Math.max(1, Math.floor(sorted.length * 0.15))));
+      const finger = tips.clone().sub(wrist).normalize();
+      // palm = pad vertices nearer the wrist than the tips
+      const pad = verts[side].pad.filter((v) => v.distanceTo(wrist) < 0.09);
+      const pc = mean(pad.length ? pad : verts[side].pad);
+      const rel = pc.clone().sub(g.gc);
+      const radial = rel.addScaledVector(g.axis, -rel.dot(g.axis));
+      const gap = radial.length() - g.radius;
+      // palm faces the handle: palm point sits on the handle side of the bone axis
+      const handC = mean(verts[side].all.filter((v) => v.distanceTo(wrist) < 0.09));
+      const palmDir = pc.clone().sub(handC).normalize();
+      const facing = THREE.MathUtils.radToDeg(palmDir.angleTo(radial.clone().negate().normalize()));
+      const cross = THREE.MathUtils.radToDeg(Math.asin(Math.min(1, Math.abs(finger.dot(g.axis)))));
+      r[side] = { gapCm: +(gap * 100).toFixed(1), palmFacingDeg: +facing.toFixed(0), fingerCrossDeg: +cross.toFixed(0), ok: Math.abs(gap) < 0.035 && facing < 50 && cross < 30 };
+    }
+    return r;
   }
+
 
   /** Rotate `bone` (pivot P) so its child currently at `from` points toward `to`, blended by w. */
   private aimBone(bone: THREE.Bone, from: THREE.Vector3, to: THREE.Vector3, P: THREE.Vector3, w: number) {
@@ -633,6 +741,44 @@ const _q3 = new THREE.Quaternion();
 const _q4 = new THREE.Quaternion();
 const _q5 = new THREE.Quaternion();
 const _q6 = new THREE.Quaternion();
+const _pw = new THREE.Vector3();
+const _hq = new THREE.Quaternion();
+const _sc = new THREE.Vector3();
+const _b1 = new THREE.Matrix4();
+const _b2 = new THREE.Matrix4();
+const _bx = new THREE.Vector3();
+const _by = new THREE.Vector3();
+const _bz = new THREE.Vector3();
+
+/** Which hand bone dominates a skinned vertex (by skin weight), if any. */
+function handOfVertex(m: THREE.SkinnedMesh, i: number, hl: THREE.Bone, hr: THREE.Bone): 'L' | 'R' | null {
+  const si = m.geometry.getAttribute('skinIndex');
+  const sw = m.geometry.getAttribute('skinWeight');
+  let best = -1;
+  let bw = 0;
+  for (let k = 0; k < 4; k++) {
+    const w = sw.getComponent(i, k);
+    if (w > bw) {
+      bw = w;
+      best = si.getComponent(i, k);
+    }
+  }
+  const b = m.skeleton.bones[best];
+  return b === hl ? 'L' : b === hr ? 'R' : null;
+}
+
+/** Rotation mapping the orthonormal pair (a1, b1) onto (a2, b2) (b's re-orthogonalised). */
+function frameQuat(a1: THREE.Vector3, b1: THREE.Vector3, a2: THREE.Vector3, b2: THREE.Vector3, out: THREE.Quaternion) {
+  const basis = (a: THREE.Vector3, b: THREE.Vector3, m: THREE.Matrix4) => {
+    _bx.copy(a).normalize();
+    _by.copy(b).addScaledVector(_bx, -b.dot(_bx)).normalize();
+    _bz.crossVectors(_bx, _by);
+    return m.makeBasis(_bx, _by, _bz);
+  };
+  basis(a1, b1, _b1);
+  basis(a2, b2, _b2);
+  return out.setFromRotationMatrix(_b2.multiply(_b1.transpose()));
+}
 
 const wrap = (a: number) => ((a % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
 const smooth = (u: number) => u * u * (3 - 2 * u);

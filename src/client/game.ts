@@ -4,6 +4,7 @@ import { StateFlags, type PlayerInfo, type TerrainEdit, type Vec3 } from '../sha
 import { LANDMARK, LunarTerrain } from '../shared/terrain';
 import { Particles } from './fx/particles';
 import { Rockets } from './fx/rockets';
+import { Scheduler } from '../engine/systems';
 import { FixedLoop } from '../engine/loop';
 import { Debris } from '../engine/debris';
 import { DebugOverlay } from '../engine/debug';
@@ -69,6 +70,8 @@ export class Game {
   private startTime = performance.now();
   private particles!: Particles;
   private prevPos = new THREE.Vector3();
+  /** Registered game systems (see src/engine/systems.ts); `game.systems.list()` from the console. */
+  readonly systems = new Scheduler();
   private loop = new FixedLoop(1 / 60);
   private debris!: Debris;
   private diag!: DebugOverlay;
@@ -84,6 +87,8 @@ export class Game {
   private inspectCam = new URLSearchParams(location.search).get('cam')?.split(',').map(Number) ?? null;
   /** Automation: keep a fixed third-person orbit (no easing back). */
   debugOrbit = false;
+  /** Automation: frame a body part up close ({ part: 'handR', az, el, dist } relative to the body heading). */
+  focusCam: { part: 'handL' | 'handR'; az: number; el: number; dist: number } | null = null;
 
   constructor(private opts: GameOptions) {
     this.pipeline = new RenderPipeline(this.scene, this.camera, { canvas: opts.canvas, quality: opts.quality });
@@ -152,6 +157,7 @@ export class Game {
     this.debris = new Debris(this.physics.rapier, this.physics.world, MOON.gravity, debrisMat);
     this.scene.add(this.debris.mesh);
     this.diag = new DebugOverlay(this.opts.ui, this.scene);
+    this.registerSystems();
     for (const h of this.welcome.health) this.pendingHealth.set(h.id, h.hp);
     window.addEventListener('mousedown', (e) => {
       if (e.button === 0 && this.input.locked) this.fireQueued = true;
@@ -179,6 +185,33 @@ export class Game {
     this.running = true;
     // ?manual → no rAF loop; automation drives the simulation with step()
     if (!new URLSearchParams(location.search).has('manual')) this.frame();
+  }
+
+  /** Fixed-step simulation, in order. New gameplay systems register here (see AGENTS.md). */
+  private registerSystems() {
+    const S = this.systems;
+    S.add({ name: 'physics', phase: 'fixed', order: 10, update: (h) => this.physics.step(h) });
+    S.add({
+      name: 'player',
+      phase: 'fixed',
+      order: 20,
+      update: (h) => {
+        this.prevPos.copy(this.ctl.position);
+        this.ctl.update(h, this.input);
+      },
+    });
+    S.add({ name: 'debris', phase: 'fixed', order: 30, update: (h) => this.debris.update(h) });
+    S.add({
+      name: 'rockets',
+      phase: 'fixed',
+      order: 40,
+      update: (h) => {
+        const up = new THREE.Vector3(0, 0.95, 0);
+        const targets = [...this.remotes.values()].filter((r) => !r.dead).map((r) => ({ id: r.info.id, pos: r.position.clone().add(up) }));
+        targets.push({ id: this.welcome.id, pos: this.ctl.position.clone().add(up) });
+        this.pendingHits.push(...this.rockets.update(h, this.welcome.id, targets));
+      },
+    });
   }
 
   /** Advance `frames` fixed steps; renders only the last one unless `renderAll`. */
@@ -374,15 +407,7 @@ export class Game {
     // fixed-step simulation: physics, character, debris, projectiles
     this.loop.advance(dt, (h) => {
       if (!this.physics.readyAt(this.ctl.position.x, this.ctl.position.z)) return;
-      this.physics.step(h);
-      this.prevPos.copy(this.ctl.position);
-      this.ctl.update(h, input);
-      this.debris.update(h);
-      const targets = [...this.remotes.values()]
-        .filter((r) => !r.dead)
-        .map((r) => ({ id: r.info.id, pos: r.position.clone().add(new THREE.Vector3(0, 0.95, 0)) }));
-      targets.push({ id: this.welcome.id, pos: this.ctl.position.clone().add(new THREE.Vector3(0, 0.95, 0)) });
-      this.pendingHits.push(...this.rockets.update(h, this.welcome.id, targets));
+      this.systems.run('fixed', h);
     });
     this.debris.sync();
     // safety net: never fall through the world
@@ -448,6 +473,17 @@ export class Game {
       this.camera.quaternion.setFromEuler(new THREE.Euler(pitch, yaw, 0, 'YXZ'));
       this.camera.updateMatrixWorld();
     }
+    if (this.focusCam) {
+      const f = this.focusCam;
+      const t = this.me.partPosition(f.part, new THREE.Vector3());
+      const yaw = this.ctl.yaw + f.az;
+      this.camera.position.set(t.x - Math.sin(yaw) * Math.cos(f.el) * f.dist, t.y + Math.sin(f.el) * f.dist, t.z - Math.cos(yaw) * Math.cos(f.el) * f.dist);
+      this.camera.near = 0.02;
+      this.camera.updateProjectionMatrix();
+      this.camera.layers.enableAll();
+      this.camera.lookAt(t);
+      this.camera.updateMatrixWorld();
+    }
     // recoil kicks the view up with the torso spring
     if (this.me.recoilPitch) {
       this.camera.rotateX(this.me.recoilPitch * 0.8);
@@ -493,7 +529,11 @@ export class Game {
     this.diag.frame(dt * 1000);
     this.terrainSys.material.wireframe = this.diag.wireframe;
     this.diag.setPhysicsLines(this.diag.physicsLines ? this.physics.world.debugRender() : null);
+    this.systems.endFrame();
+    const sysMs: Record<string, string> = {};
+    for (const [n, ms] of this.systems.timings) sysMs[`· ${n} ms`] = ms.toFixed(2);
     this.diag.update(this.pipeline.renderer, {
+      ...sysMs,
       'sim steps/frame': this.loop.lastSteps,
       'terrain jobs': this.terrainSys.pendingJobs,
       'rigid bodies': this.physics.world.bodies.len(),
