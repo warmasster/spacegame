@@ -161,7 +161,7 @@ html, body { margin: 0; height: 100%; background: #000; overflow: hidden; color:
 .sc-panel input:focus, .sc-panel select:focus { border-color: var(--holo); box-shadow: 0 0 14px rgba(79, 216, 240, 0.25); }
 .sc-panel select option { background: #031018; }
 .menu .sc-cta, .pause .sc-cta { margin: 0; border-radius: 0; display: flex; justify-content: space-between; align-items: center; padding: 14px 18px; cursor: pointer; border: 0;
-  font: 700 13px/1 var(--mono); letter-spacing: 0.3em; color: #02121a; background: var(--holo);
+  font: 700 13px/1 var(--mono); letter-spacing: 0.3em; color: #fff; background: linear-gradient(90deg, #0e5f73, #1590ad); text-shadow: 0 0 6px rgba(0,0,0,0.5);
   clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 14px 100%, 0 calc(100% - 14px));
   box-shadow: 0 0 22px rgba(79, 216, 240, 0.45); transition: filter 0.15s; }
 .menu .sc-cta:hover, .pause .sc-cta:hover { filter: brightness(1.15); }

@@ -22,7 +22,9 @@ export const MOVE = {
   jetAccel: 3.3,
   jetBurn: 4.5,
   jetRecharge: 7,
-  jetAirAccel: 1.8,
+  jetAirAccel: 4.5,
+  /** Horizontal speed the jetpack can push you to. */
+  jetSpeed: 7,
 };
 
 /**
@@ -116,7 +118,7 @@ export class PlayerController {
     const wantCrouch = input.down('KeyC') || input.down('ControlLeft');
     if (wantCrouch !== this.crouch) this.setCrouch(wantCrouch);
     this.running = input.down('ShiftLeft') && f > 0 && !this.crouch;
-    const speed = this.crouch ? MOVE.crouch : this.running ? MOVE.run : MOVE.walk;
+    const speed = this.jetting ? MOVE.jetSpeed : this.crouch ? MOVE.crouch : this.running ? MOVE.run : MOVE.walk;
     const sy = Math.sin(this.yaw);
     const cy = Math.cos(this.yaw);
     // forward = (-sin, 0, -cos), right = (cos, 0, -sin)

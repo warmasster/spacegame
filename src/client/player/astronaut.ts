@@ -229,6 +229,28 @@ export class Astronaut {
     this.lampTarget.position.applyMatrix4(chestInv);
     chest.add(this.lamp, this.lampTarget);
     this.eyeLocal.copy(EYE).applyMatrix4(chestInv);
+    this.addNeckSeal();
+  }
+
+  private addNeckSeal() {
+    const chest = this.rig.chest.bone;
+    this.model.updateMatrixWorld(true);
+    const inv = new THREE.Matrix4().copy(chest.matrixWorld).invert().multiply(this.model.matrixWorld);
+    const dark = new THREE.MeshStandardMaterial({ color: 0x151618, roughness: 0.6, metalness: 0.3 });
+    const collar = new THREE.Mesh(new THREE.CylinderGeometry(0.162, 0.175, 0.16, 40, 1, true), dark);
+    collar.position.set(0, 1.53, 0.0);
+    const inner = new THREE.Mesh(
+      new THREE.SphereGeometry(0.166, 40, 20, 0, Math.PI * 2, 0, Math.acos((1.585 - 1.672) / 0.166)),
+      new THREE.MeshStandardMaterial({ color: 0x0b0b0c, roughness: 0.8, side: THREE.DoubleSide }),
+    );
+    inner.position.set(0, 1.672, 0.005);
+    for (const m of [collar, inner]) {
+      m.castShadow = true;
+      m.applyMatrix4(inv);
+      chest.add(m);
+      this.helmetMeshes.push(m as THREE.Mesh);
+    }
+    (collar.material as THREE.Material).side = THREE.DoubleSide;
   }
 
   /** Mount a weapon: carried on the right shoulder when armed, slung on the PLSS when holstered. */
@@ -261,10 +283,10 @@ export class Astronaut {
     if (!this.weapon || !this.weaponInv) return;
     const w = smooth(this.armBlend);
     // model space (character right = -X, forward = +Z)
-    _wp.set(-0.23, 1.5, 0.05).lerp(_wp2.set(0.02, 1.33, -0.34), 1 - w);
+    _wp.set(-0.24, 1.5, 0.04).lerp(_wp2.set(0.03, 1.36, -0.47), 1 - w);
     _wp.z -= this.recoilT * this.recoilT * 0.09 * w;
     _wq.setFromEuler(_we.set(-this.recoilT * 0.12 * w, 0, 0));
-    _wq.slerp(_wq2.setFromEuler(_we.set(-1.2, 0, 0.55)), 1 - w);
+    _wq.slerp(_wq2.setFromEuler(_we.set(-1.35, 0, 0.62)), 1 - w);
     this.weapon.position.copy(_wp).applyMatrix4(this.weaponInv);
     this.weapon.quaternion.copy(this.weaponInvQ!).multiply(_wq);
   }
@@ -443,8 +465,8 @@ export class Astronaut {
       // weapon hold: right hand on the grip, left hand steadying the tube
       const w = smooth(this.armBlend) * (1 - this.deadBlend);
       const kick = this.recoilT * this.recoilT * 0.25;
-      const hold = ai === 1 ? [1.05 - kick, -0.22, 1.55] : [1.3 - kick, 0.42, 0.95];
-      const aim = look * 0.5 * w;
+      const hold = ai === 1 ? [0.42 - kick, 0.08, 1.45] : [0.72 - kick, -0.32, 1.2];
+      const aim = look * 0.25 * w;
       this.pose(
         `upperarm${A}` as BoneName,
         -THREE.MathUtils.lerp(shoulderFwd, hold[0] + aim, w),
