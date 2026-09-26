@@ -109,7 +109,7 @@ def build_body(mats):
     n('waist', (0, 0.012, 1.15), (0.192, 0.148), 'belly')
     n('chest', (0, 0.016, 1.29), (0.222, 0.160), 'waist')
     n('upper', (0, 0.020, 1.415), (0.205, 0.148), 'chest')
-    n('neck', (0, 0.020, 1.525), (0.128, 0.122), 'upper')
+    n('neck', (0, 0.018, 1.545), (0.142, 0.136), 'upper')
 
     for s, sx in (('L', 1), ('R', -1)):
         # arm: shoulder → elbow → wrist, extra nodes around the elbow for the convolutes
@@ -281,8 +281,8 @@ def build_helmet(mats):
         ob.modifiers.new('WN', 'WEIGHTED_NORMAL').keep_sharp = True
         return ob
 
-    parts.append(shell(HELMET_R + 0.012, 58, 0.010, mats['Helmet'], 'HelmetShell', c.z - 0.095))
-    visor = shell(HELMET_R + 0.004, 64, 0.004, mats['Visor'], 'Visor', c.z - 0.108, keep_front=True)
+    parts.append(shell(HELMET_R + 0.012, 58, 0.010, mats['Helmet'], 'HelmetShell', c.z - 0.115))
+    visor = shell(HELMET_R + 0.004, 64, 0.004, mats['Visor'], 'Visor', c.z - 0.118, keep_front=True)
     parts.append(visor)
     # dark inner bubble so the visor never shows the void behind it
     bub = shell(HELMET_R - 0.004, 0, 0.003, mats['HelmetInner'], 'Bubble', c.z - 0.11)
@@ -326,8 +326,8 @@ def build_helmet(mats):
     parts.append(mesh_object('CamLens', bm, mats['HelmetDark']))
 
     # neck ring (helmet ↔ torso), anodised
-    parts.append(ring('NeckRing', V(0, 0.01, c.z - 0.118), V(0, 0, 1), 0.118, 0.152, 0.032, mats['Metal'], 0.006, 72))
-    parts.append(ring('NeckRingBand', V(0, 0.01, c.z - 0.118), V(0, 0, 1), 0.150, 0.155, 0.012, mats['AnoBlue'], 0.002, 72))
+    parts.append(ring('NeckRing', V(0, 0.01, c.z - 0.122), V(0, 0, 1), 0.118, 0.166, 0.042, mats['Metal'], 0.007, 72))
+    parts.append(ring('NeckRingBand', V(0, 0.01, c.z - 0.13), V(0, 0, 1), 0.164, 0.17, 0.012, mats['AnoBlue'], 0.002, 72))
     return parts
 
 

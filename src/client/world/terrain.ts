@@ -27,6 +27,9 @@ const SPLIT_FACTOR = 1.5; // > √2 guarantees neighbours differ by at most one 
 const MORPH_GLSL = /* glsl */ `
   vec3 cdlodWorld = (modelMatrix * vec4(transformed, 1.0)).xyz;
   float cdlodK = clamp((distance(cdlodWorld, uViewer) - morph.w * 0.68) / (morph.w * 0.3), 0.0, 1.0);
+  #ifdef DBG_NOMORPH
+  cdlodK = 0.0;
+  #endif
   transformed = mix(transformed, morph.xyz, cdlodK);
 `;
 
@@ -191,7 +194,9 @@ export class TerrainSystem {
           `,
         );
     };
-    if (new URLSearchParams(location.search).has('nobaked')) mat.defines = { ...mat.defines, DBG_NOBAKED: '' };
+    const dbg = new URLSearchParams(location.search);
+    if (dbg.has('nobaked')) mat.defines = { ...mat.defines, DBG_NOBAKED: '' };
+    if (dbg.has('nomorph')) mat.defines = { ...mat.defines, DBG_NOMORPH: '' };
     mat.customProgramCacheKey = () => 'lunar-terrain-v5';
     this.material = mat;
 
@@ -312,6 +317,9 @@ export class TerrainSystem {
       g.setAttribute('sunVis', new THREE.BufferAttribute(r.sunVis, 1));
       g.setAttribute('morphNS', new THREE.BufferAttribute(r.morphNS, 4));
       g.setIndex(this.index);
+      // Skirts are not drawn: CDLOD morphing already makes joins watertight, and skirts z-fought
+      // with the neighbouring surface, showing as thin dark lines along chunk borders (?skirts to debug).
+      if (!location.search.includes('skirts')) g.setDrawRange(0, RES * RES * 6);
       g.boundingBox = new THREE.Box3(new THREE.Vector3(0, r.minY, 0), new THREE.Vector3(node.size, r.maxY, node.size));
       g.boundingSphere = g.boundingBox.getBoundingSphere(new THREE.Sphere());
       if (node.mesh) {
