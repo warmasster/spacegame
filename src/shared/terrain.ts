@@ -5,6 +5,7 @@
 // field (hash-placed, size–frequency like real maria) + one landmark crater. The landing
 // site around the origin is gently flattened (future base).
 
+import type { TerrainEdit } from './protocol.js';
 import { CellRandom, Simplex2, clamp, smax, smin, smoothstep } from './noise.js';
 
 interface CraterLevel {
@@ -44,6 +45,8 @@ export class LunarTerrain {
   private ridge: Simplex2;
   private rnd = new CellRandom();
   readonly seed: number;
+  /** Craters and other modifications on top of the procedural surface (deformable terrain). */
+  edits: TerrainEdit[] = [];
 
   constructor(seed: number) {
     this.seed = seed;
@@ -138,6 +141,19 @@ export class LunarTerrain {
     if (flat > 0) {
       const smooth = 26 * s.noise(x / 2600, z / 2600) + 10.4 * s.noise(x / 1020 + 17.3, z / 1020 - 9.1);
       h = h + (smooth + craterH * 0.12 - h) * flat * 0.92;
+    }
+
+    // player-made craters (explosions)
+    for (let i = 0; i < this.edits.length; i++) {
+      const e = this.edits[i];
+      const dx = x - e.x;
+      const dz = z - e.z;
+      const d2 = dx * dx + dz * dz;
+      const lim = e.r * 2.2;
+      if (d2 > lim * lim) continue;
+      const r = Math.sqrt(d2) / e.r;
+      h += craterProfile(r, e.r, 0) * e.d;
+      albedo *= 1 - 0.22 * Math.exp(-r * r * 1.5) + 0.12 * Math.exp(-(r - 1.2) * (r - 1.2) * 3);
     }
 
     // planetary curvature (paraboloid approximation of the sphere, exact to <1e-5 within ±20 km)

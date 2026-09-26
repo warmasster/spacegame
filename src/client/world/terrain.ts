@@ -1,6 +1,16 @@
 import * as THREE from 'three';
 import type { CSM } from 'three/addons/csm/CSM.js';
+import type { TerrainEdit } from '../../shared/protocol';
+import type { LunarTerrain } from '../../shared/terrain';
 import type { TerrainWorkerPool } from './workerPool';
+
+/** Edits that can affect a square region (crater influence reaches 2.2 radii). */
+export function editsNear(edits: TerrainEdit[], x0: number, z0: number, size: number) {
+  return edits.filter((e) => {
+    const m = e.r * 2.3;
+    return e.x > x0 - m && e.x < x0 + size + m && e.z > z0 - m && e.z < z0 + size + m;
+  });
+}
 
 /**
  * Quadtree LOD terrain. Leaves are fixed-resolution grids generated in workers from the
@@ -33,6 +43,9 @@ interface Node {
   maxY: number;
   cancel?: () => void;
   setPriority?: (p: number) => void;
+  /** Geometry out of date (terrain edited): rebuilt in place, old mesh kept until then. */
+  stale?: boolean;
+  rebuilding?: boolean;
 }
 
 export class TerrainSystem {
@@ -48,9 +61,9 @@ export class TerrainSystem {
 
   constructor(
     private pool: TerrainWorkerPool,
-    private seed: number,
+    private terrain: LunarTerrain,
     loader: THREE.TextureLoader,
-    sunDir: THREE.Vector3,
+    private sunDir: THREE.Vector3,
     csm: CSM | null,
     maxAnisotropy: number,
   ) {
@@ -86,7 +99,9 @@ export class TerrainSystem {
           `#include <common>
           attribute float albedo;
           attribute vec4 morph;
+          attribute float sunVis;
           uniform vec3 uViewer;
+          varying float vSunVis;
           varying float vAlbedo;
           varying vec3 vWorldPos;
           varying vec3 vWorldNormal;`,
@@ -96,6 +111,7 @@ export class TerrainSystem {
           `#include <begin_vertex>
           ${MORPH_GLSL}
           vAlbedo = albedo;
+          vSunVis = sunVis;
           vWorldPos = (modelMatrix * vec4(transformed, 1.0)).xyz;
           vWorldNormal = normalize(mat3(modelMatrix) * objectNormal);`,
         );
@@ -105,9 +121,18 @@ export class TerrainSystem {
           `#include <common>
           uniform sampler2D tRegA, tRegN, tMacro;
           uniform vec3 uSunDirW;
+          varying float vSunVis;
           varying float vAlbedo;
           varying vec3 vWorldPos;
           varying vec3 vWorldNormal;`,
+        )
+        .replace(
+          '#include <lights_fragment_begin>',
+          // baked horizon shadow multiplies only the sun (directional) lights, not helmet lamps
+          THREE.ShaderChunk.lights_fragment_begin.replace(
+            /getDirectionalLightInfo\(\s*directionalLights?(\[0\])?,\s*directLight\s*\);/g,
+            (m) => `${m} directLight.color *= vSunVis;`,
+          ),
         )
         .replace(
           '#include <map_fragment>',
@@ -149,7 +174,7 @@ export class TerrainSystem {
           `,
         );
     };
-    mat.customProgramCacheKey = () => 'lunar-terrain-v2';
+    mat.customProgramCacheKey = () => 'lunar-terrain-v3';
     this.material = mat;
 
     // shadow casting must morph exactly like the visible surface
@@ -210,8 +235,10 @@ export class TerrainSystem {
         return;
       }
     }
-    if (node.state === 'ready') out.add(node);
-    else this.request(node, viewer);
+    if (node.state === 'ready') {
+      out.add(node);
+      if (node.stale) this.request(node, viewer);
+    } else this.request(node, viewer);
   }
 
   private getNode(level: number, x0: number, z0: number, size: number): Node {
@@ -230,12 +257,18 @@ export class TerrainSystem {
       node.setPriority?.(priority);
       return;
     }
-    if (node.state === 'ready') return;
-    node.state = 'loading';
+    if (node.state === 'ready' && (!node.stale || node.rebuilding)) return;
+    const rebuild = node.state === 'ready';
+    if (rebuild) node.rebuilding = true;
+    else node.state = 'loading';
+    node.stale = false;
+    const s = this.sunDir;
     const job = this.pool.run(
       {
         kind: 'chunk',
-        seed: this.seed,
+        seed: this.terrain.seed,
+        edits: editsNear(this.terrain.edits, node.x0, node.z0, node.size),
+        sun: [s.x, s.y, s.z],
         x0: node.x0,
         z0: node.z0,
         size: node.size,
@@ -248,15 +281,29 @@ export class TerrainSystem {
     node.cancel = job.cancel;
     node.setPriority = job.setPriority;
     job.promise.then((r) => {
-      if (r.kind !== 'chunk' || node.state !== 'loading') return;
+      if (r.kind !== 'chunk') return;
+      if (rebuild) {
+        node.rebuilding = false;
+        if (!node.mesh) return;
+      } else if (node.state !== 'loading') return;
       const g = new THREE.BufferGeometry();
       g.setAttribute('position', new THREE.BufferAttribute(r.positions, 3));
       g.setAttribute('normal', new THREE.BufferAttribute(r.normals, 3));
       g.setAttribute('albedo', new THREE.BufferAttribute(r.albedo, 1));
       g.setAttribute('morph', new THREE.BufferAttribute(r.morph, 4));
+      g.setAttribute('sunVis', new THREE.BufferAttribute(r.sunVis, 1));
       g.setIndex(this.index);
       g.boundingBox = new THREE.Box3(new THREE.Vector3(0, r.minY, 0), new THREE.Vector3(node.size, r.maxY, node.size));
       g.boundingSphere = g.boundingBox.getBoundingSphere(new THREE.Sphere());
+      if (node.mesh) {
+        // rebuilt after an edit: swap geometry, keep visibility
+        node.mesh.geometry.dispose();
+        node.mesh.geometry = g;
+        node.minY = r.minY;
+        node.maxY = r.maxY;
+        node.state = 'ready';
+        return;
+      }
       const mesh = new THREE.Mesh(g, this.material);
       mesh.position.set(node.x0, 0, node.z0);
       mesh.updateMatrix();
@@ -272,6 +319,26 @@ export class TerrainSystem {
       node.maxY = r.maxY;
       node.state = 'ready';
     });
+  }
+
+  /** Terrain changed around (x, z): rebuild every loaded chunk that can see it. */
+  invalidate(x: number, z: number, radius: number) {
+    const m = radius * 2.3;
+    for (const n of this.nodes.values()) {
+      if (x + m < n.x0 || x - m > n.x0 + n.size || z + m < n.z0 || z - m > n.z0 + n.size) continue;
+      // coarse levels can't show a 2 m crater; don't waste work on them
+      if (n.size / RES > radius * 2) continue;
+      if (n.state === 'ready') {
+        n.stale = true;
+        if (n.rebuilding) {
+          n.cancel?.();
+          n.rebuilding = false;
+        }
+      } else if (n.state === 'loading') {
+        n.cancel?.();
+        n.state = 'idle';
+      }
+    }
   }
 
   private evict() {

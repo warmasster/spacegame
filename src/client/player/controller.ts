@@ -18,6 +18,11 @@ export const MOVE = {
   brake: 2.6,
   airAccel: 0.35,
   jump: 2.05, // ≈ 1.3 m apex, ~2.5 s airtime under lunar gravity
+  /** Jetpack: thrust acceleration (> lunar g so it climbs), burn time and ground recharge. */
+  jetAccel: 3.3,
+  jetBurn: 4.5,
+  jetRecharge: 7,
+  jetAirAccel: 1.8,
 };
 
 /**
@@ -32,6 +37,12 @@ export class PlayerController {
   grounded = false;
   crouch = false;
   running = false;
+  /** Jetpack firing this frame. */
+  jetting = false;
+  /** Jetpack propellant 0..1. */
+  fuel = 1;
+  /** Inputs ignored (dead). */
+  disabled = false;
   private body: RAPIER.RigidBody;
   private collider: RAPIER.Collider;
   private kcc: RAPIER.KinematicCharacterController;
@@ -86,10 +97,17 @@ export class PlayerController {
     this.pitch = THREE.MathUtils.clamp(this.pitch - dy, -1.5, 1.45);
   }
 
+  /** External velocity change (explosion knockback). */
+  impulse(dv: THREE.Vector3) {
+    this.velocity.add(dv);
+    if (dv.y > 0.3) this.grounded = false;
+  }
+
   update(dt: number, input: Input) {
+    const off = this.disabled;
     // --- intent --------------------------------------------------------------------------
-    let f = (input.down('KeyW') ? 1 : 0) - (input.down('KeyS') ? 1 : 0);
-    let r = (input.down('KeyD') ? 1 : 0) - (input.down('KeyA') ? 1 : 0);
+    let f = off ? 0 : (input.down('KeyW') ? 1 : 0) - (input.down('KeyS') ? 1 : 0);
+    let r = off ? 0 : (input.down('KeyD') ? 1 : 0) - (input.down('KeyA') ? 1 : 0);
     const len = Math.hypot(f, r);
     if (len > 1) {
       f /= len;
@@ -112,14 +130,14 @@ export class PlayerController {
     const dvLen = Math.hypot(dvx, dvz);
     if (dvLen > 1e-5) {
       const speeding = wx * v.x + wz * v.z >= v.x * v.x + v.z * v.z - 1e-3 && (wx !== 0 || wz !== 0);
-      const a = this.grounded ? (speeding ? MOVE.accel : MOVE.brake) : MOVE.airAccel;
+      const a = this.grounded ? (speeding ? MOVE.accel : MOVE.brake) : this.jetting ? MOVE.jetAirAccel : MOVE.airAccel;
       const k = Math.min(1, (a * dt) / dvLen);
       v.x += dvx * k;
       v.z += dvz * k;
     }
 
     // --- vertical ------------------------------------------------------------------------------
-    if (input.consume('Space')) this.jumpLatch = 0.15;
+    if (input.consume('Space') && !off) this.jumpLatch = 0.15;
     this.jumpLatch = Math.max(0, this.jumpLatch - dt);
     if (this.grounded && this.jumpLatch > 0 && !this.crouch) {
       v.y = MOVE.jump + (this.running ? 0.25 : 0);
@@ -127,7 +145,14 @@ export class PlayerController {
       this.jumpLatch = 0;
       this.airTime = 0;
     }
+    // jetpack: hold Space while airborne
+    this.jetting = !off && !this.grounded && input.down('Space') && this.fuel > 0 && this.airTime > 0.22;
+    if (this.jetting) {
+      v.y += MOVE.jetAccel * dt;
+      this.fuel = Math.max(0, this.fuel - dt / MOVE.jetBurn);
+    } else if (this.grounded) this.fuel = Math.min(1, this.fuel + dt / MOVE.jetRecharge);
     v.y -= this.gravity * dt;
+    v.y = Math.min(v.y, 9);
 
     // --- collide & slide ---------------------------------------------------------------------------
     const desired = { x: v.x * dt, y: v.y * dt, z: v.z * dt };

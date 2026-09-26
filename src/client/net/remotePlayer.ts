@@ -21,6 +21,9 @@ export class RemotePlayer {
   grounded = true;
   crouch = false;
   lamps = false;
+  jetting = false;
+  dead = false;
+  hp = 100;
   private buffer: Sample[] = [];
   private hasState = false;
 
@@ -68,6 +71,8 @@ export class RemotePlayer {
     this.grounded = (s.f & StateFlags.Grounded) !== 0;
     this.crouch = (s.f & StateFlags.Crouching) !== 0;
     this.lamps = (s.f & StateFlags.Lamps) !== 0;
+    this.jetting = (s.f & StateFlags.Jetpack) !== 0;
+    this.astronaut.setDead(this.dead);
 
     const root = this.astronaut.root;
     root.visible = true;

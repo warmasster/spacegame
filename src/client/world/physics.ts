@@ -1,5 +1,6 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import { rocksInTile, type LunarTerrain } from '../../shared/terrain';
+import { editsNear } from './terrain';
 import type { TerrainWorkerPool } from './workerPool';
 
 const TILE = 32;
@@ -68,22 +69,40 @@ export class Physics {
     return t?.state === 'ready';
   }
 
+  /** Terrain edited: rebuild collision tiles touching the area (old colliders stay until then). */
+  invalidate(x: number, z: number, radius: number) {
+    const m = radius * 2.3;
+    for (const [key, tile] of this.tiles) {
+      const [tx, tz] = key.split(':').map(Number);
+      const x0 = tx * TILE;
+      const z0 = tz * TILE;
+      if (x + m < x0 || x - m > x0 + TILE || z + m < z0 || z - m > z0 + TILE) continue;
+      tile.cancel?.();
+      const old = tile.colliders;
+      this.tiles.delete(key);
+      this.load(tx, tz, key, 0, old);
+    }
+  }
+
   step(dt: number) {
     this.world.timestep = dt;
     this.world.step();
   }
 
-  private load(tx: number, tz: number, key: string, priority: number) {
-    const tile: Tile = { key, state: 'loading', colliders: [] };
+  private load(tx: number, tz: number, key: string, priority: number, replacing: RAPIER.Collider[] = []) {
+    // while rebuilding, the previous colliders keep the tile solid
+    const tile: Tile = { key, state: replacing.length ? 'ready' : 'loading', colliders: replacing };
     this.tiles.set(key, tile);
     const x0 = tx * TILE;
     const z0 = tz * TILE;
-    const job = this.pool.run({ kind: 'heights', seed: this.terrain.seed, x0, z0, size: TILE, res: TILE_RES }, -10 + priority);
+    const job = this.pool.run({ kind: 'heights', seed: this.terrain.seed, edits: editsNear(this.terrain.edits, x0, z0, TILE), x0, z0, size: TILE, res: TILE_RES }, -10 + priority);
     tile.cancel = job.cancel;
     job.promise.then((r) => {
       if (r.kind !== 'heights' || this.tiles.get(key) !== tile) return;
       // worker layout is row-major with rows along Z; Rapier wants column-major (x-major)
       const n = TILE_RES + 1;
+      for (const c of replacing) this.world.removeCollider(c, false);
+      tile.colliders = [];
       const hf = new Float32Array(n * n);
       for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) hf[i * n + j] = r.heights[j * n + i];
       const desc = RAPIER.ColliderDesc.heightfield(TILE_RES, TILE_RES, hf, { x: TILE, y: 1, z: TILE });

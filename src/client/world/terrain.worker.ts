@@ -1,28 +1,53 @@
 /// <reference lib="webworker" />
 // Generates terrain chunk geometry, collision heightfields and rock scatter off the main thread.
 
+import type { TerrainEdit } from '../../shared/protocol';
 import { LunarTerrain, rocksInTile, type TerrainSample } from '../../shared/terrain';
 
 export type WorkerJob =
-  | { kind: 'chunk'; id: number; seed: number; x0: number; z0: number; size: number; res: number; skirt: number; morphEnd: number }
-  | { kind: 'heights'; id: number; seed: number; x0: number; z0: number; size: number; res: number }
-  | { kind: 'rocks'; id: number; seed: number; x0: number; z0: number; size: number; minSize: number; maxSize: number };
+  | { kind: 'chunk'; id: number; seed: number; x0: number; z0: number; size: number; res: number; skirt: number; morphEnd: number; edits: TerrainEdit[]; sun: [number, number, number] }
+  | { kind: 'heights'; id: number; seed: number; x0: number; z0: number; size: number; res: number; edits: TerrainEdit[] }
+  | { kind: 'rocks'; id: number; seed: number; x0: number; z0: number; size: number; minSize: number; maxSize: number; edits: TerrainEdit[] };
 
 export type WorkerResult =
-  | { kind: 'chunk'; id: number; positions: Float32Array; normals: Float32Array; albedo: Float32Array; morph: Float32Array; minY: number; maxY: number }
+  | { kind: 'chunk'; id: number; positions: Float32Array; normals: Float32Array; albedo: Float32Array; morph: Float32Array; sunVis: Float32Array; minY: number; maxY: number }
   | { kind: 'heights'; id: number; heights: Float32Array }
   | { kind: 'rocks'; id: number; rocks: Float32Array };
 
 let terrain: LunarTerrain | null = null;
 const sample: TerrainSample = { height: 0, albedo: 1 };
 
-function getTerrain(seed: number) {
+function getTerrain(seed: number, edits: TerrainEdit[]) {
   if (!terrain || terrain.seed !== seed) terrain = new LunarTerrain(seed);
+  terrain.edits = edits;
   return terrain;
 }
 
+/**
+ * Soft terrain self-shadowing toward the (static) sun: march the height field along the sun
+ * azimuth and compare the steepest horizon with the sun elevation; the solar disk width gives
+ * a natural penumbra. Replaces blocky far shadow-map cascades at a fraction of the cost.
+ */
+function sunVisibility(t: LunarTerrain, x: number, y: number, z: number, sun: [number, number, number], step: number) {
+  const hl = Math.hypot(sun[0], sun[2]);
+  const dx = sun[0] / hl;
+  const dz = sun[2] / hl;
+  const tanSun = sun[1] / hl;
+  let maxTan = -1;
+  let d = Math.max(step * 1.2, 0.8);
+  for (let i = 0; i < 22 && d < 4500; i++) {
+    const h = t.sample(x + dx * d, z + dz * d, Math.max(step, d * 0.06), sample).height;
+    const tn = (h - y) / d;
+    if (tn > maxTan) maxTan = tn;
+    d *= 1.42;
+  }
+  // penumbra ≈ ±0.5° of angle around the solar disc, a bit wider to soften sampling
+  const v = (tanSun - maxTan) / 0.028 + 0.5;
+  return v < 0 ? 0 : v > 1 ? 1 : v;
+}
+
 function buildChunk(job: Extract<WorkerJob, { kind: 'chunk' }>): WorkerResult {
-  const t = getTerrain(job.seed);
+  const t = getTerrain(job.seed, job.edits);
   const { x0, z0, size, res, skirt, morphEnd } = job;
   const step = size / res;
   const n = res + 3; // one-sample border for normals
@@ -47,6 +72,7 @@ function buildChunk(job: Extract<WorkerJob, { kind: 'chunk' }>): WorkerResult {
   const normals = new Float32Array(vcount * 3);
   const albedo = new Float32Array(vcount);
   const morph = new Float32Array(vcount * 4);
+  const sunVis = new Float32Array(vcount);
   let minY = Infinity;
   let maxY = -Infinity;
   let k = 0;
@@ -64,6 +90,7 @@ function buildChunk(job: Extract<WorkerJob, { kind: 'chunk' }>): WorkerResult {
       normals[k * 3 + 1] = inv;
       normals[k * 3 + 2] = -dz * inv;
       albedo[k] = alb[c];
+      sunVis[k] = sunVisibility(t, x0 + i * step, y, z0 + j * step, job.sun, step);
       // odd vertices slide onto their lower even neighbour (CDLOD)
       const ie = i - (i & 1);
       const je = j - (j & 1);
@@ -89,6 +116,7 @@ function buildChunk(job: Extract<WorkerJob, { kind: 'chunk' }>): WorkerResult {
     normals[k * 3 + 1] = normals[src * 3 + 1];
     normals[k * 3 + 2] = normals[src * 3 + 2];
     albedo[k] = albedo[src];
+    sunVis[k] = sunVis[src];
     morph[k * 4] = morph[src * 4];
     morph[k * 4 + 1] = morph[src * 4 + 1] - skirt;
     morph[k * 4 + 2] = morph[src * 4 + 2];
@@ -99,11 +127,11 @@ function buildChunk(job: Extract<WorkerJob, { kind: 'chunk' }>): WorkerResult {
   for (let i = 0; i <= res; i++) edge(i, res);
   for (let j = 0; j <= res; j++) edge(0, j);
   for (let j = 0; j <= res; j++) edge(res, j);
-  return { kind: 'chunk', id: job.id, positions, normals, albedo, morph, minY: minY - skirt, maxY };
+  return { kind: 'chunk', id: job.id, positions, normals, albedo, morph, sunVis, minY: minY - skirt, maxY };
 }
 
 function buildHeights(job: Extract<WorkerJob, { kind: 'heights' }>): WorkerResult {
-  const t = getTerrain(job.seed);
+  const t = getTerrain(job.seed, job.edits);
   const { x0, z0, size, res } = job;
   const step = size / res;
   const heights = new Float32Array((res + 1) * (res + 1));
@@ -114,7 +142,7 @@ function buildHeights(job: Extract<WorkerJob, { kind: 'heights' }>): WorkerResul
 }
 
 function buildRocks(job: Extract<WorkerJob, { kind: 'rocks' }>): WorkerResult {
-  const t = getTerrain(job.seed);
+  const t = getTerrain(job.seed, job.edits);
   const list = rocksInTile(t, job.x0, job.z0, job.size, job.minSize).filter((r) => r.size <= job.maxSize);
   const out = new Float32Array(list.length * 7);
   list.forEach((r, i) => {
@@ -131,7 +159,7 @@ self.onmessage = (e: MessageEvent<WorkerJob>) => {
   else res = buildRocks(job);
   const transfer: Transferable[] =
     res.kind === 'chunk'
-      ? [res.positions.buffer, res.normals.buffer, res.albedo.buffer, res.morph.buffer]
+      ? [res.positions.buffer, res.normals.buffer, res.albedo.buffer, res.morph.buffer, res.sunVis.buffer]
       : res.kind === 'heights'
         ? [res.heights.buffer]
         : [res.rocks.buffer];

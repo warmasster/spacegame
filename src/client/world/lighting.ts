@@ -30,21 +30,26 @@ export class Lighting {
     this.csm = new CSM({
       camera,
       parent: scene,
-      cascades: quality === 'high' ? 4 : 3,
-      maxFar: 520,
+      // Real-time cascades only cover the near field (characters, rocks, fresh craters);
+      // terrain self-shadowing beyond is baked per vertex (soft, no texel blocks).
+      cascades: 3,
+      maxFar: quality === 'high' ? 220 : 140,
       mode: 'practical',
       shadowMapSize: quality === 'high' ? 2048 : 1024,
       lightDirection: sunDir.clone().negate(),
       lightIntensity: SUN_INTENSITY,
       lightNear: 1,
-      lightFar: 6000,
-      lightMargin: 400,
-      shadowBias: -0.00025,
+      // A tight depth range keeps the bias tiny: bias is relative to (far - near), and with the
+      // old 6 km range it pushed shadows ~5 m away from their casters.
+      lightFar: 900,
+      lightMargin: 160,
+      shadowBias: -0.00004,
     });
     this.csm.fade = true;
     for (const l of this.csm.lights) {
       l.color.setRGB(1.0, 0.985, 0.96);
-      l.shadow.normalBias = 0.02;
+      l.shadow.normalBias = 0.035;
+      l.shadow.radius = quality === 'high' ? 3 : 2;
       l.shadow.camera.layers.enableAll();
     }
 

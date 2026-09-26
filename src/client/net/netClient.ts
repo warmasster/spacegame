@@ -4,6 +4,8 @@ import {
   type PlayerInfo,
   type PlayerState,
   type ServerMessage,
+  type TerrainEdit,
+  type Vec3,
 } from '../../shared/protocol';
 
 export type Welcome = Extract<ServerMessage, { type: 'welcome' }>;
@@ -13,6 +15,10 @@ export interface NetEvents {
   leave(id: number): void;
   state(id: number, serverTime: number, s: PlayerState): void;
   disconnect(reason: string): void;
+  fire(id: number, o: Vec3, d: Vec3): void;
+  explode(id: number, p: Vec3, edit: TerrainEdit): void;
+  health(id: number, hp: number, by?: number, dead?: boolean): void;
+  respawn(id: number, spawn: Vec3): void;
 }
 
 /** WebSocket session: handshake, state upload, snapshot delivery and server-clock estimate. */
@@ -69,6 +75,18 @@ export class NetClient {
           case 'snapshot':
             for (const st of msg.states) this.events.state(st.id, st.t, st.s);
             break;
+          case 'fire':
+            this.events.fire(msg.id, msg.o, msg.d);
+            break;
+          case 'explode':
+            this.events.explode(msg.id, msg.p, msg.edit);
+            break;
+          case 'health':
+            this.events.health(msg.id, msg.hp, msg.by, msg.dead);
+            break;
+          case 'respawn':
+            this.events.respawn(msg.id, msg.spawn);
+            break;
           case 'pong': {
             const now = performance.now();
             this.rtt = now - msg.t;
@@ -92,6 +110,14 @@ export class NetClient {
 
   sendState(s: PlayerState) {
     this.send({ type: 'state', s });
+  }
+
+  sendFire(o: Vec3, d: Vec3) {
+    this.send({ type: 'fire', o, d });
+  }
+
+  sendHit(p: Vec3) {
+    this.send({ type: 'hit', p });
   }
 
   private send(msg: ClientMessage) {

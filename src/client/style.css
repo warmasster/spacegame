@@ -99,3 +99,19 @@ html, body { margin: 0; height: 100%; background: #000; overflow: hidden; color:
   .hud-telemetry, .hud-net { top: 76px; width: 150px; }
   .hud-help { display: none; }
 }
+
+.hud-vitals { position: absolute; right: 28px; bottom: 28px; width: 220px; display: grid; gap: 8px; }
+.hud-vitals .vital { display: grid; gap: 4px; font-size: 10px; letter-spacing: 0.14em; }
+.hud-vitals .vital span { color: var(--hud-dim); }
+.hud-vitals .vital i { display: block; height: 4px; background: rgba(200, 220, 255, 0.14); border-radius: 2px; overflow: hidden; }
+.hud-vitals .vital em { display: block; height: 100%; background: var(--hud); transition: width 0.15s; }
+.hud-vitals .crit em { background: #ff6b5b; }
+.hud-vitals .fuel em { background: #7fc8ff; }
+.hud-vitals .ready em { background: var(--accent); }
+.hud-vitals .ready span { color: var(--accent); }
+.hud-hitflash { position: absolute; inset: 0; opacity: 0; transition: opacity 0.35s; pointer-events: none;
+  background: radial-gradient(ellipse at center, transparent 45%, rgba(255, 40, 20, 0.55) 100%); }
+.hud-death { position: absolute; inset: 0; display: grid; place-content: center; gap: 10px; text-align: center;
+  background: rgba(40, 0, 0, 0.45); }
+.hud-death b { font-size: 22px; letter-spacing: 0.3em; color: #ff8a7a; }
+.hud-death span { font-size: 12px; letter-spacing: 0.2em; color: var(--hud-dim); }

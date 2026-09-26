@@ -12,7 +12,7 @@ const THIGH = 0.4;
 const SHIN = 0.397;
 const HIP_Y = 0.92;
 const ANKLE_Y = 0.125;
-const EYE = new THREE.Vector3(0, 1.705, 0.055);
+const EYE = new THREE.Vector3(0, 1.7, 0.085);
 
 /** Shared GLB template + material upgrades. */
 export class AstronautAsset {
@@ -52,8 +52,9 @@ export class AstronautAsset {
 function tuneMaterial(mat: THREE.MeshStandardMaterial) {
   switch (mat.name) {
     case 'Visor':
-      mat.roughness = 0.04;
-      mat.envMapIntensity = 2.2;
+      // reflect the sunlit ground strongly so the gold reads instead of a black ball
+      mat.roughness = 0.05;
+      mat.envMapIntensity = 6;
       break;
     case 'Lamp':
       mat.emissiveIntensity = 0;
@@ -73,10 +74,20 @@ function tuneMaterial(mat: THREE.MeshStandardMaterial) {
  *  instead of tinting the albedo. Every lit material must also be registered with CSM. */
 function patchSuitShader(mat: THREE.MeshStandardMaterial, csm: CSM | null) {
   const hasAO = !!mat.userData.bakedAO;
+  // first-person clip sphere around the eye (w = radius, 0 = off)
+  const clip = { value: new THREE.Vector4(0, 0, 0, 0) };
+  mat.userData.clip = clip;
   if (csm) csm.setupMaterial(mat);
   const csmHook = mat.onBeforeCompile;
   mat.onBeforeCompile = (shader, renderer) => {
     csmHook?.call(mat, shader, renderer);
+    shader.uniforms.uEyeClip = clip;
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vSuitWorld;')
+      .replace('#include <project_vertex>', '#include <project_vertex>\nvSuitWorld = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', '#include <common>\nuniform vec4 uEyeClip;\nvarying vec3 vSuitWorld;')
+      .replace('void main() {', 'void main() {\n  if (uEyeClip.w > 0.0 && distance(vSuitWorld, uEyeClip.xyz) < uEyeClip.w) discard;');
     if (!hasAO) return;
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', '#include <common>\nattribute vec4 color;\nvarying float vSuitAO;')
@@ -93,7 +104,7 @@ function patchSuitShader(mat: THREE.MeshStandardMaterial, csm: CSM | null) {
         reflectedLight.directSpecular *= mix(1.0, suitAO, 0.6);`,
       );
   };
-  mat.customProgramCacheKey = () => `suit-${mat.name}-${hasAO}`;
+  mat.customProgramCacheKey = () => `suit2-${mat.name}-${hasAO}`;
   mat.needsUpdate = true;
 }
 
@@ -157,6 +168,8 @@ export class Astronaut {
   private time = Math.random() * 100;
   private smoothSpeed = 0;
   private lean = 0;
+  private dead = false;
+  private deadBlend = 0;
 
   constructor(asset: AstronautAsset) {
     this.model = SkeletonUtils.clone(asset.template);
@@ -173,6 +186,8 @@ export class Astronaut {
         this.helmetMeshes.push(mesh);
         mesh.layers.set(0);
       }
+      // the dark inner bubble peeked out under the shell like a gap at the neck
+      if (mat.name === 'HelmetInner') mesh.visible = false;
     });
     this.model.updateMatrixWorld(true);
     const names: BoneName[] = [
@@ -210,6 +225,48 @@ export class Astronaut {
     this.eyeLocal.copy(EYE).applyMatrix4(chestInv);
   }
 
+  /** Attach a prop (e.g. the launcher) to the right shoulder, following the chest. */
+  attachShoulder(prop: THREE.Object3D) {
+    const chest = this.rig.chest.bone;
+    this.model.updateMatrixWorld(true);
+    const inv = new THREE.Matrix4().copy(chest.matrixWorld).invert().multiply(this.model.matrixWorld);
+    const holder = new THREE.Object3D();
+    // model space: character's right = -X, forward = +Z
+    holder.position.set(-0.27, 1.5, 0.02).applyMatrix4(inv);
+    const q = new THREE.Quaternion().setFromRotationMatrix(inv);
+    holder.quaternion.copy(q);
+    holder.add(prop);
+    chest.add(holder);
+  }
+
+  /** Hide suit geometry within `radius` of `eye` (first-person body awareness without clipping). */
+  setEyeClip(eye: THREE.Vector3 | null, radius = 0.24) {
+    for (const m of this.materials) {
+      const c = m.userData.clip as { value: THREE.Vector4 } | undefined;
+      if (c) c.value.set(eye?.x ?? 0, eye?.y ?? 0, eye?.z ?? 0, eye ? radius : 0);
+    }
+  }
+
+  /** World positions of the two PLSS thruster nozzles. */
+  nozzles(out: [THREE.Vector3, THREE.Vector3]) {
+    const chest = this.rig.chest.bone;
+    chest.updateWorldMatrix(true, false);
+    const inv = this.nozzleLocal ?? (this.nozzleLocal = this.computeNozzles());
+    out[0].copy(inv[0]).applyMatrix4(chest.matrixWorld);
+    out[1].copy(inv[1]).applyMatrix4(chest.matrixWorld);
+    return out;
+  }
+  private nozzleLocal: [THREE.Vector3, THREE.Vector3] | null = null;
+  private computeNozzles(): [THREE.Vector3, THREE.Vector3] {
+    const chest = this.rig.chest.bone;
+    const inv = new THREE.Matrix4().copy(chest.matrixWorld).invert().multiply(this.model.matrixWorld);
+    return [new THREE.Vector3(0.14, 0.92, -0.3).applyMatrix4(inv), new THREE.Vector3(-0.14, 0.92, -0.3).applyMatrix4(inv)];
+  }
+
+  setDead(dead: boolean) {
+    this.dead = dead;
+  }
+
   /** The local player's helmet goes to its own layer so the first-person camera can skip it. */
   setLocal(local: boolean) {
     for (const m of this.helmetMeshes) m.layers.set(local ? HELMET_LAYER : 0);
@@ -243,6 +300,11 @@ export class Astronaut {
 
   update(dt: number, input: AnimInput) {
     this.time += dt;
+    // death: topple onto the back (low g → slow fall), limbs splayed
+    this.deadBlend += ((this.dead ? 1 : 0) - this.deadBlend) * Math.min(1, dt * (this.dead ? 1.6 : 6));
+    this.model.rotation.x = -this.deadBlend * 1.45;
+    this.model.position.y = this.deadBlend * 0.3;
+    if (this.deadBlend > 0.02) input = { ...input, velocity: new THREE.Vector3(), grounded: true, crouch: false };
     const vel = input.velocity;
     const hSpeed = Math.hypot(vel.x, vel.z);
     this.smoothSpeed += (hSpeed - this.smoothSpeed) * Math.min(1, dt * 6);
@@ -346,6 +408,10 @@ export class Astronaut {
       const elbow = 0.35 + g * 0.15 + this.runBlend * g * 0.35 + air * 0.25 + this.crouchBlend * 0.3 + Math.max(0, swing) * 0.4;
       this.pose(`forearm${A}` as BoneName, -elbow, 0, 0);
       this.pose(`hand${A}` as BoneName, 0.1, 0, 0);
+      if (this.deadBlend > 0.02) {
+        this.pose(`upperarm${A}` as BoneName, -0.2 - this.deadBlend * 0.4, 0, s * (abduct + this.deadBlend * 0.9));
+        this.pose(`forearm${A}` as BoneName, -0.35 - this.deadBlend * 0.3, 0, 0);
+      }
     }
   }
 

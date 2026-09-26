@@ -2,7 +2,7 @@
 // JSON over WebSocket for now; the message shapes are kept flat so a binary
 // encoding can replace JSON later without touching game code.
 
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;
 
 /** Suit stripe colour / crew role. 0 = commander (red stripes), 1 = crew (plain), ... */
 export type SuitVariant = number;
@@ -12,6 +12,8 @@ export const StateFlags = {
   Running: 1 << 1,
   Crouching: 1 << 2,
   Lamps: 1 << 3,
+  Jetpack: 1 << 4,
+  Dead: 1 << 5,
 } as const;
 
 /** Kinematic state of an astronaut, sent by its owner ~20 times per second. */
@@ -37,7 +39,23 @@ export interface PlayerInfo {
 export type ClientMessage =
   | { type: 'hello'; version: number; name: string }
   | { type: 'state'; s: PlayerState }
-  | { type: 'ping'; t: number };
+  | { type: 'ping'; t: number }
+  /** Rocket launched (origin, direction). */
+  | { type: 'fire'; o: Vec3; d: Vec3 }
+  /** Shooter-reported impact point of its rocket. */
+  | { type: 'hit'; p: Vec3 };
+
+export type Vec3 = [number, number, number];
+
+/** A permanent terrain modification (crater). Server-ordered, replayed on join. */
+export interface TerrainEdit {
+  x: number;
+  z: number;
+  /** Radius (m). */
+  r: number;
+  /** Depth multiplier (1 = regular crater). */
+  d: number;
+}
 
 export type ServerMessage =
   | {
@@ -48,10 +66,17 @@ export type ServerMessage =
       spawn: [number, number, number];
       worldSeed: number;
       serverTime: number;
+      edits: TerrainEdit[];
+      health: Array<{ id: number; hp: number }>;
     }
   | { type: 'reject'; reason: string }
   | { type: 'join'; player: PlayerInfo }
   | { type: 'leave'; id: number }
   /** States relayed by the server, stamped with server receive time (ms). */
   | { type: 'snapshot'; t: number; states: Array<{ id: number; t: number; s: PlayerState }> }
-  | { type: 'pong'; t: number; serverTime: number };
+  | { type: 'pong'; t: number; serverTime: number }
+  | { type: 'fire'; id: number; o: Vec3; d: Vec3 }
+  | { type: 'explode'; id: number; p: Vec3; edit: TerrainEdit }
+  /** Health change; `by` = attacker id when damaged by someone. */
+  | { type: 'health'; id: number; hp: number; by?: number; dead?: boolean }
+  | { type: 'respawn'; id: number; spawn: Vec3 };

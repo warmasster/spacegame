@@ -13,6 +13,11 @@ export interface HudData {
   maxPlayers: number;
   rtt: number;
   fps: number;
+  hp: number;
+  fuel: number;
+  /** 0 = just fired, 1 = ready. */
+  reload: number;
+  dead: boolean;
   markers: Array<{ label: string; bearing: number; distance: number; color: string }>;
 }
 
@@ -28,6 +33,9 @@ export class Hud {
   private toasts: HTMLDivElement;
   private tags = new Map<number, HTMLDivElement>();
   private tagLayer: HTMLDivElement;
+  private vitals: HTMLDivElement;
+  private deathScreen: HTMLDivElement;
+  private hitFlash: HTMLDivElement;
 
   constructor(parent: HTMLElement) {
     this.root = el('div', 'hud', parent);
@@ -45,6 +53,8 @@ export class Hud {
       ['Mayús', 'correr (trote lunar)'],
       ['Espacio', 'saltar'],
       ['C / Ctrl', 'agacharse'],
+      ['Clic izq.', 'lanzacohetes'],
+      ['Espacio (aire)', 'jetpack'],
       ['L', 'luces del casco'],
       ['V', 'primera / tercera persona'],
       ['Rueda', 'distancia de cámara (3ª)'],
@@ -55,7 +65,17 @@ export class Hud {
       .map(([k, v]) => `<div><kbd>${k}</kbd><span>${v}</span></div>`)
       .join('');
     this.toasts = el('div', 'hud-toasts', this.root);
+    this.vitals = el('div', 'hud-vitals', this.root);
+    this.hitFlash = el('div', 'hud-hitflash', this.root);
+    this.deathScreen = el('div', 'hud-death hidden', this.root);
+    this.deathScreen.innerHTML = '<b>TRAJE COMPROMETIDO</b><span>Reapareciendo…</span>';
     this.tagLayer = el('div', 'hud-tags', this.root);
+  }
+
+  /** Red pulse when taking damage. */
+  damage(amount: number) {
+    this.hitFlash.style.opacity = String(Math.min(0.85, 0.25 + amount / 80));
+    setTimeout(() => (this.hitFlash.style.opacity = '0'), 120);
   }
 
   toggleHelp() {
@@ -107,6 +127,13 @@ export class Hud {
       <div class="row"><span>POS</span><b>${fmtCoord(d.position.x)} ${fmtCoord(-d.position.z)}</b></div>
       <div class="row"><span>LUCES</span><b class="${d.lamps ? 'on' : ''}">${d.lamps ? 'ON' : 'OFF'}</b></div>
       <div class="row dim"><span>CÁM</span><b>${d.cameraMode === 'first' ? '1ª persona' : '3ª persona'}</b></div>`;
+    const bar = (label: string, v: number, cls: string) =>
+      `<div class="vital ${cls}"><span>${label}</span><i><em style="width:${Math.round(Math.max(0, Math.min(1, v)) * 100)}%"></em></i></div>`;
+    this.vitals.innerHTML =
+      bar('TRAJE', d.hp / 100, d.hp < 35 ? 'crit' : 'hp') +
+      bar('JET', d.fuel, 'fuel') +
+      bar(d.reload >= 1 ? 'COHETE LISTO' : 'RECARGANDO', d.reload, d.reload >= 1 ? 'ready' : 'reload');
+    this.deathScreen.classList.toggle('hidden', !d.dead);
     this.net.innerHTML = `
       <div class="row"><i class="dot ${d.online ? 'ok' : 'bad'}"></i><b>${d.online ? 'EN LÍNEA' : 'SIN CONEXIÓN'}</b></div>
       <div class="row"><span>TRIPULACIÓN</span><b>${d.players}/${d.maxPlayers}</b></div>

@@ -3,6 +3,8 @@ import type { CSM } from 'three/addons/csm/CSM.js';
 import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import { mulberry32 } from '../../shared/noise';
 import { ROCK_VARIANTS } from '../../shared/terrain';
+import type { LunarTerrain } from '../../shared/terrain';
+import { editsNear } from './terrain';
 import type { TerrainWorkerPool } from './workerPool';
 
 const TILE = 64;
@@ -33,12 +35,12 @@ export class RockField {
 
   constructor(
     private pool: TerrainWorkerPool,
-    private seed: number,
+    private terrain: LunarTerrain,
     material: THREE.MeshStandardMaterial,
   ) {
     this.group.name = 'Rocks';
     for (let v = 0; v < ROCK_VARIANTS; v++) {
-      const geo = makeRockGeometry(seed * 13 + v * 101);
+      const geo = makeRockGeometry(terrain.seed * 13 + v * 101);
       const mesh = new THREE.InstancedMesh(geo, material, CAPACITY);
       mesh.count = 0;
       mesh.castShadow = true;
@@ -117,11 +119,23 @@ export class RockField {
     if (this.dirty) this.rebuild();
   }
 
+  /** Re-scatter tiles near an edit so rocks follow the new ground. */
+  invalidate(x: number, z: number, radius: number) {
+    const m = radius * 2.3;
+    for (const [k, t] of this.tiles) {
+      const [tx, tz] = k.split(':').map(Number);
+      if (x + m < tx * TILE || x - m > (tx + 1) * TILE || z + m < tz * TILE || z - m > (tz + 1) * TILE) continue;
+      t.cancel?.();
+      this.tiles.delete(k);
+    }
+    this.centerKey = '';
+  }
+
   private request(tx: number, tz: number, key: string, minSize: number, maxSize: number, dist: number) {
     const tile: RockTile = { key, data: null };
     this.tiles.set(key, tile);
     const job = this.pool.run(
-      { kind: 'rocks', seed: this.seed, x0: tx * TILE, z0: tz * TILE, size: TILE, minSize, maxSize },
+      { kind: 'rocks', seed: this.terrain.seed, edits: editsNear(this.terrain.edits, tx * TILE, tz * TILE, TILE), x0: tx * TILE, z0: tz * TILE, size: TILE, minSize, maxSize },
       2 + dist * 0.5,
     );
     tile.cancel = job.cancel;

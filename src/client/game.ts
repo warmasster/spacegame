@@ -1,7 +1,9 @@
 import * as THREE from 'three';
 import { MAX_PLAYERS, MOON, CLIENT_SEND_RATE, SUIT_STRIPES } from '../shared/constants';
-import { StateFlags, type PlayerInfo } from '../shared/protocol';
+import { StateFlags, type PlayerInfo, type TerrainEdit, type Vec3 } from '../shared/protocol';
 import { LANDMARK, LunarTerrain } from '../shared/terrain';
+import { Particles } from './fx/particles';
+import { makeLauncherMesh, Rockets } from './fx/rockets';
 import { NetClient, type Welcome } from './net/netClient';
 import { RemotePlayer } from './net/remotePlayer';
 import { Astronaut, AstronautAsset } from './player/astronaut';
@@ -61,6 +63,13 @@ export class Game {
   private running = false;
   private lamps = false;
   private startTime = performance.now();
+  private particles!: Particles;
+  private rockets!: Rockets;
+  private hp = 100;
+  private dead = false;
+  private lastFire = -10;
+  private fireQueued = false;
+  private nozzles: [THREE.Vector3, THREE.Vector3] = [new THREE.Vector3(), new THREE.Vector3()];
   /** Automation: keep a fixed third-person orbit (no easing back). */
   debugOrbit = false;
 
@@ -72,6 +81,10 @@ export class Game {
       leave: (id) => this.removeRemote(id),
       state: (id, t, s) => this.remotes.get(id)?.push(t, s),
       disconnect: (reason) => this.hud?.toast(reason),
+      fire: (id, o, d) => this.onFire(id, o, d),
+      explode: (id, p, edit) => this.onExplode(id, p, edit),
+      health: (id, hp, by, dead) => this.onHealth(id, hp, by, dead),
+      respawn: (id, spawn) => this.onRespawn(id, spawn),
     });
     window.addEventListener('resize', () => this.resize());
     this.resize();
@@ -86,6 +99,7 @@ export class Game {
     const renderer = this.pipeline.renderer;
     const loader = new THREE.TextureLoader();
     this.terrain = new LunarTerrain(this.welcome.worldSeed);
+    this.terrain.edits = [...this.welcome.edits];
     this.pool = new TerrainWorkerPool();
     this.physics = await Physics.create(this.pool, this.terrain);
 
@@ -100,9 +114,9 @@ export class Game {
     this.scene.add(this.sky.group);
 
     const aniso = renderer.capabilities.getMaxAnisotropy();
-    this.terrainSys = new TerrainSystem(this.pool, this.welcome.worldSeed, loader, sunDir, csm, Math.min(8, aniso));
+    this.terrainSys = new TerrainSystem(this.pool, this.terrain, loader, sunDir, csm, Math.min(8, aniso));
     this.scene.add(this.terrainSys.group);
-    this.rocks = new RockField(this.pool, this.welcome.worldSeed, RockField.material(loader, csm));
+    this.rocks = new RockField(this.pool, this.terrain, RockField.material(loader, csm));
     this.scene.add(this.rocks.group);
 
     onProgress('Cargando traje EVA…');
@@ -110,6 +124,15 @@ export class Game {
     this.me = new Astronaut(this.asset);
     this.me.setLocal(true);
     this.me.setStripeColor(SUIT_STRIPES[this.welcome.variant % SUIT_STRIPES.length]);
+    this.me.attachShoulder(makeLauncherMesh());
+    this.particles = new Particles(renderer.getPixelRatio());
+    this.scene.add(this.particles.group);
+    this.rockets = new Rockets(this.terrain, this.particles);
+    this.scene.add(this.rockets.group);
+    for (const h of this.welcome.health) this.pendingHealth.set(h.id, h.hp);
+    window.addEventListener('mousedown', (e) => {
+      if (e.button === 0 && this.input.locked) this.fireQueued = true;
+    });
     this.scene.add(this.me.root);
     for (const p of this.welcome.players) this.addRemote(p, false);
 
@@ -172,12 +195,114 @@ export class Game {
     this.physics.step(1 / 60);
   }
 
+  private pendingHealth = new Map<number, number>();
+
   private addRemote(p: PlayerInfo, announce: boolean) {
     if (this.remotes.has(p.id) || !this.asset) return;
     const r = new RemotePlayer(p, this.asset);
+    r.astronaut.attachShoulder(makeLauncherMesh());
+    const hp = this.pendingHealth.get(p.id);
+    if (hp !== undefined) {
+      r.hp = hp;
+      r.dead = hp <= 0;
+    }
     this.remotes.set(p.id, r);
     this.scene.add(r.astronaut.root);
     if (announce) this.hud?.toast(`${p.name} se ha unido a la EVA`);
+  }
+
+  private nameOf(id: number) {
+    if (id === this.welcome.id) return this.opts.name || 'Tú';
+    return this.remotes.get(id)?.info.name ?? '???';
+  }
+
+  private onFire(id: number, o: Vec3, d: Vec3) {
+    this.rockets?.spawn(id, new THREE.Vector3(...o), new THREE.Vector3(...d));
+  }
+
+  private onExplode(id: number, p: Vec3, edit: TerrainEdit) {
+    const at = new THREE.Vector3(...p);
+    this.terrain.edits.push(edit);
+    this.terrainSys.invalidate(edit.x, edit.z, edit.r);
+    this.physics.invalidate(edit.x, edit.z, edit.r);
+    this.rocks.invalidate(edit.x, edit.z, edit.r);
+    this.rockets.explode(id, at);
+    // blast wave: push me away (the server decides damage)
+    const c = this.ctl.position.clone().add(new THREE.Vector3(0, 0.9, 0));
+    const dist = c.distanceTo(at);
+    if (dist < 7 && !this.dead) {
+      const k = (1 - dist / 7) * 7;
+      this.ctl.impulse(c.sub(at).normalize().multiplyScalar(k).add(new THREE.Vector3(0, k * 0.5, 0)));
+    }
+  }
+
+  private onHealth(id: number, hp: number, by?: number, dead?: boolean) {
+    if (id === this.welcome.id) {
+      if (hp < this.hp) this.hud.damage(this.hp - hp);
+      this.hp = hp;
+      if (dead) {
+        this.dead = true;
+        this.ctl.disabled = true;
+        this.me.setDead(true);
+        this.rig.mode === 'first' && this.rig.toggle();
+      }
+    } else {
+      const r = this.remotes.get(id);
+      if (r) {
+        r.hp = hp;
+        if (dead) r.dead = true;
+      } else this.pendingHealth.set(id, hp);
+    }
+    if (dead && by !== undefined) {
+      this.hud.toast(by === id ? `${this.nameOf(id)} se ha volado a sí mismo` : `${this.nameOf(by)} ha eliminado a ${this.nameOf(id)}`);
+    }
+  }
+
+  private onRespawn(id: number, spawn: Vec3) {
+    if (id === this.welcome.id) {
+      this.dead = false;
+      this.ctl.disabled = false;
+      this.me.setDead(false);
+      this.hp = 100;
+      this.ctl.teleport(new THREE.Vector3(spawn[0], this.terrain.height(spawn[0], spawn[2]) + 0.1, spawn[2]));
+      if (this.rig.mode === 'third') this.rig.toggle();
+    } else {
+      const r = this.remotes.get(id);
+      if (r) {
+        r.dead = false;
+        r.hp = 100;
+      }
+    }
+  }
+
+  private tryFire() {
+    const now = performance.now() / 1000;
+    if (this.dead || now - this.lastFire < 1.2) return;
+    this.lastFire = now;
+    const dir = new THREE.Vector3();
+    this.camera.getWorldDirection(dir);
+    // launch from the shoulder tube, aimed at what the crosshair covers
+    const origin = this.ctl.position.clone().add(new THREE.Vector3(0, 1.5, 0));
+    const right = new THREE.Vector3(Math.cos(this.ctl.yaw), 0, -Math.sin(this.ctl.yaw));
+    origin.addScaledVector(right, 0.28).addScaledVector(dir, 0.7);
+    const target = this.camera.position.clone().addScaledVector(dir, 80);
+    const aim = target.sub(origin).normalize();
+    this.net.sendFire(
+      [round(origin.x, 3), round(origin.y, 3), round(origin.z, 3)],
+      [round(aim.x, 4), round(aim.y, 4), round(aim.z, 4)],
+    );
+    // recoil kick
+    this.ctl.impulse(aim.clone().multiplyScalar(-0.6));
+  }
+
+  private emitJet(a: Astronaut) {
+    a.nozzles(this.nozzles);
+    for (const n of this.nozzles) {
+      for (let i = 0; i < 3; i++) {
+        _jetVel.set((Math.random() - 0.5) * 1.2, -7 - Math.random() * 4, (Math.random() - 0.5) * 1.2);
+        this.particles.emit('glow', { pos: n, vel: _jetVel, color: [1.6, 1.9, 3.2], life: 0.08 + Math.random() * 0.1, size: 0.09 });
+      }
+    }
   }
 
   private removeRemote(id: number) {
@@ -211,6 +336,8 @@ export class Game {
     if (input.consume('KeyV')) this.rig.toggle();
     if (input.consume('KeyH')) this.hud.toggleHelp();
     if (input.consume('KeyL')) this.lamps = !this.lamps;
+    if (this.fireQueued || input.consume('KeyF')) this.tryFire();
+    this.fireQueued = false;
     this.me.setLamps(this.lamps);
     this.ctl.look(input, this.rig.mode === 'third' && !this.debugOrbit ? this.rig : undefined);
     this.physics.update(this.ctl.position.x, this.ctl.position.z);
@@ -249,14 +376,27 @@ export class Game {
           (this.ctl.grounded ? StateFlags.Grounded : 0) |
           (this.ctl.running ? StateFlags.Running : 0) |
           (this.ctl.crouch ? StateFlags.Crouching : 0) |
-          (this.lamps ? StateFlags.Lamps : 0),
+          (this.lamps ? StateFlags.Lamps : 0) |
+          (this.ctl.jetting ? StateFlags.Jetpack : 0) |
+          (this.dead ? StateFlags.Dead : 0),
       });
     }
     const serverNow = this.net.serverNow();
     for (const r of this.remotes.values()) r.update(dt, serverNow);
 
+    // --- combat & effects ------------------------------------------------------------------------
+    const targets = [...this.remotes.values()]
+      .filter((r) => !r.dead)
+      .map((r) => ({ id: r.info.id, pos: r.position.clone().add(new THREE.Vector3(0, 0.95, 0)) }));
+    targets.push({ id: this.welcome.id, pos: this.ctl.position.clone().add(new THREE.Vector3(0, 0.95, 0)) });
+    for (const hit of this.rockets.update(dt, this.welcome.id, targets)) this.net.sendHit([round(hit.x, 2), round(hit.y, 2), round(hit.z, 2)]);
+    if (this.ctl.jetting) this.emitJet(this.me);
+    for (const r of this.remotes.values()) if (r.jetting && !r.dead) this.emitJet(r.astronaut);
+    this.particles.update(dt);
+
     // --- camera & world streaming -----------------------------------------------------------------
     this.rig.update(dt, this.ctl, this.me);
+    this.me.setEyeClip(this.rig.mode === 'first' ? this.camera.position : null);
     this.terrainSys.update(this.camera.position, new THREE.Frustum());
     this.rocks.update(this.ctl.position);
     this.sky.update(this.camera, (performance.now() - this.startTime) / 1000 + 36000);
@@ -286,6 +426,10 @@ export class Game {
       maxPlayers: MAX_PLAYERS,
       rtt: this.net.rtt,
       fps: this.fps,
+      hp: this.hp,
+      fuel: this.ctl.fuel,
+      reload: Math.min(1, (performance.now() / 1000 - this.lastFire) / 1.2),
+      dead: this.dead,
       markers,
     });
 
@@ -293,6 +437,8 @@ export class Game {
     input.endFrame();
   }
 }
+
+const _jetVel = new THREE.Vector3();
 
 function round(v: number, d: number) {
   const k = 10 ** d;
