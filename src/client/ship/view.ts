@@ -514,7 +514,7 @@ export class ShipView {
   private buildControlParts() {
     const def = this.sim.def;
     const counts = { cap: 0, bat: 0, handle: 0, rocker: 0 };
-    const kindPart: Record<ControlKind, keyof typeof counts | null> = { button: 'cap', toggle: 'bat', lever: 'handle', breaker: 'rocker', master: null };
+    const kindPart: Record<ControlKind, keyof typeof counts | null> = { button: 'cap', toggle: 'bat', lever: 'handle', breaker: 'rocker', master: null, rotary: 'cap', cover: null, valve: 'handle', bezel: 'cap' };
     for (const c of def.controls) {
       const k = kindPart[c.kind];
       this.partSlot.push({ kind: k, i: k ? counts[k]++ : -1 });
@@ -809,6 +809,10 @@ const BASES: Record<ControlKind, V3> = {
   lever: [0.05, 0.18, 0.012],
   breaker: [0.052, 0.08, 0.016],
   master: [0.1, 0.07, 0.014],
+  rotary: [0.05, 0.05, 0.01],
+  cover: [0.07, 0.09, 0.01],
+  valve: [0.08, 0.08, 0.01],
+  bezel: [0.05, 0.022, 0.008],
 };
 
 /** Label atlas: every console title / control label rendered once. */

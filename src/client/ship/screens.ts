@@ -57,10 +57,10 @@ export class ShipScreens {
       const off = hidden(it.def.host);
       it.mesh.visible = !off;
       if (off) continue;
-      const on = it.def.page === 'power' ? true : this.sim.powered('avionics');
+      const on = it.def.pages[0] === 'power' ? true : this.sim.powered('avionics');
       it.mat.color.setScalar(on ? 1.5 : 0.02);
       if (!on) continue;
-      this.draw(it.ctx, it.w, it.h, it.def.page, time, anim);
+      this.draw(it.ctx, it.w, it.h, it.def.pages[0], time, anim);
       it.tex.needsUpdate = true;
     }
   }

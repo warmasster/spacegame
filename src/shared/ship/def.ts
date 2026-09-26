@@ -26,6 +26,7 @@ import {
 /** hull = outer skin (wall/roof), glass = window, floor = deck plate, bulkhead = interior wall. */
 export type PanelKind = 'hull' | 'glass' | 'floor' | 'bulkhead';
 
+
 /** A breakable, repairable plate. Flat convex prism: polygon in (u, v) around `c`, ±t/2 along n. */
 export interface PanelDef extends Frame {
   index: number;
@@ -39,9 +40,12 @@ export interface PanelDef extends Frame {
   maxHp: number;
   /** Power subsystems whose conduit runs behind this panel (cut when it is destroyed). */
   conduits: SubsystemId[];
+  /** Bulkheads: the compartment on the other side (a hole joins the two). */
+  other?: string;
 }
 
-export type SubsystemId = 'lights' | 'ext' | 'doors' | 'hyd' | 'avionics' | 'shield';
+/** Power circuits (breaker + conduit + priority), see power.ts. */
+export type SubsystemId = 'lights' | 'ext' | 'doors' | 'hyd' | 'avionics' | 'shield' | 'prop' | 'life' | 'cool' | 'sensors' | 'weapons' | 'grav';
 
 export interface SubsystemDef {
   id: SubsystemId;
@@ -51,30 +55,135 @@ export interface SubsystemDef {
   /** Conduit runs from the breaker cabinet (polylines, ship space). */
   routes: V3[][];
   color: number;
+  /** Breaker trip rating (kW): a load above it for 2 s opens the breaker. */
+  rating: number;
+  /** Load always drawn while the circuit is live (kW). */
+  base: number;
+  /** Switch key of the circuit's priority selector (0 ALTA, 1 NORMAL, 2 BAJA: shed first). */
+  priority: string;
 }
 
-export type ControlKind = 'button' | 'toggle' | 'lever' | 'breaker' | 'master';
+export type ControlKind = 'button' | 'toggle' | 'lever' | 'breaker' | 'master' | 'rotary' | 'cover' | 'valve' | 'bezel';
+
+/**
+ * How a click changes the control's state key: toggle 0↔1, reset → 0, cycle → next position
+ * (the mouse wheel steps it up/down), pulse → 1 for the simulation to consume, set → `value`.
+ */
+export type ControlAction = 'toggle' | 'reset' | 'cycle' | 'pulse' | 'set';
 
 /** A clickable control. Several controls may drive the same state `key` (e.g. ramp buttons). */
 export interface ControlDef extends Frame {
   index: number;
   id: string;
   key: string;
-  action: 'toggle' | 'reset';
+  action: ControlAction;
+  /** Value written by `set` controls (MFD page buttons). */
+  value?: number;
   kind: ControlKind;
   /** Printed on the console. */
   label: string;
   /** Shown in the helmet HUD when aimed at. */
   name: string;
-  /** State texts for 0 / 1. */
-  states: [string, string];
+  /** State texts per position (index = value of `key`). */
+  states: string[];
   /** Subsystem that must be powered for the control to do anything. */
   requires?: SubsystemId;
+  /** Key of the flip cover over it: while the cover is shut the control can't be reached. */
+  guard?: string;
   console: string;
   /** Panel this control is mounted on (-1 = free-standing): destroyed panel → control lost. */
   host: number;
   /** Hit box half extents along u, v, n. */
   half: V3;
+}
+
+// -----------------------------------------------------------------------------------------------
+// Systems: parts, propellant network, compartments (see sim.ts / systems/*.ts)
+// -----------------------------------------------------------------------------------------------
+
+export type PartType =
+  | 'reactor'
+  | 'battery'
+  | 'apu'
+  | 'coolpump'
+  | 'radiator'
+  | 'tank'
+  | 'engine'
+  | 'rcs'
+  | 'o2gen'
+  | 'scrubber'
+  | 'gas'
+  | 'radar'
+  | 'antenna'
+  | 'turret'
+  | 'grav'
+  | 'loader';
+
+/**
+ * A breakable, repairable machine: an oriented box in ship space (blasts measure distance to it,
+ * the crosshair and the welder aim at it), its compartment (null = outside), its power circuit,
+ * and type parameters read by the systems code.
+ */
+export interface PartDef {
+  index: number;
+  id: string;
+  type: PartType;
+  /** HUD name. */
+  name: string;
+  c: V3;
+  half: V3;
+  /** Rotation about +Y (ship space). */
+  yaw: number;
+  zone: string | null;
+  maxHp: number;
+  circuit?: SubsystemId;
+  /** Moving mount (nacelle) the part rides on. */
+  mount?: string;
+  /** Damage taken from blasts is multiplied by this (armour < 1). */
+  soft: number;
+  /** Propellant consumers: network node they draw from. */
+  feed?: string;
+  p: Record<string, number>;
+}
+
+/** Propellant network: tanks and consumers are parts, manifolds are plain nodes. */
+export interface FluidNetDef {
+  manifolds: string[];
+  /** Pipe between two nodes (part ids or manifolds), open while `valve` is 1 (no valve = always). */
+  pipes: Array<{ a: string; b: string; valve?: string }>;
+}
+
+/** A pressurised compartment (one per zone). */
+export interface CompartmentDef {
+  id: string;
+  label: string;
+  /** Free gas volume (m³). */
+  volume: number;
+}
+
+/**
+ * Gas path between two compartments or to vacuum (b = null): doors and the ramp open with their
+ * mover, vents with their valve, ducts (air circulation) with their damper while the fans run.
+ */
+export interface OpeningDef {
+  id: string;
+  kind: 'door' | 'ramp' | 'vent' | 'duct';
+  a: string;
+  b: string | null;
+  /** Mover or valve key that opens it. */
+  key: string;
+  /** Fully open area (m²). */
+  area: number;
+}
+
+/** A moving part driven by a switch: travels toward it while its circuit is powered. */
+export interface MoverDef {
+  key: string;
+  /** Fraction per second. */
+  rate: number;
+  circuit: SubsystemId;
+  /** Extra power while travelling (kW). */
+  load: number;
 }
 
 export interface ConsoleDef extends Frame {
@@ -87,13 +196,14 @@ export interface ConsoleDef extends Frame {
   depth: number;
 }
 
-export type ScreenPage = 'status' | 'hull' | 'power';
+export type ScreenPage = 'status' | 'hull' | 'power' | 'fuel' | 'atmos' | 'engines' | 'reactor' | 'alerts' | 'flight' | 'nav' | 'radar' | 'weapons';
 
+/** Multi-function display: `pages` selectable with its bezel buttons (switch key `mfd.<id>`). */
 export interface ScreenDef extends Frame {
   id: string;
   w: number;
   h: number;
-  page: ScreenPage;
+  pages: ScreenPage[];
   host: number;
 }
 
@@ -213,6 +323,13 @@ export interface ShipDef {
   cargo: CargoDef[];
   extLights: ExtLightDef[];
   subsystems: SubsystemDef[];
+  parts: PartDef[];
+  fluid: FluidNetDef;
+  compartments: CompartmentDef[];
+  openings: OpeningDef[];
+  movers: MoverDef[];
+  /** Annunciator lamp grid on a console (lamp names = Alert.lamp groups). */
+  annunciator: { console: string; at: V2; cols: number; cell: V2; lamps: string[] };
   defaults: Record<string, number>;
   /** Hull cross-sections (for the decor/structure builder). */
   modules: ModuleDef[];
@@ -239,6 +356,8 @@ export interface PanelOpts {
   id: string;
   kind: PanelKind;
   zone: string;
+  /** Bulkheads: compartment on the other side. */
+  other?: string;
   t: number;
   hp?: number;
   /** Where the given polygon lies: 'inner' = interior face (skin grows outward), 'top' = top
@@ -279,7 +398,7 @@ export class ShipBuilder {
     poly = insetPoly(poly, PANEL_GAP / 2);
     const off = o.face === 'inner' ? o.t / 2 : o.face === 'top' ? -o.t / 2 : 0;
     const c = madd(c0, n, off);
-    this.panels.push({ index: this.panels.length, id: o.id, kind: o.kind, zone: o.zone, c, u, v, n, poly, t: o.t, maxHp: o.hp ?? HP[o.kind], conduits: [] });
+    this.panels.push({ index: this.panels.length, id: o.id, kind: o.kind, zone: o.zone, other: o.other, c, u, v, n, poly, t: o.t, maxHp: o.hp ?? HP[o.kind], conduits: [] });
   }
 
   /**
@@ -356,7 +475,7 @@ export class ShipBuilder {
     z: number,
     outer: V2[],
     inner: V2[] | null,
-    o: { outwardZ: number; kind: PanelKind; t: number; rowH: number; splitX?: number[]; clip?: { origin: V3; n: V3 }; face: 'inner' | 'mid' },
+    o: { outwardZ: number; kind: PanelKind; t: number; rowH: number; splitX?: number[]; clip?: { origin: V3; n: V3 }; face: 'inner' | 'mid'; other?: string },
   ) {
     const wOut = outer[outer.length - 1][0];
     const wIn = inner ? inner[inner.length - 1][0] : 0;
@@ -401,7 +520,7 @@ export class ShipBuilder {
         if (o.clip) pts = clipPoly(pts, o.clip.origin, o.clip.n);
         if (pts.length < 3) continue;
         const before = this.panels.length;
-        this.addPoly(pts, [0, 0, o.outwardZ], { id: `${prefix}-${++n}`, kind: o.kind, zone, t: o.t, face: o.face });
+        this.addPoly(pts, [0, 0, o.outwardZ], { id: `${prefix}-${++n}`, kind: o.kind, zone, other: o.other, t: o.t, face: o.face });
         if (this.panels.length === before) n--;
       }
     }

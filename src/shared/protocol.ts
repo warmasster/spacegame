@@ -4,7 +4,7 @@
 
 import type { ShipSnapshot } from './ship/sim.js';
 
-export const PROTOCOL_VERSION = 3;
+export const PROTOCOL_VERSION = 4;
 
 /** Suit stripe colour / crew role. 0 = commander (red stripes), 1 = crew (plain), ... */
 export type SuitVariant = number;
@@ -52,10 +52,12 @@ export type ClientMessage =
   | { type: 'fire'; o: Vec3; d: Vec3 }
   /** Shooter-reported impact point of its rocket. */
   | { type: 'hit'; p: Vec3 }
-  /** Operate a ship control (index into the ship definition's controls). */
-  | { type: 'interact'; ship: number; ctl: number }
+  /** Operate a ship control (index into the ship definition's controls); dir = wheel step on knobs. */
+  | { type: 'interact'; ship: number; ctl: number; dir?: number }
   /** Repair tool on a panel; sent ~10 times per second while held. */
-  | { type: 'repair'; ship: number; panel: number };
+  | { type: 'repair'; ship: number; panel: number }
+  /** Repair tool on a machine (part index). */
+  | { type: 'repairPart'; ship: number; part: number };
 
 export type Vec3 = [number, number, number];
 
@@ -95,6 +97,12 @@ export type ServerMessage =
   | { type: 'ship'; ship: number; sw?: Record<string, number>; hp?: Array<[number, number]>; by?: number }
   /** A control request the server refused (the client normally predicts this itself). */
   | { type: 'shipDenied'; ship: number; ctl: number; reason: string }
+  /** Continuous ship state diffs: flat [varIndex, value, …] (see shared/ship/state.ts). */
+  | { type: 'shipSt'; ship: number; d: number[] }
+  /** Ship system message for the crew's helmet display (SCRAM, breaker tripped…). */
+  | { type: 'say'; ship: number; text: string }
+  /** Own suit: oxygen reserve 0..1 and whether it is breathing cabin air. */
+  | { type: 'vitals'; o2: number; cabin: boolean }
   /** Health change; `by` = attacker id when damaged by someone. */
   | { type: 'health'; id: number; hp: number; by?: number; dead?: boolean }
   | { type: 'respawn'; id: number; spawn: Vec3 };
