@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import type { CSM } from 'three/addons/csm/CSM.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
+import type { WeaponDef } from '../fx/weapons';
 
 /** Layer used for helmet meshes: hidden from the first-person camera, still casts shadows. */
 export const HELMET_LAYER = 1;
@@ -178,7 +179,11 @@ export class Astronaut {
   private isLocal = false;
   private lookPitch = 0;
   private armBlend = 0;
-  private recoilT = 0;
+  private weaponDef: WeaponDef | null = null;
+  private torsoAng = 0;
+  private torsoVel = 0;
+  private kick = 0;
+  private kickVel = 0;
 
   constructor(asset: AstronautAsset) {
     this.model = SkeletonUtils.clone(asset.template);
@@ -255,7 +260,9 @@ export class Astronaut {
   }
 
   /** Mount a weapon: carried on the right shoulder when armed, slung on the PLSS when holstered. */
-  attachWeapon(prop: THREE.Object3D) {
+  attachWeapon(def: WeaponDef) {
+    const prop = def.build();
+    this.weaponDef = def;
     const chest = this.rig.chest.bone;
     this.model.updateMatrixWorld(true);
     this.weaponInv = new THREE.Matrix4().copy(chest.matrixWorld).invert().multiply(this.model.matrixWorld);
@@ -277,19 +284,39 @@ export class Astronaut {
     return this.armed;
   }
 
-  /** Firing kick (visual). */
-  recoil() {
-    this.recoilT = 1;
+  /**
+   * Firing: the weapon's momentum goes into two damped springs — the torso rocks back
+   * (angular impulse about the hips, suit+body ≈ 45 kg·m²) and the weapon slides back
+   * against the shoulder — so stronger weapons kick harder without per-weapon animation.
+   */
+  applyRecoil(momentum: number) {
+    this.torsoVel += (momentum * 0.55) / 45;
+    this.kickVel += momentum / 22;
+  }
+
+  /** World position of the weapon muzzle (null when no weapon). */
+  muzzle(out: THREE.Vector3) {
+    if (!this.weapon || !this.weaponDef) return null;
+    this.weapon.updateWorldMatrix(true, true);
+    return this.weapon.children[0].localToWorld(out.copy(this.weaponDef.muzzle));
+  }
+
+  /** Current recoil pitch (rad) for the camera. */
+  get recoilPitch() {
+    return this.torsoAng;
   }
 
   private placeWeapon() {
-    if (!this.weapon || !this.weaponInv) return;
+    if (!this.weapon || !this.weaponInv || !this.weaponDef) return;
     const w = smooth(this.armBlend);
-    // model space (character right = -X, forward = +Z)
-    _wp.set(-0.24, 1.5, 0.04).lerp(_wp2.set(0.03, 1.36, -0.47), 1 - w);
-    _wp.z -= this.recoilT * this.recoilT * 0.09 * w;
-    _wq.setFromEuler(_we.set((-this.recoilT * 0.12 + this.lookPitch * 0.7) * w, 0, 0));
-    _wq.slerp(_wq2.setFromEuler(_we.set(-1.35, 0, 0.62)), 1 - w);
+    const def = this.weaponDef;
+    // shoulder carry (like a real bazooka gunner): contact on the right shoulder, tube beside the helmet
+    const aim = this.lookPitch * 0.74 - this.torsoAng * 0.6;
+    _wq.setFromEuler(_we.set(aim, 0.02, 0));
+    _wp.set(-0.225, 1.47, 0.02).addScaledVector(_fwd.set(0, 0, -1).applyQuaternion(_wq), this.kick);
+    if (def.carry === 'hip') _wp.set(-0.2, 1.05, 0.25);
+    _wp.lerp(def.holster.pos, 1 - w);
+    _wq.slerp(_wq2.setFromEuler(def.holster.rot), 1 - w);
     this.weapon.position.copy(_wp).applyMatrix4(this.weaponInv);
     this.weapon.quaternion.copy(this.weaponInvQ!).multiply(_wq);
   }
@@ -449,12 +476,20 @@ export class Astronaut {
     this.lean += (targetLean - this.lean) * Math.min(1, dt * 4);
     this.pose('pelvis', this.lean * 0.4, sway * 0.5, 0);
     const look = THREE.MathUtils.clamp(-input.pitch, -0.9, 1.1);
-    this.pose('spine', this.lean * 0.5 + look * 0.16, -sway * 0.8, 0);
-    this.pose('chest', this.lean * 0.3 + look * 0.26 + breathe * 2, -sway * 0.6, Math.sin(this.phase) * 0.02 * g);
+    this.pose('spine', this.lean * 0.5 + look * 0.16 - this.torsoAng * 0.5, -sway * 0.8, 0);
+    this.pose('chest', this.lean * 0.3 + look * 0.26 + breathe * 2 - this.torsoAng, -sway * 0.6, Math.sin(this.phase) * 0.02 * g);
 
     // ---- weapon (placed first; arms reach for it after the body pose) ------------------------------
     this.armBlend += ((this.armed && !this.dead ? 1 : 0) - this.armBlend) * Math.min(1, dt * 5);
-    this.recoilT = Math.max(0, this.recoilT - dt * 4);
+    // recoil springs (critically-ish damped)
+    const sub = 4;
+    for (let i = 0; i < sub; i++) {
+      const h = dt / sub;
+      this.torsoVel += (-55 * this.torsoAng - 9 * this.torsoVel) * h;
+      this.torsoAng += this.torsoVel * h;
+      this.kickVel += (-260 * this.kick - 22 * this.kickVel) * h;
+      this.kick += this.kickVel * h;
+    }
     this.lookPitch = THREE.MathUtils.clamp(-input.pitch, -0.9, 1.1);
     this.placeWeapon();
 
@@ -485,11 +520,11 @@ export class Astronaut {
    * so the arms follow every weapon motion — gait bob, aim pitch, recoil — like the legs do.
    */
   private armIK(w: number) {
-    if (!this.weapon || w < 0.01) return;
+    if (!this.weapon || !this.weaponDef || w < 0.01) return;
     this.model.updateMatrixWorld(true);
     const grips: Array<[BoneName, BoneName, BoneName, THREE.Vector3, number]> = [
-      ['upperarmR', 'forearmR', 'handR', _g1.set(0.0, -0.14, 0.1), -1],
-      ['upperarmL', 'forearmL', 'handL', _g2.set(0.02, -0.08, 0.36), 1],
+      ['upperarmR', 'forearmR', 'handR', _g1.copy(this.weaponDef.rightGrip), -1],
+      ['upperarmL', 'forearmL', 'handL', _g2.copy(this.weaponDef.leftGrip), 1],
     ];
     const modelQ = this.model.getWorldQuaternion(_mq);
     for (const [ua, fa, ha, grip, side] of grips) {
@@ -506,7 +541,8 @@ export class Astronaut {
       const dist = Math.min(toT.length(), L1 + L2 - 0.002);
       const dir = toT.normalize();
       // elbow hangs down and out
-      const pole = _p.set(side * 0.6, -1, -0.25).applyQuaternion(modelQ).normalize();
+      // elbows down under the tube, right one out to the side, left tucked under
+      const pole = _p.set(side > 0 ? 0.25 : -0.8, -1, side > 0 ? 0.1 : -0.2).applyQuaternion(modelQ).normalize();
       const perp = pole.addScaledVector(dir, -pole.dot(dir)).normalize();
       const a = (L1 * L1 - L2 * L2 + dist * dist) / (2 * dist);
       const h = Math.sqrt(Math.max(0, L1 * L1 - a * a));
@@ -557,11 +593,11 @@ function findBone(root: THREE.Object3D, name: string): THREE.Bone | null {
 }
 
 const _wp = new THREE.Vector3();
-const _wp2 = new THREE.Vector3();
 const _wq = new THREE.Quaternion();
 const _wq2 = new THREE.Quaternion();
 const _we = new THREE.Euler();
 const _g1 = new THREE.Vector3();
+const _fwd = new THREE.Vector3();
 const _g2 = new THREE.Vector3();
 const _mq = new THREE.Quaternion();
 const _s = new THREE.Vector3();

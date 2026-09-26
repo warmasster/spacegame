@@ -3,7 +3,8 @@ import { MAX_PLAYERS, MOON, CLIENT_SEND_RATE, SUIT_STRIPES } from '../shared/con
 import { StateFlags, type PlayerInfo, type TerrainEdit, type Vec3 } from '../shared/protocol';
 import { LANDMARK, LunarTerrain } from '../shared/terrain';
 import { Particles } from './fx/particles';
-import { makeLauncherMesh, Rockets } from './fx/rockets';
+import { Rockets } from './fx/rockets';
+import { LAUNCHER } from './fx/weapons';
 import { NetClient, type Welcome } from './net/netClient';
 import { RemotePlayer } from './net/remotePlayer';
 import { Astronaut, AstronautAsset } from './player/astronaut';
@@ -131,7 +132,7 @@ export class Game {
     this.me = new Astronaut(this.asset);
     this.me.setLocal(true);
     this.me.setStripeColor(SUIT_STRIPES[this.welcome.variant % SUIT_STRIPES.length]);
-    this.me.attachWeapon(makeLauncherMesh());
+    this.me.attachWeapon(LAUNCHER);
     this.me.setArmed(true);
     this.particles = new Particles(renderer.getPixelRatio());
     this.scene.add(this.particles.group);
@@ -208,7 +209,7 @@ export class Game {
   private addRemote(p: PlayerInfo, announce: boolean) {
     if (this.remotes.has(p.id) || !this.asset) return;
     const r = new RemotePlayer(p, this.asset);
-    r.astronaut.attachWeapon(makeLauncherMesh());
+    r.astronaut.attachWeapon(LAUNCHER);
     const hp = this.pendingHealth.get(p.id);
     if (hp !== undefined) {
       r.hp = hp;
@@ -226,7 +227,7 @@ export class Game {
 
   private onFire(id: number, o: Vec3, d: Vec3) {
     this.rockets?.spawn(id, new THREE.Vector3(...o), new THREE.Vector3(...d));
-    this.remotes.get(id)?.astronaut.recoil();
+    this.remotes.get(id)?.astronaut.applyRecoil(LAUNCHER.recoil);
   }
 
   private onExplode(id: number, p: Vec3, edit: TerrainEdit) {
@@ -286,14 +287,13 @@ export class Game {
 
   private tryFire() {
     const now = performance.now() / 1000;
-    if (this.dead || !this.me.isArmed || now - this.lastFire < 1.2) return;
+    if (this.dead || !this.me.isArmed || now - this.lastFire < LAUNCHER.cooldown) return;
     this.lastFire = now;
     const dir = new THREE.Vector3();
     this.camera.getWorldDirection(dir);
     // launch from the shoulder tube, aimed at what the crosshair covers
-    const origin = this.ctl.position.clone().add(new THREE.Vector3(0, 1.5, 0));
-    const right = new THREE.Vector3(Math.cos(this.ctl.yaw), 0, -Math.sin(this.ctl.yaw));
-    origin.addScaledVector(right, 0.28).addScaledVector(dir, 0.7);
+    const origin = this.me.muzzle(new THREE.Vector3()) ?? this.ctl.position.clone().add(new THREE.Vector3(0, 1.5, 0));
+    origin.addScaledVector(dir, 0.1);
     const target = this.camera.position.clone().addScaledVector(dir, 80);
     const aim = target.sub(origin).normalize();
     this.net.sendFire(
@@ -301,8 +301,9 @@ export class Game {
       [round(aim.x, 4), round(aim.y, 4), round(aim.z, 4)],
     );
     // recoil kick
-    this.me.recoil();
-    this.ctl.impulse(aim.clone().multiplyScalar(-0.6));
+    // momentum conservation on a ~180 kg suited astronaut, plus the body/arm springs
+    this.me.applyRecoil(LAUNCHER.recoil);
+    this.ctl.impulse(aim.clone().multiplyScalar(-LAUNCHER.recoil / 180));
   }
 
   private emitJet(a: Astronaut) {
@@ -417,6 +418,11 @@ export class Game {
       this.camera.quaternion.setFromEuler(new THREE.Euler(pitch, yaw, 0, 'YXZ'));
       this.camera.updateMatrixWorld();
     }
+    // recoil kicks the view up with the torso spring
+    if (this.me.recoilPitch) {
+      this.camera.rotateX(this.me.recoilPitch * 0.8);
+      this.camera.updateMatrixWorld();
+    }
     this.me.setEyeClip(this.rig.mode === 'first' ? this.camera.position : null);
     this.terrainSys.update(this.camera.position, new THREE.Frustum());
     this.rocks.update(this.ctl.position);
@@ -449,7 +455,7 @@ export class Game {
       fps: this.fps,
       hp: this.hp,
       fuel: this.ctl.fuel,
-      reload: this.me.isArmed ? Math.min(1, (performance.now() / 1000 - this.lastFire) / 1.2) : 0,
+      reload: this.me.isArmed ? Math.min(1, (performance.now() / 1000 - this.lastFire) / LAUNCHER.cooldown) : 0,
       dead: this.dead,
       markers,
     });

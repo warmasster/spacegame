@@ -39,32 +39,6 @@ function makeRocketMesh(mats: { body: THREE.Material; dark: THREE.Material }) {
   return g;
 }
 
-/** Shoulder-carried launcher tube, local +Z forward (attached to the chest bone). */
-export function makeLauncherMesh() {
-  const olive = new THREE.MeshStandardMaterial({ color: 0x4d5243, roughness: 0.55, metalness: 0.35 });
-  const dark = new THREE.MeshStandardMaterial({ color: 0x1b1c1e, roughness: 0.45, metalness: 0.7 });
-  const g = new THREE.Group();
-  const tube = new THREE.Mesh(
-    lathe([[0.052, -0.55], [0.062, -0.54], [0.064, -0.5], [0.056, -0.47], [0.056, 0.4], [0.064, 0.43], [0.066, 0.5], [0.055, 0.52]], 28),
-    olive,
-  );
-  tube.rotation.x = Math.PI / 2;
-  const inner = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 1.04, 20, 1, true), dark);
-  inner.material = dark.clone();
-  (inner.material as THREE.MeshStandardMaterial).side = THREE.BackSide;
-  inner.rotation.x = Math.PI / 2;
-  const grip = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.12, 0.05), dark);
-  grip.position.set(0, -0.09, 0.12);
-  grip.rotation.x = 0.25;
-  const sight = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.045, 0.1), dark);
-  sight.position.set(-0.06, 0.05, 0.16);
-  for (const m of [tube, inner, grip, sight]) {
-    m.castShadow = true;
-    g.add(m);
-  }
-  return g;
-}
-
 /**
  * Rockets in flight. Every client simulates every rocket (same start = same arc); only the
  * shooter reports the impact, the server turns it into an explosion + crater for everyone.
