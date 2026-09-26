@@ -10,7 +10,7 @@ export type WorkerJob =
   | { kind: 'rocks'; id: number; seed: number; x0: number; z0: number; size: number; minSize: number; maxSize: number; edits: TerrainEdit[] };
 
 export type WorkerResult =
-  | { kind: 'chunk'; id: number; positions: Float32Array; normals: Float32Array; albedo: Float32Array; morph: Float32Array; sunVis: Float32Array; minY: number; maxY: number }
+  | { kind: 'chunk'; id: number; positions: Float32Array; normals: Float32Array; albedo: Float32Array; morph: Float32Array; sunVis: Float32Array; morphNS: Float32Array; minY: number; maxY: number }
   | { kind: 'heights'; id: number; heights: Float32Array }
   | { kind: 'rocks'; id: number; rocks: Float32Array };
 
@@ -74,6 +74,9 @@ function buildChunk(job: Extract<WorkerJob, { kind: 'chunk' }>): WorkerResult {
   const albedo = new Float32Array(vcount);
   const morph = new Float32Array(vcount * 4);
   const sunVis = new Float32Array(vcount);
+  // morph targets for shading: normal (xyz) + sun visibility (w) of the even vertex each vertex
+  // collapses onto, so fused triangles never mix values (that was the blocky "tile" artefact)
+  const morphNS = new Float32Array(vcount * 4);
   let minY = Infinity;
   let maxY = -Infinity;
   let k = 0;
@@ -107,6 +110,16 @@ function buildChunk(job: Extract<WorkerJob, { kind: 'chunk' }>): WorkerResult {
       k++;
     }
   }
+  for (let j = 0; j <= res; j++) {
+    for (let i = 0; i <= res; i++) {
+      const k2 = j * (res + 1) + i;
+      const e = (j - (j & 1)) * (res + 1) + (i - (i & 1));
+      morphNS[k2 * 4] = normals[e * 3];
+      morphNS[k2 * 4 + 1] = normals[e * 3 + 1];
+      morphNS[k2 * 4 + 2] = normals[e * 3 + 2];
+      morphNS[k2 * 4 + 3] = sunVis[e];
+    }
+  }
   // skirts: copy of each edge, pushed down (backup for transient LOD jumps)
   const edge = (i: number, j: number) => {
     const src = j * (res + 1) + i;
@@ -118,6 +131,7 @@ function buildChunk(job: Extract<WorkerJob, { kind: 'chunk' }>): WorkerResult {
     normals[k * 3 + 2] = normals[src * 3 + 2];
     albedo[k] = albedo[src];
     sunVis[k] = sunVis[src];
+    morphNS.set(morphNS.subarray(src * 4, src * 4 + 4), k * 4);
     morph[k * 4] = morph[src * 4];
     morph[k * 4 + 1] = morph[src * 4 + 1] - skirt;
     morph[k * 4 + 2] = morph[src * 4 + 2];
@@ -128,7 +142,7 @@ function buildChunk(job: Extract<WorkerJob, { kind: 'chunk' }>): WorkerResult {
   for (let i = 0; i <= res; i++) edge(i, res);
   for (let j = 0; j <= res; j++) edge(0, j);
   for (let j = 0; j <= res; j++) edge(res, j);
-  return { kind: 'chunk', id: job.id, positions, normals, albedo, morph, sunVis, minY: minY - skirt, maxY };
+  return { kind: 'chunk', id: job.id, positions, normals, albedo, morph, sunVis, morphNS, minY: minY - skirt, maxY };
 }
 
 function buildHeights(job: Extract<WorkerJob, { kind: 'heights' }>): WorkerResult {
@@ -160,7 +174,7 @@ self.onmessage = (e: MessageEvent<WorkerJob>) => {
   else res = buildRocks(job);
   const transfer: Transferable[] =
     res.kind === 'chunk'
-      ? [res.positions.buffer, res.normals.buffer, res.albedo.buffer, res.morph.buffer, res.sunVis.buffer]
+      ? [res.positions.buffer, res.normals.buffer, res.albedo.buffer, res.morph.buffer, res.sunVis.buffer, res.morphNS.buffer]
       : res.kind === 'heights'
         ? [res.heights.buffer]
         : [res.rocks.buffer];

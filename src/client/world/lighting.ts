@@ -48,7 +48,7 @@ export class Lighting {
     this.csm.fade = true;
     for (const l of this.csm.lights) {
       l.color.setRGB(1.0, 0.985, 0.96);
-      l.shadow.normalBias = 0.035;
+      l.shadow.normalBias = 0.06;
       l.shadow.radius = quality === 'high' ? 3 : 2;
       l.shadow.camera.layers.enableAll();
     }

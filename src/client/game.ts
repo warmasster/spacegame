@@ -70,6 +70,8 @@ export class Game {
   private lastFire = -10;
   private fireQueued = false;
   private nozzles: [THREE.Vector3, THREE.Vector3] = [new THREE.Vector3(), new THREE.Vector3()];
+  /** ?cam=x,z,yaw,pitch[,h] free inspection camera. */
+  private inspectCam = new URLSearchParams(location.search).get('cam')?.split(',').map(Number) ?? null;
   /** Automation: keep a fixed third-person orbit (no easing back). */
   debugOrbit = false;
 
@@ -93,7 +95,11 @@ export class Game {
   async start() {
     const { onProgress } = this.opts;
     onProgress('Conectando con el servidor…');
-    this.welcome = await this.net.connect(this.opts.name);
+    const params = new URLSearchParams(location.search);
+    // ?offline: no server — terrain/lighting inspection and solo testing
+    this.welcome = params.has('offline')
+      ? { type: 'welcome', id: 1, variant: 0, players: [], spawn: [0, 0, 0], worldSeed: 1969, serverTime: 0, edits: [], health: [] }
+      : await this.net.connect(this.opts.name);
 
     onProgress('Preparando la superficie lunar…');
     const renderer = this.pipeline.renderer;
@@ -405,6 +411,12 @@ export class Game {
 
     // --- camera & world streaming -----------------------------------------------------------------
     this.rig.update(dt, this.ctl, this.me);
+    if (this.inspectCam) {
+      const [x, z, yaw, pitch, hgt = 1.8] = this.inspectCam;
+      this.camera.position.set(x, this.terrain.height(x, z) + hgt, z);
+      this.camera.quaternion.setFromEuler(new THREE.Euler(pitch, yaw, 0, 'YXZ'));
+      this.camera.updateMatrixWorld();
+    }
     this.me.setEyeClip(this.rig.mode === 'first' ? this.camera.position : null);
     this.terrainSys.update(this.camera.position, new THREE.Frustum());
     this.rocks.update(this.ctl.position);

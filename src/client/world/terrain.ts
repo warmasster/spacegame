@@ -101,6 +101,7 @@ export class TerrainSystem {
           attribute float albedo;
           attribute vec4 morph;
           attribute float sunVis;
+          attribute vec4 morphNS;
           uniform vec3 uViewer;
           varying float vSunVis;
           varying float vSkirt;
@@ -109,11 +110,17 @@ export class TerrainSystem {
           varying vec3 vWorldNormal;`,
         )
         .replace(
+          '#include <beginnormal_vertex>',
+          `#include <beginnormal_vertex>
+          float cdlodK0 = clamp((distance((modelMatrix * vec4(position, 1.0)).xyz, uViewer) - morph.w * 0.68) / (morph.w * 0.3), 0.0, 1.0);
+          objectNormal = normalize(mix(objectNormal, morphNS.xyz, cdlodK0));`,
+        )
+        .replace(
           '#include <begin_vertex>',
           `#include <begin_vertex>
           ${MORPH_GLSL}
           vAlbedo = albedo;
-          vSunVis = sunVis;
+          vSunVis = mix(sunVis, morphNS.w, cdlodK);
           vSkirt = float(gl_VertexID >= ${(RES + 1) * (RES + 1)});
           vWorldPos = (modelMatrix * vec4(transformed, 1.0)).xyz;
           vWorldNormal = normalize(mat3(modelMatrix) * objectNormal);`,
@@ -185,7 +192,7 @@ export class TerrainSystem {
         );
     };
     if (new URLSearchParams(location.search).has('nobaked')) mat.defines = { ...mat.defines, DBG_NOBAKED: '' };
-    mat.customProgramCacheKey = () => 'lunar-terrain-v4';
+    mat.customProgramCacheKey = () => 'lunar-terrain-v5';
     this.material = mat;
 
     // shadow casting must morph exactly like the visible surface
@@ -303,6 +310,7 @@ export class TerrainSystem {
       g.setAttribute('albedo', new THREE.BufferAttribute(r.albedo, 1));
       g.setAttribute('morph', new THREE.BufferAttribute(r.morph, 4));
       g.setAttribute('sunVis', new THREE.BufferAttribute(r.sunVis, 1));
+      g.setAttribute('morphNS', new THREE.BufferAttribute(r.morphNS, 4));
       g.setIndex(this.index);
       g.boundingBox = new THREE.Box3(new THREE.Vector3(0, r.minY, 0), new THREE.Vector3(node.size, r.maxY, node.size));
       g.boundingSphere = g.boundingBox.getBoundingSphere(new THREE.Sphere());
