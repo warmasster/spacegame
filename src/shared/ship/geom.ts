@@ -21,6 +21,44 @@ export function rotY(p: V3, yaw: number): V3 {
   return [p[0] * c + p[2] * s, p[1], -p[0] * s + p[2] * c];
 }
 
+// -----------------------------------------------------------------------------------------------
+// Quaternions [x, y, z, w] (same layout as three.js), for ship poses
+// -----------------------------------------------------------------------------------------------
+
+export type Quat = [number, number, number, number];
+
+/** Rotation about +Y by `yaw` (three.js convention). */
+export const qYaw = (yaw: number): Quat => [0, Math.sin(yaw / 2), 0, Math.cos(yaw / 2)];
+
+export function qMul(a: Quat, b: Quat): Quat {
+  return [
+    a[3] * b[0] + a[0] * b[3] + a[1] * b[2] - a[2] * b[1],
+    a[3] * b[1] - a[0] * b[2] + a[1] * b[3] + a[2] * b[0],
+    a[3] * b[2] + a[0] * b[1] - a[1] * b[0] + a[2] * b[3],
+    a[3] * b[3] - a[0] * b[0] - a[1] * b[1] - a[2] * b[2],
+  ];
+}
+
+export const qConj = (q: Quat): Quat => [-q[0], -q[1], -q[2], q[3]];
+
+export function qNorm(q: Quat): Quat {
+  const l = Math.hypot(q[0], q[1], q[2], q[3]) || 1;
+  return [q[0] / l, q[1] / l, q[2] / l, q[3] / l];
+}
+
+/** Rotate a vector by a unit quaternion. */
+export function qRotate(q: Quat, v: V3): V3 {
+  const u: V3 = [q[0], q[1], q[2]];
+  const t = scale(cross(u, v), 2);
+  return add(add(v, scale(t, q[3])), cross(u, t));
+}
+
+/** Advance an orientation by angular velocity `w` (world frame, rad/s) over dt. */
+export function qIntegrate(q: Quat, w: V3, dt: number): Quat {
+  const dq = qMul([w[0], w[1], w[2], 0], q);
+  return qNorm([q[0] + dq[0] * 0.5 * dt, q[1] + dq[1] * 0.5 * dt, q[2] + dq[2] * 0.5 * dt, q[3] + dq[3] * 0.5 * dt]);
+}
+
 /** Newell normal of a planar polygon (unit). */
 export function polyNormal(pts: V3[]): V3 {
   let x = 0;

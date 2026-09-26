@@ -1,9 +1,9 @@
 import type { WebSocket } from 'ws';
 import { MAX_PLAYERS, SERVER_SNAPSHOT_RATE, SHIP_SPAWNS, WORLD_SEED } from '../shared/constants.js';
-import { placeShip, REACH, REPAIR_RATE, SHIP_DEFS, ShipSim, SYSTEMS_HZ } from '../shared/ship/sim.js';
+import { CREW_BLAST_RADIUS, placeShip, REACH, REPAIR_RATE, SHIP_DEFS, shipBlast, ShipSim, SYSTEMS_HZ } from '../shared/ship/sim.js';
 import { VarSync } from '../shared/ship/state.js';
 import type { SysEvent } from '../shared/ship/systems.js';
-import { SUIT, crewContext } from '../shared/ship/crew.js';
+import { SUIT, crewStep } from '../shared/ship/crew.js';
 import { LunarTerrain } from '../shared/terrain.js';
 import {
   PROTOCOL_VERSION,
@@ -17,7 +17,7 @@ import {
 } from '../shared/protocol.js';
 
 export const MAX_HP = 100;
-const BLAST_RADIUS = 6; // m, damage falls off linearly
+const BLAST_RADIUS = CREW_BLAST_RADIUS; // m, damage falls off linearly
 const CRATER_RADIUS = 2.4;
 const RESPAWN_MS = 4000;
 const MAX_EDITS = 4000;
@@ -61,6 +61,7 @@ export class Room {
   private snapshotTimer: NodeJS.Timeout;
   private edits: TerrainEdit[] = [];
   /** Same deterministic terrain the clients use (+ the craters), to decide where craters form. */
+  private seed = WORLD_SEED;
   private terrain = new LunarTerrain(WORLD_SEED);
   private ships: ShipSim[];
   private sync = new Map<number, VarSync>();
@@ -98,25 +99,20 @@ export class Room {
       this.tickAcc -= h;
       this.ticks++;
       const players = this.players().filter((m) => m.state && !m.dead);
-      for (const ship of this.ships) {
-        const crew = crewContext(ship, players.map((m) => ({ p: m.state!.p, seated: (m.state!.f & StateFlags.Seated) !== 0 })));
-        const r = ship.tick(h, { crew: crew.counts, docked: crew.docked, bodies: crew.bodies });
-        if (Object.keys(r.sw).length) this.broadcast({ type: 'ship', ship: ship.id, sw: r.sw });
-        this.shipEvents(ship, r.events);
-        // suits: breathe the cabin (and top up) where it is breathable, else spend the reserve
-        players.forEach((m, i) => {
-          const where = crew.members[i];
-          if (!where.inside) return;
-          m.cabin = where.breathable;
-          if (where.breathable || where.docked) m.suitO2 = Math.min(1, m.suitO2 + (where.breathable ? SUIT.refill : SUIT.dockRefill) * h);
-        });
-      }
-      for (const m of players) {
-        const inAny = this.ships.some((ship) => crewContext(ship, [{ p: m.state!.p, seated: false }]).members[0].inside);
-        if (!inAny) m.cabin = false;
-        if (!m.cabin) m.suitO2 = Math.max(0, m.suitO2 - SUIT.use * h);
+      // ships tick with their crew; suits breathe the cabin where it is breathable, drink from a
+      // seat umbilical, or spend their reserve (shared/ship/crew.ts, same rules offline)
+      const crew = players.map((m) => ({ p: m.state!.p, seated: (m.state!.f & StateFlags.Seated) !== 0, o2: m.suitO2 }));
+      const r = crewStep(this.ships, crew, h, (ship, ctx) => ship.tick(h, ctx));
+      this.ships.forEach((ship, k) => {
+        const res = r.results[k];
+        if (Object.keys(res.sw).length) this.broadcast({ type: 'ship', ship: ship.id, sw: res.sw });
+        this.shipEvents(ship, res.events);
+      });
+      players.forEach((m, i) => {
+        m.suitO2 = r.o2[i];
+        m.cabin = r.cabin[i];
         if (m.suitO2 <= 0) this.damage(m, SUIT.choke * h, 0);
-      }
+      });
       if (this.ticks % 2 === 0) {
         for (const ship of this.ships) {
           const d = this.sync.get(ship.id)!.diff(ship.st);
@@ -143,6 +139,22 @@ export class Room {
         if (part) this.broadcast({ type: 'say', ship: ship.id, text: `${part.name}: destruido` });
       }
     }
+  }
+
+  /** Empty room only: a new terrain, no craters, ships sat on the fresh ground. */
+  private reseed(seed: number) {
+    this.seed = seed >>> 0;
+    this.edits = [];
+    this.terrain = new LunarTerrain(this.seed);
+    this.terrain.edits = this.edits;
+    const base = new LunarTerrain(this.seed);
+    this.ships = SHIP_SPAWNS.map((s) => {
+      const def = SHIP_DEFS[s.def];
+      return new ShipSim(s.id, def, placeShip(def, s.x, s.z, s.yaw, base), base);
+    });
+    this.sync.clear();
+    for (const ship of this.ships) this.sync.set(ship.id, new VarSync(ship.vars, ship.st));
+    this.log(`mundo nuevo · semilla ${this.seed}`);
   }
 
   get playerCount() {
@@ -234,6 +246,7 @@ export class Room {
     let variant = 0;
     while (taken.has(variant)) variant++;
 
+    if (this.playerCount === 0 && Number.isInteger(msg.seed) && (msg.seed as number) > 0) this.reseed(msg.seed as number);
     member.info = { id: this.nextId++, name: sanitizeName(msg.name, variant), variant };
     const spawn = SPAWNS[variant % SPAWNS.length];
 
@@ -243,7 +256,7 @@ export class Room {
       variant,
       players: this.others(member).map((m) => m.info),
       spawn: [spawn[0], 0, spawn[1]],
-      worldSeed: WORLD_SEED,
+      worldSeed: this.seed,
       serverTime: now(),
       edits: this.edits,
       health: this.others(member).map((m) => ({ id: m.info.id, hp: m.hp })),
@@ -289,7 +302,7 @@ export class Room {
     this.broadcast({ type: 'explode', id: by, p, edit });
     const scale = (o.radius ?? BLAST_RADIUS) / BLAST_RADIUS;
     for (const ship of this.ships) {
-      const r = ship.explode(p, { radius: 2.8 * Math.max(1, scale), damage: o.damage ?? 75 });
+      const r = ship.explode(p, shipBlast(o.radius, o.damage));
       if (r.hp.length) {
         this.broadcast({ type: 'ship', ship: ship.id, hp: r.hp, sw: Object.keys(r.sw).length ? r.sw : undefined, by });
         const holes = r.hp.filter(([, hp]) => hp <= 0).map(([i]) => ship.def.panels[i].id);

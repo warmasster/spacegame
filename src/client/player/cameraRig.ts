@@ -12,7 +12,8 @@ export class CameraRig {
   orbit = 0;
   orbitPitch = 0;
   private eye = new THREE.Vector3();
-  private smoothEye = new THREE.Vector3();
+  /** Smoothed eye height above the body. The body itself is not smoothed, or the jet and falls leave the camera behind. */
+  private smoothBob = 0;
   private thirdPos = new THREE.Vector3();
   private initialized = false;
   zoom = 3.4;
@@ -20,6 +21,11 @@ export class CameraRig {
   fpZoom = 1;
   /** Right mouse held: extra ×3 on top, in either mode. */
   zoomHeld = false;
+  /**
+   * Wheel while looking at a selector (or with the manual open). Return true to keep the zoom
+   * where it is. `dir` is +1 for scroll up.
+   */
+  wheelTo: ((dir: number) => boolean) | null = null;
   static readonly BASE_FOV = 72;
 
   constructor(
@@ -27,6 +33,8 @@ export class CameraRig {
     private terrain: LunarTerrain,
   ) {
     window.addEventListener('wheel', (e) => {
+      const dir = -Math.sign(e.deltaY);
+      if (dir && this.wheelTo?.(dir)) return;
       if (this.mode === 'third') this.zoom = THREE.MathUtils.clamp(this.zoom + Math.sign(e.deltaY) * 0.4, 1.6, 9);
       else this.fpZoom = THREE.MathUtils.clamp(this.fpZoom * (e.deltaY < 0 ? 1.25 : 0.8), 1, 4);
     });
@@ -46,20 +54,17 @@ export class CameraRig {
   update(dt: number, ctl: PlayerController, astronaut: Astronaut, occlude?: (from: THREE.Vector3, to: THREE.Vector3) => number | null) {
     const cam = this.camera;
     astronaut.eyePosition(this.eye);
-    if (!this.initialized) {
-      this.smoothEye.copy(this.eye);
-    }
-    // keep horizontal exact, soften vertical gait bounce a little
-    this.smoothEye.x = this.eye.x;
-    this.smoothEye.z = this.eye.z;
-    this.smoothEye.y += (this.eye.y - this.smoothEye.y) * Math.min(1, dt * 18);
+    const bob = this.eye.y - ctl.renderPosition.y;
+    if (!this.initialized) this.smoothBob = bob;
+    // only the gait bob is softened; the body rise (jet, fall) stays with the body
+    this.smoothBob += (bob - this.smoothBob) * Math.min(1, dt * 18);
 
     const rot = new THREE.Euler(ctl.pitch, ctl.yaw, 0, 'YXZ');
     if (this.mode === 'third') rot.set(THREE.MathUtils.clamp(ctl.pitch + this.orbitPitch, -1.4, 1.3), ctl.yaw + this.orbit, 0, 'YXZ');
     if (this.mode === 'first') {
       cam.layers.disable(HELMET_LAYER);
       cam.near = 0.05;
-      cam.position.copy(this.smoothEye);
+      cam.position.set(this.eye.x, ctl.renderPosition.y + this.smoothBob, this.eye.z);
       cam.quaternion.setFromEuler(rot);
     } else {
       cam.layers.enable(HELMET_LAYER);

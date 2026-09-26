@@ -4,25 +4,34 @@
 //
 // State: `sw` = positions of every control (crew input), `hp` = hull panel integrity, `st` = the
 // continuous simulation table (power, propellant, reactor, atmosphere, part integrity…, see
-// systems.ts), replicated as quantised diffs.
+// systems.ts and modules/*.ts), replicated as quantised diffs.
 
+import { SUN } from '../constants.js';
 import type { ControlDef, PanelDef, PartDef, ShipDef, SubsystemId } from './def.js';
-import { add, closestInPoly, rotY, sub, toFrame, type V3 } from './geom.js';
-import { HAULER } from './hauler.js';
+import { massProperties, type MassProps, type ShipPose } from './flight.js';
+import { add, closestInPoly, qConj, qRotate, qYaw, rotY, sub, toFrame, type V3 } from './geom.js';
+import type { Engine } from './modules/engines.js';
 import { quantize, VarTable } from './state.js';
-import { ENG, panelArea, RX, ShipSystems, SYSTEMS_HZ, type SysContext, type SysEvent } from './systems.js';
+import { panelArea, ShipSystems, SYSTEMS_HZ, type SysContext, type SysEvent } from './systems.js';
 
-export const SHIP_DEFS: Record<string, ShipDef> = { hauler: HAULER };
+/** Every ship the game knows, by id (ships/index.ts). */
+export { SHIP_DEFS } from './ships/index.js';
 
 /** A panel below this integrity is a hole (damage below it blows the panel out completely). */
 export const SOLID_HP = 30;
 /** HP per second one astronaut restores with the repair tool. */
 export const REPAIR_RATE = 22;
 export const BLAST = { radius: 2.8, damage: 75 };
+/** Crew-scale radius of a rocket blast (m): other explosions scale the ship blast by radius / this. */
+export const CREW_BLAST_RADIUS = 6;
+
+/** Ship-scale blast of an explosion given in crew scale (rocket = 6 m, 75 dmg). Same on server and offline. */
+export function shipBlast(radius = CREW_BLAST_RADIUS, damage = BLAST.damage) {
+  return { radius: BLAST.radius * Math.max(1, radius / CREW_BLAST_RADIUS), damage };
+}
 /** Max distances (m) from the astronaut's eye to act on a control / repair a panel. */
 export const REACH = { control: 2.4, repair: 3.2 };
-/** Pressure difference (kPa) across a door above which it refuses to open. */
-export const DOOR_DP = 5;
+export { DOOR_DP } from './modules/life.js';
 export { SYSTEMS_HZ };
 
 export interface ShipPlacement {
@@ -42,18 +51,21 @@ export interface ShipSnapshot {
   hp: number[];
   /** Continuous state (full table, quantised). */
   st?: number[];
+  /** World pose (flight groundwork; parked ships derive it from x, z, yaw). */
+  pose?: ShipPose;
 }
 
 type Ground = { height(x: number, z: number): number };
 
 /** World placement on its gear: floor at the mean ground height under the feet + clearance. */
 export function placeShip(def: ShipDef, x: number, z: number, yaw: number, ground: Ground): ShipPlacement {
+  const legs: V3[] = def.gear?.legs.length ? def.gear.legs : [[0, 0, 0]];
   let sum = 0;
-  for (const leg of def.gear.legs) {
+  for (const leg of legs) {
     const w = rotY(leg, yaw);
     sum += ground.height(x + w[0], z + w[2]);
   }
-  return { x, y: sum / def.gear.legs.length + def.floorHeight, z, yaw };
+  return { x, y: sum / legs.length + def.floorHeight, z, yaw };
 }
 
 export class ShipSim {
@@ -68,14 +80,22 @@ export class ShipSim {
   landed = true;
   /** Parked on a pad with a refuelling point. */
   onPad = true;
+  /** Sunlight on the arrays (0..1): the landing site sits in the lunar day. */
+  sun = SUN.el > 0 ? 1 : 0;
+  /**
+   * Where the ship is and how it moves. Parked ships sit on `place`; the flight model (flight.ts)
+   * will move this. Every ship-space ↔ world conversion goes through it.
+   */
+  readonly pose: ShipPose;
 
   constructor(
     readonly id: number,
     readonly def: ShipDef,
     readonly place: ShipPlacement,
     ground: Ground,
-    snap?: { sw: Record<string, number>; hp: number[]; st?: number[] },
+    snap?: { sw: Record<string, number>; hp: number[]; st?: number[]; pose?: ShipPose },
   ) {
+    this.pose = snap?.pose ? { p: [...snap.pose.p], q: [...snap.pose.q], v: [...snap.pose.v], w: [...snap.pose.w] } : { p: [place.x, place.y, place.z], q: qYaw(place.yaw), v: [0, 0, 0], w: [0, 0, 0] };
     this.sw = { ...def.defaults, ...(snap?.sw ?? {}) };
     this.hp = def.panels.map((p, i) => snap?.hp[i] ?? p.maxHp);
     this.sys = new ShipSystems(def, this.vars);
@@ -84,11 +104,14 @@ export class ShipSim {
     else this.sys.init(this.st);
     // settle the ramp lip on the terrain (two fixed-point passes are plenty)
     const r = def.ramp;
-    let a = Math.asin(Math.min(0.95, def.floorHeight / r.length));
-    for (let k = 0; k < 3; k++) {
-      const tip = this.toWorld([r.hinge[0], r.hinge[1] - Math.sin(a) * r.length, r.hinge[2] + Math.cos(a) * r.length]);
-      const drop = place.y - ground.height(tip[0], tip[2]);
-      a = Math.asin(Math.max(0.1, Math.min(0.7, drop / r.length)));
+    let a = 0;
+    if (r) {
+      a = Math.asin(Math.min(0.95, def.floorHeight / r.length));
+      for (let k = 0; k < 3; k++) {
+        const tip = this.toWorld([r.hinge[0], r.hinge[1] - Math.sin(a) * r.length, r.hinge[2] + Math.cos(a) * r.length]);
+        const drop = place.y - ground.height(tip[0], tip[2]);
+        a = Math.asin(Math.max(0.1, Math.min(0.7, drop / r.length)));
+      }
     }
     this.rampAngle = a;
   }
@@ -104,6 +127,7 @@ export class ShipSim {
       sw: { ...this.sw },
       hp: this.hp.map((h) => Math.round(h * 10) / 10),
       st: Array.from(this.st, (v, i) => +quantize(v, Math.max(0, q[i])).toFixed(6)),
+      pose: { p: [...this.pose.p], q: [...this.pose.q], v: [...this.pose.v], w: [...this.pose.w] },
     };
   }
 
@@ -113,15 +137,20 @@ export class ShipSim {
   }
 
   toLocal(p: V3): V3 {
-    return rotY(sub(p, [this.place.x, this.place.y, this.place.z]), -this.place.yaw);
+    return qRotate(qConj(this.pose.q), sub(p, this.pose.p));
   }
 
   toWorld(p: V3): V3 {
-    return add(rotY(p, this.place.yaw), [this.place.x, this.place.y, this.place.z]);
+    return add(qRotate(this.pose.q, p), this.pose.p);
   }
 
   dirToLocal(d: V3): V3 {
-    return rotY(d, -this.place.yaw);
+    return qRotate(qConj(this.pose.q), d);
+  }
+
+  /** Mass properties with the consumables aboard right now (flight.ts). */
+  massNow(crew: V3[] = []): MassProps {
+    return massProperties(this.def, (p) => (this.vars.has(`${p.id}.kg`) ? Math.max(0, this.get(`${p.id}.kg`)) : 0), crew);
   }
 
   /** Panel is blown out (or still being rebuilt). */
@@ -153,58 +182,50 @@ export class ShipSim {
     return this.st[this.sys.hpIndex(part.id)];
   }
 
-  /** Door or ramp position 0..1 as the authority simulates it. */
+  /** Mover travel 0..1 (door, ramp, shutters, gear…) as the authority simulates it. */
   mover(key: string) {
-    const i = this.sys.moverIndex(key);
-    return i === undefined ? 0 : this.st[i];
+    return this.sys.mover(this.st, key);
   }
 
-  /** Why a control would do nothing right now (null = it works). */
-  blocked(c: ControlDef): string | null {
-    const sys = this.sys;
-    const st = this.st;
+  /** Position a control would move its switch to (dir: mouse wheel step for rotary knobs). */
+  next(c: ControlDef, dir = 0): number {
+    const cur = this.sw[c.key] ?? 0;
+    const n = c.states.length;
+    switch (c.action) {
+      case 'reset':
+        return 0;
+      case 'pulse':
+        return 1;
+      case 'set':
+        return c.value ?? 0;
+      case 'cycle': {
+        // click steps forward; the wheel passes dir = ±1. Selectors wrap, scales stop at the end.
+        const nxt = cur + (dir ? Math.sign(dir) : 1);
+        return c.wrap ? ((nxt % n) + n) % n : Math.max(0, Math.min(n - 1, nxt));
+      }
+      default:
+        return cur === 1 ? 0 : 1;
+    }
+  }
+
+  /**
+   * Why a control would do nothing right now (null = it works): what it is mounted on, its cover,
+   * its circuit's wiring, then the interlocks of the systems (see modules/*.ts).
+   */
+  blocked(c: ControlDef, dir = 0): string | null {
     if (c.host >= 0 && this.hole(c.host)) return 'Mando destruido';
+    if (c.hostPart >= 0 && this.partHp(c.hostPart) <= 0) return 'Mando destruido';
     if (c.guard && this.sw[c.guard] !== 1) return 'Tapa de seguridad cerrada';
-    if (c.requires && !this.powered(c.requires)) {
+    if (c.requires) {
       const s = this.def.subsystems.find((x) => x.id === c.requires)!;
+      // a closed breaker and an intact cable accept the command; the motor waits if the bus is starved
       if (this.sw[s.breaker] !== 1) return `Sin energía · disyuntor ${s.label} abierto`;
       const cut = this.conduitCut(c.requires);
       if (cut) return `Sin energía · conducto de ${s.label} cortado (${cut.id})`;
-      return `Sin energía · ${s.label} (${Math.round(sys.supply(st, c.requires) * 100)} %)`;
     }
-    const v = this.sw[c.key] ?? 0;
-    switch (c.key) {
-      case 'gear':
-        if (this.landed && v === 1) return 'Enclavamiento: peso sobre el tren';
-        break;
-      case 'reactor':
-        if (v === 0) return sys.reactorStartBlock(st, this.sw);
-        break;
-      case 'apu':
-        if (v === 0) return sys.apuStartBlock(st, this.sw);
-        break;
-      case 'rx.reset':
-        if (st[sys.idx('rx.state')] !== RX.scram) return 'El reactor no está en SCRAM';
-        if (st[sys.idx('rx.temp')] >= 300) return `Núcleo demasiado caliente para rearmar (${Math.round(st[sys.idx('rx.temp')])} °C)`;
-        break;
-      case 'refuel':
-        if (v === 0 && !(this.landed && this.onPad)) return 'No hay toma de repostaje aquí (plataforma de la base)';
-        break;
-      case 'ramp':
-        // the cargo bay must be vented before the ramp opens onto vacuum
-        if (v === 0 && sys.pressure(st, 'cargo') > DOOR_DP) return `Enclavamiento: bodega presurizada (${sys.pressure(st, 'cargo').toFixed(0)} kPa) — ventéala o recupera el aire`;
-        break;
-    }
-    if (c.key.endsWith('.start') && c.key.startsWith('eng.')) return sys.engineStartBlock(st, this.sw, c.key.slice(0, -6));
-    const door = this.def.doors.find((d) => d.key === c.key);
-    if (door && v === 0) {
-      const o = this.def.openings.find((x) => x.key === door.key);
-      if (o && o.b) {
-        const dp = Math.abs(sys.pressure(st, o.a) - sys.pressure(st, o.b));
-        if (dp > DOOR_DP) return `Enclavamiento: diferencia de presión ${dp.toFixed(0)} kPa`;
-      }
-    }
-    return null;
+    const next = this.next(c, dir);
+    if (next === (this.sw[c.key] ?? 0)) return null;
+    return this.sys.interlock(c, next, this.st, this.sw, { landed: this.landed, onPad: this.onPad });
   }
 
   /**
@@ -214,27 +235,10 @@ export class ShipSim {
   interact(index: number, dir = 0): { changed: Record<string, number> } | { reason: string } {
     const c = this.def.controls[index];
     if (!c) return { reason: 'Mando desconocido' };
-    const reason = this.blocked(c);
+    const reason = this.blocked(c, dir);
     if (reason) return { reason };
     const cur = this.sw[c.key] ?? 0;
-    const n = c.states.length;
-    let v: number;
-    switch (c.action) {
-      case 'reset':
-        v = 0;
-        break;
-      case 'pulse':
-        v = 1;
-        break;
-      case 'set':
-        v = c.value ?? 0;
-        break;
-      case 'cycle':
-        v = dir ? Math.max(0, Math.min(n - 1, cur + Math.sign(dir))) : (cur + 1) % n;
-        break;
-      default:
-        v = cur === 1 ? 0 : 1;
-    }
+    const v = this.next(c, dir);
     if (cur === v) return { changed: {} };
     this.sw[c.key] = v;
     return { changed: { [c.key]: v } };
@@ -251,6 +255,7 @@ export class ShipSim {
       bodies: ctx.bodies ?? [],
       landed: ctx.landed ?? this.landed,
       onPad: ctx.onPad ?? this.onPad,
+      sun: ctx.sun ?? this.sun,
       rand: ctx.rand ?? Math.random,
     };
     const r = this.sys.tick(dt, this.st, this.sw, full, (i) => this.hole(i), (i) => this.crack(i));
@@ -291,7 +296,8 @@ export class ShipSim {
       this.sys.damagePart(this.st, part, blast.damage * part.soft * (1 - d / r) ** 2, events);
     }
     const sw: Record<string, number> = {};
-    if (breach && this.sw.caution !== 1) sw.caution = this.sw.caution = 1;
+    const caution = this.def.caution;
+    if (breach && this.sw[caution] !== 1) sw[caution] = this.sw[caution] = 1;
     return { hp: changed, sw, events };
   }
 
@@ -359,9 +365,8 @@ export class ShipSim {
     return this.toWorld(this.def.parts[i].c);
   }
 
-  /** Engine thrust fractions (for effects): id → 0..1 while running. */
+  /** Engine thrust fraction (for effects): 0..1 while running. */
   engineThrust(id: string) {
-    const s = this.st[this.sys.idx(`${id}.state`)];
-    return s === ENG.run || s === ENG.spool ? this.st[this.sys.idx(`${id}.thr`)] : 0;
+    return this.sys.module<Engine>(`engine:${id}`)?.thrust(this.st) ?? 0;
   }
 }

@@ -1,26 +1,21 @@
 import * as THREE from 'three';
 import type { CSM } from 'three/addons/csm/CSM.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { SEAT_BOXES, type ControlDef, type ControlKind, type PanelDef, type SeatBox, type SeatDef, type SubsystemId } from '../../shared/ship/def';
+import { doorAxis, partKey, SEAT_BOXES, nacellePylons, type ControlDef, type ControlKind, type PanelDef, type PartDef, type SeatBox, type SeatDef, type SubsystemId } from '../../shared/ship/def';
+import { maker } from '../../shared/ship/catalog/makers';
+import { LOCK } from '../../shared/ship/modules/airlock';
+import { RX, type Reactor } from '../../shared/ship/modules/reactor';
+import type { Engine } from '../../shared/ship/modules/engines';
 import type { V2, V3 } from '../../shared/ship/geom';
 import type { ShipSim } from '../../shared/ship/sim';
 import { buildFrames, buildPanels, Parts, strip, type PanelMatKey, type PanelRange } from './geometry';
 import { allocInteriorLight, patchInteriorLights, setInteriorLight } from './interiorLights';
 import { glassMaterial, LampMaterial, litMaterial, panelMaterial } from './materials';
+import { machineModel, propModel, type Slot } from './models';
+import { ReasonHold } from '../../shared/ship/hold';
 import { ShipScreens, type ShipAnimState } from './screens';
 
 const lin = (r: number, g: number, b: number) => new THREE.Color().setRGB(r, g, b, THREE.LinearSRGBColorSpace);
-
-/** Subsystem that makes a switch actually do something (for its indicator LED). */
-const EFFECT: Record<string, SubsystemId> = {
-  'light.cockpit': 'lights',
-  'light.corridor': 'lights',
-  'light.cargo': 'lights',
-  'light.nav': 'ext',
-  'light.beacon': 'ext',
-  'light.landing': 'ext',
-  shield: 'shield',
-};
 
 const frameMatrix = (c: V3, u: V3, v: V3, n: V3) => new THREE.Matrix4().makeBasis(new THREE.Vector3(...u), new THREE.Vector3(...v), new THREE.Vector3(...n)).setPosition(...c);
 
@@ -45,16 +40,30 @@ export class ShipView {
   private hiddenHosts = '';
   private doorLeaves = new Map<string, [THREE.Mesh, THREE.Mesh]>();
   private ramp = new THREE.Group();
-  private pistons: { barrel: THREE.InstancedMesh; rod: THREE.InstancedMesh; a: V3[]; b: V3[] };
+  private pistons: { barrel: THREE.InstancedMesh; rod: THREE.InstancedMesh; a: V3[]; b: V3[] } | null = null;
+  /** Circuit that makes a switch actually do something (its LED goes amber when that circuit is dead). */
+  private effect = new Map<string, SubsystemId>();
+  /** Reactor run switches (their LED is green/red like a breaker). */
+  private runKeys = new Set<string>();
   private shield: THREE.InstancedMesh;
-  private parts: Record<'cap' | 'bat' | 'handle' | 'rocker', THREE.InstancedMesh>;
-  private partSlot: Array<{ kind: 'cap' | 'bat' | 'handle' | 'rocker' | null; i: number }> = [];
+  private parts: Record<'cap' | 'bat' | 'handle' | 'rocker' | 'knob' | 'lid', THREE.InstancedMesh>;
+  private partSlot: Array<{ kind: 'cap' | 'bat' | 'handle' | 'rocker' | 'knob' | 'lid' | null; i: number }> = [];
+  /** Per-machine materials (welder tint) and the machine's deployment animation. */
+  private machines: Array<{ part: PartDef; mats: Array<{ mat: THREE.MeshStandardMaterial; base: THREE.Color }>; animate: ((t: number) => void) | null; mover: string | null }> = [];
+  /** Machine integrity tint, only while the welder is in hand. */
+  private welder = false;
   private shown: Float32Array;
   private press: Float32Array;
   private lightSlots: Array<{ slot: number; zone: number; pos: THREE.Vector3 }> = [];
   private landing: THREE.SpotLight;
   private labelAtlas: { tex: THREE.CanvasTexture; rects: Map<string, [number, number, number, number, number]> };
   private lastRamp = -1;
+  private pistonsAt = -1;
+  /** Refusals light the button only after they have held still (see ReasonHold). */
+  private blocks = new ReasonHold(0.35);
+  private refused = new Set<number>();
+  /** Control marked from the manual: its LED blinks cyan. */
+  private pointed = -1;
   private lastShield = -1;
   /** Number of static decor meshes (diagnostics). */
   decorCount = 0;
@@ -69,17 +78,19 @@ export class ShipView {
   ) {
     const def = sim.def;
     this.root.name = `ship-${sim.id}`;
-    this.root.position.set(sim.place.x, sim.place.y, sim.place.z);
-    this.root.rotation.y = sim.place.yaw;
+    // everything of the ship lives under its pose (flight will move it; parked it never changes)
+    this.root.position.set(...sim.pose.p);
+    this.root.quaternion.set(...sim.pose.q);
     this.root.updateMatrixWorld(true);
     this.heat = new Float32Array(def.panels.length);
     this.shown = new Float32Array(def.controls.length).map((_, i) => sim.sw[def.controls[i].key] ?? 0);
     this.press = new Float32Array(def.controls.length);
 
     const inside = <T extends THREE.MeshStandardMaterial>(m: T) => patchInteriorLights(m);
-    const hullColor = lin(0.3, 0.305, 0.31);
+    const livery = def.livery;
+    const hullColor = lin(...livery.hull);
     this.mats = {
-      hull: panelMaterial('hull', csm, { color: hullColor, roughness: 0.62, metalness: 0.15 }),
+      hull: panelMaterial('hull', csm, { color: hullColor, roughness: 0.62, metalness: 0.15 }, livery.stripe),
       lining: inside(panelMaterial('lining', csm, { color: lin(0.2, 0.21, 0.22), roughness: 0.82, metalness: 0.05, envMapIntensity: 0.15 })),
       deck: inside(panelMaterial('deck', csm, { color: lin(0.11, 0.115, 0.12), roughness: 0.42, metalness: 0.85, envMapIntensity: 0.2 })),
       under: litMaterial(csm, { color: lin(0.05, 0.05, 0.05), roughness: 0.85 }),
@@ -88,7 +99,7 @@ export class ShipView {
       frame: inside(litMaterial(csm, { color: lin(0.07, 0.075, 0.085), roughness: 0.5, metalness: 0.65, envMapIntensity: 0.5 })),
       paint: inside(litMaterial(csm, { color: hullColor, roughness: 0.62, metalness: 0.15 })),
       paintDark: inside(litMaterial(csm, { color: lin(0.06, 0.062, 0.066), roughness: 0.6, metalness: 0.2 })),
-      accent: inside(litMaterial(csm, { color: lin(0.5, 0.26, 0.02), roughness: 0.55, metalness: 0.1 })),
+      accent: inside(litMaterial(csm, { color: lin(...livery.accent), roughness: 0.55, metalness: 0.1 })),
       dark: inside(litMaterial(csm, { color: lin(0.035, 0.037, 0.04), roughness: 0.45, metalness: 0.7, envMapIntensity: 0.6 })),
       strap: inside(litMaterial(csm, { color: lin(0.3, 0.12, 0.02), roughness: 0.85, envMapIntensity: 0.2 })),
       chrome: inside(litMaterial(csm, { color: lin(0.62, 0.62, 0.64), roughness: 0.16, metalness: 1 })),
@@ -100,15 +111,28 @@ export class ShipView {
       cap: inside(litMaterial(csm, { color: lin(0.55, 0.56, 0.58), roughness: 0.45, metalness: 0.1, envMapIntensity: 0.3 })),
       rocker: inside(litMaterial(csm, { color: lin(0.75, 0.75, 0.72), roughness: 0.4, envMapIntensity: 0.3 })),
       door: inside(litMaterial(csm, { map: doorTexture(), roughness: 0.6, metalness: 0.3, envMapIntensity: 0.3 })),
+      // machine bodies: an industrial grey of their own, whatever the hull colour
+      machine: inside(litMaterial(csm, { color: lin(0.24, 0.25, 0.26), roughness: 0.55, metalness: 0.35, envMapIntensity: 0.4 })),
+      cells: inside(litMaterial(csm, { color: lin(0.015, 0.03, 0.08), roughness: 0.25, metalness: 0.8, envMapIntensity: 1.2 })),
+      glassy: inside(litMaterial(csm, { color: lin(0.05, 0.16, 0.3), roughness: 0.1, metalness: 0.2, emissive: lin(0.01, 0.04, 0.08) })),
+      fabric: inside(litMaterial(csm, { color: lin(0.1, 0.13, 0.17), roughness: 0.95, envMapIntensity: 0.1 })),
     };
 
     // ---- lamps: register every emitter first (the shader needs the count) -------------------------
-    const lampNames = ['zone:cockpit', 'zone:corridor', 'zone:cargo', 'emergency', 'nav-red', 'nav-green', 'strobe', 'beacon', 'landing', 'nozzle', 'reactor-core', 'gear-greens', 'caution-lens'];
+    for (const l of def.loads) this.effect.set(l.key, l.circuit);
+    for (const m of def.movers) this.effect.set(m.key, m.circuit);
+    for (const r of this.reactors()) this.runKeys.add(r.keys.run);
+    const lampNames = [...def.zones.map((z) => `zone:${z.id}`), 'emergency', 'nav-red', 'nav-green', 'strobe', 'beacon', 'landing', 'nozzle', 'caution-lens'];
+    def.indicators.forEach((ind, i) => {
+      if (ind.kind === 'airlock') for (let k = 0; k < 3; k++) lampNames.push(`ind:${i}:${k}`);
+      else lampNames.push(`ind:${i}`);
+    });
+    def.annunciator?.lamps.forEach((_, i) => lampNames.push(`ann:${i}`));
     for (const st of def.seats) lampNames.push(`seat:${st.id}`);
     for (const c of def.controls) lampNames.push(`led:${c.index}`);
     lampNames.forEach((n, i) => this.lampIds.set(n, i));
     this.lampMat = new LampMaterial(lampNames.length);
-    this.labelAtlas = buildLabelAtlas([...def.consoles.map((c) => c.title), ...def.controls.map((c) => c.label)]);
+    this.labelAtlas = buildLabelAtlas([...def.consoles.map((c) => c.title), ...def.controls.map((c) => c.label), ...(def.annunciator?.lamps ?? [])]);
 
     this.rebuildPanels();
     const frames = new THREE.Mesh(buildFrames(def), this.mats.frame);
@@ -121,9 +145,13 @@ export class ShipView {
     this.screens = new ShipScreens(sim);
     for (const m of this.screens.meshes) this.root.add(m);
     this.buildDoors();
-    this.buildRamp();
-    this.pistons = this.buildPistons();
-    this.shield = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), this.mats.paint, def.shield.plates.length);
+    if (def.ramp) {
+      this.buildRamp();
+      this.pistons = this.buildPistons();
+    }
+    const plates = def.shield?.plates.length ?? 0;
+    this.shield = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), this.mats.paint, Math.max(1, plates));
+    this.shield.count = plates;
     this.shield.castShadow = this.shield.receiveShadow = true;
     this.shield.frustumCulled = false;
     this.root.add(this.shield);
@@ -217,50 +245,16 @@ export class ShipView {
       const tub: V2[] = [[-hw, 0], [-hw, -0.2], [-hw + 0.25, -0.45], [hw - 0.25, -0.45], [hw, -0.2], [hw, 0], [hw - T, 0], [hw - T, -0.3], [-hw + T, -0.3], [-hw + T, 0]];
       P.extrudeZ('paintDark', tub, m.z0, m.z1);
     }
-    const zNose = def.modules[0].z0;
-    // nose chin under the dash
-    P.extrudeX('paintDark', [[zNose, 0], [zNose - 0.12, 0], [zNose - 0.62, -0.16], [zNose - 0.46, -0.42], [zNose, -0.45]], -1.7, 1.7, 0.02);
-    // engine nacelles on short pylons along the cargo bay
-    for (const sx of [-1, 1]) {
-      const x = sx * 3.45;
-      const body: V2[] = [[0, 0], [0.3, 0.03], [0.55, 0.18], [0.68, 0.5], [0.74, 1.1], [0.74, 6.7], [0.7, 7.0], [0.6, 7.2]];
-      P.lathe('paint', body, [x, 1.15, -1.9], new THREE.Euler(Math.PI / 2, 0, 0), 32);
-      // nozzle bell: burnt dark metal inside and out
-      P.lathe('dark', [[0.6, 7.2], [0.67, 8.2], [0.61, 8.22], [0.52, 7.4], [0, 7.4]], [x, 1.15, -1.9], new THREE.Euler(Math.PI / 2, 0, 0), 32);
-      P.lathe('dark', [[0, 0], [0.16, 0.012], [0.3, 0.03], [0.29, 0.05], [0, 0.03]], [x, 1.15, -1.92], new THREE.Euler(Math.PI / 2, 0, 0), 24);
-      P.lathe('dark', [[0.745, 0.6], [0.752, 0.62], [0.752, 0.9], [0.745, 0.92]], [x, 1.15, -1.9], new THREE.Euler(Math.PI / 2, 0, 0), 32);
-      P.lathe('dark', [[0.745, 5.9], [0.752, 5.92], [0.752, 6.3], [0.745, 6.32]], [x, 1.15, -1.9], new THREE.Euler(Math.PI / 2, 0, 0), 32);
-      P.box('paint', 0.32, 0.36, 5.2, [sx * 2.78, 1.15, 2.1]);
-      P.box('dark', 0.12, 0.5, 3.0, [sx * 2.75, 1.15, 2.1]);
-      // RCS quad on the nacelle
-      P.box('dark', 0.22, 0.16, 0.34, [x, 1.95, 5.4]);
-      for (const [dx, dy, dz] of [[0, 0.1, 0], [sx * 0.13, 0, 0], [0, 0, 0.19], [0, 0, -0.19]] as V3[]) {
-        const a: V3 = [x + dx, 1.95 + dy, 5.4 + dz];
-        P.rod('chrome', a, [a[0] + dx * 0.5, a[1] + dy * 0.5, a[2] + dz * 0.4], 0.025, 8, 0.04);
-      }
-      // nozzle glow at the throat
-      lamp('nozzle', new THREE.CircleGeometry(0.5, 24), new THREE.Matrix4().makeTranslation(x, 1.15, -1.9 + 7.43));
+    // fairings (chin, fin, spine…) are props with their own models; pylons are sized from the
+    // nacelle part boxes; the tanks, engines and RCS are drawn from those boxes
+    for (const py of nacellePylons(def.parts, def.modules)) P.box('paint', py.half[0] * 2, py.half[1] * 2, py.half[2] * 2, py.c);
+    for (const e of def.parts.filter((p) => p.type === 'engine')) {
+      lamp('nozzle', new THREE.CircleGeometry(Math.min(e.half[0], e.half[1]) * 0.72, 24), new THREE.Matrix4().makeTranslation(e.c[0], e.c[1], e.c[2] + e.half[2] * 0.92));
     }
-    // dorsal fin + strobe mast
-    const zt = def.modules[def.modules.length - 1].z1;
-    P.extrudeX('paint', [[zt - 2.3, 3.05], [zt + 0.05, 3.05], [zt + 0.05, 3.55], [zt - 0.35, 3.92], [zt - 1.05, 3.92]], -0.06, 0.06, 0.01);
-    // dorsal spine along the cargo roof: equipment fairing and radiator fins
-    const zc0 = def.modules[def.modules.length - 1].z0;
-    P.box('paintDark', 0.44, 0.2, 5.4, [0, 3.18, zc0 + 3.3]);
-    P.box('paint', 0.3, 0.06, 5.2, [0, 3.3, zc0 + 3.3]);
-    for (let i = 0; i < 4; i++) {
-      for (const sx of [-1, 1]) P.box('dark', 0.7, 0.025, 0.9, [sx * 0.55, 3.2, zc0 + 1.3 + i * 1.15], new THREE.Euler(0, 0, sx * 0.18));
-    }
-    // sensor dome over the cockpit
-    P.lathe('paintDark', [[0, 0], [0.34, 0], [0.34, 0.06], [0.3, 0.15], [0.18, 0.24], [0, 0.27]], [0, 2.5, -7.2], undefined, 24);
-    // antenna on the corridor roof edge
-    P.rod('dark', [1.05, 2.45, -4.4], [1.05, 2.95, -4.4], 0.025, 8);
-    P.lathe('paint', [[0, 0], [0.18, 0.03], [0.26, 0.09], [0.25, 0.1], [0.17, 0.05], [0, 0.03]], [1.05, 2.95, -4.4], new THREE.Euler(0.5, 0, -0.6), 20);
-    P.rod('dark', [-1.9, 3.05, 4.6], [-1.9, 3.9, 4.6], 0.008, 6);
 
     // landing gear: struts reach the actual terrain under each foot
     const inv = new THREE.Matrix4().copy(this.root.matrixWorld).invert();
-    for (const leg of def.gear.legs) {
+    for (const leg of def.gear?.legs ?? []) {
       const w = new THREE.Vector3(...leg).applyMatrix4(this.root.matrixWorld);
       const footY = new THREE.Vector3(w.x, ground(w.x, w.z), w.z).applyMatrix4(inv).y;
       const [x, , z] = leg;
@@ -274,35 +268,27 @@ export class ShipView {
     }
 
     // ---- interior -----------------------------------------------------------------------------------
-    // flight deck: crew seats (see SEAT_BOXES), centre pedestal, console body under the dash board
+    // seats; furniture (dash supports, bunks, galley, handrails…) is props, drawn with the machines
     for (const st of def.seats) this.buildSeat(P, st, lamp);
-    P.box('console', 0.34, 0.7, 0.8, [0, 0.35, -8.3]);
-    P.rod('chrome', [0.06, 0.7, -8.35], [0.06, 0.82, -8.45], 0.012, 8);
-    P.box('dark', 0.05, 0.03, 0.06, [0.06, 0.83, -8.46]);
-    P.box('console', 2.86, 0.62, 0.58, [0, 0.31, -9.27]);
-    P.box('console', 2.86, 0.1, 0.08, [0, 0.66, -9.0]);
-    // corridor: grab rails along the ribs
-    for (const sx of [-1, 1]) P.rod('chrome', [sx * 1.52, 1.05, -6.1], [sx * 1.52, 1.05, -5.0], 0.018, 8);
-    // cargo bay: equipment rack (the crates are loose physics bodies, see cargo.ts)
-    P.box('console', 0.5, 1.8, 0.6, [2.25, 0.9, 0.4]);
-    P.box('dark', 0.52, 0.04, 0.62, [2.25, 1.2, 0.4]);
-    P.box('dark', 0.52, 0.04, 0.62, [2.25, 0.6, 0.4]);
-    // tie-down rails on the ribs
-    for (const sx of [-1, 1]) P.box('dark', 0.05, 0.05, 7.4, [sx * 2.56, 1.15, 1.6]);
 
     // conduits: cable runs of every subsystem (seen on the ceiling, under the deck through holes)
     for (const s of def.subsystems) for (const r of s.routes) for (let i = 0; i < r.length - 1; i++) P.rod('pipe', r[i], r[i + 1], 0.03, 8);
 
     // cabin light strips, emergency lights on the ribs near the deck
+    // strips along both edges of the flat roof of each zone's module (the nose module is shorter: windshield)
     def.zones.forEach((zn) => {
-      const cargo = zn.id === 'cargo';
-      const x = cargo ? 1.8 : 0.98;
-      const y = cargo ? 2.92 : 2.33;
+      const mi = def.modules.findIndex((m) => m.zone === zn.id);
+      const mod = def.modules[mi];
+      const top = mod ? Math.max(...mod.profile.map((q) => q[1])) : zn.max[1];
+      const flat = mod ? Math.max(...mod.profile.filter((q) => Math.abs(q[1] - top) < 1e-3).map((q) => q[0])) : (zn.max[0] - zn.min[0]) * 0.3;
+      const x = flat - 0.085;
+      const y = top - 0.075;
+      const nose = mi === 0;
       const len = zn.max[2] - zn.min[2] - 0.6;
-      const zc = (zn.max[2] + zn.min[2]) / 2 + (zn.id === 'cockpit' ? 0.2 : 0);
+      const zc = (zn.max[2] + zn.min[2]) / 2 + (nose ? 0.2 : 0);
       for (const sx of [-1, 1]) {
         P.box('dark', 0.1, 0.03, len + 0.04, [sx * x, y + 0.02, zc]);
-        lamp(`zone:${zn.id}`, new THREE.BoxGeometry(0.07, 0.012, zn.id === 'cockpit' ? len - 0.4 : len), new THREE.Matrix4().makeTranslation(sx * x, y, zc));
+        lamp(`zone:${zn.id}`, new THREE.BoxGeometry(0.07, 0.012, nose ? len - 0.4 : len), new THREE.Matrix4().makeTranslation(sx * x, y, zc));
       }
     });
     for (const m of def.modules) {
@@ -341,15 +327,35 @@ export class ShipView {
         lamp(l.kind, new THREE.SphereGeometry(0.048, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2), new THREE.Matrix4().compose(on(0.028), qn, new THREE.Vector3(1, 1, 1.25)));
       }
     }
-    // reactor core window + three greens on the consoles
+    // console indicators (reactor core window, gear greens…) from the definition
+    def.indicators.forEach((ind, i) => {
+      const F = frameMatrix(ind.c, ind.u, ind.v, ind.n);
+      if (ind.kind === 'reactor-core') {
+        const at = F.clone().multiply(new THREE.Matrix4().makeTranslation(0, 0, 0.002));
+        lamp(`ind:${i}`, new THREE.CircleGeometry(0.055, 24), at);
+        P.add('chrome', new THREE.TorusGeometry(0.062, 0.008, 6, 24).applyMatrix4(at));
+      } else if (ind.kind === 'gear-greens') {
+        for (let k = -1; k <= 1; k++) lamp(`ind:${i}`, new THREE.BoxGeometry(0.03, 0.02, 0.006), F.clone().multiply(new THREE.Matrix4().makeTranslation(k * 0.06, 0, 0)));
+      } else if (ind.kind === 'airlock') {
+        // three lamps: cabin side (green), cycling (amber), outside (red)
+        for (let k = -1; k <= 1; k++) {
+          lamp(`ind:${i}:${k + 1}`, new THREE.CircleGeometry(0.014, 12), F.clone().multiply(new THREE.Matrix4().makeTranslation(k * 0.045, 0, 0.004)));
+          P.add('chrome', new THREE.TorusGeometry(0.017, 0.003, 5, 14).applyMatrix4(F.clone().multiply(new THREE.Matrix4().makeTranslation(k * 0.045, 0, 0.003))));
+        }
+      }
+    });
     for (const con of def.consoles) {
       const F = frameMatrix(con.c, con.u, con.v, con.n);
-      if (con.id === 'cg.rct') {
-        const at = F.clone().multiply(new THREE.Matrix4().makeTranslation(-0.34, 0.22, 0.006));
-        lamp('reactor-core', new THREE.CircleGeometry(0.055, 24), at);
-        P.add('chrome', new THREE.TorusGeometry(0.062, 0.008, 6, 24).applyMatrix4(at));
+      if (def.annunciator && con.id === def.annunciator.console) {
+        const ann = def.annunciator;
+        ann.lamps.forEach((_, i) => {
+          const col = i % ann.cols;
+          const row = Math.floor(i / ann.cols);
+          const x = ann.at[0] + (col - (ann.cols - 1) / 2) * ann.cell[0];
+          const y = ann.at[1] - row * ann.cell[1];
+          lamp(`ann:${i}`, new THREE.BoxGeometry(ann.cell[0] * 0.82, ann.cell[1] * 0.62, 0.006), F.clone().multiply(new THREE.Matrix4().makeTranslation(x, y, 0.008)));
+        });
       }
-      if (con.id === 'ck.main') for (let i = 0; i < 3; i++) lamp('gear-greens', new THREE.BoxGeometry(0.03, 0.02, 0.006), F.clone().multiply(new THREE.Matrix4().makeTranslation(1.14 + i * 0.06, 0.22, 0.004)));
     }
     // indicator LED above every control (the master caution button is its own lens)
     for (const c of def.controls) {
@@ -358,16 +364,27 @@ export class ShipView {
       else lamp(`led:${c.index}`, new THREE.BoxGeometry(0.03, 0.008, 0.005), F.clone().multiply(new THREE.Matrix4().makeTranslation(0, c.half[1] + 0.012, 0.003)));
     }
     // shutter housings above every canopy pane
-    for (const pl of def.shield.plates) {
+    for (const pl of def.shield?.plates ?? []) {
       const F = frameMatrix(pl.c, pl.u, pl.v, pl.n);
       const g = new THREE.BoxGeometry(pl.w, 0.07, 0.07);
       g.applyMatrix4(F.clone().multiply(new THREE.Matrix4().makeTranslation(0, pl.h / 2 + 0.035, 0)));
       P.add('dark', g);
     }
-    // registry on the nacelles
-    const decal = registryDecal(def.name, def.registry, this.csm);
-    for (const sx of [-1, 1]) {
-      const g = new THREE.CylinderGeometry(0.746, 0.746, 4.6, 16, 1, true, sx > 0 ? Math.PI / 2 - 0.34 : -Math.PI / 2 - 0.34, 0.68);
+    // registry: wrapped round the nacelles, or flat panels on the hull sides
+    const decal = registryDecal(def.name, def.registry, def.livery.tagline || def.role.toUpperCase(), def.livery.accent, this.csm);
+    if (def.livery.decals !== 'nacelles')
+      for (const d of def.livery.decals) {
+        const g = new THREE.PlaneGeometry(d.w, d.h);
+        const n = new THREE.Vector3(...d.n);
+        const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), n);
+        g.applyQuaternion(q).translate(d.c[0] + n.x * 0.006, d.c[1] + n.y * 0.006, d.c[2] + n.z * 0.006);
+        const m = new THREE.Mesh(g, decal);
+        m.receiveShadow = true;
+        this.root.add(m);
+      }
+    for (const e of def.livery.decals === 'nacelles' ? def.parts.filter((p) => p.type === 'engine' && p.mount) : []) {
+      const sx = Math.sign(e.c[0]) || 1;
+      const g = new THREE.CylinderGeometry(e.half[1] * 1.02, e.half[1] * 1.02, e.half[2] * 1.4, 16, 1, true, sx > 0 ? Math.PI / 2 - 0.34 : -Math.PI / 2 - 0.34, 0.68);
       const uv = g.getAttribute('uv') as THREE.BufferAttribute;
       for (let i = 0; i < uv.count; i++) {
         const u = uv.getX(i);
@@ -376,11 +393,46 @@ export class ShipView {
         else uv.setXY(i, v, 1 - u);
       }
       g.rotateX(Math.PI / 2);
-      g.translate(sx * 3.45, 1.15, 2.6);
+      g.translate(e.c[0], e.c[1], e.c[2]);
       const m = new THREE.Mesh(g, decal);
       m.receiveShadow = true;
       this.root.add(m);
     }
+    // machines: body, trim and the maker's colour are the part's own materials (the welder tints them)
+    const shared: Partial<Record<Slot, THREE.Material>> = {
+      dark: this.mats.dark,
+      chrome: this.mats.chrome,
+      pipe: this.mats.pipe,
+      cells: this.mats.cells,
+      glass: this.mats.glassy,
+      seat: this.mats.seat,
+      console: this.mats.console,
+      paint: this.mats.paint,
+      paintDark: this.mats.paintDark,
+      lining: this.mats.paint,
+      fabric: this.mats.fabric,
+      accent: this.mats.accent,
+    };
+    for (const part of def.parts) {
+      const own = new Map<Slot, THREE.MeshStandardMaterial>();
+      const trimColor = lin(...maker(part.maker).trim);
+      const mat = (slot: Slot): THREE.Material => {
+        if (slot !== 'body' && slot !== 'trim' && slot !== 'accent') return shared[slot] ?? this.mats.dark;
+        let m = own.get(slot);
+        if (!m) {
+          m = ((slot === 'body' ? this.mats.machine : slot === 'trim' ? this.mats.edge : this.mats.accent) as THREE.MeshStandardMaterial).clone();
+          if (slot === 'accent') m.color.copy(trimColor);
+          own.set(slot, m);
+        }
+        return m;
+      };
+      const model = machineModel(part, mat);
+      this.root.add(model.group);
+      const mover = part.type === 'radiator' || part.type === 'solar' ? partKey(part, 'deploy', `${part.id}.deploy`) : null;
+      this.machines.push({ part, mats: [...own.values()].map((m) => ({ mat: m, base: m.color.clone() })), animate: model.animate, mover: mover && def.movers.some((m) => m.key === mover) ? mover : null });
+      model.animate?.(mover ? this.sim.mover(mover) : 1);
+    }
+    for (const prop of def.props) this.root.add(propModel(prop, (slot) => shared[slot] ?? (slot === 'body' ? this.mats.console : this.mats.dark)).group);
 
     for (const [key, geo] of P.build()) {
       const mesh = new THREE.Mesh(geo, this.mats[key]);
@@ -481,15 +533,25 @@ export class ShipView {
         const g = new THREE.BoxGeometry(base[0], base[1], base[2]);
         g.applyMatrix4(F.clone().multiply(new THREE.Matrix4().makeTranslation(lx, ly, base[2] / 2)));
         P.add('dark', g);
-        label(c.label, F, lx, ly - c.half[1] - 0.022, 0.017);
+        if (c.label) label(c.label, F, lx, ly - c.half[1] - 0.022, 0.017);
+      }
+      if (def.annunciator && con.id === def.annunciator.console) {
+        const ann = def.annunciator;
+        ann.lamps.forEach((name, i) => {
+          const col = i % ann.cols;
+          const row = Math.floor(i / ann.cols);
+          const x = ann.at[0] + (col - (ann.cols - 1) / 2) * ann.cell[0];
+          const y = ann.at[1] - row * ann.cell[1] - ann.cell[1] * 0.55;
+          label(name, F, x, y, 0.011);
+        });
       }
     }
     // control LEDs live in the lamp mesh; hide the ones whose console is gone
     for (const c of def.controls) this.lampMat.levels[this.lampIds.get(`led:${c.index}`)!].w = this.hostHidden(c.host) ? 0 : 1;
-    for (const name of ['reactor-core', 'gear-greens']) {
-      const con = def.consoles.find((c) => c.id === (name === 'reactor-core' ? 'cg.rct' : 'ck.main'))!;
-      this.lampMat.levels[this.lampIds.get(name)!].w = this.hostHidden(con.host) ? 0 : 1;
-    }
+    def.indicators.forEach((ind, i) => {
+      const con = def.consoles.find((c) => c.id === ind.console)!;
+      for (const name of ind.kind === 'airlock' ? [0, 1, 2].map((k) => `ind:${i}:${k}`) : [`ind:${i}`]) this.lampMat.levels[this.lampIds.get(name)!].w = this.hostHidden(con.host) ? 0 : 1;
+    });
     for (const m of [this.consoleMesh, this.labelMesh]) {
       if (!m) continue;
       this.root.remove(m);
@@ -513,14 +575,16 @@ export class ShipView {
 
   private buildControlParts() {
     const def = this.sim.def;
-    const counts = { cap: 0, bat: 0, handle: 0, rocker: 0 };
-    const kindPart: Record<ControlKind, keyof typeof counts | null> = { button: 'cap', toggle: 'bat', lever: 'handle', breaker: 'rocker', master: null, rotary: 'cap', cover: null, valve: 'handle', bezel: 'cap' };
+    const counts = { cap: 0, bat: 0, handle: 0, rocker: 0, knob: 0, lid: 0 };
+    const kindPart: Record<ControlKind, keyof typeof counts | null> = { button: 'cap', toggle: 'bat', lever: 'handle', breaker: 'rocker', master: null, mushroom: 'cap', rotary: 'knob', cover: 'lid', valve: 'knob', bezel: 'cap' };
     for (const c of def.controls) {
       const k = kindPart[c.kind];
       this.partSlot.push({ kind: k, i: k ? counts[k]++ : -1 });
     }
     const bat = mergeGeometries([strip(new THREE.CylinderGeometry(0.0045, 0.006, 0.042, 8).rotateX(Math.PI / 2).translate(0, 0, 0.021)), strip(new THREE.SphereGeometry(0.009, 10, 8).translate(0, 0, 0.044))])!;
     const handle = mergeGeometries([strip(new THREE.CylinderGeometry(0.007, 0.007, 0.055, 8).rotateX(Math.PI / 2).translate(0, 0, 0.0275)), strip(new THREE.TorusGeometry(0.02, 0.008, 8, 16).translate(0, 0, 0.06))])!;
+    const knob = mergeGeometries([strip(new THREE.CylinderGeometry(0.016, 0.018, 0.016, 14).rotateX(Math.PI / 2).translate(0, 0, 0.008)), strip(new THREE.BoxGeometry(0.006, 0.02, 0.006).translate(0, 0.012, 0.012))])!;
+    const lid = strip(new THREE.BoxGeometry(0.07, 0.08, 0.006));
     const make = (g: THREE.BufferGeometry, mat: THREE.Material, n: number) => {
       const m = new THREE.InstancedMesh(g, mat, Math.max(1, n));
       m.count = n;
@@ -534,6 +598,8 @@ export class ShipView {
       bat: make(bat, this.mats.chrome, counts.bat),
       handle: make(handle, this.mats.cap, counts.handle),
       rocker: make(new THREE.BoxGeometry(1, 1, 1), this.mats.rocker, counts.rocker),
+      knob: make(knob, this.mats.cap, counts.knob),
+      lid: make(lid, this.mats.dark, counts.lid),
     };
   }
 
@@ -551,6 +617,8 @@ export class ShipView {
       const leaves: THREE.Mesh[] = [];
       for (const side of [-1, 1]) {
         const g = new THREE.BoxGeometry(d.w / 2, d.h, 0.05);
+        // the leaf's width runs along the wall, whichever way the door faces
+        g.rotateY(Math.atan2(d.n[0], d.n[2]));
         if (side > 0) {
           const uv = g.getAttribute('uv') as THREE.BufferAttribute;
           for (let i = 0; i < uv.count; i++) uv.setX(i, 1 - uv.getX(i));
@@ -566,7 +634,7 @@ export class ShipView {
   }
 
   private buildRamp() {
-    const r = this.sim.def.ramp;
+    const r = this.sim.def.ramp!;
     // deck-plate walking face, hull paint outside: a pseudo panel through the panel builder
     const pseudo: PanelDef = {
       index: 0,
@@ -609,16 +677,14 @@ export class ShipView {
     this.root.add(this.ramp);
   }
 
+  /** Hydraulic rams between the hull and the ramp (anchors from the ramp's data). */
   private buildPistons() {
-    const r = this.sim.def.ramp;
-    const a: V3[] = [];
-    const b: V3[] = [];
-    for (const sx of [-1, 1]) {
-      a.push([sx * 1.58, 1.95, r.hinge[2] - 0.12]);
-      b.push([sx * 1.52, 1.0, 0]); // on the ramp: x, distance along it, depth
-    }
-    const barrel = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.05, 0.05, 1, 12).translate(0, 0.5, 0), this.mats.dark, 2);
-    const rod = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.026, 0.026, 1, 10).translate(0, 0.5, 0), this.mats.chrome, 2);
+    const list = this.sim.def.ramp!.pistons ?? [];
+    if (!list.length) return null;
+    const a: V3[] = list.map((p) => p.hull);
+    const b: V3[] = list.map((p) => p.ramp);
+    const barrel = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.05, 0.05, 1, 12).translate(0, 0.5, 0), this.mats.dark, list.length);
+    const rod = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.026, 0.026, 1, 10).translate(0, 0.5, 0), this.mats.chrome, list.length);
     for (const m of [barrel, rod]) {
       m.castShadow = true;
       m.frustumCulled = false;
@@ -649,48 +715,55 @@ export class ShipView {
       this.writePanel(i);
     }
 
-    // doors
+    // doors: the two leaves slide apart along the wall
     for (const d of def.doors) {
       const leaves = this.doorLeaves.get(d.key)!;
-      const open = anim.doors[d.key] ?? 0;
+      const open = anim.movers[d.key] ?? 0;
+      const a = doorAxis(d);
       leaves.forEach((m, k) => {
         const side = k === 0 ? -1 : 1;
-        m.position.set(d.c[0] + side * (d.w / 4 + open * (d.w / 2 - 0.03)), d.c[1] + d.h / 2, d.c[2] + d.offset);
+        const s = side * (d.w / 4 + open * (d.w / 2 - 0.03));
+        m.position.set(d.c[0] + a[0] * s + d.n[0] * d.offset, d.c[1] + d.h / 2, d.c[2] + a[2] * s + d.n[2] * d.offset);
       });
     }
     // ramp + pistons
-    if (anim.ramp !== this.lastRamp) {
-      this.lastRamp = anim.ramp;
-      const phi = this.rampPhi(anim.ramp);
-      this.ramp.rotation.x = phi;
+    const rampOpen = def.ramp ? anim.movers[def.ramp.key] ?? 0 : 0;
+    if (def.ramp && rampOpen !== this.lastRamp) {
+      this.lastRamp = rampOpen;
+      this.ramp.rotation.x = this.rampPhi(rampOpen);
       this.ramp.updateMatrix();
+    }
+    if (this.pistons && this.pistonsAt !== rampOpen) {
+      const pistons = this.pistons;
+      this.pistonsAt = rampOpen;
       const m = new THREE.Matrix4();
       const q = new THREE.Quaternion();
       const up = new THREE.Vector3(0, 1, 0);
-      for (let i = 0; i < 2; i++) {
-        const A = new THREE.Vector3(...this.pistons.a[i]);
-        const B = new THREE.Vector3(this.pistons.b[i][0], this.pistons.b[i][1], this.pistons.b[i][2]).applyMatrix4(this.ramp.matrix);
+      for (let i = 0; i < pistons.a.length; i++) {
+        const A = new THREE.Vector3(...pistons.a[i]);
+        const B = new THREE.Vector3(pistons.b[i][0], pistons.b[i][1], pistons.b[i][2]).applyMatrix4(this.ramp.matrix);
         const dir = B.clone().sub(A);
         const L = dir.length();
         q.setFromUnitVectors(up, dir.normalize());
-        this.pistons.barrel.setMatrixAt(i, m.compose(A, q, new THREE.Vector3(1, Math.min(1.0, L * 0.55), 1)));
-        this.pistons.rod.setMatrixAt(i, m.compose(A.clone().addScaledVector(dir, L * 0.2), q, new THREE.Vector3(1, L * 0.8, 1)));
+        pistons.barrel.setMatrixAt(i, m.compose(A, q, new THREE.Vector3(1, Math.min(1.0, L * 0.55), 1)));
+        pistons.rod.setMatrixAt(i, m.compose(A.clone().addScaledVector(dir, L * 0.2), q, new THREE.Vector3(1, L * 0.8, 1)));
       }
-      this.pistons.barrel.instanceMatrix.needsUpdate = true;
-      this.pistons.rod.instanceMatrix.needsUpdate = true;
+      pistons.barrel.instanceMatrix.needsUpdate = true;
+      pistons.rod.instanceMatrix.needsUpdate = true;
     }
     // shutters roll down from their housings
-    if (anim.shield !== this.lastShield) {
-      this.lastShield = anim.shield;
+    const shield = def.shield ? anim.movers[def.shield.key] ?? 0 : 0;
+    if (def.shield && shield !== this.lastShield) {
+      this.lastShield = shield;
       const m = new THREE.Matrix4();
       def.shield.plates.forEach((pl, i) => {
-        const h = Math.max(0.001, pl.h * anim.shield);
+        const h = Math.max(0.001, pl.h * shield);
         const F = frameMatrix(pl.c, pl.u, pl.v, pl.n);
         m.copy(F).multiply(new THREE.Matrix4().compose(new THREE.Vector3(0, pl.h / 2 - h / 2, 0), new THREE.Quaternion(), new THREE.Vector3(pl.w, h, 0.035)));
         this.shield.setMatrixAt(i, m);
       });
       this.shield.instanceMatrix.needsUpdate = true;
-      this.shield.visible = anim.shield > 0.005;
+      this.shield.visible = shield > 0.005;
     }
 
     // controls: smooth throws, click feedback
@@ -707,13 +780,22 @@ export class ShipView {
       let L: THREE.Matrix4;
       switch (slot.kind) {
         case 'cap':
-          L = new THREE.Matrix4().compose(new THREE.Vector3(0, 0, 0.019 - this.press[c.index] * 0.007), new THREE.Quaternion(), new THREE.Vector3(0.046, 0.046, 0.016));
+          L = new THREE.Matrix4().compose(new THREE.Vector3(0, 0, 0.019 - this.press[c.index] * 0.007), new THREE.Quaternion(), new THREE.Vector3(c.kind === 'bezel' ? 0.042 : 0.046, c.kind === 'bezel' ? 0.016 : 0.046, 0.016));
           break;
         case 'bat':
           L = new THREE.Matrix4().makeTranslation(0, 0, 0.012).multiply(new THREE.Matrix4().makeRotationX(-0.5 + (1 - s) * 1.0));
           break;
         case 'handle':
           L = new THREE.Matrix4().makeTranslation(0, (s - 0.5) * 0.11, 0.012);
+          break;
+        case 'knob': {
+          const span = Math.max(1, c.states.length - 1);
+          L = new THREE.Matrix4().makeRotationZ((s / span) * Math.PI * 1.35).multiply(new THREE.Matrix4().makeTranslation(0, 0, 0.012));
+          break;
+        }
+        case 'lid':
+          // hinge along the top edge: shut flat, open it flips up and off the button
+          L = new THREE.Matrix4().makeTranslation(0, 0.04, 0).multiply(new THREE.Matrix4().makeRotationX(-s * 1.65)).multiply(new THREE.Matrix4().makeTranslation(0, -0.04, 0.012));
           break;
         default:
           L = new THREE.Matrix4().makeTranslation(0, 0, 0.02).multiply(new THREE.Matrix4().makeRotationX(s > 0.5 ? -0.24 : 0.24)).multiply(new THREE.Matrix4().makeScale(0.036, 0.05, 0.012));
@@ -723,41 +805,91 @@ export class ShipView {
     }
     for (const m of Object.values(this.parts)) m.instanceMatrix.needsUpdate = true;
 
+    this.refused.clear();
+    for (const c of def.controls) {
+      if (c.host >= 0 && sim.hole(c.host)) {
+        this.blocks.live(String(c.index), null, time);
+        continue;
+      }
+      if (this.blocks.live(String(c.index), sim.blocked(c), time)) this.refused.add(c.index);
+    }
+
     // ---- lamps --------------------------------------------------------------------------------------
     const L = this.lampMat;
     const id = (n: string) => this.lampIds.get(n)!;
     const blink = (hz: number, duty = 0.5) => (time * hz) % 1 < duty;
-    const lightsOn = sim.powered('lights');
-    const ext = sim.powered('ext');
+    const lk = def.lighting;
+    const lightsOn = sim.powered(lk.cabin);
+    const ext = sim.powered(lk.exterior);
     def.zones.forEach((zn) => {
       const on = lightsOn && sw[zn.lightKey] === 1;
       L.set(id(`zone:${zn.id}`), on ? 7 : 0.02, on ? 6.6 : 0.02, on ? 6 : 0.02);
     });
     const emergency = !lightsOn;
     L.set(id('emergency'), emergency ? (blink(0.5, 0.85) ? 6 : 2.5) : 0.04, emergency ? 0.25 : 0.01, emergency ? 0.1 : 0.01);
-    L.set(id('nav-red'), ext && sw['light.nav'] ? 8 : 0.05, ext && sw['light.nav'] ? 0.3 : 0, 0);
-    L.set(id('nav-green'), 0, ext && sw['light.nav'] ? 7 : 0.05, ext && sw['light.nav'] ? 1.2 : 0);
-    const strobe = ext && sw['light.nav'] && (time * 0.8) % 1 < 0.06;
+    const nav = ext && sw[lk.nav] === 1;
+    L.set(id('nav-red'), nav ? 8 : 0.05, nav ? 0.3 : 0, 0);
+    L.set(id('nav-green'), 0, nav ? 7 : 0.05, nav ? 1.2 : 0);
+    const strobe = nav && (time * 0.8) % 1 < 0.06;
     L.set(id('strobe'), strobe ? 40 : 0.1, strobe ? 40 : 0.1, strobe ? 40 : 0.1);
-    const beacon = ext && sw['light.beacon'] ? Math.max(0, Math.sin(time * Math.PI * 1.2)) ** 8 : 0;
+    const beacon = ext && sw[lk.beacon] === 1 ? Math.max(0, Math.sin(time * Math.PI * 1.2)) ** 8 : 0;
     L.set(id('beacon'), 0.1 + beacon * 25, beacon * 1.2, 0);
-    const landing = ext && sw['light.landing'] === 1;
+    const landing = ext && sw[lk.landing] === 1;
     L.set(id('landing'), landing ? 30 : 0.1, landing ? 29 : 0.1, landing ? 26 : 0.1);
     this.landing.intensity = landing ? 900 : 0;
-    const reactor = sw.reactor === 1;
+    const reactors = this.reactors();
+    const online = (r: Reactor | undefined) => !!r && r.state(sim.st) === RX.online;
     const flick = 1 + Math.sin(time * 9.1) * 0.05 + Math.sin(time * 23.7) * 0.03;
-    // engines are cold on the pad; the throat only shows a faint warm-up glow with the reactor on
-    L.set(id('nozzle'), reactor ? 0.006 * flick : 0, reactor ? 0.012 * flick : 0, reactor ? 0.04 * flick : 0);
-    L.set(id('reactor-core'), reactor ? 1.5 * flick : 0.02, reactor ? 4 * flick : 0.02, reactor ? 7 * flick : 0.03);
-    const av = sim.powered('avionics');
-    L.set(id('gear-greens'), 0, av && sw.gear ? 5 : 0.03, av && sw.gear ? 1 : 0);
-    L.set(id('caution-lens'), sw.caution && blink(2) ? 9 : 0.15, sw.caution && blink(2) ? 5 : 0.08, 0);
+    // engines are cold on the pad: a faint warm-up glow with a reactor online, brighter with thrust
+    const thrust = Math.max(0, ...sim.sys.modules.filter((m): m is Engine => m.id.startsWith('engine:')).map((e) => e.thrust(sim.st)));
+    const warm = (reactors.some(online) ? 0.006 : 0) + thrust * 2;
+    L.set(id('nozzle'), warm * flick, warm * 2 * flick, warm * 6.6 * flick);
+    const grid = sim.sys.power;
+    const lit = !grid || sim.st[grid.iLive] === 1;
+    def.indicators.forEach((ind, i) => {
+      if (ind.kind === 'reactor-core') {
+        const r = reactors.find((x) => x.part.id === ind.ref) ?? reactors[0];
+        const on = online(r);
+        L.set(id(`ind:${i}`), on ? 1.5 * flick : 0.02, on ? 4 * flick : 0.02, on ? 7 * flick : 0.03);
+      } else if (ind.kind === 'gear-greens') {
+        const down = lit && sim.mover(ind.ref ?? def.gear?.key ?? '') > 0.99;
+        L.set(id(`ind:${i}`), 0, down ? 5 : 0.03, down ? 1 : 0);
+      } else if (ind.kind === 'airlock') {
+        const ph = sim.vars.has('lock.phase') ? sim.get('lock.phase') : LOCK.in;
+        const cyc = ph !== LOCK.in && ph !== LOCK.out;
+        L.set(id(`ind:${i}:0`), 0, lit && ph === LOCK.in ? 5 : 0.03, lit && ph === LOCK.in ? 1 : 0);
+        L.set(id(`ind:${i}:1`), lit && cyc && blink(2) ? 5 : 0.05, lit && cyc && blink(2) ? 2.6 : 0.03, 0);
+        L.set(id(`ind:${i}:2`), lit && ph === LOCK.out ? 6 : 0.05, lit && ph === LOCK.out ? 0.3 : 0.01, 0);
+      }
+    });
+    const caution = sw[def.caution] === 1 && blink(2);
+    L.set(id('caution-lens'), caution ? 9 : 0.15, caution ? 5 : 0.08, 0);
+    const active = sim.sys.active(sim.st);
+    def.annunciator?.lamps.forEach((name, i) => {
+      const hit = active.filter((a) => a.lamp === name);
+      const hot = hit.some((a) => a.level === 2);
+      const on = hit.length > 0 && (!hot || blink(2));
+      L.set(id(`ann:${i}`), on ? (hot ? 7 : 5.5) : 0.12, on ? (hot ? 0.35 : 3.4) : 0.06, on ? 0.05 : 0.02);
+    });
+    for (const m of this.machines) {
+      if (m.animate && m.mover) m.animate(anim.movers[m.mover] ?? 0);
+      const ratio = sim.partHp(m.part) / m.part.maxHp;
+      for (const x of m.mats) {
+        if (!this.welder) {
+          x.mat.color.copy(x.base);
+          x.mat.emissive.setRGB(0, 0, 0);
+          continue;
+        }
+        x.mat.color.setRGB(0.18 + 0.16 * ratio, 0.08 + 0.22 * ratio, 0.05 + 0.04 * ratio);
+        x.mat.emissive.setRGB(ratio < 0.35 ? 0.35 * (1 - ratio) : 0, 0.02, 0);
+      }
+    }
     // seat umbilical port: green while a pack is docked
     def.seats.forEach((st, i) => {
       const docked = this.seatOccupied[i];
       L.set(id(`seat:${st.id}`), docked ? 0 : 0.6, docked ? 4 : 0.35, docked ? 1 : 0);
     });
-    for (const c of def.controls) this.setLed(c, time, anim);
+    for (const c of def.controls) this.setLed(c, time, anim, this.refused.has(c.index));
 
     // cabin lights (shader lights; emergency = dim red)
     const center = new THREE.Vector3();
@@ -769,7 +901,7 @@ export class ShipView {
       center.set((zn.min[0] + zn.max[0]) / 2, (zn.min[1] + zn.max[1]) / 2, (zn.min[2] + zn.max[2]) / 2);
       half.set((zn.max[0] - zn.min[0]) / 2 + 0.14, (zn.max[1] - zn.min[1]) / 2 + 0.14, (zn.max[2] - zn.min[2]) / 2 + 0.14);
       center.applyMatrix4(this.root.matrixWorld);
-      const intensity = on ? (zn.id === 'cargo' ? 7 : 4.2) : emergency ? (blink(0.5, 0.85) ? 0.9 : 0.35) : 0;
+      const intensity = on ? zn.lux ?? 4.2 : emergency ? (blink(0.5, 0.85) ? 0.9 : 0.35) : 0;
       if (on) col.setRGB(1, 0.93, 0.84);
       else col.setRGB(1, 0.06, 0.03);
       setInteriorLight(ls.slot, ls.pos.clone().applyMatrix4(this.root.matrixWorld), col, intensity, center, sim.place.yaw, half);
@@ -778,25 +910,54 @@ export class ShipView {
     this.screens.update(time, anim, this.hostHidden);
   }
 
-  private setLed(c: ControlDef, time: number, anim: ShipAnimState) {
+  private reactors() {
+    return this.sim.sys.modules.filter((m): m is Reactor => m.id.startsWith('reactor:'));
+  }
+
+  /** Welder in hand: machines show how damaged they are. */
+  setWelder(on: boolean) {
+    this.welder = on;
+  }
+
+  /** Mark a control from the manual (null = none). */
+  point(index: number | null) {
+    this.pointed = index ?? -1;
+  }
+
+  /** The authority refused this control: light it now, don't wait out the settle. */
+  refuse(index: number) {
+    this.blocks.pin(String(index));
+    this.refused.add(index);
+  }
+
+  isRefused(index: number) {
+    return this.refused.has(index);
+  }
+
+  private setLed(c: ControlDef, time: number, anim: ShipAnimState, refused: boolean) {
     const sim = this.sim;
     const i = this.lampIds.get(`led:${c.index}`)!;
     const L = this.lampMat;
     const vis = L.levels[i].w > 0.5;
     const set = (r: number, g: number, b: number) => L.set(i, r, g, b, vis);
+    if (refused) return set(5.2, 2.6, 0.2);
+    if (c.index === this.pointed) return (time * 2.5) % 1 < 0.55 ? set(0, 4, 6) : set(0, 0.3, 0.5);
     const v = sim.sw[c.key] ?? 0;
     if (c.kind === 'master') return set(0, 0, 0);
+    if (c.kind === 'bezel') return (sim.sw[c.key] ?? 0) === (c.value ?? 0) ? set(0, 2.4, 4) : set(0.04, 0.08, 0.1);
+    if (c.kind === 'cover') return v ? set(0.5, 0.35, 0.05) : set(0.04, 0.04, 0.04);
     if (c.kind === 'breaker') return v ? set(0, 4, 0.8) : set(5, 0.3, 0);
-    if (c.key === 'reactor') return v ? set(0, 4, 0.8) : set(5, 0.3, 0);
-    if (c.key === 'gear') return set(0, sim.sw.gear ? 4 : 0, 0.5);
-    const moving = c.key === 'ramp' ? anim.ramp : anim.doors[c.key];
+    if (this.runKeys.has(c.key)) return v ? set(0, 4, 0.8) : set(5, 0.3, 0);
+    // anything that travels (doors, ramp, gear, shutters, radiators): amber blink while on its way
+    const moving = anim.movers[c.key];
     if (moving !== undefined) {
       const travelling = Math.abs(moving - v) > 0.01;
       if (travelling) return (time * 3) % 1 < 0.5 ? set(5, 2.6, 0) : set(0.1, 0.05, 0);
-      if (c.requires && !sim.powered(c.requires)) return set(0.6, 0.02, 0);
+      const bus = c.requires ?? this.effect.get(c.key);
+      if (bus && !sim.powered(bus)) return set(0.6, 0.02, 0);
       return v ? set(0, 4, 0.8) : set(0.05, 0.05, 0.05);
     }
-    const eff = EFFECT[c.key];
+    const eff = this.effect.get(c.key);
     if (!v) return set(0.04, 0.04, 0.04);
     return !eff || sim.powered(eff) ? set(0, 4, 0.8) : set(5, 2.6, 0);
   }
@@ -809,6 +970,7 @@ const BASES: Record<ControlKind, V3> = {
   lever: [0.05, 0.18, 0.012],
   breaker: [0.052, 0.08, 0.016],
   master: [0.1, 0.07, 0.014],
+  mushroom: [0.07, 0.07, 0.012],
   rotary: [0.05, 0.05, 0.01],
   cover: [0.07, 0.09, 0.01],
   valve: [0.08, 0.08, 0.01],
@@ -898,7 +1060,7 @@ function doorTexture() {
   return tex;
 }
 
-function registryDecal(name: string, reg: string, csm: CSM | null) {
+function registryDecal(name: string, reg: string, tagline: string, accent: [number, number, number], csm: CSM | null) {
   const c = document.createElement('canvas');
   c.width = 1024;
   c.height = 256;
@@ -910,11 +1072,13 @@ function registryDecal(name: string, reg: string, csm: CSM | null) {
   g.fillText(reg, 40, 118);
   g.font = '700 54px ui-sans-serif, Helvetica, Arial, sans-serif';
   g.fillText(name.toUpperCase(), 560, 96);
-  g.fillStyle = '#c8901a';
+  // the accent colour, linear → sRGB for the canvas
+  const srgb = accent.map((c) => Math.round(255 * (c <= 0.0031308 ? c * 12.92 : 1.055 * c ** (1 / 2.4) - 0.055)));
+  g.fillStyle = `rgb(${srgb.join(',')})`;
   g.fillRect(560, 140, 420, 16);
   g.fillStyle = 'rgba(20,24,30,0.92)';
   g.font = '600 30px ui-sans-serif, Helvetica, Arial, sans-serif';
-  g.fillText('CARGA LIGERA · LUNA', 560, 196);
+  g.fillText(tagline, 560, 196);
   const tex = new THREE.CanvasTexture(c);
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.anisotropy = 8;

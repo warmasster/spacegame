@@ -14,7 +14,7 @@ Este archivo es el punto de entrada para un agente de IA que vaya a desarrollar 
 | `src/client/ship/` | Nave en el cliente: `view.ts` (casco, estructura, consolas, luces), `physics.ts` (colisiones), `interaction.ts` (mirar + clic, soldar, asientos), `cargo.ts` (cajas dinámicas), `screens.ts` (MFD), `interiorLights.ts` |
 | `src/client/world/` | Terreno LOD en workers, colisión en streaming, rocas, iluminación |
 | `src/shared/` | Código común cliente/servidor: terreno determinista, protocolo de red |
-| `src/shared/ship/` | Naves como datos: `hauler.ts` (paneles, mandos, puertas, asientos, carga, conductos), `def.ts` (tipos + constructor), `sim.ts` (reglas autoritativas: energía, daño, reparación, enclavamientos) |
+| `src/shared/ship/` | Naves como datos: `hauler.ts` (la nave), `def.ts` (tipos, constructores, `finishShip` que valida), `sim.ts` (mandos, daño, reparación), `systems.ts` (núcleo por fases) y `modules/` (un fichero por mecánica: energía, mecanismos, propelente, soporte vital, reactor, APU, motores). Guía: [`docs/SHIPS.md`](docs/SHIPS.md) |
 | `src/server/` | Servidor autoritativo (salas, daño, explosiones, ediciones de terreno) |
 | `tools/blender/` | Traje del astronauta generado por código (Blender headless → `public/assets/astronaut.glb`) |
 | `tools/diag/` | Herramientas de autodiagnóstico visual y numérico |
@@ -37,6 +37,7 @@ Este archivo es el punto de entrada para un agente de IA que vaya a desarrollar 
 - El servidor es autoritativo para daño, explosiones y ediciones, y para el estado de las naves
   (`ShipSim`: interruptores, integridad de cada panel). El cliente lleva un espejo del mismo `ShipSim`
   para predecir negativas ("sin energía") y evaluar la energía; en `?offline` hace de servidor.
+- **Una mecánica de nave es un módulo** (`shared/ship/modules/`, contrato en `api.ts`, lista en `index.ts`); el núcleo no conoce ninguna máquina por su nombre. Ver `docs/SHIPS.md`.
 - **Una nave es datos** (`shared/ship/hauler.ts`): paneles convexos rompibles/reparables, consolas con
   mandos (`key` = interruptor que accionan, `requires` = bus que necesitan), subsistemas con disyuntor y
   recorrido de conductos (un panel destruido corta el bus que pasa por detrás), asientos, carga suelta.

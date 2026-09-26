@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { SEAT_PICK, seatFrame } from '../../shared/ship/def';
+import { SEAT_PICK, boxFrame, coverHit, seatFrame, type ConsoleDef } from '../../shared/ship/def';
 import { REACH, SOLID_HP } from '../../shared/ship/sim';
 import type { Particles } from '../fx/particles';
 import type { ShipClient, ShipHit } from './ship';
@@ -9,6 +9,8 @@ export interface InteractionSink {
   interact(ship: ShipClient, ctl: number): void;
   /** Repair tool tick on a panel (dt seconds of welding). */
   repair(ship: ShipClient, panel: number, dt: number): void;
+  /** Repair tool tick on a machine. */
+  repairPart(ship: ShipClient, part: number, dt: number): void;
   /** Sit in a seat. */
   sit(ship: ShipClient, seat: number): void;
 }
@@ -19,6 +21,8 @@ export interface PromptInfo {
   tone: 'on' | 'off' | 'warn' | 'bad';
   hint: string;
   hintTone?: 'bad';
+  /** What the control actually does, one line. */
+  detail?: string;
   bar?: number;
 }
 
@@ -33,12 +37,15 @@ const KIND: Record<string, string> = { hull: 'casco', glass: 'ventana', floor: '
 export class Interaction {
   target: Target | null = null;
   repairing = false;
-  private denied: { key: string; text: string; until: number } | null = null;
   private box: THREE.LineSegments;
   private outline: THREE.LineLoop;
   private ghost: THREE.Mesh;
   private beam: THREE.Mesh;
+  /** Button consoles that were mounted on the blown panel under the crosshair. */
+  private consoleGhosts: THREE.Group;
+  private consoleMat: THREE.MeshBasicMaterial;
   private outlineKey = '';
+  private consoleKey = '';
   private tick = 0;
   private sparkT = 0;
   private tool = false;
@@ -54,7 +61,9 @@ export class Interaction {
     this.outline = new THREE.LineLoop(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: 0x4fd8f0, ...noDepth }));
     this.ghost = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial({ color: 0x4fd8f0, side: THREE.DoubleSide, opacity: 0.15, ...noDepth }));
     this.beam = new THREE.Mesh(new THREE.CylinderGeometry(0.004, 0.004, 1, 6).translate(0, 0.5, 0), new THREE.MeshBasicMaterial({ color: new THREE.Color(2.5, 3.5, 5), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }));
-    for (const o of [this.box, this.outline, this.ghost, this.beam]) {
+    this.consoleMat = new THREE.MeshBasicMaterial({ color: 0x9ad7ff, side: THREE.DoubleSide, transparent: true, opacity: 0.28, depthWrite: false, toneMapped: false });
+    this.consoleGhosts = new THREE.Group();
+    for (const o of [this.box, this.outline, this.ghost, this.beam, this.consoleGhosts]) {
       o.matrixAutoUpdate = false;
       o.visible = false;
       o.frustumCulled = false;
@@ -70,6 +79,7 @@ export class Interaction {
   update(dt: number, ctx: { camera: THREE.Camera; eye: THREE.Vector3; hand: THREE.Vector3; ships: ShipClient[]; tool: boolean; holdRepair: boolean; now: number; disabled: boolean; seated: boolean }): PromptInfo | null {
     this.tool = ctx.tool;
     this.seated = ctx.seated;
+    for (const ship of ctx.ships) ship.view.setWelder(ctx.tool);
     const { camera, eye, ships } = ctx;
     const origin = camera.getWorldPosition(new THREE.Vector3());
     const dir = camera.getWorldDirection(new THREE.Vector3());
@@ -83,28 +93,32 @@ export class Interaction {
         if (h && (!best || h.dist < best.dist)) best = { ...h, ship, inReach: false };
       }
     }
-    if (best) best.inReach = best.point.distanceTo(eye) <= (best.kind === 'panel' ? REACH.repair : REACH.control);
+    if (best) best.inReach = best.point.distanceTo(eye) <= (best.kind === 'panel' || best.kind === 'part' ? REACH.repair : REACH.control);
     this.target = best;
 
     // welding
     const t = best;
-    const canWeld = !!t && t.kind === 'panel' && t.inReach && ctx.tool && ctx.holdRepair && t.ship.sim.hp[t.index] < t.ship.sim.def.panels[t.index].maxHp;
+    const panelWeld = !!t && t.kind === 'panel' && t.inReach && ctx.tool && ctx.holdRepair && t.ship.sim.hp[t.index] < t.ship.sim.def.panels[t.index].maxHp;
+    const part = t?.kind === 'part' ? t.ship.sim.def.parts[t.index] : null;
+    const partWeld = !!t && !!part && t.inReach && ctx.tool && ctx.holdRepair && t.ship.sim.partHp(part) < part.maxHp;
+    const canWeld = panelWeld || partWeld;
     this.repairing = canWeld;
     if (canWeld) {
       this.tick += dt;
       if (this.tick >= 0.1) {
-        this.sink.repair(t!.ship, t!.index, this.tick);
+        if (partWeld) this.sink.repairPart(t!.ship, t!.index, this.tick);
+        else this.sink.repair(t!.ship, t!.index, this.tick);
         this.tick = 0;
       }
       this.weldFx(dt, ctx.hand, t!.point, t!.normal);
     } else this.tick = 0;
     this.beam.visible = canWeld;
-    this.draw(t, ctx.now);
-    return t ? this.prompt(t, ctx.now) : null;
+    this.draw(t);
+    return t ? this.prompt(t) : null;
   }
 
   /** Click / E. True when it acted on a control (so the click does not also fire). */
-  use(now: number): boolean {
+  use(): boolean {
     const t = this.target;
     if (!t || !t.inReach) return false;
     if (t.kind === 'seat') {
@@ -113,20 +127,11 @@ export class Interaction {
       return true;
     }
     if (t.kind !== 'control') return false;
-    const c = t.ship.sim.def.controls[t.index];
-    const reason = t.ship.sim.blocked(c);
+    // a settled refusal is the amber light; the click does not also fire or print a line
+    if (t.ship.view.isRefused(t.index)) return true;
     t.ship.view.pressed(t.index);
-    if (reason) {
-      this.denied = { key: `${t.ship.id}:${t.index}`, text: reason, until: now + 1.8 };
-      return true;
-    }
     this.sink.interact(t.ship, t.index);
     return true;
-  }
-
-  /** Server refused (rare: the client normally knows first). */
-  deny(ship: number, ctl: number, text: string, now: number) {
-    this.denied = { key: `${ship}:${ctl}`, text, until: now + 1.8 };
   }
 
   private weldFx(dt: number, hand: THREE.Vector3, at: THREE.Vector3, n: THREE.Vector3) {
@@ -152,11 +157,12 @@ export class Interaction {
     this.particles.emit('glow', { pos: at, vel: n.clone().multiplyScalar(0.05), color: [3, 4, 6], life: 0.05, size: 0.12 + Math.random() * 0.1 });
   }
 
-  private draw(t: Target | null, now: number) {
-    this.box.visible = this.outline.visible = this.ghost.visible = false;
+  private draw(t: Target | null) {
+    this.box.visible = this.outline.visible = this.ghost.visible = this.consoleGhosts.visible = false;
     if (!t) return;
+    if (!this.tool && (t.kind === 'panel' || t.kind === 'part')) return;
     const M = t.ship.view.root.matrixWorld;
-    const deniedHere = this.denied && this.denied.until > now && this.denied.key === `${t.ship.id}:${t.index}`;
+    const refused = t.kind === 'control' && t.ship.view.isRefused(t.index);
     if (t.kind === 'seat') {
       const st = t.ship.sim.def.seats[t.index];
       const f = seatFrame(st, SEAT_PICK);
@@ -169,11 +175,27 @@ export class Interaction {
     }
     if (t.kind === 'control') {
       const c = t.ship.sim.def.controls[t.index];
-      const F = new THREE.Matrix4().makeBasis(new THREE.Vector3(...c.u), new THREE.Vector3(...c.v), new THREE.Vector3(...c.n)).setPosition(...c.c);
-      F.multiply(new THREE.Matrix4().compose(new THREE.Vector3(0, 0, c.half[2] * 0.6), new THREE.Quaternion(), new THREE.Vector3(c.half[0] * 2.5, c.half[1] * 2.5, c.half[2] * 2)));
+      const lid = c.kind === 'cover' ? coverHit(c, (t.ship.sim.sw[c.key] ?? 0) === 1) : null;
+      const frame = lid ? lid.frame : { c: c.c, u: c.u, v: c.v, n: c.n };
+      const F = new THREE.Matrix4().makeBasis(new THREE.Vector3(...frame.u), new THREE.Vector3(...frame.v), new THREE.Vector3(...frame.n)).setPosition(...frame.c);
+      const size = lid ? [lid.half[0] * 2, lid.half[1] * 2, lid.half[2] * 2] : [c.half[0] * 2.5, c.half[1] * 2.5, c.half[2] * 2];
+      const seat = lid ? new THREE.Vector3(0, 0, 0) : new THREE.Vector3(0, 0, c.half[2] * 0.6);
+      F.multiply(new THREE.Matrix4().compose(seat, new THREE.Quaternion(), new THREE.Vector3(size[0], size[1], size[2])));
       this.box.matrix.multiplyMatrices(M, F);
       this.box.matrixWorld.copy(this.box.matrix);
-      (this.box.material as THREE.LineBasicMaterial).color.set(deniedHere ? 0xff5a4a : t.inReach ? 0x4fd8f0 : 0x2a6f80);
+      (this.box.material as THREE.LineBasicMaterial).color.set(refused ? 0xffc04a : t.inReach ? 0x4fd8f0 : 0x2a6f80);
+      this.box.visible = true;
+      return;
+    }
+    if (t.kind === 'part') {
+      const part = t.ship.sim.def.parts[t.index];
+      const f = boxFrame(part);
+      const F = new THREE.Matrix4().makeBasis(new THREE.Vector3(...f.u), new THREE.Vector3(...f.v), new THREE.Vector3(...f.n)).setPosition(...f.c);
+      F.multiply(new THREE.Matrix4().makeScale(part.half[0] * 2, part.half[1] * 2, part.half[2] * 2));
+      this.box.matrix.multiplyMatrices(M, F);
+      this.box.matrixWorld.copy(this.box.matrix);
+      const ratio = t.ship.sim.partHp(part) / part.maxHp;
+      (this.box.material as THREE.LineBasicMaterial).color.set(t.inReach ? (ratio > 0.8 ? 0x5cf29a : ratio > 0.5 ? 0xffc04a : 0xff5a4a) : 0x2a6f80);
       this.box.visible = true;
       return;
     }
@@ -202,14 +224,37 @@ export class Interaction {
     if (t.hole) {
       this.ghost.matrix.copy(M);
       this.ghost.matrixWorld.copy(M);
-      (this.ghost.material as THREE.MeshBasicMaterial).opacity = 0.08 + 0.4 * (sim.hp[p.index] / SOLID_HP) + (this.repairing ? 0.05 * Math.random() : 0);
+      (this.ghost.material as THREE.MeshBasicMaterial).opacity = 0.22 + 0.35 * (sim.hp[p.index] / SOLID_HP) + (this.repairing ? 0.05 * Math.random() : 0);
       this.ghost.visible = true;
+      this.consoleGhost(t.ship, t.index, M);
     }
   }
 
-  private prompt(t: Target, now: number): PromptInfo {
+  /** Translucent copy of every button console that was bolted to this hull plate. */
+  private consoleGhost(ship: Target['ship'], panel: number, M: THREE.Matrix4) {
+    const key = `${ship.id}:${panel}`;
+    if (key !== this.consoleKey) {
+      this.consoleKey = key;
+      for (const child of [...this.consoleGhosts.children]) {
+        const mesh = child as THREE.Mesh;
+        mesh.geometry.dispose();
+        this.consoleGhosts.remove(mesh);
+      }
+      const add = (con: ConsoleDef) => {
+        const geo = new THREE.BoxGeometry(con.w, con.h, Math.max(0.02, con.depth));
+        const F = new THREE.Matrix4().makeBasis(new THREE.Vector3(...con.u), new THREE.Vector3(...con.v), new THREE.Vector3(...con.n)).setPosition(...con.c);
+        geo.applyMatrix4(F.multiply(new THREE.Matrix4().makeTranslation(0, 0, -con.depth / 2)));
+        this.consoleGhosts.add(new THREE.Mesh(geo, this.consoleMat));
+      };
+      for (const con of ship.sim.def.consoles) if (con.host === panel) add(con);
+    }
+    this.consoleGhosts.matrix.copy(M);
+    this.consoleGhosts.updateMatrixWorld(true);
+    this.consoleGhosts.visible = this.consoleGhosts.children.length > 0;
+  }
+
+  private prompt(t: Target): PromptInfo | null {
     const sim = t.ship.sim;
-    const denied = this.denied && this.denied.until > now && this.denied.key === `${t.ship.id}:${t.index}` ? this.denied.text : null;
     if (t.kind === 'seat') {
       const st = sim.def.seats[t.index];
       return { title: st.name, state: this.seated ? 'SENTADO' : 'LIBRE', tone: 'on', hint: this.seated ? '[E] / [ESPACIO] levantarse' : t.inReach ? '[E] / [CLIC] sentarse' : 'Acércate para sentarte' };
@@ -217,18 +262,29 @@ export class Interaction {
     if (t.kind === 'control') {
       const c = sim.def.controls[t.index];
       const v = sim.sw[c.key] ?? 0;
-      const blocked = sim.blocked(c);
-      const hint = !t.inReach ? 'Acércate para accionar' : denied ?? (c.action === 'reset' ? '[CLIC] / [E] reconocer' : '[CLIC] / [E] accionar');
-      return { title: c.name, state: c.states[v] ?? '', tone: c.key === 'caution' ? (v ? 'warn' : 'off') : v ? 'on' : 'off', hint: blocked && t.inReach && !denied ? `${hint} · ${blocked}` : hint, hintTone: denied || (blocked && t.inReach) ? 'bad' : undefined };
+      const how = c.action === 'reset' ? '[CLIC] / [E] reconocer' : c.action === 'cycle' ? '[CLIC] avanza · [RUEDA] gira' : '[CLIC] / [E] accionar';
+      const hint = !t.inReach ? 'Acércate para accionar' : how;
+      const refused = t.ship.view.isRefused(c.index);
+      const why = refused ? sim.blocked(c) : null;
+      return { title: c.name, state: c.states[v] ?? '', tone: refused ? 'warn' : c.key === 'caution' ? (v ? 'warn' : 'off') : v ? 'on' : 'off', hint, detail: why ?? c.help };
+    }
+    if (t.kind === 'part' || t.kind === 'panel') {
+      if (!this.tool) return null;
+    }
+    if (t.kind === 'part') {
+      const part = sim.def.parts[t.index];
+      const hp = sim.partHp(part);
+      const ratio = hp / part.maxHp;
+      const hint = !t.inReach ? 'Acércate para reparar' : hp >= part.maxHp ? 'Íntegra' : this.repairing ? 'Soldando…' : '[MANTÉN CLIC] soldar';
+      return { title: part.name, state: `${Math.round(ratio * 100)} %`, tone: ratio > 0.8 ? 'on' : ratio > 0.5 ? 'warn' : 'bad', hint, detail: part.circuit ? `Circuito ${part.circuit}.` : 'Pieza mecánica, sin circuito.', bar: ratio };
     }
     const p = sim.def.panels[t.index];
     const hp = sim.hp[p.index];
     const r = hp / p.maxHp;
-    const conduits = p.conduits.map((id) => sim.def.subsystems.find((s) => s.id === id)!.label).join(', ');
     const state = t.hole ? (hp > 0 ? `RECONSTRUYENDO ${Math.round((hp / SOLID_HP) * 100)}%` : 'DESTRUIDO') : `${Math.round(r * 100)}%`;
-    const hint = !t.inReach ? 'Acércate para reparar' : hp >= p.maxHp ? 'Íntegro' : this.repairing ? 'Soldando…' : this.tool ? '[MANTÉN CLIC] soldar' : 'Saca la soldadora [2] para reparar';
+    const hint = !t.inReach ? 'Acércate para reparar' : hp >= p.maxHp ? 'Íntegro' : this.repairing ? 'Soldando…' : '[MANTÉN CLIC] soldar';
     return {
-      title: `Panel ${p.id} · ${KIND[p.kind]}${conduits ? ` · conducto ${conduits}` : ''}`,
+      title: `Panel ${p.id} · ${KIND[p.kind]}`,
       state,
       tone: t.hole ? 'bad' : r > 0.8 ? 'on' : r > 0.5 ? 'warn' : 'bad',
       hint,

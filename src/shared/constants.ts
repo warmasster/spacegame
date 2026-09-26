@@ -36,8 +36,15 @@ export const MOON: BodyDef = {
 export const SUIT_STRIPES = [0xb3261e, 0xe8e6e1, 0x1f4fa8, 0xd9a21b];
 export const SUIT_VARIANT_NAMES = ['Comandante', 'Especialista', 'Piloto', 'Ingeniero'];
 
+/** Sun over the landing site: azimuth and elevation (degrees). Lighting, sky and solar arrays. */
+export const SUN = { az: 98, el: 16 };
+
 /** Ships parked in the world at start: ship-space origin (deck centre) position and heading. */
-export const SHIP_SPAWNS = [{ id: 1, def: 'hauler', x: 3.6, z: -23.7, yaw: -0.5 }];
+export const SHIP_SPAWNS = [
+  { id: 1, def: 'hauler', x: 3.6, z: -23.7, yaw: -0.5 },
+  // the passenger shuttle, hatch side (starboard) toward the landing site
+  { id: 2, def: 'peregrina', x: -17, z: -12, yaw: -0.62 },
+];
 
 /** Circles kept free of boulders (landing pads). */
 export const CLEARINGS = SHIP_SPAWNS.map((s) => ({ x: s.x, z: s.z, r: 14 }));

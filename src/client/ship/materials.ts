@@ -71,7 +71,9 @@ float shHeight(vec2 uv, vec4 P, float aa) {
 }
 `;
 
-export function panelMaterial(style: PanelStyle, csm: CSM | null, params: THREE.MeshStandardMaterialParameters) {
+/** `stripe`: the livery's stripe colour (linear RGB), painted on PAINT.stripe panels. */
+export function panelMaterial(style: PanelStyle, csm: CSM | null, params: THREE.MeshStandardMaterialParameters, stripe: [number, number, number] = [0.46, 0.15, 0.02]) {
+  const stripeGlsl = `vec3(${stripe.map((v) => v.toFixed(4)).join(', ')})`;
   const mat = new THREE.MeshStandardMaterial(params);
   mat.name = `ship-${style}`;
   if (csm) csm.setupMaterial(mat);
@@ -113,7 +115,7 @@ export function panelMaterial(style: PanelStyle, csm: CSM | null, params: THREE.
             float k = fract((vPUv.x + vPUv.y) * 2.6);
             diffuseColor.rgb = mix(vec3(0.02), vec3(0.52, 0.34, 0.03), step(0.5, k)) * shTone;
           }
-          if (shScheme > 2.5 && vPUv.y < 0.11 && vPUv.y > 0.03) diffuseColor.rgb = vec3(0.46, 0.15, 0.02) * shTone;
+          if (shScheme > 2.5 && vPUv.y < 0.11 && vPUv.y > 0.03) diffuseColor.rgb = ${stripeGlsl} * shTone;
           // regolith dust: settles low on the hull and in the panel seams
           float shDust = shFbm(vPW.xz * 0.7 + vPW.y * 1.3);
           diffuseColor.rgb *= mix(0.8, 1.04, shDust) * mix(0.82, 1.0, smoothstep(0.0, 0.05, shEdge));
@@ -138,7 +140,7 @@ export function panelMaterial(style: PanelStyle, csm: CSM | null, params: THREE.
       )
       .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += vec3(3.2, 0.95, 0.22) * vHeat * vHeat * (0.25 + shScorch);');
   };
-  mat.customProgramCacheKey = () => `ship-panel-${style}`;
+  mat.customProgramCacheKey = () => `ship-panel-${style}-${stripeGlsl}`;
   return mat;
 }
 

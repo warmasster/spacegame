@@ -3,7 +3,8 @@ import type { CSM } from 'three/addons/csm/CSM.js';
 import type { Debris } from '../../engine/debris';
 import { SHIP_DEFS, ShipSim, placeShip, type ShipSnapshot } from '../../shared/ship/sim';
 import { rayBox, rayPrism, type V3 } from '../../shared/ship/geom';
-import { SEAT_PICK, seatFrame, type SubsystemId } from '../../shared/ship/def';
+import { SEAT_PICK, boxFrame, controlHit, seatFrame, shutCovers } from '../../shared/ship/def';
+import { zoneAt } from '../../shared/ship/crew';
 import type { Particles } from '../fx/particles';
 import type { Physics } from '../world/physics';
 import { ShipCargo } from './cargo';
@@ -11,15 +12,8 @@ import { ShipPhysics } from './physics';
 import type { ShipAnimState } from './screens';
 import { ShipView } from './view';
 
-/** Travel speeds (fraction per second) and the bus each mover needs. */
-const MOVERS: Record<string, { rate: number; bus: SubsystemId }> = {
-  door: { rate: 1 / 0.9, bus: 'doors' },
-  ramp: { rate: 1 / 4.5, bus: 'hyd' },
-  shield: { rate: 1 / 2.4, bus: 'shield' },
-};
-
 export interface ShipHit {
-  kind: 'control' | 'panel' | 'seat';
+  kind: 'control' | 'panel' | 'seat' | 'part';
   index: number;
   /** Panel is a hole (target for rebuilding). */
   hole: boolean;
@@ -53,6 +47,8 @@ export class ShipClient {
   private time = 0;
   private sparkT = 0;
   private toShip = new THREE.Matrix4();
+  /** Authority's travel per mover and how long it has not changed (s). */
+  private authMv = new Map<string, { v: number; still: number }>();
 
   constructor(
     snap: ShipSnapshot,
@@ -66,9 +62,8 @@ export class ShipClient {
     this.physics = new ShipPhysics(deps.physics, this.sim, ground);
     const m = this.view.mats;
     this.cargo = new ShipCargo(deps.physics, def.cargo, this.view.root.matrixWorld, snap.yaw, deps.gravity, { orange: m.crate, grey: m.crate2, strap: m.dark });
-    const sw = this.sim.sw;
-    // late joiners see things where they already are, no replayed travel
-    this.anim = { doors: Object.fromEntries(def.doors.map((d) => [d.key, sw[d.key] ?? 0])), ramp: sw[def.ramp.key] ?? 0, shield: sw[def.shield.key] ?? 0 };
+    // late joiners see things where they already are (the snapshot carries the travel), no replay
+    this.anim = { movers: Object.fromEntries(def.movers.map((m) => [m.key, this.sim.mover(m.key)])) };
     this.toShip.copy(this.view.root.matrixWorld).invert();
   }
 
@@ -123,53 +118,55 @@ export class ShipClient {
     }
   }
 
-  /** Obstruction: an astronaut standing where a door or the ramp would close. */
-  private blocked(key: string, bodies: THREE.Vector3[]) {
-    const def = this.sim.def;
-    const l = new THREE.Vector3();
-    for (const b of bodies) {
-      this.local(b, l);
-      if (key === def.ramp.key) {
-        if (Math.abs(l.x) < def.ramp.w / 2 + 0.3 && l.z > def.ramp.hinge[2] - 0.45 && l.z < def.ramp.hinge[2] + def.ramp.length + 0.4 && l.y < 0.6) return true;
-        continue;
-      }
-      const d = def.doors.find((x) => x.key === key);
-      if (d && Math.abs(l.x - d.c[0]) < d.w / 2 + 0.3 && Math.abs(l.z - d.c[2]) < 0.55 && l.y > -0.5 && l.y < d.h) return true;
-    }
-    return false;
-  }
-
-  /** Fixed step: move doors / ramp / shutters toward their targets while powered. */
-  fixed(dt: number, bodies: THREE.Vector3[]) {
+  /**
+   * Fixed step: doors / ramp / shutters / gear. The travel is predicted every fixed step with the
+   * mover's own rule (toward its switch at its rate while its circuit is powered), so it is as
+   * smooth as the physics. The authority's travel (replicated `mv.*`, a few updates a second and
+   * always a little behind) only corrects it when they really disagree: the authority has stopped
+   * somewhere else (an obstruction sensor held a door) or is far off.
+   */
+  fixed(dt: number) {
     const sim = this.sim;
-    const def = sim.def;
-    const step = (cur: number, target: number, kind: keyof typeof MOVERS, key: string) => {
-      if (cur === target || !sim.powered(MOVERS[kind].bus)) return cur;
-      // obstruction sensor: hold the door open, stop the ramp
-      if (target < cur && this.blocked(key, bodies)) return cur;
-      const k = MOVERS[kind].rate * dt;
-      return target > cur ? Math.min(target, cur + k) : Math.max(target, cur - k);
-    };
-    for (const d of def.doors) this.anim.doors[d.key] = step(this.anim.doors[d.key], sim.sw[d.key] ?? 0, 'door', d.key);
-    this.anim.ramp = step(this.anim.ramp, sim.sw[def.ramp.key] ?? 0, 'ramp', def.ramp.key);
-    this.anim.shield = step(this.anim.shield, sim.sw[def.shield.key] ?? 0, 'shield', def.shield.key);
-    this.physics.update(this.anim, this.view.rampPhi(smooth(this.anim.ramp)));
+    for (const m of sim.def.movers) {
+      let cur = this.anim.movers[m.key] ?? 0;
+      const target = sim.sw[m.key] ?? 0;
+      if (sim.powered(m.circuit) && cur !== target) {
+        const k = m.rate * dt;
+        cur = target > cur ? Math.min(target, cur + k) : Math.max(target, cur - k);
+      }
+      // authority: how long has it been still?
+      const auth = sim.mover(m.key);
+      const t = this.authMv.get(m.key);
+      if (!t || Math.abs(t.v - auth) > 1e-4) this.authMv.set(m.key, { v: auth, still: 0 });
+      else t.still += dt;
+      const still = this.authMv.get(m.key)!.still;
+      // the authority always trails a little while moving: only a stop elsewhere or a big gap counts
+      const err = auth - cur;
+      if ((still > 0.35 && Math.abs(err) > 0.01) || Math.abs(err) > 0.5) cur += err * Math.min(1, dt * 6);
+      this.anim.movers[m.key] = cur;
+    }
+    const ramp = sim.def.ramp;
+    this.physics.update(this.anim, ramp ? this.view.rampPhi(smooth(this.anim.movers[ramp.key] ?? 0)) : 0);
   }
 
   /** Once per frame: visuals and ambient effects. */
   frame(dt: number) {
     this.time += dt;
     this.cargo.sync();
-    this.view.update(dt, this.time, { ...this.anim, ramp: smooth(this.anim.ramp) });
+    const ramp = this.sim.def.ramp;
+    this.view.update(dt, this.time, ramp ? { movers: { ...this.anim.movers, [ramp.key]: smooth(this.anim.movers[ramp.key] ?? 0) } } : this.anim);
     // damaged panels spit sparks now and then; cut conduits arc
     this.sparkT -= dt;
     if (this.sparkT > 0) return;
     this.sparkT = 0.08;
     const sim = this.sim;
     const M = this.view.root.matrixWorld;
+    const grid = sim.sys.power;
+    const live = !!grid && sim.st[grid.iLive] === 1;
     for (const p of sim.def.panels) {
       const r = sim.hp[p.index] / p.maxHp;
-      const cut = sim.hole(p.index) && p.conduits.length && sim.sw.reactor === 1;
+      // a cut conduit arcs while its breaker is closed and something feeds the grid
+      const cut = sim.hole(p.index) && live && p.conduits.some((c) => sim.sw[sim.def.subsystems.find((s) => s.id === c)!.breaker] === 1);
       if (!cut && (sim.hole(p.index) || r > 0.55)) continue;
       if (Math.random() > (cut ? 0.35 : 0.08)) continue;
       const q = p.poly[Math.floor(Math.random() * p.poly.length)];
@@ -209,10 +206,12 @@ export class ShipClient {
     let best: ShipHit | null = null;
     const M = this.view.root.matrixWorld;
     const world = (t: number) => origin.clone().addScaledVector(dir, t);
+    const shut = shutCovers(def.controls, sim.sw);
     for (const c of def.controls) {
       if (c.host >= 0 && sim.hole(c.host)) continue;
-      const half: V3 = [c.half[0] * 1.5 + 0.01, c.half[1] * 1.5 + 0.01, c.half[2] + 0.02];
-      const t = rayBox({ c: [c.c[0] + c.n[0] * c.half[2] * 0.5, c.c[1] + c.n[1] * c.half[2] * 0.5, c.c[2] + c.n[2] * c.half[2] * 0.5], u: c.u, v: c.v, n: c.n }, half, O, D, max);
+      const hit = controlHit(c, sim.sw, shut);
+      if (!hit) continue;
+      const t = rayBox(hit.frame, hit.half, O, D, max);
       if (t < 0 || t > tOcc + 0.04 || (best && t >= best.dist)) continue;
       best = { kind: 'control', index: c.index, hole: false, point: world(t), normal: new THREE.Vector3(...c.n).transformDirection(M), dist: t };
     }
@@ -222,6 +221,12 @@ export class ShipClient {
       const t = rayBox(f, f.half, O, D, max);
       if (t < 0 || t > tOcc + 0.05 || (best && t >= best.dist)) continue;
       best = { kind: 'seat', index: i, hole: false, point: world(t), normal: new THREE.Vector3(0, 1, 0), dist: t };
+    }
+    for (const part of def.parts) {
+      if (part.shape === 'none') continue;
+      const t = rayBox(boxFrame(part), part.half, O, D, max);
+      if (t < 0 || t > tOcc + 0.08 || (best && t >= best.dist)) continue;
+      best = { kind: 'part', index: part.index, hole: false, point: world(t), normal: new THREE.Vector3(0, 1, 0), dist: t };
     }
     if (best) return best;
     if (occ && occ.panel >= 0) {
@@ -269,7 +274,7 @@ export class ShipClient {
   /** Compartment containing a world point, if any. */
   zoneAt(p: THREE.Vector3) {
     const l = this.local(p);
-    return this.sim.def.zones.find((z) => l.x >= z.min[0] && l.x <= z.max[0] && l.y >= z.min[1] - 0.2 && l.y <= z.max[1] && l.z >= z.min[2] && l.z <= z.max[2]) ?? null;
+    return zoneAt(this.sim.def, [l.x, l.y, l.z]);
   }
 
   /** Centre of the ship in world space (compass marker). */

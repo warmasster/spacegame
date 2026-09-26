@@ -1,9 +1,10 @@
 import * as THREE from 'three';
-import { MAX_PLAYERS, MOON, CLIENT_SEND_RATE, SHIP_SPAWNS, SUIT_STRIPES } from '../shared/constants';
+import { MAX_PLAYERS, MOON, CLIENT_SEND_RATE, SHIP_SPAWNS, SUIT_STRIPES, SUN } from '../shared/constants';
 import { StateFlags, type PlayerInfo, type TerrainEdit, type Vec3 } from '../shared/protocol';
 import { LANDMARK, LunarTerrain } from '../shared/terrain';
-import { placeShip, REPAIR_RATE, SHIP_DEFS, ShipSim, SYSTEMS_HZ, type ShipSnapshot } from '../shared/ship/sim';
-import { crewContext, SUIT } from '../shared/ship/crew';
+import { placeShip, REPAIR_RATE, SHIP_DEFS, shipBlast, ShipSim, SYSTEMS_HZ, type ShipSnapshot } from '../shared/ship/sim';
+import { crewStep } from '../shared/ship/crew';
+import type { SysEvent } from '../shared/ship/systems';
 import { Interaction } from './ship/interaction';
 import { updateInteriorLights } from './ship/interiorLights';
 import { litMaterial } from './ship/materials';
@@ -36,12 +37,14 @@ export interface GameOptions {
   ui: HTMLElement;
   name: string;
   quality: 'high' | 'low';
+  /** Rolled from the menu. Offline uses it; online asks the empty server to adopt it. */
+  worldSeed?: number;
   onProgress: (text: string) => void;
 }
 
 // Landing site: ~20°N on the near side, local morning.
-const SUN_AZ = 98;
-const SUN_EL = 16;
+const SUN_AZ = SUN.az;
+const SUN_EL = SUN.el;
 const EARTH_AZ = 228;
 const EARTH_EL = 52;
 const SUN_ECLIPTIC_LONGITUDE = 150;
@@ -129,7 +132,7 @@ export class Game {
       health: (id, hp, by, dead) => this.onHealth(id, hp, by, dead),
       respawn: (id, spawn) => this.onRespawn(id, spawn),
       ship: (ship, sw, hp, by) => this.onShip(ship, sw, hp, by),
-      shipDenied: (ship, ctl, reason) => this.interaction?.deny(ship, ctl, reason, performance.now() / 1000),
+      shipDenied: (ship, ctl) => this.ships.find((s) => s.id === ship)?.view.refuse(ctl),
       shipState: (ship, d) => this.ships.find((s) => s.id === ship)?.sim.applyState(d),
       say: (_ship, text) => this.hud?.toast(text),
       vitals: (o2) => (this.suitO2 = o2),
@@ -144,9 +147,10 @@ export class Game {
     const params = new URLSearchParams(location.search);
     // ?offline: no server — terrain/lighting inspection and solo testing
     this.offline = params.has('offline');
+    const seed = this.opts.worldSeed ?? 1969;
     this.welcome = this.offline
-      ? { type: 'welcome', id: 1, variant: 0, players: [], spawn: [0, 0, 0], worldSeed: 1969, serverTime: 0, edits: [], health: [], ships: this.offlineShips(1969) }
-      : await this.net.connect(this.opts.name);
+      ? { type: 'welcome', id: 1, variant: 0, players: [], spawn: [0, 0, 0], worldSeed: seed, serverTime: 0, edits: [], health: [], ships: this.offlineShips(seed) }
+      : await this.net.connect(this.opts.name, undefined, this.opts.worldSeed);
 
     onProgress('Preparando la superficie lunar…');
     const renderer = this.pipeline.renderer;
@@ -201,8 +205,9 @@ export class Game {
       this.scene.add(ship.view.root, ship.cargo.group);
     }
     this.interaction = new Interaction(this.scene, this.particles, {
-      interact: (ship, ctl) => (this.offline ? this.localInteract(ship.id, ctl) : this.net.sendInteract(ship.id, ctl)),
+      interact: (ship, ctl) => this.operate(ship, ctl),
       repair: (ship, panel, dt) => (this.offline ? this.localRepair(ship.id, panel, dt) : this.net.sendRepair(ship.id, panel)),
+      repairPart: (ship, part, dt) => (this.offline ? this.localRepairPart(ship.id, part, dt) : this.net.sendRepairPart(ship.id, part)),
       sit: (ship, index) => this.sitDown(ship, index),
     });
     this.diag = new DebugOverlay(this.opts.ui, this.scene);
@@ -238,6 +243,24 @@ export class Game {
 
     this.hud = new Hud(this.opts.ui);
     this.hud.root.classList.add('hidden');
+    // the manual (M) is the one of the ship you are in, or of the nearest one
+    this.hud.beforeManual = () => this.bindManual();
+    this.bindManual();
+    // reading the manual frees the mouse; closing it takes it back (M / Esc / ✕ are user gestures)
+    this.hud.onManual = (open) => {
+      if (open) document.exitPointerLock?.();
+      else this.lockPointer();
+    };
+    this.rig.wheelTo = (dir) => {
+      // the manual has the mouse: the page scrolls by itself, the camera must not zoom
+      if (this.hud.manualOpen) return true;
+      const t = this.interaction.target;
+      if (!t || t.kind !== 'control' || !t.inReach) return false;
+      const c = t.ship.sim.def.controls[t.index];
+      if (c.action !== 'cycle') return false;
+      this.operate(t.ship, t.index, dir);
+      return true;
+    };
 
     // stream the world around the spawn before letting the player in
     onProgress('Generando terreno…');
@@ -276,8 +299,7 @@ export class Game {
       phase: 'fixed',
       order: 30,
       update: (h) => {
-        const bodies = [this.ctl.position, ...[...this.remotes.values()].map((r) => r.position)];
-        for (const ship of this.ships) ship.fixed(h, bodies);
+        for (const ship of this.ships) ship.fixed(h);
         if (this.offline) this.offlineSystems(h);
       },
     });
@@ -402,34 +424,49 @@ export class Game {
     while (this.sysAcc >= step) {
       this.sysAcc -= step;
       const p = this.ctl.position;
-      let cabin = false;
-      for (const [id, sim] of this.shipAuthority) {
-        const crew = crewContext(sim, [{ p: [p.x, p.y, p.z], seated: !!this.seat }]);
-        const r = sim.tick(step, { crew: crew.counts, docked: crew.docked, bodies: crew.bodies });
-        const mirror = this.ships.find((s) => s.id === id);
+      // the same crew rules as the server (shared/ship/crew.ts)
+      const sims = [...this.shipAuthority.values()];
+      const r = crewStep(sims, [{ p: [p.x, p.y, p.z], seated: !!this.seat, o2: this.suitO2 }], step, (sim, ctx) => sim.tick(step, ctx));
+      this.suitO2 = r.o2[0];
+      sims.forEach((sim, k) => {
+        const mirror = this.ships.find((s) => s.id === sim.id);
         if (mirror && mirror.sim !== sim) mirror.sim.st.set(sim.st);
-        if (Object.keys(r.sw).length) this.onShip(id, r.sw);
-        for (const e of r.events) {
-          if (e.type === 'say') this.hud.toast(e.text);
-          else if (e.type === 'explode') {
-            const w = sim.toWorld(e.at);
-            this.onExplode(0, [w[0], w[1], w[2]]);
-            this.hud.toast(e.cause);
-          }
-        }
-        const m = crew.members[0];
-        if (m.breathable) cabin = true;
-        if (m.breathable || m.docked) this.suitO2 = Math.min(1, this.suitO2 + (m.breathable ? SUIT.refill : SUIT.dockRefill) * step);
-      }
-      if (!cabin) this.suitO2 = Math.max(0, this.suitO2 - SUIT.use * step);
+        if (Object.keys(r.results[k].sw).length) this.onShip(sim.id, r.results[k].sw);
+        this.offlineEvents(sim, r.results[k].events);
+      });
     }
   }
 
-  private localInteract(ship: number, ctl: number) {
+  /** Offline: what the ship systems reported, resolved like the server does (room.ts). */
+  private offlineEvents(sim: ShipSim, events: SysEvent[], depth = 0) {
+    for (const e of events) {
+      if (e.type === 'explode') {
+        this.hud?.toast(e.cause);
+        // bounded chain, like the server
+        if (depth < 3) this.onExplode(0, sim.toWorld(e.at), undefined, { radius: e.radius, damage: e.damage, depth: depth + 1 });
+      } else if (e.type === 'say') this.hud?.toast(e.text);
+      else if (e.type === 'trip') this.hud?.toast(`Disyuntor saltado por sobrecarga: ${sim.def.subsystems.find((c) => c.id === e.circuit)?.label ?? e.circuit}`);
+      else if (e.type === 'destroyed') this.hud?.toast(`${sim.def.parts.find((x) => x.id === e.part)?.name ?? e.part}: destruido`);
+    }
+  }
+
+  /**
+   * Operate a ship control. Offline we are the authority. Online the server decides, but an MFD
+   * page button changes nothing but that screen and has no interlock beyond what the mirror already
+   * checks, so it is applied locally at once (the server's echo confirms the same value).
+   */
+  private operate(ship: ShipClient, ctl: number, dir = 0) {
+    if (this.offline) return this.localInteract(ship.id, ctl, dir);
+    const c = ship.sim.def.controls[ctl];
+    if (c?.kind === 'bezel' && !ship.sim.blocked(c, dir)) ship.apply({ [c.key]: ship.sim.next(c, dir) });
+    this.net.sendInteract(ship.id, ctl, dir);
+  }
+
+  private localInteract(ship: number, ctl: number, dir = 0) {
     const sim = this.shipAuthority.get(ship);
     if (!sim) return;
-    const r = sim.interact(ctl);
-    if ('reason' in r) this.interaction.deny(ship, ctl, r.reason, performance.now() / 1000);
+    const r = sim.interact(ctl, dir);
+    if ('reason' in r) this.ships.find((s) => s.id === ship)?.view.refuse(ctl);
     else this.onShip(ship, r.changed, undefined, this.welcome.id);
   }
 
@@ -438,12 +475,18 @@ export class Game {
     if (hp !== null && hp !== undefined) this.onShip(ship, undefined, [[panel, hp]], this.welcome.id);
   }
 
+  private localRepairPart(ship: number, part: number, dt: number) {
+    const sim = this.shipAuthority.get(ship);
+    const hp = sim?.repairPart(part, REPAIR_RATE * dt);
+    if (hp == null || !sim) return;
+    const mirror = this.ships.find((s) => s.id === ship);
+    if (mirror && mirror.sim !== sim) mirror.sim.st[mirror.sim.sys.hpIndex(sim.def.parts[part].id)] = hp;
+  }
+
   private onShip(id: number, sw?: Record<string, number>, hp?: Array<[number, number]>, by?: number) {
     const ship = this.ships.find((s) => s.id === id);
     if (!ship) return;
-    const blown = ship.apply(sw, hp);
-    if (blown.length) this.hud.toast(`Brecha en el casco: ${blown.map((i) => ship.sim.def.panels[i].id).join(', ')}`);
-    if (sw?.caution === 1 && !blown.length) this.hud.toast('Alarma general activada');
+    ship.apply(sw, hp);
     void by;
   }
 
@@ -454,8 +497,7 @@ export class Game {
     if (!s || !c) throw new Error(`no control ${id}`);
     const reason = s.sim.blocked(c);
     if (reason) return reason;
-    if (this.offline) this.localInteract(s.id, c.index);
-    else this.net.sendInteract(s.id, c.index);
+    this.operate(s, c.index);
     return null;
   }
 
@@ -468,6 +510,39 @@ export class Game {
   /** Advance `frames` frames of `dt`; renders only the last one (none with render = false). */
   step(frames = 1, dt = 1 / 30, render = true) {
     for (let i = 0; i < frames; i++) this.tick(dt, render && i === frames - 1);
+  }
+
+  private bookShip: ShipClient | null = null;
+
+  /** Point the manual at the ship the astronaut is in (or the nearest one). */
+  private bindManual() {
+    const at = this.ctl.position;
+    const head = at.clone().add(new THREE.Vector3(0, 1, 0));
+    const ship = this.ships.find((s) => s.zoneAt(head)) ?? [...this.ships].sort((a, b) => a.position.distanceTo(at) - b.position.distanceTo(at))[0];
+    if (!ship || ship === this.bookShip) return;
+    if (this.bookShip) this.pointAt(null);
+    this.bookShip = ship;
+    this.hud.setManual(ship.sim, {
+      point: (index) => this.pointAt(index === null ? null : { ship, index }),
+      where: () => (ship.zoneAt(this.ctl.position.clone().add(new THREE.Vector3(0, 1, 0))) ? ship.sim.toLocal([this.ctl.position.x, this.ctl.position.y, this.ctl.position.z]) : null),
+    });
+  }
+
+  /** Control marked from the manual ("Señalar"), cleared when you aim at it. */
+  private pointed: { ship: ShipClient; index: number } | null = null;
+
+  private pointAt(p: { ship: ShipClient; index: number } | null) {
+    this.pointed?.ship.view.point(null);
+    this.pointed = p;
+    p?.ship.view.point(p.index);
+    if (!p) {
+      this.hud.removeTag(-1);
+      this.hud.manualBook?.clearPoint();
+    }
+  }
+
+  get manualOpen() {
+    return this.hud?.manualOpen ?? false;
   }
 
   get pointerLocked() {
@@ -535,7 +610,7 @@ export class Game {
     this.remotes.get(id)?.astronaut.applyRecoil(LAUNCHER.recoil);
   }
 
-  private onExplode(id: number, p: Vec3, edit?: TerrainEdit) {
+  private onExplode(id: number, p: Vec3, edit?: TerrainEdit, blast?: { radius: number; damage: number; depth: number }) {
     const at = new THREE.Vector3(...p);
     if (edit) {
       this.terrain.edits.push(edit);
@@ -549,8 +624,9 @@ export class Game {
     // offline: we are the ship authority too
     if (this.offline) {
       for (const [sid, sim] of this.shipAuthority) {
-        const r = sim.explode(p);
+        const r = sim.explode(p, shipBlast(blast?.radius, blast?.damage));
         if (r.hp.length) this.onShip(sid, Object.keys(r.sw).length ? r.sw : undefined, r.hp, id);
+        this.offlineEvents(sim, r.events, blast?.depth ?? 0);
       }
     }
     // blast wave: push me away (the server decides damage)
@@ -679,10 +755,9 @@ export class Game {
       this.hud.toast(this.me.isArmed ? `${this.me.equipped === 'welder' ? WELDER.name : LAUNCHER.name} en mano` : 'Herramienta a la espalda');
     }
     // click: a ship control / seat under the crosshair takes it, otherwise the tool in hand acts
-    const now = performance.now() / 1000;
-    if (this.fireQueued && !this.interaction.use(now)) this.tryFire();
+    if (this.fireQueued && !this.interaction.use()) this.tryFire();
     if (input.consume('KeyF')) this.tryFire();
-    if (input.consume('KeyE') && !this.interaction.use(now) && this.seat) this.standUp();
+    if (input.consume('KeyE') && !this.interaction.use() && this.seat) this.standUp();
     if (this.seat && input.consume('Space')) this.standUp();
     this.fireQueued = false;
     this.rig.zoomHeld = input.down('Mouse2');
@@ -808,11 +883,24 @@ export class Game {
     this.lighting.update();
 
     // --- HUD ---------------------------------------------------------------------------------------
+    this.hud.updateManual(performance.now() / 1000);
     const markers = [
       markerTo(this.ctl.position, new THREE.Vector3(0, 0, 0), 'Base', '#9fd3ff'),
       markerTo(this.ctl.position, new THREE.Vector3(LANDMARK.x, 0, LANDMARK.z), 'Cráter', '#e8d49c'),
       ...this.ships.map((s) => markerTo(this.ctl.position, s.position, s.sim.def.name, '#4fd8f0')),
     ];
+    // a control pointed at from the manual: helmet tag + compass marker until you aim at it
+    if (this.pointed) {
+      const { ship, index } = this.pointed;
+      const c = ship.sim.def.controls[index];
+      const at = new THREE.Vector3(...ship.sim.controlWorld(index));
+      const t = this.interaction.target;
+      if (t?.kind === 'control' && t.ship === ship && ship.sim.def.controls[t.index].key === c.key && t.inReach) this.pointAt(null);
+      else {
+        markers.push(markerTo(this.ctl.position, at, c.name, '#ffb347'));
+        this.hud.updateTag(-1, c.name, at, this.camera, '#ffb347');
+      }
+    }
     for (const r of this.remotes.values()) {
       const color = cssColor(SUIT_STRIPES[r.info.variant % SUIT_STRIPES.length]);
       markers.push(markerTo(this.ctl.position, r.position, r.info.name, color));

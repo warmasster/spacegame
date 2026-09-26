@@ -3,12 +3,12 @@
 // blown-out panels, cracks in damaged ones, vent valves) with the compressible orifice equation —
 // choked at large pressure ratios, so a 1 m² breach empties a cabin in about a second while a
 // cracked plate hisses for minutes — and the expanding gas that stays behind cools. Fans mix the
-// air between compartments through ducts with dampers. Life support adds and removes gas: O2
-// generator, CO2 scrubber, make-up from the O2/N2 bottles (automatic pressure control or manual
-// valves) and a compressor that recovers the air of a compartment into the bottles.
+// air between compartments through ducts with dampers. Life support (life.ts) adds and removes
+// gas: O2 generators, CO2 scrubbers, make-up from the O2/N2 bottles (automatic pressure control or
+// manual valves) and a compressor that recovers the air of a compartment into the bottles.
 
-import type { CompartmentDef } from './def.js';
-import type { VarTable } from './state.js';
+import type { CompartmentDef } from '../def.js';
+import type { VarTable } from '../state.js';
 
 const R = 8.314;
 const M = { o2: 0.032, n2: 0.028, co2: 0.044 };
@@ -27,24 +27,34 @@ export interface GasPath {
   mix?: number;
 }
 
+/** The gas bottles as the atmosphere sees them (life.ts decides which ones can deliver). */
+export interface GasStore {
+  /** Take up to `kg` of a gas from the bottles that can deliver now; returns what came out. */
+  take(gas: 'o2' | 'n2', kg: number): number;
+  /** Put gas back (recovery compressor); returns what fitted. */
+  put(gas: 'o2' | 'n2', kg: number): number;
+  /** Free room left in all the bottles (kg). */
+  room(): number;
+}
+
 export interface LifeInput {
-  /** Oxygen generator output into a compartment (mol/s). */
-  o2gen: { comp: number; rate: number } | null;
-  /** CO2 scrubber efficiency 0..1 in a compartment (air reaches it through the ducts). */
-  scrub: { comp: number; eff: number } | null;
+  /** Oxygen generators: output into a compartment (mol/s). */
+  o2gen: Array<{ comp: number; rate: number }>;
+  /** CO2 scrubbers: efficiency 0..1 in a compartment (air reaches them through the ducts). */
+  scrub: Array<{ comp: number; eff: number }>;
   /** 0 AUTO (pressure control), 1 MANUAL (per-compartment valves), 2 OFF. */
   mode: number;
   /** Manual repressurisation valve open, per compartment. */
   manual: boolean[];
-  /** Bottles can deliver (valves open, solenoids powered). */
-  supplyO2: boolean;
-  supplyN2: boolean;
+  gas: GasStore;
   /** Recovery compressor running on this compartment. */
   recover: number | -1;
   /** Crew members breathing cabin air, per compartment. */
   crew: number[];
   /** Cabin heaters powered. */
   heat: boolean;
+  /** Compartments the pressure control must leave alone (an airlock pumping down). */
+  hold?: boolean[];
 }
 
 interface CompVars {
@@ -64,16 +74,11 @@ interface CompVars {
 
 export class Atmosphere {
   readonly v: CompVars[];
-  readonly iO2: number;
-  readonly iN2: number;
-  readonly o2Cap: number;
-  readonly n2Cap: number;
   private prevP: number[];
 
   constructor(
     readonly comps: CompartmentDef[],
     vars: VarTable,
-    bottles: { o2: { id: string; cap: number }; n2: { id: string; cap: number } },
   ) {
     this.v = comps.map((c) => ({
       // internal integrator state (server only)
@@ -91,10 +96,6 @@ export class Atmosphere {
       sealed: vars.define(`${c.id}.sealed`, 1, 1),
       feed: vars.define(`${c.id}.feed`, 0.02),
     }));
-    this.iO2 = vars.define(`${bottles.o2.id}.kg`, 0.1, bottles.o2.cap);
-    this.iN2 = vars.define(`${bottles.n2.id}.kg`, 0.1, bottles.n2.cap);
-    this.o2Cap = bottles.o2.cap;
-    this.n2Cap = bottles.n2.cap;
     this.prevP = comps.map(() => 0);
   }
 
@@ -108,6 +109,12 @@ export class Atmosphere {
     st[v.n2] = n * (1 - xo2);
     st[v.co2] = 0;
     st[v.tk] = 294;
+  }
+
+  /** Oxygen partial pressure (kPa). */
+  po2(st: Float64Array, i: number) {
+    const v = this.v[i];
+    return (st[v.o2] * R * st[v.tk]) / this.comps[i].volume / 1000;
   }
 
   pressure(st: Float64Array, i: number) {
@@ -137,10 +144,13 @@ export class Atmosphere {
       const added = Math.max(0, o2) + Math.max(0, n2) + Math.max(0, co2);
       if (added > 0) st[v.tk] = (st[v.tk] * before + tIn * added) / Math.max(1e-9, before + added);
     };
-    if (life.o2gen && life.o2gen.rate > 0 && this.pressure(st, life.o2gen.comp) < 101000) add(life.o2gen.comp, life.o2gen.rate * dt, 0, 0);
-    if (life.scrub && life.scrub.eff > 0) {
-      const v = V[life.scrub.comp];
-      st[v.co2] -= Math.min(st[v.co2], Math.min(0.02 * st[v.co2] + 0.002, 0.08) * life.scrub.eff * dt);
+    // generators regulate on oxygen partial pressure: they top up what the crew breathes, they
+    // do not keep pumping a sealed cabin toward pure oxygen
+    for (const g of life.o2gen) if (g.comp >= 0 && g.rate > 0 && this.pressure(st, g.comp) < 101000 && this.po2(st, g.comp) < CABIN.po2 + 1) add(g.comp, g.rate * dt, 0, 0);
+    for (const s of life.scrub) {
+      if (s.comp < 0 || s.eff <= 0) continue;
+      const v = V[s.comp];
+      st[v.co2] -= Math.min(st[v.co2], Math.min(0.02 * st[v.co2] + 0.002, 0.08) * s.eff * dt);
     }
     for (let i = 0; i < n; i++) {
       const crew = life.crew[i] ?? 0;
@@ -154,7 +164,7 @@ export class Atmosphere {
     for (let i = 0; i < n; i++) st[V[i].feed] = 0;
     for (let i = 0; i < n; i++) {
       const pkPa = this.pressure(st, i) / 1000;
-      const wantAuto = life.mode === 0 && sealed[i] && pkPa < CABIN.p - 2;
+      const wantAuto = life.mode === 0 && sealed[i] && pkPa < CABIN.p - 2 && !life.hold?.[i];
       const wantManual = life.mode === 1 && life.manual[i] && pkPa < 101;
       if (!wantAuto && !wantManual) continue;
       const v = V[i];
@@ -164,10 +174,8 @@ export class Atmosphere {
       const needN2 = Math.max(0, CABIN.p - CABIN.po2 - pn2);
       const sum = needO2 + needN2 || 1;
       const kgs = wantManual ? 0.6 : 1.0;
-      const kO2 = life.supplyO2 ? Math.min(st[this.iO2], ((kgs * needO2) / sum) * dt) : 0;
-      const kN2 = life.supplyN2 ? Math.min(st[this.iN2], ((kgs * needN2) / sum) * dt) : 0;
-      st[this.iO2] -= kO2;
-      st[this.iN2] -= kN2;
+      const kO2 = life.gas.take('o2', ((kgs * needO2) / sum) * dt);
+      const kN2 = life.gas.take('n2', ((kgs * needN2) / sum) * dt);
       add(i, kO2 / M.o2, kN2 / M.n2, 0, 282);
       st[v.feed] = (kO2 + kN2) / dt;
     }
@@ -178,10 +186,10 @@ export class Atmosphere {
       if (tot > 1e-6 && this.pressure(st, life.recover) > 800) {
         const molar = (st[v.o2] * M.o2 + st[v.n2] * M.n2 + st[v.co2] * M.co2) / tot;
         const k = Math.min(0.5, (0.4 * dt) / molar / tot);
-        const room = Math.max(0, this.o2Cap - st[this.iO2]) + Math.max(0, this.n2Cap - st[this.iN2]);
-        if (room > 0.01) {
-          st[this.iO2] = Math.min(this.o2Cap, st[this.iO2] + st[v.o2] * k * M.o2);
-          st[this.iN2] = Math.min(this.n2Cap, st[this.iN2] + st[v.n2] * k * M.n2);
+        if (life.gas.room() > 0.01) {
+          // what doesn't fit in the bottles is vented overboard by the compressor
+          life.gas.put('o2', st[v.o2] * k * M.o2);
+          life.gas.put('n2', st[v.n2] * k * M.n2);
           st[v.o2] *= 1 - k;
           st[v.n2] *= 1 - k;
           st[v.co2] *= 1 - k;

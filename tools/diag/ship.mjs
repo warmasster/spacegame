@@ -112,16 +112,42 @@ if (mode === 'checks' || mode === 'all') {
     out.panels = s.sim.def.panels.length;
     out.controls = s.sim.def.controls.length;
     out.colliders = s.sim.def.panels.filter((p) => s.physics.hasPanel(p.index)).length;
-    // every control does something (or refuses with a reason)
+    // every control does something (or refuses with a reason); a guarded one is tried with its
+    // cover open, like a crew member would
     out.acts = [];
+    const sw0 = { ...s.sim.sw };
     for (const c of s.sim.def.controls) {
+      if (c.kind === 'cover') continue;
+      const guard = c.guard && s.sim.sw[c.guard] !== 1 ? s.sim.def.controls.find((x) => x.kind === 'cover' && x.key === c.guard && x.console === c.console) : null;
+      if (guard) g.shipControl(guard.id);
       const before = s.sim.sw[c.key];
       const reason = g.shipControl(c.id);
       const after = s.sim.sw[c.key];
-      out.acts.push({ id: c.id, key: c.key, before, after, reason });
-      // restore
+      out.acts.push({ id: c.id, key: c.key, action: c.action, before, after, reason });
+      // restore (pulses are consumed by the systems; the SCRAM is undone by its reset later)
       if (!reason && c.action === 'toggle' && after !== before) g.shipControl(c.id);
+      if (guard) g.shipControl(guard.id);
+      g.step(1, 1 / 30, false);
     }
+    // put every switch back where it was (selectors were stepped, not toggled back), on the
+    // authority and on the mirror
+    const auth = [...g.debug.game.shipAuthority.values()].find((x) => x.id === s.id);
+    for (const [k, v] of Object.entries(sw0)) {
+      if (s.sim.sw[k] === v) continue;
+      auth.sw[k] = v;
+      s.apply({ [k]: v });
+    }
+    g.step(3, 1 / 30, false);
+    // the SCRAM test left the reactor tripped: cool it (authority state), reset it, restart it
+    if (s.sim.get('rx.state') === 3) {
+      auth.st[auth.vars.idx('rx.temp')] = 100;
+      g.step(3, 1 / 30, false);
+      out.reset = g.shipControl('cg.rct/rx.reset');
+      g.step(3, 1 / 30, false);
+      if (s.sim.sw.reactor !== 1) out.lever = g.shipControl('cg.rct/reactor');
+      g.step(20 * 30, 1 / 30, false);
+    }
+    out.rxAfter = s.sim.get('rx.state');
     return out;
   });
   // loose cargo settles on the deck before anything blows up
@@ -167,11 +193,22 @@ if (mode === 'checks' || mode === 'all') {
   });
   for (const l of lights) check(`ext light ${l.kind} mounted on the hull`, l.gap !== null && Math.abs(l.gap) < 0.06, l.gap === null ? 'flota: ninguna superficie detrás' : `${(l.gap * 100).toFixed(1)} cm`);
   check('every panel has a collider', r.colliders === r.panels, `${r.colliders}/${r.panels}`);
+  // refusals the ship is right to give in its parked state
+  const expected = {
+    gear: /peso/,
+    apu: /propelente/,
+    'rx.reset': /SCRAM|caliente/,
+    'eng.L.start': /desarmado/,
+    'eng.R.start': /desarmado/,
+  };
   for (const a of r.acts) {
-    if (a.key === 'gear') check(`interlock ${a.id}`, !!a.reason && a.after === a.before, a.reason ?? 'no refusal');
+    if (a.key in expected) check(`control ${a.id} (negativa esperada)`, !!a.reason && expected[a.key].test(a.reason), a.reason ?? 'no se negó');
     else if (a.key === 'caution') check(`control ${a.id}`, !a.reason, a.reason ?? 'reset');
+    else if (a.action === 'set' && a.before === a.after && !a.reason) check(`control ${a.id}`, true, 'ya estaba en esa página');
+    else if (a.action === 'pulse' && !a.reason) check(`control ${a.id}`, true, 'pulso consumido');
     else check(`control ${a.id}`, !a.reason && a.after !== a.before, a.reason ?? `${a.key}: ${a.before} → ${a.after}`);
   }
+  check('reactor back online after the SCRAM test', r.rxAfter === 2, `estado ${r.rxAfter} · rearme ${r.reset ?? 'ok'} · palanca ${r.lever ?? 'ok'}`);
 
   P.step('controles');
   // --- power: reactor off → buses dead, doors refuse, emergency lighting --------------------------
@@ -179,23 +216,32 @@ if (mode === 'checks' || mode === 'all') {
     const g = window.game;
     const s = g.ships[0];
     const o = {};
-    g.shipControl('cr.rct/reactor');
+    // reactor down and battery out: nothing feeds the grid (the battery alone would carry it)
+    g.shipControl('cg.rct/reactor');
+    g.shipControl('ck.over/bat');
+    g.step(20 * 30, 1 / 30, false);
     o.reactor = s.sim.sw.reactor;
     o.lights = s.sim.powered('lights');
-    o.door = g.shipControl('bk1.b/door.cockpit');
-    g.shipControl('cr.rct/reactor');
-    o.after = s.sim.powered('lights') && s.sim.powered('doors');
+    g.shipControl('ck.over/bat');
+    g.step(3, 1 / 30, false);
+    o.onBattery = s.sim.powered('lights') && s.sim.powered('doors');
+    g.shipControl('cg.rct/reactor');
+    g.step(20 * 30, 1 / 30, false);
+    o.after = s.sim.powered('lights') && s.sim.powered('doors') && s.sim.get('rx.state') === 2;
     // breaker: only its bus dies
     g.shipControl('cr.brk/brk.hyd');
+    g.step(3, 1 / 30, false);
     o.hyd = s.sim.powered('hyd');
     o.others = s.sim.powered('doors') && s.sim.powered('lights');
     o.ramp = g.shipControl('ext.ramp/ramp');
     g.shipControl('cr.brk/brk.hyd');
+    g.step(3, 1 / 30, false);
     o.rampOk = g.shipControl('ext.ramp/ramp') === null;
     g.shipControl('ext.ramp/ramp');
     return o;
   });
-  check('reactor off kills power', p.reactor === 0 && !p.lights && !!p.door, `puerta: ${p.door}`);
+  check('reactor and battery off kill power', p.reactor === 0 && !p.lights);
+  check('battery alone carries the grid', p.onBattery);
   check('reactor on restores power', p.after);
   check('breaker isolates one bus', !p.hyd && p.others && !!p.ramp, `rampa: ${p.ramp}`);
   check('breaker closed → ramp works again', p.rampOk);
@@ -207,13 +253,18 @@ if (mode === 'checks' || mode === 'all') {
     const s = g.ships[0];
     const o = {};
     g.debug.controller.teleport(window.diag.w(0, 0.05, 12)); // out of the way
+    // life support off: sealing the doors must not pressurise one side and lock them shut
+    const auth = [...g.debug.game.shipAuthority.values()].find((x) => x.id === s.id);
+    const mode = auth.sw['ls.mode'];
+    auth.sw['ls.mode'] = 2;
+    s.apply({ 'ls.mode': 2 });
     g.shipControl('bk2.b/door.cargo');
     g.shipControl('ext.ramp/ramp');
     g.shipControl('ck.main/shield');
     g.step(200, 1 / 30, false);
-    o.door = s.anim.doors['door.cargo'];
-    o.ramp = s.anim.ramp;
-    o.shield = s.anim.shield;
+    o.door = s.anim.movers['door.cargo'];
+    o.ramp = s.anim.movers.ramp;
+    o.shield = s.anim.movers.shield;
     // closed ramp blocks a ray through the rear opening
     const from = window.diag.w(0, 1.2, 8);
     const dir = window.diag.w(0, 1.2, 0).sub(from).normalize();
@@ -222,11 +273,13 @@ if (mode === 'checks' || mode === 'all') {
     g.shipControl('ext.ramp/ramp');
     g.shipControl('ck.main/shield');
     g.step(200, 1 / 30, false);
-    o.door2 = s.anim.doors['door.cargo'];
-    o.ramp2 = s.anim.ramp;
-    o.shield2 = s.anim.shield;
+    o.door2 = s.anim.movers['door.cargo'];
+    o.ramp2 = s.anim.movers.ramp;
+    o.shield2 = s.anim.movers.shield;
     const hit = s.physics.castRay(from, dir, 4);
     o.rampOpen = !hit || hit.t > 3.5;
+    auth.sw['ls.mode'] = mode;
+    s.apply({ 'ls.mode': mode });
     return o;
   });
   check('door closes', m.door === 0, `${m.door}`);
@@ -266,7 +319,7 @@ if (mode === 'checks' || mode === 'all') {
     const g = window.game;
     const s = g.ships[0];
     const o = {};
-    const target = s.sim.def.panels.find((p) => p.id === 'CG-R2-3');
+    const target = s.sim.def.panels.find((p) => p.id === 'CR-R2-2');
     const out = window.diag.w(target.c[0] + target.n[0] * 0.2, target.c[1] + target.n[1] * 0.2, target.c[2] + target.n[2] * 0.2);
     g.blast(out);
     o.hp1 = s.sim.hp[target.index];
@@ -281,12 +334,13 @@ if (mode === 'checks' || mode === 'all') {
     const hit = s.physics.castRay(from, to.clone().sub(from).normalize(), 3.5);
     o.rayThrough = !hit || hit.t > 1.5 + target.t;
     o.caution = s.sim.sw.caution;
-    // conduit: the hydraulic trunk under the cargo deck
+    // conduit: the hydraulic trunk under the cargo deck (the grid notices on its next tick)
     const trunk = s.sim.def.panels.find((p) => p.conduits.includes('hyd') && p.kind === 'floor' && p.zone === 'cargo');
     o.trunk = trunk.id;
     const top = window.diag.w(trunk.c[0], 0.3, trunk.c[2]);
     g.blast(top);
     g.blast(top);
+    g.step(3, 1 / 30, false);
     o.hyd = s.sim.powered('hyd');
     o.hydReason = g.shipControl('ck.main/ramp');
     return o;
@@ -303,9 +357,9 @@ if (mode === 'checks' || mode === 'all') {
   const rp = await page.evaluate(() => {
     const g = window.game;
     const s = g.ships[0];
-    const target = s.sim.def.panels.find((p) => p.id === 'CG-R2-3');
-    // stand inside the cargo bay facing the hole
-    window.diag.stand([1.3, 0.05, target.c[2]], target.c);
+    const target = s.sim.def.panels.find((p) => p.id === 'CR-R2-2');
+    // stand inside the corridor facing the hole
+    window.diag.stand([0.2, 0.05, target.c[2]], target.c);
     g.step(10, 1 / 30);
     const tgt = g.interaction.target;
     const o = { aimed: tgt ? `${tgt.kind}:${s.sim.def.panels[tgt.index]?.id}:${tgt.hole}:${tgt.inReach}` : 'none' };
@@ -325,13 +379,14 @@ if (mode === 'checks' || mode === 'all') {
     // fix the trunk too
     const trunk = s.sim.def.panels.find((p) => p.conduits.includes('hyd') && p.kind === 'floor' && p.zone === 'cargo');
     for (let i = 0; i < 40; i++) g.debug.game.localRepair(s.id, trunk.index, 0.25);
+    g.step(3, 1 / 30, false);
     o.hyd = s.sim.powered('hyd');
     o.cut = s.sim.conduitCut('hyd')?.id ?? '-';
     g.shipControl('ck.main/caution');
     o.caution = s.sim.sw.caution;
     return o;
   });
-  check('crosshair finds the hole', /^panel:CG-R2-3:true:true$/.test(rp.aimed), rp.aimed);
+  check('crosshair finds the hole', /^panel:CR-R2-2:true:true$/.test(rp.aimed), rp.aimed);
   check('welder + held click rebuilds the panel', rp.midSolid && rp.collider, `hp ${rp.mid?.toFixed?.(1)} a los 1.5 s`);
   check('repair reaches full integrity', rp.final >= 99.9, `hp ${rp.final?.toFixed?.(1)}`);
   check('repaired conduit restores hydraulics', rp.hyd, `corte: ${rp.cut}`);

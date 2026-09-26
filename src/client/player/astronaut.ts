@@ -693,7 +693,8 @@ export class Astronaut {
       // weapon hold: right hand on the grip, left hand steadying the tube
       this.pose(`upperarm${A}` as BoneName, -shoulderFwd, 0, s * abduct);
       this.pose(`forearm${A}` as BoneName, -elbow, 0, 0);
-      this.pose(`hand${A}` as BoneName, 0.1, 0, 0);
+      // bind pose already turns the palm toward the thigh. Yaw ±90° swings it forward or back.
+      this.pose(`hand${A}` as BoneName, 0, 0, 0);
       if (this.deadBlend > 0.02) {
         this.pose(`upperarm${A}` as BoneName, -0.2 - this.deadBlend * 0.4, 0, s * (abduct + this.deadBlend * 0.9));
         this.pose(`forearm${A}` as BoneName, -0.35 - this.deadBlend * 0.3, 0, 0);

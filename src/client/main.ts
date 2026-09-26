@@ -30,6 +30,7 @@ menu.innerHTML = `
           </select>
         </label>
         <button type="submit" class="sc-cta"><span>INICIAR EVA</span><b>▸</b></button>
+        <button type="button" class="sc-ghost" id="new-world">MUNDO NUEVO</button>
       </form>
       <p class="menu-status" id="status"></p>
       <div class="sc-stats">
@@ -41,7 +42,7 @@ menu.innerHTML = `
     <section class="sc-panel hidden" data-panel="controls">
       <h2><span>02</span>CONTROLES</h2>
       <div class="sc-keys">
-        ${[['W A S D','moverse'],['Mayús','trote lunar'],['Espacio','saltar · mantener en el aire: jetpack'],['Clic izq. / F','disparar · con la soldadora: mantener sobre un panel para repararlo'],['E / clic en un mando','accionarlo · en un asiento: sentarse / levantarse'],['1 / 2','lanzacohetes / soldadora'],['X','sacar / guardar herramienta'],['Rueda · clic der.','zoom (1ª persona) · zoom mantenido'],['C / Ctrl','agacharse'],['L','luces del casco'],['V','primera / tercera persona'],['Alt + ratón','mirar alrededor (3ª)'],['H','ayuda en pantalla'],['Esc','menú']].map(([k, v]) => `<div><kbd>${k}</kbd><span>${v}</span></div>`).join('')}
+        ${[['W A S D','moverse'],['Mayús','trote lunar'],['Espacio','saltar · mantener en el aire: jetpack'],['Clic izq. / F','disparar · con la soldadora: mantener sobre un panel o una máquina para repararlo'],['E / clic en un mando','accionarlo · en un asiento: sentarse / levantarse'],['Rueda sobre un selector','girarlo; si no, zoom'],['1 / 2','lanzacohetes / soldadora'],['X','sacar / guardar herramienta'],['Clic der.','zoom mantenido'],['C / Ctrl','agacharse'],['L','luces del casco'],['V','primera / tercera persona'],['Alt + ratón','mirar alrededor (3ª)'],['M','manual de la nave'],['H','ayuda en pantalla'],['Esc','menú']].map(([k, v]) => `<div><kbd>${k}</kbd><span>${v}</span></div>`).join('')}
       </div>
     </section>
     <section class="sc-panel hidden" data-panel="about">
@@ -65,7 +66,7 @@ pause.innerHTML = `<div class="sc-pause">
   <small>EVA EN PAUSA · CONTROL LOCAL</small>
   <button type="button" class="sc-cta" id="resume"><span>REANUDAR</span><b>▸</b></button>
   <button type="button" class="sc-ghost" id="leave">ABANDONAR EVA</button>
-  <p>WASD moverse · Espacio saltar/jetpack · Clic disparar/soldar · E accionar/sentarse · 1/2 herramienta · clic der. zoom · V cámara · L luces · H ayuda</p>
+  <p>WASD moverse · Espacio saltar/jetpack · Clic disparar/soldar · E accionar/sentarse · 1/2 herramienta · rueda selector/zoom · M manual · V cámara · L luces · H ayuda</p>
 </div>`;
 ui.appendChild(pause);
 
@@ -77,6 +78,19 @@ quality.value = localStorageGet('selene.quality') ?? (isLikelyLowEnd() ? 'low' :
 
 let game: Game | null = null;
 
+const worldButton = menu.querySelector('#new-world') as HTMLButtonElement;
+const showWorld = () => {
+  const n = Number(sessionStorage.getItem('selene.world'));
+  worldButton.textContent = sessionStorage.getItem('selene.reseed') === '1' && n > 0 ? `MUNDO NUEVO · ${n}` : 'MUNDO NUEVO';
+};
+showWorld();
+worldButton.addEventListener('click', () => {
+  const seed = (Math.floor(Math.random() * 0xffffffff) >>> 0) || 1;
+  sessionStorage.setItem('selene.world', String(seed));
+  sessionStorage.setItem('selene.reseed', '1');
+  showWorld();
+});
+
 menu.querySelector('#join')!.addEventListener('submit', async (e) => {
   e.preventDefault();
   if (game) return;
@@ -85,11 +99,14 @@ menu.querySelector('#join')!.addEventListener('submit', async (e) => {
   localStorageSet('selene.quality', quality.value);
   (menu.querySelector('.sc-cta') as HTMLButtonElement).disabled = true;
   status.classList.remove('error');
+  const rolled = sessionStorage.getItem('selene.reseed') === '1' ? Number(sessionStorage.getItem('selene.world')) : 0;
+  if (rolled > 0) sessionStorage.removeItem('selene.reseed');
   game = new Game({
     canvas,
     ui,
     name,
     quality: quality.value === 'low' ? 'low' : 'high',
+    worldSeed: rolled > 0 ? rolled : undefined,
     onProgress: (t) => (status.textContent = t),
   });
   (window as unknown as { game: Game }).game = game;
@@ -101,6 +118,8 @@ menu.querySelector('#join')!.addEventListener('submit', async (e) => {
     console.error(err);
     status.textContent = err instanceof Error ? err.message : String(err);
     status.classList.add('error');
+    if (rolled > 0) sessionStorage.setItem('selene.reseed', '1');
+    showWorld();
     (menu.querySelector('.sc-cta') as HTMLButtonElement).disabled = false;
     game?.dispose();
     game = null;
@@ -112,7 +131,8 @@ pause.querySelector('#resume')!.addEventListener('click', () => game?.lockPointe
 pause.querySelector('#leave')!.addEventListener('click', () => location.reload());
 document.addEventListener('pointerlockchange', () => {
   if (!game) return;
-  pause.classList.toggle('hidden', document.pointerLockElement === canvas);
+  // reading the manual frees the mouse without pausing
+  pause.classList.toggle('hidden', document.pointerLockElement === canvas || game.manualOpen);
 });
 
 function localStorageGet(k: string) {

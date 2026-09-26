@@ -1,4 +1,6 @@
 import * as THREE from 'three';
+import type { ShipSim } from '../../shared/ship/sim';
+import { ShipManual, type ManualHooks } from './manual';
 import type { PromptInfo } from '../ship/interaction';
 
 export interface HudData {
@@ -44,6 +46,12 @@ export class Hud {
   private hitFlash: HTMLDivElement;
   private prompt: HTMLDivElement;
   private promptKey = '';
+  private manual: HTMLDivElement;
+  private book: ShipManual | null = null;
+  /** The manual opened / closed (the game frees the mouse to read it and takes it back). */
+  onManual?: (open: boolean) => void;
+  /** True while the ship manual covers the view (the wheel scrolls it instead of zooming). */
+  manualOpen = false;
 
   constructor(parent: HTMLElement) {
     this.root = el('div', 'hud', parent);
@@ -56,6 +64,25 @@ export class Hud {
     this.net = el('div', 'hud-net', this.root);
     el('div', 'hud-crosshair', this.root);
     this.prompt = el('div', 'hud-prompt hidden', this.root);
+    this.manual = el('div', 'mn hidden', this.root);
+    this.manual.addEventListener('click', (ev) => {
+      if ((ev.target as HTMLElement).closest('[data-act="close"]')) this.toggleManual(false);
+    });
+    window.addEventListener('keydown', (e) => {
+      if (e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      const typing = tag === 'INPUT' || tag === 'TEXTAREA';
+      if (e.code === 'Escape' && this.manualOpen) {
+        e.preventDefault();
+        this.toggleManual(false);
+      } else if (e.code === 'KeyM' && !typing) {
+        e.preventDefault();
+        this.toggleManual();
+      } else if (e.code === 'Slash' && this.manualOpen && !typing) {
+        e.preventDefault();
+        this.book?.focusSearch();
+      }
+    });
     this.help = el('div', 'hud-help', this.root);
     this.help.innerHTML = [
       ['W A S D', 'moverse'],
@@ -65,7 +92,9 @@ export class Hud {
       ['Clic izq.', 'disparar / soldar · pulsar botón'],
       ['E', 'accionar · sentarse / levantarse'],
       ['1 / 2', 'lanzacohetes / soldadora'],
+      ['Rueda sobre un selector', 'girarlo'],
       ['Rueda · Clic der.', 'zoom'],
+      ['M', 'manual de la nave'],
       ['X', 'sacar / guardar herramienta'],
       ['Espacio (aire)', 'jetpack'],
       ['L', 'luces del casco'],
@@ -91,15 +120,47 @@ export class Hud {
     setTimeout(() => (this.hitFlash.style.opacity = '0'), 120);
   }
 
+  /** Ship manual (M), built from the ship itself (see manual.ts). */
+  setManual(sim: ShipSim, hooks: ManualHooks) {
+    this.book = new ShipManual(this.manual, sim, hooks);
+  }
+
+  get manualBook() {
+    return this.book;
+  }
+
+  /** Called right before the manual opens (the game picks which ship's manual to show). */
+  beforeManual?: () => void;
+
+  toggleManual(open = !this.manualOpen) {
+    if (open === this.manualOpen) return;
+    if (open) this.beforeManual?.();
+    this.manualOpen = open;
+    this.manual.classList.toggle('hidden', !open);
+    if (open) this.book?.update(Infinity);
+    this.onManual?.(open);
+  }
+
+  /** Every frame: the manual refreshes its live parts while open. */
+  updateManual(time: number) {
+    if (this.manualOpen) this.book?.update(time);
+  }
+
+  /** Wheel while the manual is open: scroll the page instead of the camera. */
+  scrollManual(dy: number) {
+    this.book?.scroll(dy);
+  }
+
   /** What the crosshair is on (ship control or panel), or null. */
   setPrompt(p: PromptInfo | null) {
-    const key = p ? `${p.title}|${p.state}|${p.tone}|${p.hint}|${p.hintTone}|${p.bar === undefined ? '' : Math.round(p.bar * 50)}` : '';
+    const key = p ? `${p.title}|${p.state}|${p.tone}|${p.hint}|${p.hintTone}|${p.detail ?? ''}|${p.bar === undefined ? '' : Math.round(p.bar * 50)}` : '';
     if (key === this.promptKey) return;
     this.promptKey = key;
     this.prompt.classList.toggle('hidden', !p);
     if (!p) return;
     const bar = p.bar === undefined ? '' : `<i><em class="${p.tone}" style="width:${Math.round(Math.max(0, Math.min(1, p.bar)) * 100)}%"></em></i>`;
-    this.prompt.innerHTML = `<b>${escapeHtml(p.title)}</b><span class="${p.tone}">${escapeHtml(p.state)}</span>${bar}<small class="${p.hintTone ?? ''}">${escapeHtml(p.hint)}</small>`;
+    const detail = p.detail ? `<span class="detail">${escapeHtml(p.detail)}</span>` : '';
+    this.prompt.innerHTML = `<b>${escapeHtml(p.title)}</b><span class="${p.tone}">${escapeHtml(p.state)}</span>${bar}<small class="${p.hintTone ?? ''}">${escapeHtml(p.hint)}</small>${detail}`;
   }
 
   toggleHelp() {

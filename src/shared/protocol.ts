@@ -45,7 +45,7 @@ export interface PlayerInfo {
 }
 
 export type ClientMessage =
-  | { type: 'hello'; version: number; name: string }
+  | { type: 'hello'; version: number; name: string; seed?: number }
   | { type: 'state'; s: PlayerState }
   | { type: 'ping'; t: number }
   /** Rocket launched (origin, direction). */

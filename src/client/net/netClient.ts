@@ -37,12 +37,12 @@ export class NetClient {
 
   constructor(private events: NetEvents) {}
 
-  connect(name: string, url = defaultUrl()): Promise<Welcome> {
+  connect(name: string, url?: string, seed?: number): Promise<Welcome> {
     return new Promise((resolve, reject) => {
-      const ws = new WebSocket(url);
+      const ws = new WebSocket(url ?? defaultUrl());
       this.ws = ws;
       let welcomed = false;
-      ws.onopen = () => this.send({ type: 'hello', version: PROTOCOL_VERSION, name });
+      ws.onopen = () => this.send({ type: 'hello', version: PROTOCOL_VERSION, name, seed });
       ws.onerror = () => {
         if (!welcomed) reject(new Error('No se pudo conectar con el servidor.'));
       };
@@ -146,6 +146,10 @@ export class NetClient {
 
   sendRepair(ship: number, panel: number) {
     this.send({ type: 'repair', ship, panel });
+  }
+
+  sendRepairPart(ship: number, part: number) {
+    this.send({ type: 'repairPart', ship, part });
   }
 
   private send(msg: ClientMessage) {
