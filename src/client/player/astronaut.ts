@@ -170,6 +170,12 @@ export class Astronaut {
   private lean = 0;
   private dead = false;
   private deadBlend = 0;
+  private weapon: THREE.Object3D | null = null;
+  private weaponInv: THREE.Matrix4 | null = null;
+  private weaponInvQ: THREE.Quaternion | null = null;
+  private armed = false;
+  private armBlend = 0;
+  private recoilT = 0;
 
   constructor(asset: AstronautAsset) {
     this.model = SkeletonUtils.clone(asset.template);
@@ -225,18 +231,42 @@ export class Astronaut {
     this.eyeLocal.copy(EYE).applyMatrix4(chestInv);
   }
 
-  /** Attach a prop (e.g. the launcher) to the right shoulder, following the chest. */
-  attachShoulder(prop: THREE.Object3D) {
+  /** Mount a weapon: carried on the right shoulder when armed, slung on the PLSS when holstered. */
+  attachWeapon(prop: THREE.Object3D) {
     const chest = this.rig.chest.bone;
     this.model.updateMatrixWorld(true);
-    const inv = new THREE.Matrix4().copy(chest.matrixWorld).invert().multiply(this.model.matrixWorld);
-    const holder = new THREE.Object3D();
-    // model space: character's right = -X, forward = +Z
-    holder.position.set(-0.27, 1.5, 0.02).applyMatrix4(inv);
-    const q = new THREE.Quaternion().setFromRotationMatrix(inv);
-    holder.quaternion.copy(q);
-    holder.add(prop);
-    chest.add(holder);
+    this.weaponInv = new THREE.Matrix4().copy(chest.matrixWorld).invert().multiply(this.model.matrixWorld);
+    this.weaponInvQ = new THREE.Quaternion().setFromRotationMatrix(this.weaponInv);
+    this.weapon = new THREE.Object3D();
+    this.weapon.add(prop);
+    chest.add(this.weapon);
+    this.placeWeapon();
+  }
+
+  /** Draw / holster. */
+  setArmed(armed: boolean) {
+    this.armed = armed;
+  }
+
+  get isArmed() {
+    return this.armed;
+  }
+
+  /** Firing kick (visual). */
+  recoil() {
+    this.recoilT = 1;
+  }
+
+  private placeWeapon() {
+    if (!this.weapon || !this.weaponInv) return;
+    const w = smooth(this.armBlend);
+    // model space (character right = -X, forward = +Z)
+    _wp.set(-0.23, 1.5, 0.05).lerp(_wp2.set(0.02, 1.33, -0.34), 1 - w);
+    _wp.z -= this.recoilT * this.recoilT * 0.09 * w;
+    _wq.setFromEuler(_we.set(-this.recoilT * 0.12 * w, 0, 0));
+    _wq.slerp(_wq2.setFromEuler(_we.set(-1.2, 0, 0.55)), 1 - w);
+    this.weapon.position.copy(_wp).applyMatrix4(this.weaponInv);
+    this.weapon.quaternion.copy(this.weaponInvQ!).multiply(_wq);
   }
 
   /** Hide suit geometry within `radius` of `eye` (first-person body awareness without clipping). */
@@ -395,6 +425,11 @@ export class Astronaut {
     this.pose('spine', this.lean * 0.5 + look * 0.16, -sway * 0.8, 0);
     this.pose('chest', this.lean * 0.3 + look * 0.26 + breathe * 2, -sway * 0.6, Math.sin(this.phase) * 0.02 * g);
 
+    // ---- weapon -----------------------------------------------------------------------------------
+    this.armBlend += ((this.armed && !this.dead ? 1 : 0) - this.armBlend) * Math.min(1, dt * 5);
+    this.recoilT = Math.max(0, this.recoilT - dt * 4);
+    this.placeWeapon();
+
     // ---- arms ----------------------------------------------------------------------------------
     for (let ai = 0; ai < 2; ai++) {
       const A = ai === 0 ? 'L' : 'R';
@@ -404,9 +439,19 @@ export class Astronaut {
       const air = this.airBlend;
       const shoulderFwd = 0.12 + swing + air * 0.25 + this.crouchBlend * 0.25 + this.runBlend * g * 0.15;
       const abduct = 0.08 + air * 0.22 + Math.sin(this.time * 0.9 + ai) * 0.01;
-      this.pose(`upperarm${A}` as BoneName, -shoulderFwd, 0, s * abduct);
       const elbow = 0.35 + g * 0.15 + this.runBlend * g * 0.35 + air * 0.25 + this.crouchBlend * 0.3 + Math.max(0, swing) * 0.4;
-      this.pose(`forearm${A}` as BoneName, -elbow, 0, 0);
+      // weapon hold: right hand on the grip, left hand steadying the tube
+      const w = smooth(this.armBlend) * (1 - this.deadBlend);
+      const kick = this.recoilT * this.recoilT * 0.25;
+      const hold = ai === 1 ? [1.05 - kick, -0.22, 1.55] : [1.3 - kick, 0.42, 0.95];
+      const aim = look * 0.5 * w;
+      this.pose(
+        `upperarm${A}` as BoneName,
+        -THREE.MathUtils.lerp(shoulderFwd, hold[0] + aim, w),
+        0,
+        THREE.MathUtils.lerp(s * abduct, hold[1], w),
+      );
+      this.pose(`forearm${A}` as BoneName, -THREE.MathUtils.lerp(elbow, hold[2], w), 0, 0);
       this.pose(`hand${A}` as BoneName, 0.1, 0, 0);
       if (this.deadBlend > 0.02) {
         this.pose(`upperarm${A}` as BoneName, -0.2 - this.deadBlend * 0.4, 0, s * (abduct + this.deadBlend * 0.9));
@@ -439,6 +484,12 @@ function findBone(root: THREE.Object3D, name: string): THREE.Bone | null {
   });
   return found;
 }
+
+const _wp = new THREE.Vector3();
+const _wp2 = new THREE.Vector3();
+const _wq = new THREE.Quaternion();
+const _wq2 = new THREE.Quaternion();
+const _we = new THREE.Euler();
 
 const wrap = (a: number) => ((a % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
 const smooth = (u: number) => u * u * (3 - 2 * u);

@@ -124,7 +124,8 @@ export class Game {
     this.me = new Astronaut(this.asset);
     this.me.setLocal(true);
     this.me.setStripeColor(SUIT_STRIPES[this.welcome.variant % SUIT_STRIPES.length]);
-    this.me.attachShoulder(makeLauncherMesh());
+    this.me.attachWeapon(makeLauncherMesh());
+    this.me.setArmed(true);
     this.particles = new Particles(renderer.getPixelRatio());
     this.scene.add(this.particles.group);
     this.rockets = new Rockets(this.terrain, this.particles);
@@ -200,7 +201,7 @@ export class Game {
   private addRemote(p: PlayerInfo, announce: boolean) {
     if (this.remotes.has(p.id) || !this.asset) return;
     const r = new RemotePlayer(p, this.asset);
-    r.astronaut.attachShoulder(makeLauncherMesh());
+    r.astronaut.attachWeapon(makeLauncherMesh());
     const hp = this.pendingHealth.get(p.id);
     if (hp !== undefined) {
       r.hp = hp;
@@ -218,6 +219,7 @@ export class Game {
 
   private onFire(id: number, o: Vec3, d: Vec3) {
     this.rockets?.spawn(id, new THREE.Vector3(...o), new THREE.Vector3(...d));
+    this.remotes.get(id)?.astronaut.recoil();
   }
 
   private onExplode(id: number, p: Vec3, edit: TerrainEdit) {
@@ -277,7 +279,7 @@ export class Game {
 
   private tryFire() {
     const now = performance.now() / 1000;
-    if (this.dead || now - this.lastFire < 1.2) return;
+    if (this.dead || !this.me.isArmed || now - this.lastFire < 1.2) return;
     this.lastFire = now;
     const dir = new THREE.Vector3();
     this.camera.getWorldDirection(dir);
@@ -292,6 +294,7 @@ export class Game {
       [round(aim.x, 4), round(aim.y, 4), round(aim.z, 4)],
     );
     // recoil kick
+    this.me.recoil();
     this.ctl.impulse(aim.clone().multiplyScalar(-0.6));
   }
 
@@ -336,6 +339,10 @@ export class Game {
     if (input.consume('KeyV')) this.rig.toggle();
     if (input.consume('KeyH')) this.hud.toggleHelp();
     if (input.consume('KeyL')) this.lamps = !this.lamps;
+    if (input.consume('KeyX') || input.consume('Digit1')) {
+      this.me.setArmed(!this.me.isArmed);
+      this.hud.toast(this.me.isArmed ? 'Lanzacohetes en mano' : 'Lanzacohetes a la espalda');
+    }
     if (this.fireQueued || input.consume('KeyF')) this.tryFire();
     this.fireQueued = false;
     this.me.setLamps(this.lamps);
@@ -378,7 +385,8 @@ export class Game {
           (this.ctl.crouch ? StateFlags.Crouching : 0) |
           (this.lamps ? StateFlags.Lamps : 0) |
           (this.ctl.jetting ? StateFlags.Jetpack : 0) |
-          (this.dead ? StateFlags.Dead : 0),
+          (this.dead ? StateFlags.Dead : 0) |
+          (this.me.isArmed ? StateFlags.Armed : 0),
       });
     }
     const serverNow = this.net.serverNow();
@@ -428,7 +436,7 @@ export class Game {
       fps: this.fps,
       hp: this.hp,
       fuel: this.ctl.fuel,
-      reload: Math.min(1, (performance.now() / 1000 - this.lastFire) / 1.2),
+      reload: this.me.isArmed ? Math.min(1, (performance.now() / 1000 - this.lastFire) / 1.2) : 0,
       dead: this.dead,
       markers,
     });

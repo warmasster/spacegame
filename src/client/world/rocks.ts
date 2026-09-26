@@ -121,7 +121,7 @@ export class RockField {
 
   /** Re-scatter tiles near an edit so rocks follow the new ground. */
   invalidate(x: number, z: number, radius: number) {
-    const m = radius * 2.3;
+    const m = radius * 2.7;
     for (const [k, t] of this.tiles) {
       const [tx, tz] = k.split(':').map(Number);
       if (x + m < tx * TILE || x - m > (tx + 1) * TILE || z + m < tz * TILE || z - m > (tz + 1) * TILE) continue;

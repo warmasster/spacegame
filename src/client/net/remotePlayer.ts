@@ -73,6 +73,7 @@ export class RemotePlayer {
     this.lamps = (s.f & StateFlags.Lamps) !== 0;
     this.jetting = (s.f & StateFlags.Jetpack) !== 0;
     this.astronaut.setDead(this.dead);
+    this.astronaut.setArmed((s.f & StateFlags.Armed) !== 0);
 
     const root = this.astronaut.root;
     root.visible = true;

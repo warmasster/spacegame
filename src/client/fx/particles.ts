@@ -108,26 +108,71 @@ export class Particles {
     p.floor[i] = e.floor ?? -1e9;
   }
 
-  /** Rocket impact: flash, sparks and a ballistic regolith curtain. */
+  /**
+   * Rocket impact. Real lunar ejecta is not a smooth dome: it leaves in uneven rays and clumps,
+   * so directions and speeds are drawn from a few random "jets" with noise, not uniformly.
+   */
   explosion(at: THREE.Vector3, floor: number, scale = 1) {
     const v = new THREE.Vector3();
     const p = new THREE.Vector3();
-    for (let i = 0; i < 70 * scale; i++) {
-      v.randomDirection().multiplyScalar(4 + Math.random() * 14);
-      v.y = Math.abs(v.y) * 0.8 + 1;
-      this.emit('glow', { pos: at, vel: v, color: [4, 2.2 + Math.random(), 0.7], life: 0.15 + Math.random() * 0.35, size: 0.12 + Math.random() * 0.2, gravity: 1.62 });
+    const rnd = Math.random;
+    // flash core: several offset, uneven blobs instead of one perfect sphere
+    for (let i = 0; i < 9; i++) {
+      p.copy(at).add(v.randomDirection().multiplyScalar(rnd() * 0.9));
+      p.y = Math.max(p.y, at.y + 0.1);
+      this.emit('glow', { pos: p, vel: v.randomDirection().multiplyScalar(1 + rnd() * 2), color: [6, 3.5 + rnd() * 1.5, 1.5], life: 0.08 + rnd() * 0.18, size: 1.2 + rnd() * 2.4 });
     }
-    for (let i = 0; i < 6; i++) {
-      this.emit('glow', { pos: at, vel: v.set(0, 0.5, 0), color: [7, 5, 3], life: 0.12 + i * 0.03, size: 2.5 + i * 0.8 });
+    // sparks, some fast streaks
+    for (let i = 0; i < 90 * scale; i++) {
+      v.randomDirection().multiplyScalar(3 + rnd() * rnd() * 22);
+      v.y = Math.abs(v.y) * 0.9 + 0.5;
+      this.emit('glow', { pos: at, vel: v, color: [4, 1.6 + rnd() * 1.4, 0.4], life: 0.1 + rnd() * rnd() * 0.9, size: 0.05 + rnd() * 0.12, gravity: 1.62 });
     }
-    for (let i = 0; i < 900 * scale; i++) {
-      const a = Math.random() * Math.PI * 2;
-      const up = 0.35 + Math.random() * 0.9;
-      const sp = 2 + Math.random() * 11 * (Math.random() < 0.15 ? 1.6 : 1);
+    // glowing hot fragments that arc far and cool down
+    for (let i = 0; i < 12 * scale; i++) {
+      const a = rnd() * Math.PI * 2;
+      v.set(Math.cos(a), 0.6 + rnd() * 1.2, Math.sin(a)).multiplyScalar(5 + rnd() * 9);
+      this.emit('glow', { pos: at, vel: v, color: [2.2, 0.9, 0.3], life: 1.5 + rnd() * 2, size: 0.07, gravity: 1.62 });
+    }
+    // ejecta rays
+    const rays = 7 + Math.floor(rnd() * 7);
+    const rayDir: number[] = [];
+    const rayW: number[] = [];
+    for (let r = 0; r < rays; r++) {
+      rayDir.push(rnd() * Math.PI * 2);
+      rayW.push(0.4 + rnd() * rnd() * 1.6);
+    }
+    const total = 1100 * scale;
+    for (let i = 0; i < total; i++) {
+      let a: number;
+      let sp: number;
+      let up: number;
+      if (rnd() < 0.7) {
+        const r = Math.floor(rnd() * rays);
+        a = rayDir[r] + (rnd() - 0.5) * 0.28 * (rnd() + 0.2);
+        sp = (3 + rnd() * 10) * rayW[r];
+        up = 0.4 + rnd() * 0.5;
+      } else {
+        // diffuse curtain + a low fast skirt
+        a = rnd() * Math.PI * 2;
+        const low = rnd() < 0.3;
+        sp = low ? 6 + rnd() * 8 : 1.5 + rnd() * 6;
+        up = low ? 0.12 + rnd() * 0.2 : 0.6 + rnd() * 0.8;
+      }
+      sp *= 0.75 + 0.5 * Math.sin(a * 5.3 + rays) ** 2; // lumpy azimuthal noise
       v.set(Math.cos(a) * Math.cos(up), Math.sin(up), Math.sin(a) * Math.cos(up)).multiplyScalar(sp);
-      p.copy(at).add(new THREE.Vector3(Math.cos(a), 0, Math.sin(a)).multiplyScalar(Math.random() * 1.4));
-      const g = 0.16 + Math.random() * 0.1;
-      this.emit('dust', { pos: p, vel: v, color: [g, g, g * 0.97], life: 4 + Math.random() * 5, size: 0.05 + Math.random() * 0.14, gravity: 1.62, floor });
+      p.copy(at).add(new THREE.Vector3(Math.cos(a), 0, Math.sin(a)).multiplyScalar(rnd() * 1.2));
+      const g = 0.11 + rnd() * 0.14 + (rnd() < 0.08 ? 0.12 : 0); // some fresher, brighter grains
+      const clump = rnd() < 0.05;
+      this.emit('dust', {
+        pos: p,
+        vel: v,
+        color: [g, g * 0.99, g * 0.96],
+        life: 3.5 + rnd() * 6,
+        size: clump ? 0.18 + rnd() * 0.25 : 0.03 + rnd() * rnd() * 0.16,
+        gravity: 1.62,
+        floor: floor + (rnd() - 0.5) * 0.4,
+      });
     }
   }
 

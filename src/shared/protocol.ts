@@ -14,6 +14,7 @@ export const StateFlags = {
   Lamps: 1 << 3,
   Jetpack: 1 << 4,
   Dead: 1 << 5,
+  Armed: 1 << 6,
 } as const;
 
 /** Kinematic state of an astronaut, sent by its owner ~20 times per second. */

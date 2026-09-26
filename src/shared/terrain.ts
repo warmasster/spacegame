@@ -149,9 +149,13 @@ export class LunarTerrain {
       const dx = x - e.x;
       const dz = z - e.z;
       const d2 = dx * dx + dz * dz;
-      const lim = e.r * 2.2;
+      const lim = e.r * 2.2 * 1.2;
       if (d2 > lim * lim) continue;
-      const r = Math.sqrt(d2) / e.r;
+      // irregular rim: radius wobbles with azimuth and a little noise (not a perfect bowl)
+      const ang = Math.atan2(dz, dx);
+      const seedA = e.x * 1.7 + e.z * 3.1;
+      const wobble = 1 + 0.09 * Math.sin(ang * 3 + seedA) + 0.06 * Math.sin(ang * 7 - seedA * 0.5) + 0.05 * this.simplex.noise(dx * 1.3, dz * 1.3);
+      const r = Math.sqrt(d2) / (e.r * wobble);
       h += craterProfile(r, e.r, 0) * e.d;
       albedo *= 1 - 0.22 * Math.exp(-r * r * 1.5) + 0.12 * Math.exp(-(r - 1.2) * (r - 1.2) * 3);
     }

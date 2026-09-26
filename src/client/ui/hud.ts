@@ -53,7 +53,8 @@ export class Hud {
       ['Mayús', 'correr (trote lunar)'],
       ['Espacio', 'saltar'],
       ['C / Ctrl', 'agacharse'],
-      ['Clic izq.', 'lanzacohetes'],
+      ['Clic izq.', 'disparar cohete'],
+      ['X / 1', 'sacar / guardar arma'],
       ['Espacio (aire)', 'jetpack'],
       ['L', 'luces del casco'],
       ['V', 'primera / tercera persona'],
@@ -132,7 +133,7 @@ export class Hud {
     this.vitals.innerHTML =
       bar('TRAJE', d.hp / 100, d.hp < 35 ? 'crit' : 'hp') +
       bar('JET', d.fuel, 'fuel') +
-      bar(d.reload >= 1 ? 'COHETE LISTO' : 'RECARGANDO', d.reload, d.reload >= 1 ? 'ready' : 'reload');
+      bar(d.reload >= 1 ? 'COHETE LISTO' : d.reload <= 0 ? 'ARMA GUARDADA' : 'RECARGANDO', d.reload, d.reload >= 1 ? 'ready' : 'reload');
     this.deathScreen.classList.toggle('hidden', !d.dead);
     this.net.innerHTML = `
       <div class="row"><i class="dot ${d.online ? 'ok' : 'bad'}"></i><b>${d.online ? 'EN LÍNEA' : 'SIN CONEXIÓN'}</b></div>

@@ -7,7 +7,7 @@ import type { TerrainWorkerPool } from './workerPool';
 /** Edits that can affect a square region (crater influence reaches 2.2 radii). */
 export function editsNear(edits: TerrainEdit[], x0: number, z0: number, size: number) {
   return edits.filter((e) => {
-    const m = e.r * 2.3;
+    const m = e.r * 2.7;
     return e.x > x0 - m && e.x < x0 + size + m && e.z > z0 - m && e.z < z0 + size + m;
   });
 }
@@ -323,7 +323,7 @@ export class TerrainSystem {
 
   /** Terrain changed around (x, z): rebuild every loaded chunk that can see it. */
   invalidate(x: number, z: number, radius: number) {
-    const m = radius * 2.3;
+    const m = radius * 2.7;
     for (const n of this.nodes.values()) {
       if (x + m < n.x0 || x - m > n.x0 + n.size || z + m < n.z0 || z - m > n.z0 + n.size) continue;
       // coarse levels can't show a 2 m crater; don't waste work on them
