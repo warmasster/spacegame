@@ -142,7 +142,25 @@ los `System` las procesan → el estado se replica.
 | **6 — Terreno deformable** | Cráteres dinámicos sincronizados en red |
 | **7+** | Más cuerpos, atmósfera, reparación, economía |
 
-## 11. Decisiones abiertas
+## 11. Estado actual — v0.1 (mínimo viable)
+
+Decisiones tomadas para el MVP:
+
+- **Motor: web (Three.js + Rapier + Node/WebSocket).** Se juega desde el navegador sin instalar nada
+  (el segundo jugador solo abre una URL), se itera muy rápido y todo el contenido se genera por código.
+  El diseño de módulos es independiente del motor; si el rendimiento lo exige más adelante, el paso
+  natural es WebGPU o un cliente nativo reutilizando servidor y protocolo.
+- **Cooperativo, 2 jugadores**, servidor que retransmite estados (clientes de confianza). La autoridad
+  física pasará al servidor cuando haya naves y daños.
+- **Estilo realista**: el traje es un modelo propio generado en Blender por script; terreno, rocas,
+  texturas y cielo son procedurales o datos reales (catálogo estelar, texturas NASA de la Tierra).
+- El terreno se define como función determinista compartida (`src/shared/terrain.ts`) con curvatura
+  real del cuerpo; los cuerpos celestes siguen siendo datos (`BodyDef`), no código fijo.
+
+Incluido: dos astronautas con animación procedural, FPV con cuerpo visible y 3ª persona, gravedad lunar,
+física, terreno con LOD, sombras, cielo real, HUD de casco, luces del casco sincronizadas, nombres.
+
+## 12. Decisiones abiertas
 
 1. **Motor / plataforma** (web, Godot, Unity, Unreal).
 2. Estilo visual (realista vs. estilizado low-poly).
