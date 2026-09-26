@@ -53,8 +53,9 @@ function tuneMaterial(mat: THREE.MeshStandardMaterial) {
   switch (mat.name) {
     case 'Visor':
       // reflect the sunlit ground strongly so the gold reads instead of a black ball
-      mat.roughness = 0.05;
-      mat.envMapIntensity = 6;
+      mat.metalness = 0.85;
+      mat.roughness = 0.14;
+      mat.envMapIntensity = 5;
       break;
     case 'Lamp':
       mat.emissiveIntensity = 0;
@@ -174,6 +175,8 @@ export class Astronaut {
   private weaponInv: THREE.Matrix4 | null = null;
   private weaponInvQ: THREE.Quaternion | null = null;
   private armed = false;
+  private isLocal = false;
+  private lookPitch = 0;
   private armBlend = 0;
   private recoilT = 0;
 
@@ -237,20 +240,18 @@ export class Astronaut {
     this.model.updateMatrixWorld(true);
     const inv = new THREE.Matrix4().copy(chest.matrixWorld).invert().multiply(this.model.matrixWorld);
     const dark = new THREE.MeshStandardMaterial({ color: 0x151618, roughness: 0.6, metalness: 0.3 });
-    const collar = new THREE.Mesh(new THREE.CylinderGeometry(0.162, 0.175, 0.16, 40, 1, true), dark);
-    collar.position.set(0, 1.53, 0.0);
+    void dark;
     const inner = new THREE.Mesh(
-      new THREE.SphereGeometry(0.166, 40, 20, 0, Math.PI * 2, 0, Math.acos((1.585 - 1.672) / 0.166)),
+      new THREE.SphereGeometry(0.166, 40, 20, 0, Math.PI * 2, 0, Math.acos((1.556 - 1.672) / 0.166)),
       new THREE.MeshStandardMaterial({ color: 0x0b0b0c, roughness: 0.8, side: THREE.DoubleSide }),
     );
     inner.position.set(0, 1.672, 0.005);
-    for (const m of [collar, inner]) {
+    for (const m of [inner]) {
       m.castShadow = true;
       m.applyMatrix4(inv);
       chest.add(m);
       this.helmetMeshes.push(m as THREE.Mesh);
     }
-    (collar.material as THREE.Material).side = THREE.DoubleSide;
   }
 
   /** Mount a weapon: carried on the right shoulder when armed, slung on the PLSS when holstered. */
@@ -261,6 +262,8 @@ export class Astronaut {
     this.weaponInvQ = new THREE.Quaternion().setFromRotationMatrix(this.weaponInv);
     this.weapon = new THREE.Object3D();
     this.weapon.add(prop);
+    // first person: the tube would fill the view; aim with the crosshair instead
+    if (this.isLocal) this.weapon.traverse((o) => o.layers.set(HELMET_LAYER));
     chest.add(this.weapon);
     this.placeWeapon();
   }
@@ -285,7 +288,7 @@ export class Astronaut {
     // model space (character right = -X, forward = +Z)
     _wp.set(-0.24, 1.5, 0.04).lerp(_wp2.set(0.03, 1.36, -0.47), 1 - w);
     _wp.z -= this.recoilT * this.recoilT * 0.09 * w;
-    _wq.setFromEuler(_we.set(-this.recoilT * 0.12 * w, 0, 0));
+    _wq.setFromEuler(_we.set((-this.recoilT * 0.12 + this.lookPitch * 0.7) * w, 0, 0));
     _wq.slerp(_wq2.setFromEuler(_we.set(-1.35, 0, 0.62)), 1 - w);
     this.weapon.position.copy(_wp).applyMatrix4(this.weaponInv);
     this.weapon.quaternion.copy(this.weaponInvQ!).multiply(_wq);
@@ -321,7 +324,9 @@ export class Astronaut {
 
   /** The local player's helmet goes to its own layer so the first-person camera can skip it. */
   setLocal(local: boolean) {
+    this.isLocal = local;
     for (const m of this.helmetMeshes) m.layers.set(local ? HELMET_LAYER : 0);
+    this.weapon?.traverse((o) => o.layers.set(local ? HELMET_LAYER : 0));
   }
 
   setStripeColor(hex: number) {
@@ -447,9 +452,10 @@ export class Astronaut {
     this.pose('spine', this.lean * 0.5 + look * 0.16, -sway * 0.8, 0);
     this.pose('chest', this.lean * 0.3 + look * 0.26 + breathe * 2, -sway * 0.6, Math.sin(this.phase) * 0.02 * g);
 
-    // ---- weapon -----------------------------------------------------------------------------------
+    // ---- weapon (placed first; arms reach for it after the body pose) ------------------------------
     this.armBlend += ((this.armed && !this.dead ? 1 : 0) - this.armBlend) * Math.min(1, dt * 5);
     this.recoilT = Math.max(0, this.recoilT - dt * 4);
+    this.lookPitch = THREE.MathUtils.clamp(-input.pitch, -0.9, 1.1);
     this.placeWeapon();
 
     // ---- arms ----------------------------------------------------------------------------------
@@ -463,23 +469,66 @@ export class Astronaut {
       const abduct = 0.08 + air * 0.22 + Math.sin(this.time * 0.9 + ai) * 0.01;
       const elbow = 0.35 + g * 0.15 + this.runBlend * g * 0.35 + air * 0.25 + this.crouchBlend * 0.3 + Math.max(0, swing) * 0.4;
       // weapon hold: right hand on the grip, left hand steadying the tube
-      const w = smooth(this.armBlend) * (1 - this.deadBlend);
-      const kick = this.recoilT * this.recoilT * 0.25;
-      const hold = ai === 1 ? [0.42 - kick, 0.08, 1.45] : [0.72 - kick, -0.32, 1.2];
-      const aim = look * 0.25 * w;
-      this.pose(
-        `upperarm${A}` as BoneName,
-        -THREE.MathUtils.lerp(shoulderFwd, hold[0] + aim, w),
-        0,
-        THREE.MathUtils.lerp(s * abduct, hold[1], w),
-      );
-      this.pose(`forearm${A}` as BoneName, -THREE.MathUtils.lerp(elbow, hold[2], w), 0, 0);
+      this.pose(`upperarm${A}` as BoneName, -shoulderFwd, 0, s * abduct);
+      this.pose(`forearm${A}` as BoneName, -elbow, 0, 0);
       this.pose(`hand${A}` as BoneName, 0.1, 0, 0);
       if (this.deadBlend > 0.02) {
         this.pose(`upperarm${A}` as BoneName, -0.2 - this.deadBlend * 0.4, 0, s * (abduct + this.deadBlend * 0.9));
         this.pose(`forearm${A}` as BoneName, -0.35 - this.deadBlend * 0.3, 0, 0);
       }
     }
+    this.armIK(smooth(this.armBlend) * (1 - this.deadBlend));
+  }
+
+  /**
+   * Two-bone arm IK onto the weapon grips (right hand on the pistol grip, left under the tube),
+   * so the arms follow every weapon motion — gait bob, aim pitch, recoil — like the legs do.
+   */
+  private armIK(w: number) {
+    if (!this.weapon || w < 0.01) return;
+    this.model.updateMatrixWorld(true);
+    const grips: Array<[BoneName, BoneName, BoneName, THREE.Vector3, number]> = [
+      ['upperarmR', 'forearmR', 'handR', _g1.set(0.0, -0.14, 0.1), -1],
+      ['upperarmL', 'forearmL', 'handL', _g2.set(0.02, -0.08, 0.36), 1],
+    ];
+    const modelQ = this.model.getWorldQuaternion(_mq);
+    for (const [ua, fa, ha, grip, side] of grips) {
+      const U = this.rig[ua].bone;
+      const F = this.rig[fa].bone;
+      const H = this.rig[ha].bone;
+      const S = U.getWorldPosition(_s);
+      const E0 = F.getWorldPosition(_e0);
+      const H0 = H.getWorldPosition(_h0);
+      const L1 = S.distanceTo(E0);
+      const L2 = E0.distanceTo(H0);
+      const T = this.weapon.children[0].localToWorld(_t.copy(grip));
+      const toT = _d.subVectors(T, S);
+      const dist = Math.min(toT.length(), L1 + L2 - 0.002);
+      const dir = toT.normalize();
+      // elbow hangs down and out
+      const pole = _p.set(side * 0.6, -1, -0.25).applyQuaternion(modelQ).normalize();
+      const perp = pole.addScaledVector(dir, -pole.dot(dir)).normalize();
+      const a = (L1 * L1 - L2 * L2 + dist * dist) / (2 * dist);
+      const h = Math.sqrt(Math.max(0, L1 * L1 - a * a));
+      const E = _e.copy(S).addScaledVector(dir, a).addScaledVector(perp, h);
+      const Hn = _hn.copy(S).addScaledVector(dir, dist);
+      this.aimBone(U, E0, E, S, w);
+      this.model.updateMatrixWorld(true);
+      this.aimBone(F, H.getWorldPosition(_h0), Hn, F.getWorldPosition(_s2), w);
+      this.model.updateMatrixWorld(true);
+    }
+  }
+
+  /** Rotate `bone` (pivot P) so its child currently at `from` points toward `to`, blended by w. */
+  private aimBone(bone: THREE.Bone, from: THREE.Vector3, to: THREE.Vector3, P: THREE.Vector3, w: number) {
+    const a = _v1.subVectors(from, P).normalize();
+    const b = _v2.subVectors(to, P).normalize();
+    const delta = _q3.setFromUnitVectors(a, b);
+    const worldQ = bone.getWorldQuaternion(_q4);
+    const target = _q5.copy(delta).multiply(worldQ);
+    const parentQ = bone.parent!.getWorldQuaternion(_q6).invert();
+    const local = parentQ.multiply(target);
+    bone.quaternion.slerp(local, w);
   }
 
   /** Apply rest * rotX(ax) * rotY(ay) * rotZ(az), angles about model-space axes. */
@@ -512,6 +561,24 @@ const _wp2 = new THREE.Vector3();
 const _wq = new THREE.Quaternion();
 const _wq2 = new THREE.Quaternion();
 const _we = new THREE.Euler();
+const _g1 = new THREE.Vector3();
+const _g2 = new THREE.Vector3();
+const _mq = new THREE.Quaternion();
+const _s = new THREE.Vector3();
+const _s2 = new THREE.Vector3();
+const _e0 = new THREE.Vector3();
+const _h0 = new THREE.Vector3();
+const _t = new THREE.Vector3();
+const _d = new THREE.Vector3();
+const _p = new THREE.Vector3();
+const _e = new THREE.Vector3();
+const _hn = new THREE.Vector3();
+const _v1 = new THREE.Vector3();
+const _v2 = new THREE.Vector3();
+const _q3 = new THREE.Quaternion();
+const _q4 = new THREE.Quaternion();
+const _q5 = new THREE.Quaternion();
+const _q6 = new THREE.Quaternion();
 
 const wrap = (a: number) => ((a % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
 const smooth = (u: number) => u * u * (3 - 2 * u);

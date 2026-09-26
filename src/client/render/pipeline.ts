@@ -54,7 +54,9 @@ export class RenderPipeline {
     });
     composer.addPass(new RenderPass(scene, camera));
 
-    if (opts.quality === 'high') {
+    // Screen-space AO produced banding at LOD joins and blocky patches on distant slopes on real
+    // GPUs (half-res + log depth); under a hard vacuum sun it adds little. Opt-in with ?ao.
+    if (opts.quality === 'high' && new URLSearchParams(location.search).has('ao')) {
       const ao = new N8AOPostPass(scene, camera, 1, 1);
       ao.configuration.aoRadius = 0.9;
       ao.configuration.distanceFalloff = 0.6;

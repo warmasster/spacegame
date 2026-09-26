@@ -146,6 +146,9 @@ export class TerrainSystem {
           float camDist = length(vWorldPos - cameraPosition);
           // near field: real-time cascades only; baked horizon shadows take over further out
           float sunVisF = mix(1.0, vSunVis, smoothstep(uBakedFade.x, uBakedFade.y, camDist));
+          #ifdef DBG_NOBAKED
+          sunVisF = 1.0;
+          #endif
           vec3 a1 = texture2D(tRegA, wuv / 1.9).rgb;
           vec3 a2 = texture2D(tRegA, wuv / 8.3 + vec2(0.31, 0.77)).rgb;
           float m1 = texture2D(tMacro, wuv / 157.0).r;
@@ -181,6 +184,7 @@ export class TerrainSystem {
           `,
         );
     };
+    if (new URLSearchParams(location.search).has('nobaked')) mat.defines = { ...mat.defines, DBG_NOBAKED: '' };
     mat.customProgramCacheKey = () => 'lunar-terrain-v4';
     this.material = mat;
 
