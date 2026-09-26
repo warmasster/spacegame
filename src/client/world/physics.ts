@@ -72,7 +72,8 @@ export class Physics {
   /** Terrain edited: rebuild collision tiles touching the area (old colliders stay until then). */
   invalidate(x: number, z: number, radius: number) {
     const m = radius * 2.3;
-    for (const [key, tile] of this.tiles) {
+    // snapshot: load() re-inserts keys, and iterating a Map while re-inserting never ends
+    for (const [key, tile] of [...this.tiles]) {
       const [tx, tz] = key.split(':').map(Number);
       const x0 = tx * TILE;
       const z0 = tz * TILE;
