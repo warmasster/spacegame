@@ -52,7 +52,7 @@ export class CameraRig {
     } else {
       cam.layers.enable(HELMET_LAYER);
       cam.near = 0.1;
-      const target = new THREE.Vector3(ctl.position.x, ctl.position.y + (ctl.crouch ? 1.15 : 1.55), ctl.position.z);
+      const target = new THREE.Vector3(ctl.renderPosition.x, ctl.renderPosition.y + (ctl.crouch ? 1.15 : 1.55), ctl.renderPosition.z);
       const back = new THREE.Vector3(0, 0, 1).applyEuler(rot);
       const right = new THREE.Vector3(1, 0, 0).applyEuler(rot);
       const desired = target.clone().addScaledVector(back, this.zoom).addScaledVector(right, 0.55).add(new THREE.Vector3(0, 0.25, 0));

@@ -68,6 +68,7 @@ export class Game {
   private lamps = false;
   private startTime = performance.now();
   private particles!: Particles;
+  private prevPos = new THREE.Vector3();
   private loop = new FixedLoop(1 / 60);
   private debris!: Debris;
   private diag!: DebugOverlay;
@@ -374,6 +375,7 @@ export class Game {
     this.loop.advance(dt, (h) => {
       if (!this.physics.readyAt(this.ctl.position.x, this.ctl.position.z)) return;
       this.physics.step(h);
+      this.prevPos.copy(this.ctl.position);
       this.ctl.update(h, input);
       this.debris.update(h);
       const targets = [...this.remotes.values()]
@@ -387,7 +389,10 @@ export class Game {
     const ground = this.terrain.height(this.ctl.position.x, this.ctl.position.z);
     if (this.ctl.position.y < ground - 2) this.ctl.teleport(new THREE.Vector3(this.ctl.position.x, ground + 0.3, this.ctl.position.z));
 
-    this.me.root.position.copy(this.ctl.position);
+    // render between the last two sim states: no 60 Hz judder/smear on high refresh screens
+    if (this.prevPos.distanceToSquared(this.ctl.position) > 25) this.prevPos.copy(this.ctl.position);
+    this.ctl.renderPosition.lerpVectors(this.prevPos, this.ctl.position, this.loop.alpha);
+    this.me.root.position.copy(this.ctl.renderPosition);
     this.me.root.rotation.y = this.ctl.yaw;
     this.me.update(dt, {
       velocity: this.ctl.velocity,

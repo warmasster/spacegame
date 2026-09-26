@@ -269,8 +269,6 @@ export class Astronaut {
     this.weaponInvQ = new THREE.Quaternion().setFromRotationMatrix(this.weaponInv);
     this.weapon = new THREE.Object3D();
     this.weapon.add(prop);
-    // first person: the tube would fill the view; aim with the crosshair instead
-    if (this.isLocal) this.weapon.traverse((o) => o.layers.set(HELMET_LAYER));
     chest.add(this.weapon);
     this.placeWeapon();
   }
@@ -313,7 +311,7 @@ export class Astronaut {
     // shoulder carry (like a real bazooka gunner): contact on the right shoulder, tube beside the helmet
     const aim = this.lookPitch * 0.74 - this.torsoAng * 0.6;
     _wq.setFromEuler(_we.set(aim, 0.02, 0));
-    _wp.set(-0.225, 1.47, 0.02).addScaledVector(_fwd.set(0, 0, -1).applyQuaternion(_wq), this.kick);
+    _wp.set(-0.21, 1.47, 0.06).addScaledVector(_fwd.set(0, 0, -1).applyQuaternion(_wq), this.kick);
     if (def.carry === 'hip') _wp.set(-0.2, 1.05, 0.25);
     _wp.lerp(def.holster.pos, 1 - w);
     _wq.slerp(_wq2.setFromEuler(def.holster.rot), 1 - w);
@@ -353,7 +351,7 @@ export class Astronaut {
   setLocal(local: boolean) {
     this.isLocal = local;
     for (const m of this.helmetMeshes) m.layers.set(local ? HELMET_LAYER : 0);
-    this.weapon?.traverse((o) => o.layers.set(local ? HELMET_LAYER : 0));
+
   }
 
   setStripeColor(hex: number) {

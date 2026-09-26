@@ -33,6 +33,8 @@ export const MOVE = {
  */
 export class PlayerController {
   readonly position = new THREE.Vector3();
+  /** Interpolated position for rendering (set by the game each frame). */
+  readonly renderPosition = new THREE.Vector3();
   readonly velocity = new THREE.Vector3();
   yaw = 0;
   pitch = 0;

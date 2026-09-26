@@ -38,7 +38,7 @@ for (const v of spec.split(';').filter(Boolean)) {
     const [orbit = 3, zoom = 2.2, walk = 0, armed = 1] = n;
     await page.evaluate(([o, z, w, a]) => {
       const g = window.game, d = g.debug;
-      if (d.rig.mode !== 'third') d.rig.toggle();
+      if ((d.rig.mode === 'third') !== o >= -9) d.rig.toggle(); // orbit -10 = first person
       g.debugOrbit = true;
       d.rig.orbit = o;
       d.rig.zoom = z;

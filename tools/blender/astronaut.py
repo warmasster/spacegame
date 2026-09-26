@@ -326,7 +326,7 @@ def build_helmet(mats):
     parts.append(mesh_object('CamLens', bm, mats['HelmetDark']))
 
     # neck ring (helmet ↔ torso), anodised
-    parts.append(ring('NeckRing', V(0, 0.01, c.z - 0.122), V(0, 0, 1), 0.118, 0.166, 0.042, mats['Metal'], 0.007, 72))
+    parts.append(ring('NeckRing', V(0, 0.01, c.z - 0.13), V(0, 0, 1), 0.118, 0.17, 0.062, mats['SuitHard'], 0.008, 72))
     parts.append(ring('NeckRingBand', V(0, 0.01, c.z - 0.13), V(0, 0, 1), 0.164, 0.17, 0.012, mats['AnoBlue'], 0.002, 72))
     return parts
 
@@ -442,14 +442,14 @@ def build_glove(mats, side, sx):
     tips = []
     for i, (fx, fl) in enumerate(zip(finger_x, finger_len)):
         seg = [0.42, 0.32, 0.26]
-        curl = [math.radians(a) for a in (16, 30, 24)]
+        curl = [math.radians(a) for a in (38, 62, 46)]  # relaxed grasp (pressurised gloves rest half-closed)
         p = V(fx, 0.004, -0.108)
         d = V(fx * 0.1, 0, -1).normalized()
         prev = 'knuck'
         ang = 0
         for j in range(3):
             ang += curl[j]
-            dd = Matrix.Rotation(-ang, 3, 'X') @ d
+            dd = Matrix.Rotation(ang, 3, 'X') @ d  # curl toward the palm (+Y)
             p = p + dd * fl * seg[j]
             name = f'f{i}{j}'
             n(name, tuple(p), 0.0152 - j * 0.0013, prev)
@@ -457,8 +457,8 @@ def build_glove(mats, side, sx):
         tips.append(name)
     p = V(0.05, 0.014, -0.034)
     n('th0', tuple(p), 0.02, 'palm0')
-    for j, (dv, ln) in enumerate(((V(0.55, -0.35, -0.75), 0.046), (V(0.25, -0.55, -0.8), 0.038),
-                                  (V(0.05, -0.6, -0.8), 0.03))):
+    for j, (dv, ln) in enumerate(((V(0.5, 0.45, -0.7), 0.046), (V(0.1, 0.75, -0.6), 0.038),
+                                  (V(-0.2, 0.8, -0.4), 0.03))):
         p = p + dv.normalized() * ln
         n(f'th{j + 1}', tuple(p), 0.017 - j * 0.0013, f'th{j}')
 

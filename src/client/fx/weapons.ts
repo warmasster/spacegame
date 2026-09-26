@@ -52,8 +52,8 @@ export const LAUNCHER: WeaponDef = {
   name: 'Lanzacohetes',
   carry: 'shoulder',
   // pistol grip raked back 0.25 rad, fore-grip raked forward 0.15 rad (see build())
-  rightGrip: { pos: new THREE.Vector3(0, -0.075, 0.31), axis: new THREE.Vector3(0, -Math.cos(0.25), -Math.sin(0.25)), radius: 0.02, side: new THREE.Vector3(-1, 0, 0) },
-  leftGrip: { pos: new THREE.Vector3(0, -0.05, 0.66), axis: new THREE.Vector3(0, -Math.cos(0.15), Math.sin(0.15)), radius: 0.02, side: new THREE.Vector3(1, 0, 0) },
+  rightGrip: { pos: new THREE.Vector3(0, -0.075, 0.2), axis: new THREE.Vector3(0, -Math.cos(0.25), -Math.sin(0.25)), radius: 0.02, side: new THREE.Vector3(-1, 0, 0) },
+  leftGrip: { pos: new THREE.Vector3(0, -0.05, 0.4), axis: new THREE.Vector3(0, -Math.cos(0.15), Math.sin(0.15)), radius: 0.02, side: new THREE.Vector3(1, 0, 0) },
   muzzle: new THREE.Vector3(0, 0.065, 0.86),
   holster: { pos: new THREE.Vector3(0.03, 1.36, -0.47), rot: new THREE.Euler(-1.35, 0, 0.62) },
   recoil: 70,
@@ -69,11 +69,11 @@ export const LAUNCHER: WeaponDef = {
     g.add(inner);
     // shoulder pad and clamp rings
     g.add(part(new THREE.BoxGeometry(0.07, 0.03, 0.2), dark, 0, 0.012, -0.02));
-    for (const z of [-0.3, 0.18, 0.55]) g.add(part(lathe([[0.053, -0.018], [0.058, -0.012], [0.058, 0.012], [0.053, 0.018]]), dark, 0, ax, z));
+    for (const z of [-0.3, 0.08, 0.55]) g.add(part(lathe([[0.053, -0.018], [0.058, -0.012], [0.058, 0.012], [0.053, 0.018]]), dark, 0, ax, z));
     // pistol grip + trigger guard, fore-grip, sight
-    g.add(part(new THREE.BoxGeometry(0.032, 0.11, 0.045), dark, 0, -0.07, 0.31, 0.25));
-    g.add(part(new THREE.BoxGeometry(0.012, 0.04, 0.07), dark, 0, 0.0, 0.27));
-    g.add(part(new THREE.BoxGeometry(0.03, 0.1, 0.04), dark, 0, -0.045, 0.66, -0.15));
+    g.add(part(new THREE.BoxGeometry(0.032, 0.11, 0.045), dark, 0, -0.07, 0.2, 0.25));
+    g.add(part(new THREE.BoxGeometry(0.012, 0.04, 0.07), dark, 0, 0.0, 0.16));
+    g.add(part(new THREE.BoxGeometry(0.03, 0.1, 0.04), dark, 0, -0.045, 0.4, -0.15));
     g.add(part(new THREE.BoxGeometry(0.03, 0.05, 0.08), dark, -0.06, ax + 0.045, 0.2));
     g.add(part(new THREE.BoxGeometry(0.004, 0.035, 0.004), dark, -0.06, ax + 0.08, 0.72));
     return g;
