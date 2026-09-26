@@ -41,8 +41,9 @@ function sunVisibility(t: LunarTerrain, x: number, y: number, z: number, sun: [n
     if (tn > maxTan) maxTan = tn;
     d *= 1.42;
   }
-  // penumbra ≈ ±0.5° of angle around the solar disc, a bit wider to soften sampling
-  const v = (tanSun - maxTan) / 0.028 + 0.5;
+  // penumbra: solar disc (~0.5°) widened with vertex spacing, so coarse far chunks get soft
+  // gradients instead of per-triangle blocks
+  const v = (tanSun - maxTan) / (0.03 + step * 0.0045) + 0.5;
   return v < 0 ? 0 : v > 1 ? 1 : v;
 }
 

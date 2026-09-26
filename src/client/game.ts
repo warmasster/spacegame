@@ -116,6 +116,7 @@ export class Game {
     const aniso = renderer.capabilities.getMaxAnisotropy();
     this.terrainSys = new TerrainSystem(this.pool, this.terrain, loader, sunDir, csm, Math.min(8, aniso));
     this.scene.add(this.terrainSys.group);
+    if (this.opts.quality === 'low') this.terrainSys.setBakedFade(75, 125);
     this.rocks = new RockField(this.pool, this.terrain, RockField.material(loader, csm));
     this.scene.add(this.rocks.group);
 

@@ -83,6 +83,7 @@ export class TerrainSystem {
       tMacro: { value: tex('/assets/tex/macro.png', false) },
       uSunDirW: { value: sunDir },
       uViewer: this.viewer,
+      uBakedFade: { value: new THREE.Vector2(120, 190) },
     };
 
     // linear albedo ≈ 0.13 (real regolith 0.10–0.15); the detail maps average to 1.0
@@ -102,6 +103,7 @@ export class TerrainSystem {
           attribute float sunVis;
           uniform vec3 uViewer;
           varying float vSunVis;
+          varying float vSkirt;
           varying float vAlbedo;
           varying vec3 vWorldPos;
           varying vec3 vWorldNormal;`,
@@ -112,6 +114,7 @@ export class TerrainSystem {
           ${MORPH_GLSL}
           vAlbedo = albedo;
           vSunVis = sunVis;
+          vSkirt = float(gl_VertexID >= ${(RES + 1) * (RES + 1)});
           vWorldPos = (modelMatrix * vec4(transformed, 1.0)).xyz;
           vWorldNormal = normalize(mat3(modelMatrix) * objectNormal);`,
         );
@@ -121,7 +124,9 @@ export class TerrainSystem {
           `#include <common>
           uniform sampler2D tRegA, tRegN, tMacro;
           uniform vec3 uSunDirW;
+          uniform vec2 uBakedFade;
           varying float vSunVis;
+          varying float vSkirt;
           varying float vAlbedo;
           varying vec3 vWorldPos;
           varying vec3 vWorldNormal;`,
@@ -131,14 +136,16 @@ export class TerrainSystem {
           // baked horizon shadow multiplies only the sun (directional) lights, not helmet lamps
           THREE.ShaderChunk.lights_fragment_begin.replace(
             /getDirectionalLightInfo\(\s*directionalLights?(\[0\])?,\s*directLight\s*\);/g,
-            (m) => `${m} directLight.color *= vSunVis;`,
-          ),
+            (m) => `${m} directLight.color *= sunVisF;`,
+          ).replace(/&&\s*receiveShadow\s*\)/g, '&& receiveShadow && vSkirt < 0.5 )'),
         )
         .replace(
           '#include <map_fragment>',
           `
           vec2 wuv = vWorldPos.xz;
           float camDist = length(vWorldPos - cameraPosition);
+          // near field: real-time cascades only; baked horizon shadows take over further out
+          float sunVisF = mix(1.0, vSunVis, smoothstep(uBakedFade.x, uBakedFade.y, camDist));
           vec3 a1 = texture2D(tRegA, wuv / 1.9).rgb;
           vec3 a2 = texture2D(tRegA, wuv / 8.3 + vec2(0.31, 0.77)).rgb;
           float m1 = texture2D(tMacro, wuv / 157.0).r;
@@ -174,7 +181,7 @@ export class TerrainSystem {
           `,
         );
     };
-    mat.customProgramCacheKey = () => 'lunar-terrain-v3';
+    mat.customProgramCacheKey = () => 'lunar-terrain-v4';
     this.material = mat;
 
     // shadow casting must morph exactly like the visible surface
@@ -273,7 +280,7 @@ export class TerrainSystem {
         z0: node.z0,
         size: node.size,
         res: RES,
-        skirt: Math.max(0.4, node.size * 0.01),
+        skirt: Math.max(1.5, node.size * 0.03),
         morphEnd: SPLIT_FACTOR * node.size * 2,
       },
       priority,
@@ -319,6 +326,11 @@ export class TerrainSystem {
       node.maxY = r.maxY;
       node.state = 'ready';
     });
+  }
+
+  /** Distance band where baked shadows replace the real-time cascades (match CSM maxFar). */
+  setBakedFade(start: number, end: number) {
+    (this.uniforms.uBakedFade.value as THREE.Vector2).set(start, end);
   }
 
   /** Terrain changed around (x, z): rebuild every loaded chunk that can see it. */
