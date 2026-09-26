@@ -27,14 +27,18 @@ export class Debris {
     private world: RAPIER.World,
     private gravity: number,
     material: THREE.Material,
+    /** Fragment shape (unit size); default: lumpy rock. */
+    geometry?: THREE.BufferGeometry,
   ) {
-    const g = new THREE.DodecahedronGeometry(1, 0);
+    const g = geometry ?? new THREE.DodecahedronGeometry(1, 0);
     const pos = g.getAttribute('position');
-    // lumpy, non-uniform fragments
-    for (let i = 0; i < pos.count; i++) pos.setXYZ(i, pos.getX(i) * (0.8 + ((i * 7) % 5) * 0.08), pos.getY(i) * 0.7, pos.getZ(i));
-    g.computeVertexNormals();
-    const col = new Float32Array(pos.count * 3).fill(0.23);
-    g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    if (!geometry) {
+      // lumpy, non-uniform fragments
+      for (let i = 0; i < pos.count; i++) pos.setXYZ(i, pos.getX(i) * (0.8 + ((i * 7) % 5) * 0.08), pos.getY(i) * 0.7, pos.getZ(i));
+      g.computeVertexNormals();
+      const col = new Float32Array(pos.count * 3).fill(0.23);
+      g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    }
     this.mesh = new THREE.InstancedMesh(g, material, MAX);
     this.mesh.count = 0;
     this.mesh.castShadow = true;
@@ -46,17 +50,24 @@ export class Debris {
     return this.chunks.length;
   }
 
-  burst(at: THREE.Vector3, n = 10) {
+  /** Throw `n` fragments from `at`: a ground blast by default, or a cone along `dir` (hull breach). */
+  burst(at: THREE.Vector3, n = 10, opts: { dir?: THREE.Vector3; speed?: number; size?: number; spread?: number } = {}) {
     const R = this.R;
     for (let i = 0; i < n; i++) {
       if (this.chunks.length >= MAX) this.remove(0);
-      const size = 0.05 + Math.random() ** 2 * 0.22;
+      const size = (0.05 + Math.random() ** 2 * 0.22) * (opts.size ?? 1);
       const a = Math.random() * Math.PI * 2;
       const up = 0.5 + Math.random() * 0.9;
-      const sp = 3 + Math.random() * 8;
+      const sp = (3 + Math.random() * 8) * (opts.speed ?? 1);
+      const v = new THREE.Vector3(Math.cos(a) * Math.cos(up), Math.sin(up), Math.sin(a) * Math.cos(up));
+      const o = new THREE.Vector3(Math.cos(a) * 0.4, 0.3, Math.sin(a) * 0.4);
+      if (opts.dir) {
+        v.randomDirection().multiplyScalar(opts.spread ?? 0.6).add(opts.dir).normalize();
+        o.randomDirection().multiplyScalar(0.35);
+      }
       const desc = R.RigidBodyDesc.dynamic()
-        .setTranslation(at.x + Math.cos(a) * 0.4, at.y + 0.3, at.z + Math.sin(a) * 0.4)
-        .setLinvel(Math.cos(a) * Math.cos(up) * sp, Math.sin(up) * sp, Math.sin(a) * Math.cos(up) * sp)
+        .setTranslation(at.x + o.x, at.y + o.y, at.z + o.z)
+        .setLinvel(v.x * sp, v.y * sp, v.z * sp)
         .setAngvel({ x: (Math.random() - 0.5) * 12, y: (Math.random() - 0.5) * 12, z: (Math.random() - 0.5) * 12 })
         .setGravityScale(this.gravity / 9.81)
         .setCcdEnabled(true);

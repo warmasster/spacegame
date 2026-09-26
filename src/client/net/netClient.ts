@@ -16,9 +16,11 @@ export interface NetEvents {
   state(id: number, serverTime: number, s: PlayerState): void;
   disconnect(reason: string): void;
   fire(id: number, o: Vec3, d: Vec3): void;
-  explode(id: number, p: Vec3, edit: TerrainEdit): void;
+  explode(id: number, p: Vec3, edit?: TerrainEdit): void;
   health(id: number, hp: number, by?: number, dead?: boolean): void;
   respawn(id: number, spawn: Vec3): void;
+  ship(ship: number, sw: Record<string, number> | undefined, hp: Array<[number, number]> | undefined, by?: number): void;
+  shipDenied(ship: number, ctl: number, reason: string): void;
 }
 
 /** WebSocket session: handshake, state upload, snapshot delivery and server-clock estimate. */
@@ -87,6 +89,12 @@ export class NetClient {
           case 'respawn':
             this.events.respawn(msg.id, msg.spawn);
             break;
+          case 'ship':
+            this.events.ship(msg.ship, msg.sw, msg.hp, msg.by);
+            break;
+          case 'shipDenied':
+            this.events.shipDenied(msg.ship, msg.ctl, msg.reason);
+            break;
           case 'pong': {
             const now = performance.now();
             this.rtt = now - msg.t;
@@ -118,6 +126,14 @@ export class NetClient {
 
   sendHit(p: Vec3) {
     this.send({ type: 'hit', p });
+  }
+
+  sendInteract(ship: number, ctl: number) {
+    this.send({ type: 'interact', ship, ctl });
+  }
+
+  sendRepair(ship: number, panel: number) {
+    this.send({ type: 'repair', ship, panel });
   }
 
   private send(msg: ClientMessage) {

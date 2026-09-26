@@ -3,6 +3,7 @@ import type { CSM } from 'three/addons/csm/CSM.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 import type { Grip, WeaponDef } from '../fx/weapons';
+import { patchInteriorLights } from '../ship/interiorLights';
 
 /** Layer used for helmet meshes: hidden from the first-person camera, still casts shadows. */
 export const HELMET_LAYER = 1;
@@ -46,7 +47,8 @@ export class AstronautAsset {
     const mat = src.clone();
     mat.userData.bakedAO = src.userData.bakedAO;
     patchSuitShader(mat, this.csm);
-    return mat;
+    // lit by ship cabin lights when inside one
+    return patchInteriorLights(mat);
   }
 }
 
@@ -321,6 +323,10 @@ export class Astronaut {
   /** Mount a weapon: carried on the right shoulder when armed, slung on the PLSS when holstered. */
   attachWeapon(def: WeaponDef) {
     const prop = def.build();
+    prop.traverse((o) => {
+      const m = (o as THREE.Mesh).material;
+      if (m instanceof THREE.MeshStandardMaterial) patchInteriorLights(m);
+    });
     this.weaponDef = def;
     const chest = this.rig.chest.bone;
     this.model.updateMatrixWorld(true);

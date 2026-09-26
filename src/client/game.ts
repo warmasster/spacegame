@@ -1,7 +1,12 @@
 import * as THREE from 'three';
-import { MAX_PLAYERS, MOON, CLIENT_SEND_RATE, SUIT_STRIPES } from '../shared/constants';
+import { MAX_PLAYERS, MOON, CLIENT_SEND_RATE, SHIP_SPAWNS, SUIT_STRIPES } from '../shared/constants';
 import { StateFlags, type PlayerInfo, type TerrainEdit, type Vec3 } from '../shared/protocol';
 import { LANDMARK, LunarTerrain } from '../shared/terrain';
+import { placeShip, REPAIR_RATE, SHIP_DEFS, ShipSim, type ShipSnapshot } from '../shared/ship/sim';
+import { Interaction } from './ship/interaction';
+import { updateInteriorLights } from './ship/interiorLights';
+import { litMaterial } from './ship/materials';
+import { ShipClient } from './ship/ship';
 import { Particles } from './fx/particles';
 import { Rockets } from './fx/rockets';
 import { JointDiagnostics, JointGizmos } from './player/jointDiag';
@@ -90,6 +95,13 @@ export class Game {
   private lastFire = -10;
   private fireQueued = false;
   private nozzles: [THREE.Vector3, THREE.Vector3] = [new THREE.Vector3(), new THREE.Vector3()];
+  /** Ships in the world (client mirrors of the server's). `game.ships` from the console. */
+  ships: ShipClient[] = [];
+  /** Offline only: this client is its own ship authority. */
+  private shipAuthority = new Map<number, ShipSim>();
+  interaction!: Interaction;
+  private scrap!: Debris;
+  private envInside = 0;
   /** ?cam=x,z,yaw,pitch[,h] free inspection camera. */
   private inspectCam = new URLSearchParams(location.search).get('cam')?.split(',').map(Number) ?? null;
   /** Automation: keep a fixed third-person orbit (no easing back). */
@@ -109,6 +121,8 @@ export class Game {
       explode: (id, p, edit) => this.onExplode(id, p, edit),
       health: (id, hp, by, dead) => this.onHealth(id, hp, by, dead),
       respawn: (id, spawn) => this.onRespawn(id, spawn),
+      ship: (ship, sw, hp, by) => this.onShip(ship, sw, hp, by),
+      shipDenied: (ship, ctl, reason) => this.interaction?.deny(ship, ctl, reason, performance.now() / 1000),
     });
     window.addEventListener('resize', () => this.resize());
     this.resize();
@@ -121,7 +135,7 @@ export class Game {
     // ?offline: no server — terrain/lighting inspection and solo testing
     this.offline = params.has('offline');
     this.welcome = this.offline
-      ? { type: 'welcome', id: 1, variant: 0, players: [], spawn: [0, 0, 0], worldSeed: 1969, serverTime: 0, edits: [], health: [] }
+      ? { type: 'welcome', id: 1, variant: 0, players: [], spawn: [0, 0, 0], worldSeed: 1969, serverTime: 0, edits: [], health: [], ships: this.offlineShips(1969) }
       : await this.net.connect(this.opts.name);
 
     onProgress('Preparando la superficie lunar…');
@@ -163,6 +177,22 @@ export class Game {
     const debrisMat = RockField.material(loader, csm);
     this.debris = new Debris(this.physics.rapier, this.physics.world, MOON.gravity, debrisMat);
     this.scene.add(this.debris.mesh);
+
+    onProgress('Preparando la nave…');
+    // hull fragments: thin bent plates
+    this.scrap = new Debris(this.physics.rapier, this.physics.world, MOON.gravity, litMaterial(csm, { color: new THREE.Color().setRGB(0.3, 0.3, 0.31), roughness: 0.5, metalness: 0.6 }), new THREE.BoxGeometry(1.4, 0.12, 1.0));
+    this.scene.add(this.scrap.mesh);
+    // ships stand on the pristine surface, like on the server
+    const pristine = new LunarTerrain(this.welcome.worldSeed);
+    for (const snap of this.welcome.ships ?? []) {
+      const ship = new ShipClient(snap, { physics: this.physics, csm, ground: pristine, particles: this.particles, debris: this.scrap });
+      this.ships.push(ship);
+      this.scene.add(ship.view.root);
+    }
+    this.interaction = new Interaction(this.scene, this.particles, {
+      interact: (ship, ctl) => (this.offline ? this.localInteract(ship.id, ctl) : this.net.sendInteract(ship.id, ctl)),
+      repair: (ship, panel, dt) => (this.offline ? this.localRepair(ship.id, panel, dt) : this.net.sendRepair(ship.id, panel)),
+    });
     this.diag = new DebugOverlay(this.opts.ui, this.scene);
     this.registerSystems();
     this.joints = new JointDiagnostics(this.me);
@@ -220,7 +250,24 @@ export class Game {
         this.ctl.update(h, this.input);
       },
     });
-    S.add({ name: 'debris', phase: 'fixed', order: 30, update: (h) => this.debris.update(h) });
+    S.add({
+      name: 'debris',
+      phase: 'fixed',
+      order: 30,
+      update: (h) => {
+        this.debris.update(h);
+        this.scrap.update(h);
+      },
+    });
+    S.add({
+      name: 'ships',
+      phase: 'fixed',
+      order: 30,
+      update: (h) => {
+        const bodies = [this.ctl.position, ...[...this.remotes.values()].map((r) => r.position)];
+        for (const ship of this.ships) ship.fixed(h, bodies);
+      },
+    });
     S.add({
       name: 'rockets',
       phase: 'fixed',
@@ -229,9 +276,101 @@ export class Game {
         const up = new THREE.Vector3(0, 0.95, 0);
         const targets = [...this.remotes.values()].filter((r) => !r.dead).map((r) => ({ id: r.info.id, pos: r.position.clone().add(up) }));
         targets.push({ id: this.welcome.id, pos: this.ctl.position.clone().add(up) });
-        this.pendingHits.push(...this.rockets.update(h, this.welcome.id, targets));
+        this.pendingHits.push(...this.rockets.update(h, this.welcome.id, targets, (a, b) => this.shipSweep(a, b)));
       },
     });
+    // --- per rendered frame (after the camera is placed) ---
+    S.add({
+      name: 'interaction',
+      phase: 'frame',
+      order: 40,
+      update: (dt) => {
+        const eye = this.me.eyePosition(new THREE.Vector3());
+        const prompt = this.interaction.update(dt, {
+          camera: this.camera,
+          eye,
+          hand: this.me.partPosition('handR', new THREE.Vector3()),
+          ships: this.ships,
+          holdRepair: this.input.down('KeyE') && !this.dead,
+          now: performance.now() / 1000,
+          disabled: this.dead || !!this.inspectCam,
+        });
+        this.hud.setPrompt(prompt);
+      },
+    });
+    S.add({
+      name: 'ship-view',
+      phase: 'frame',
+      order: 90,
+      update: (dt) => {
+        for (const ship of this.ships) ship.frame(dt);
+        updateInteriorLights(this.camera);
+        // eyes adapt inside: the regolith glow of the environment map is outside
+        const inside = this.ships.some((s) => s.zoneAt(this.camera.position));
+        this.envInside += ((inside ? 1 : 0) - this.envInside) * Math.min(1, dt * 3);
+        this.scene.environmentIntensity = 1 - 0.65 * this.envInside;
+      },
+    });
+  }
+
+  /** Rocket sweep against every ship hull. */
+  private shipSweep(a: THREE.Vector3, b: THREE.Vector3) {
+    for (const ship of this.ships) {
+      const h = ship.segmentHit(a, b);
+      if (h) return h;
+    }
+    return null;
+  }
+
+  /** Default ship states for ?offline (what a fresh server would send). */
+  private offlineShips(seed: number): ShipSnapshot[] {
+    const ground = new LunarTerrain(seed);
+    return SHIP_SPAWNS.map((s) => {
+      const def = SHIP_DEFS[s.def];
+      const sim = new ShipSim(s.id, def, placeShip(def, s.x, s.z, s.yaw, ground), ground);
+      this.shipAuthority.set(s.id, sim);
+      return sim.snapshot();
+    });
+  }
+
+  private localInteract(ship: number, ctl: number) {
+    const sim = this.shipAuthority.get(ship);
+    if (!sim) return;
+    const r = sim.interact(ctl);
+    if ('reason' in r) this.interaction.deny(ship, ctl, r.reason, performance.now() / 1000);
+    else this.onShip(ship, r.changed, undefined, this.welcome.id);
+  }
+
+  private localRepair(ship: number, panel: number, dt: number) {
+    const hp = this.shipAuthority.get(ship)?.repair(panel, REPAIR_RATE * dt);
+    if (hp !== null && hp !== undefined) this.onShip(ship, undefined, [[panel, hp]], this.welcome.id);
+  }
+
+  private onShip(id: number, sw?: Record<string, number>, hp?: Array<[number, number]>, by?: number) {
+    const ship = this.ships.find((s) => s.id === id);
+    if (!ship) return;
+    const blown = ship.apply(sw, hp);
+    if (blown.length) this.hud.toast(`Brecha en el casco: ${blown.map((i) => ship.sim.def.panels[i].id).join(', ')}`);
+    if (sw?.caution === 1 && !blown.length) this.hud.toast('Alarma general activada');
+    void by;
+  }
+
+  /** Automation: operate a ship control by id (e.g. 'ck.main/ramp'), through the normal path. */
+  shipControl(id: string, ship = 0) {
+    const s = this.ships[ship];
+    const c = s?.sim.def.controls.find((x) => x.id === id);
+    if (!s || !c) throw new Error(`no control ${id}`);
+    const reason = s.sim.blocked(c);
+    if (reason) return reason;
+    if (this.offline) this.localInteract(s.id, c.index);
+    else this.net.sendInteract(s.id, c.index);
+    return null;
+  }
+
+  /** Automation (offline): a rocket blast at a world point, as if the server confirmed it. */
+  blast(p: THREE.Vector3) {
+    const v: Vec3 = [round(p.x, 2), round(p.y, 2), round(p.z, 2)];
+    this.onExplode(this.welcome.id, v, p.y - this.terrain.height(p.x, p.z) < 1.2 ? { x: v[0], z: v[2], r: 2.4, d: 1 } : undefined);
   }
 
   /** Advance `frames` fixed steps; renders only the last one unless `renderAll`. */
@@ -249,7 +388,7 @@ export class Game {
 
   /** Automation hook (tests / screenshots). */
   get debug() {
-    return { input: this.input, controller: this.ctl, rig: this.rig, camera: this.camera, remotes: this.remotes, game: this };
+    return { input: this.input, controller: this.ctl, rig: this.rig, camera: this.camera, remotes: this.remotes, ships: this.ships, interaction: this.interaction, scene: this.scene, game: this };
   }
 
   private async warmUp(spawn: THREE.Vector3) {
@@ -297,14 +436,23 @@ export class Game {
     this.remotes.get(id)?.astronaut.applyRecoil(LAUNCHER.recoil);
   }
 
-  private onExplode(id: number, p: Vec3, edit: TerrainEdit) {
+  private onExplode(id: number, p: Vec3, edit?: TerrainEdit) {
     const at = new THREE.Vector3(...p);
-    this.terrain.edits.push(edit);
-    this.terrainSys.invalidate(edit.x, edit.z, edit.r);
-    this.physics.invalidate(edit.x, edit.z, edit.r);
-    this.rocks.invalidate(edit.x, edit.z, edit.r);
+    if (edit) {
+      this.terrain.edits.push(edit);
+      this.terrainSys.invalidate(edit.x, edit.z, edit.r);
+      this.physics.invalidate(edit.x, edit.z, edit.r);
+      this.rocks.invalidate(edit.x, edit.z, edit.r);
+    }
     this.rockets.explode(id, at);
-    if (this.physics.readyAt(at.x, at.z)) this.debris.burst(at, 8 + Math.floor(Math.random() * 6));
+    if (edit && this.physics.readyAt(at.x, at.z)) this.debris.burst(at, 8 + Math.floor(Math.random() * 6));
+    // offline: we are the ship authority too
+    if (this.offline) {
+      for (const [sid, sim] of this.shipAuthority) {
+        const r = sim.explode(p);
+        if (r.hp.length) this.onShip(sid, Object.keys(r.sw).length ? r.sw : undefined, r.hp, id);
+      }
+    }
     // blast wave: push me away (the server decides damage)
     const c = this.ctl.position.clone().add(new THREE.Vector3(0, 0.9, 0));
     const dist = c.distanceTo(at);
@@ -419,7 +567,11 @@ export class Game {
       this.me.setArmed(!this.me.isArmed);
       this.hud.toast(this.me.isArmed ? 'Lanzacohetes en mano' : 'Lanzacohetes a la espalda');
     }
-    if (this.fireQueued || input.consume('KeyF')) this.tryFire();
+    // click: a ship control under the crosshair takes it, otherwise it fires
+    const now = performance.now() / 1000;
+    if (this.fireQueued && !this.interaction.use(now)) this.tryFire();
+    if (input.consume('KeyF')) this.tryFire();
+    if (input.consume('KeyE')) this.interaction.use(now);
     this.fireQueued = false;
     this.me.setLamps(this.lamps);
     this.ctl.look(input, this.rig.mode === 'third' && !this.debugOrbit ? this.rig : undefined);
@@ -482,7 +634,7 @@ export class Game {
     for (const hit of this.pendingHits) {
       const p: Vec3 = [round(hit.x, 2), round(hit.y, 2), round(hit.z, 2)];
       // offline: act as our own server (crater, no damage bookkeeping)
-      if (this.offline) this.onExplode(this.welcome.id, p, { x: p[0], z: p[2], r: 2.4, d: 1 });
+      if (this.offline) this.onExplode(this.welcome.id, p, hit.y - this.terrain.height(hit.x, hit.z) < 1.2 ? { x: p[0], z: p[2], r: 2.4, d: 1 } : undefined);
       else this.net.sendHit(p);
     }
     this.pendingHits.length = 0;
@@ -491,7 +643,14 @@ export class Game {
     this.particles.update(dt);
 
     // --- camera & world streaming -----------------------------------------------------------------
-    this.rig.update(dt, this.ctl, this.me);
+    this.rig.update(dt, this.ctl, this.me, (a, b) => {
+      let best: number | null = null;
+      for (const ship of this.ships) {
+        const t = ship.occlude(a, b);
+        if (t !== null && (best === null || t < best)) best = t;
+      }
+      return best;
+    });
     if (this.inspectCam) {
       const [x, z, yaw, pitch, hgt = 1.8] = this.inspectCam;
       this.camera.position.set(x, this.terrain.height(x, z) + hgt, z);
@@ -515,6 +674,7 @@ export class Game {
       this.camera.updateMatrixWorld();
     }
     this.me.setEyeClip(this.rig.mode === 'first' ? this.camera.position : null);
+    this.systems.run('frame', dt);
     this.terrainSys.update(this.camera.position, new THREE.Frustum());
     this.rocks.update(this.ctl.position);
     this.sky.update(this.camera, (performance.now() - this.startTime) / 1000 + 36000);
@@ -524,6 +684,7 @@ export class Game {
     const markers = [
       markerTo(this.ctl.position, new THREE.Vector3(0, 0, 0), 'Base', '#9fd3ff'),
       markerTo(this.ctl.position, new THREE.Vector3(LANDMARK.x, 0, LANDMARK.z), 'Cráter', '#e8d49c'),
+      ...this.ships.map((s) => markerTo(this.ctl.position, s.position, s.sim.def.name, '#4fd8f0')),
     ];
     for (const r of this.remotes.values()) {
       const color = cssColor(SUIT_STRIPES[r.info.variant % SUIT_STRIPES.length]);
@@ -563,7 +724,7 @@ export class Game {
       'terrain jobs': this.terrainSys.pendingJobs,
       'rigid bodies': this.physics.world.bodies.len(),
       colliders: this.physics.world.colliders.len(),
-      debris: this.debris.count,
+      debris: this.debris.count + this.scrap.count,
       'player pos': `${this.ctl.position.x.toFixed(1)}, ${this.ctl.position.y.toFixed(1)}, ${this.ctl.position.z.toFixed(1)}`,
       grounded: this.ctl.grounded ? 'sí' : 'no',
       'rtt ms': Math.round(this.net.rtt),

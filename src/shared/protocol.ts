@@ -2,7 +2,9 @@
 // JSON over WebSocket for now; the message shapes are kept flat so a binary
 // encoding can replace JSON later without touching game code.
 
-export const PROTOCOL_VERSION = 2;
+import type { ShipSnapshot } from './ship/sim.js';
+
+export const PROTOCOL_VERSION = 3;
 
 /** Suit stripe colour / crew role. 0 = commander (red stripes), 1 = crew (plain), ... */
 export type SuitVariant = number;
@@ -44,7 +46,11 @@ export type ClientMessage =
   /** Rocket launched (origin, direction). */
   | { type: 'fire'; o: Vec3; d: Vec3 }
   /** Shooter-reported impact point of its rocket. */
-  | { type: 'hit'; p: Vec3 };
+  | { type: 'hit'; p: Vec3 }
+  /** Operate a ship control (index into the ship definition's controls). */
+  | { type: 'interact'; ship: number; ctl: number }
+  /** Repair tool on a panel; sent ~10 times per second while held. */
+  | { type: 'repair'; ship: number; panel: number };
 
 export type Vec3 = [number, number, number];
 
@@ -69,6 +75,7 @@ export type ServerMessage =
       serverTime: number;
       edits: TerrainEdit[];
       health: Array<{ id: number; hp: number }>;
+      ships: ShipSnapshot[];
     }
   | { type: 'reject'; reason: string }
   | { type: 'join'; player: PlayerInfo }
@@ -77,7 +84,12 @@ export type ServerMessage =
   | { type: 'snapshot'; t: number; states: Array<{ id: number; t: number; s: PlayerState }> }
   | { type: 'pong'; t: number; serverTime: number }
   | { type: 'fire'; id: number; o: Vec3; d: Vec3 }
-  | { type: 'explode'; id: number; p: Vec3; edit: TerrainEdit }
+  /** Explosion; `edit` is the crater when it went off near the ground. */
+  | { type: 'explode'; id: number; p: Vec3; edit?: TerrainEdit }
+  /** Ship state change: switches and/or panel integrity [index, hp]; `by` = who caused it. */
+  | { type: 'ship'; ship: number; sw?: Record<string, number>; hp?: Array<[number, number]>; by?: number }
+  /** A control request the server refused (the client normally predicts this itself). */
+  | { type: 'shipDenied'; ship: number; ctl: number; reason: string }
   /** Health change; `by` = attacker id when damaged by someone. */
   | { type: 'health'; id: number; hp: number; by?: number; dead?: boolean }
   | { type: 'respawn'; id: number; spawn: Vec3 };

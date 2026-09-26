@@ -82,6 +82,19 @@ html, body { margin: 0; height: 100%; background: #000; overflow: hidden; color:
 
 .hud-crosshair { position: absolute; left: 50%; top: 50%; width: 4px; height: 4px; margin: -2px 0 0 -2px; border-radius: 50%; background: rgba(255, 255, 255, 0.75); box-shadow: 0 0 4px rgba(0, 0, 0, 0.8); }
 
+.hud-prompt { position: absolute; left: 50%; top: calc(50% + 22px); transform: translateX(-50%); display: grid; justify-items: center; gap: 3px; min-width: 220px;
+  padding: 7px 12px 8px; border-radius: 6px; background: rgba(4, 10, 16, 0.55); border: 1px solid rgba(79, 216, 240, 0.28); text-align: center; }
+.hud-prompt b { font-size: 12px; font-weight: 600; letter-spacing: 0.06em; color: #e8f6ff; }
+.hud-prompt span { font-size: 11px; letter-spacing: 0.14em; color: var(--hud-dim); }
+.hud-prompt span.on { color: #5cf29a; }
+.hud-prompt span.warn { color: #ffc04a; }
+.hud-prompt span.bad { color: #ff7a6a; }
+.hud-prompt i { display: block; width: 180px; height: 4px; background: rgba(200, 220, 255, 0.14); border-radius: 2px; overflow: hidden; }
+.hud-prompt em { display: block; height: 100%; background: #5cf29a; }
+.hud-prompt em.warn { background: #ffc04a; }
+.hud-prompt em.bad { background: #ff7a6a; }
+.hud-prompt small { font-size: 10px; letter-spacing: 0.12em; color: #4fd8f0; }
+.hud-prompt small.bad { color: #ff8a7a; }
 .hud-help { position: absolute; left: 28px; bottom: 28px; display: grid; gap: 4px; font-size: 11px; color: var(--hud-dim); }
 .hud-help div { display: flex; gap: 10px; align-items: center; }
 .hud-help kbd { min-width: 64px; font: 600 10px/1 var(--mono); color: var(--hud); padding: 4px 6px; border: 1px solid var(--hud-line); border-radius: 4px; text-align: center; background: rgba(10, 16, 28, 0.4); }

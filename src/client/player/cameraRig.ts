@@ -31,7 +31,8 @@ export class CameraRig {
     this.initialized = false;
   }
 
-  update(dt: number, ctl: PlayerController, astronaut: Astronaut) {
+  /** Third person: `occlude(from, to)` returns the distance to the first solid surface (ship hulls). */
+  update(dt: number, ctl: PlayerController, astronaut: Astronaut, occlude?: (from: THREE.Vector3, to: THREE.Vector3) => number | null) {
     const cam = this.camera;
     astronaut.eyePosition(this.eye);
     if (!this.initialized) {
@@ -58,6 +59,10 @@ export class CameraRig {
       const desired = target.clone().addScaledVector(back, this.zoom).addScaledVector(right, 0.55).add(new THREE.Vector3(0, 0.25, 0));
       const ground = this.terrain.height(desired.x, desired.z) + 0.4;
       if (desired.y < ground) desired.y = ground;
+      // don't look through walls: pull in in front of the first surface
+      const pivot = target.clone().addScaledVector(right, 0.2);
+      const hit = occlude?.(pivot, desired);
+      if (hit !== null && hit !== undefined) desired.lerpVectors(pivot, desired, Math.max(0.05, (hit - 0.25) / pivot.distanceTo(desired)));
       if (!this.initialized) this.thirdPos.copy(desired);
       this.thirdPos.lerp(desired, Math.min(1, dt * 12));
       cam.position.copy(this.thirdPos);

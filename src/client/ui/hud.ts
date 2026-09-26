@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import type { PromptInfo } from '../ship/interaction';
 
 export interface HudData {
   heading: number; // radians, 0 = north
@@ -36,6 +37,8 @@ export class Hud {
   private vitals: HTMLDivElement;
   private deathScreen: HTMLDivElement;
   private hitFlash: HTMLDivElement;
+  private prompt: HTMLDivElement;
+  private promptKey = '';
 
   constructor(parent: HTMLElement) {
     this.root = el('div', 'hud', parent);
@@ -47,13 +50,15 @@ export class Hud {
     this.telemetry = el('div', 'hud-telemetry', this.root);
     this.net = el('div', 'hud-net', this.root);
     el('div', 'hud-crosshair', this.root);
+    this.prompt = el('div', 'hud-prompt hidden', this.root);
     this.help = el('div', 'hud-help', this.root);
     this.help.innerHTML = [
       ['W A S D', 'moverse'],
       ['Mayús', 'correr (trote lunar)'],
       ['Espacio', 'saltar'],
       ['C / Ctrl', 'agacharse'],
-      ['Clic izq.', 'disparar cohete'],
+      ['Clic izq.', 'disparar · pulsar botón'],
+      ['E', 'accionar · mantener: reparar'],
       ['X / 1', 'sacar / guardar arma'],
       ['Espacio (aire)', 'jetpack'],
       ['L', 'luces del casco'],
@@ -77,6 +82,17 @@ export class Hud {
   damage(amount: number) {
     this.hitFlash.style.opacity = String(Math.min(0.85, 0.25 + amount / 80));
     setTimeout(() => (this.hitFlash.style.opacity = '0'), 120);
+  }
+
+  /** What the crosshair is on (ship control or panel), or null. */
+  setPrompt(p: PromptInfo | null) {
+    const key = p ? `${p.title}|${p.state}|${p.tone}|${p.hint}|${p.hintTone}|${p.bar === undefined ? '' : Math.round(p.bar * 50)}` : '';
+    if (key === this.promptKey) return;
+    this.promptKey = key;
+    this.prompt.classList.toggle('hidden', !p);
+    if (!p) return;
+    const bar = p.bar === undefined ? '' : `<i><em class="${p.tone}" style="width:${Math.round(Math.max(0, Math.min(1, p.bar)) * 100)}%"></em></i>`;
+    this.prompt.innerHTML = `<b>${escapeHtml(p.title)}</b><span class="${p.tone}">${escapeHtml(p.state)}</span>${bar}<small class="${p.hintTone ?? ''}">${escapeHtml(p.hint)}</small>`;
   }
 
   toggleHelp() {

@@ -5,6 +5,7 @@
 // field (hash-placed, size–frequency like real maria) + one landmark crater. The landing
 // site around the origin is gently flattened (future base).
 
+import { CLEARINGS } from './constants.js';
 import type { TerrainEdit } from './protocol.js';
 import { CellRandom, Simplex2, clamp, smax, smin, smoothstep } from './noise.js';
 
@@ -241,6 +242,7 @@ export function rocksInTile(terrain: LunarTerrain, x0: number, z0: number, size:
         if (s < minSize) continue;
         const dLanding = Math.hypot(px, pz);
         if (dLanding < 12 && s > 0.2) continue; // keep the spawn walkable
+        if (s > 0.06 && CLEARINGS.some((c) => (px - c.x) ** 2 + (pz - c.z) ** 2 < c.r * c.r)) continue; // landing pads
         out.push({ x: px, z: pz, size: s, rot: rnd.next() * Math.PI * 2, variant: Math.floor(rnd.next() * ROCK_VARIANTS), jitter: rnd.next() });
       }
     }

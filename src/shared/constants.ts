@@ -35,3 +35,9 @@ export const MOON: BodyDef = {
 /** Suit stripe colours by variant (linear-ish sRGB hex). */
 export const SUIT_STRIPES = [0xb3261e, 0xe8e6e1, 0x1f4fa8, 0xd9a21b];
 export const SUIT_VARIANT_NAMES = ['Comandante', 'Especialista', 'Piloto', 'Ingeniero'];
+
+/** Ships parked in the world at start: ship-space origin (deck centre) position and heading. */
+export const SHIP_SPAWNS = [{ id: 1, def: 'hauler', x: 3.6, z: -23.7, yaw: -0.5 }];
+
+/** Circles kept free of boulders (landing pads). */
+export const CLEARINGS = SHIP_SPAWNS.map((s) => ({ x: s.x, z: s.z, r: 14 }));

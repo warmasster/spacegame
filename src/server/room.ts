@@ -1,5 +1,7 @@
 import type { WebSocket } from 'ws';
-import { MAX_PLAYERS, SERVER_SNAPSHOT_RATE, WORLD_SEED } from '../shared/constants.js';
+import { MAX_PLAYERS, SERVER_SNAPSHOT_RATE, SHIP_SPAWNS, WORLD_SEED } from '../shared/constants.js';
+import { placeShip, REACH, REPAIR_RATE, SHIP_DEFS, ShipSim } from '../shared/ship/sim.js';
+import { LunarTerrain } from '../shared/terrain.js';
 import {
   PROTOCOL_VERSION,
   type ClientMessage,
@@ -15,6 +17,8 @@ const BLAST_RADIUS = 6; // m, damage falls off linearly
 const CRATER_RADIUS = 2.4;
 const RESPAWN_MS = 4000;
 const MAX_EDITS = 4000;
+/** Explosions higher than this above the ground (m) leave no crater (e.g. on a ship's hull). */
+const CRATER_MAX_HEIGHT = 1.2;
 
 interface Member {
   info: PlayerInfo;
@@ -27,6 +31,7 @@ interface Member {
   /** Rockets in flight (fire timestamps) — a hit is only accepted for a fired rocket. */
   rockets: number[];
   lastFire: number;
+  lastRepair: number;
 }
 
 /** Spawn points (x, z) around the landing site; y is resolved by the client on the terrain. */
@@ -48,9 +53,19 @@ export class Room {
   private nextId = 1;
   private snapshotTimer: NodeJS.Timeout;
   private edits: TerrainEdit[] = [];
+  /** Same deterministic terrain the clients use (+ the craters), to decide where craters form. */
+  private terrain = new LunarTerrain(WORLD_SEED);
+  private ships: ShipSim[];
 
   constructor(private readonly log: (msg: string) => void) {
     this.snapshotTimer = setInterval(() => this.broadcastSnapshot(), 1000 / SERVER_SNAPSHOT_RATE);
+    // ships sit on the pristine surface, so placement never depends on later craters
+    const base = new LunarTerrain(WORLD_SEED);
+    this.ships = SHIP_SPAWNS.map((s) => {
+      const def = SHIP_DEFS[s.def];
+      return new ShipSim(s.id, def, placeShip(def, s.x, s.z, s.yaw, base), base);
+    });
+    this.terrain.edits = this.edits;
   }
 
   dispose() {
@@ -72,6 +87,7 @@ export class Room {
       dead: false,
       rockets: [],
       lastFire: 0,
+      lastRepair: 0,
     };
     this.members.set(socket, member);
 
@@ -117,6 +133,10 @@ export class Room {
         return this.fire(member, msg.o, msg.d);
       case 'hit':
         return this.hit(member, msg.p);
+      case 'interact':
+        return this.interact(member, msg.ship, msg.ctl);
+      case 'repair':
+        return this.repair(member, msg.ship, msg.panel);
     }
   }
 
@@ -150,6 +170,7 @@ export class Room {
       serverTime: now(),
       edits: this.edits,
       health: this.others(member).map((m) => ({ id: m.info.id, hp: m.hp })),
+      ships: this.ships.map((sh) => sh.snapshot()),
     });
     for (const other of this.others(member)) send(other.socket, { type: 'join', player: member.info });
     this.log(`+ ${member.info.name} (#${member.info.id}) — ${this.playerCount}/${MAX_PLAYERS}`);
@@ -175,10 +196,20 @@ export class Room {
     const t = now();
     if (m.info.id === 0 || !isFiniteVec(p) || !m.rockets.length) return;
     m.rockets.shift();
-    const edit: TerrainEdit = { x: round2(p[0]), z: round2(p[2]), r: CRATER_RADIUS, d: 1 };
-    this.edits.push(edit);
-    if (this.edits.length > MAX_EDITS) this.edits.shift();
+    let edit: TerrainEdit | undefined;
+    if (p[1] - this.terrain.height(p[0], p[2]) < CRATER_MAX_HEIGHT) {
+      edit = { x: round2(p[0]), z: round2(p[2]), r: CRATER_RADIUS, d: 1 };
+      this.edits.push(edit);
+      if (this.edits.length > MAX_EDITS) this.edits.shift();
+    }
     this.broadcast({ type: 'explode', id: m.info.id, p, edit });
+    for (const ship of this.ships) {
+      const r = ship.explode(p);
+      if (!r.hp.length) continue;
+      this.broadcast({ type: 'ship', ship: ship.id, hp: r.hp, sw: Object.keys(r.sw).length ? r.sw : undefined, by: m.info.id });
+      const holes = r.hp.filter(([, hp]) => hp <= 0).map(([i]) => ship.def.panels[i].id);
+      if (holes.length) this.log(`✸ ${ship.def.name}: brecha ${holes.join(', ')} ← ${m.info.name}`);
+    }
     for (const target of this.players()) {
       if (target.dead || !target.state) continue;
       const [x, y, z] = target.state.p;
@@ -197,6 +228,40 @@ export class Room {
       this.broadcast({ type: 'health', id: target.info.id, hp: target.hp, by: m.info.id, dead });
     }
     void t;
+  }
+
+  /** Eye position of a member (feet + 1.6 m), or null before its first state. */
+  private eye(m: Member): Vec3 | null {
+    return m.state ? [m.state.p[0], m.state.p[1] + 1.6, m.state.p[2]] : null;
+  }
+
+  private interact(m: Member, shipId: unknown, ctl: unknown) {
+    const ship = this.ships.find((s) => s.id === shipId);
+    const eye = this.eye(m);
+    if (m.info.id === 0 || m.dead || !ship || !eye || !Number.isInteger(ctl) || !ship.def.controls[ctl as number]) return;
+    const i = ctl as number;
+    // generous: the owner's position is ~100 ms old and it may be moving
+    if (dist(eye, ship.controlWorld(i)) > REACH.control + 1.2) return;
+    const r = ship.interact(i);
+    if ('reason' in r) {
+      send(m.socket, { type: 'shipDenied', ship: ship.id, ctl: i, reason: r.reason });
+      return;
+    }
+    if (Object.keys(r.changed).length) this.broadcast({ type: 'ship', ship: ship.id, sw: r.changed, by: m.info.id });
+  }
+
+  private repair(m: Member, shipId: unknown, panel: unknown) {
+    const ship = this.ships.find((s) => s.id === shipId);
+    const eye = this.eye(m);
+    if (m.info.id === 0 || m.dead || !ship || !eye || !Number.isInteger(panel) || !ship.def.panels[panel as number]) return;
+    const i = panel as number;
+    const t = now();
+    // the tool works at a fixed rate whatever the message rate: credit the time since the last tick
+    const dt = Math.min(0.25, (t - m.lastRepair) / 1000);
+    m.lastRepair = t;
+    if (dist(eye, ship.panelWorld(i)) > REACH.repair + 2) return;
+    const hp = ship.repair(i, REPAIR_RATE * dt);
+    if (hp !== null) this.broadcast({ type: 'ship', ship: ship.id, hp: [[i, hp]], by: m.info.id });
   }
 
   private respawn(m: Member) {
@@ -243,6 +308,7 @@ function sanitizeName(name: unknown, variant: number) {
 }
 
 const round2 = (v: number) => Math.round(v * 100) / 100;
+const dist = (a: Vec3, b: Vec3) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
 
 function isFiniteVec(v: unknown): v is [number, number, number] {
   return Array.isArray(v) && v.length === 3 && v.every((n) => typeof n === 'number' && Number.isFinite(n));

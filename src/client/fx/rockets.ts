@@ -98,7 +98,7 @@ export class Rockets {
    * Advance rockets. `targets` = other astronauts (centre positions); returns impacts of
    * rockets owned by `me` that must be reported to the server.
    */
-  update(dt: number, me: number, targets: Array<{ id: number; pos: THREE.Vector3 }>): THREE.Vector3[] {
+  update(dt: number, me: number, targets: Array<{ id: number; pos: THREE.Vector3 }>, obstacle?: (a: THREE.Vector3, b: THREE.Vector3) => THREE.Vector3 | null): THREE.Vector3[] {
     const impacts: THREE.Vector3[] = [];
     this.flash = Math.max(0, this.flash - dt * 5);
     this.light.intensity = this.flash * this.flash * 400;
@@ -110,7 +110,15 @@ export class Rockets {
       for (let s = 0; s < steps && !hit; s++) {
         const h = dt / steps;
         r.vel.y -= GRAVITY * h;
+        const from = this.tmp.copy(r.pos);
         r.pos.addScaledVector(r.vel, h);
+        // ships and other solid structures (the rocket is fused to hit anything it sweeps through)
+        const blocked = obstacle?.(from, r.pos);
+        if (blocked) {
+          r.pos.copy(blocked);
+          hit = blocked.clone();
+          break;
+        }
         if (r.pos.y <= this.terrain.height(r.pos.x, r.pos.z)) hit = r.pos.clone();
         for (const t of targets) {
           if (r.age < 0.12 && t.id === r.owner) continue;

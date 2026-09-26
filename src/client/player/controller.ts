@@ -8,6 +8,9 @@ import type { Input } from './input';
 const RADIUS = 0.34;
 const HALF_HEIGHT = 0.56;
 const CROUCH_HALF_HEIGHT = 0.3;
+const MAX_CLIMB = THREE.MathUtils.degToRad(36);
+/** Contact normals steeper than this (y component) are walls, not ground. */
+const WALKABLE_NY = Math.cos(MAX_CLIMB) - 0.01;
 
 export const MOVE = {
   walk: 1.55,
@@ -67,7 +70,7 @@ export class PlayerController {
     );
     this.kcc = world.createCharacterController(0.03);
     this.kcc.setUp({ x: 0, y: 1, z: 0 });
-    this.kcc.setMaxSlopeClimbAngle(THREE.MathUtils.degToRad(36));
+    this.kcc.setMaxSlopeClimbAngle(MAX_CLIMB);
     this.kcc.setMinSlopeSlideAngle(THREE.MathUtils.degToRad(42));
     this.kcc.enableAutostep(0.32, 0.15, false);
     this.kcc.enableSnapToGround(0.35);
@@ -171,12 +174,21 @@ export class PlayerController {
 
     if (this.grounded && v.y < 0) v.y = 0;
     if (!this.grounded && desired.y > 0 && m.y < desired.y * 0.5) v.y = Math.min(v.y, 0); // bumped head
-    // blocked horizontally → lose that velocity
-    if (dt > 0) {
-      const hx = m.x / dt;
-      const hz = m.z / dt;
-      if (Math.abs(hx) < Math.abs(v.x) - 0.05) v.x = hx;
-      if (Math.abs(hz) < Math.abs(v.z) - 0.05) v.z = hz;
+    // blocked by a wall → lose the velocity going into it (keep the slide along it). Walkable
+    // slopes (a ship's ramp) keep it: clamping to the achieved motion compounded every step on a
+    // slope, and clamping per world axis skewed the heading on slopes not aligned with X/Z.
+    for (let i = 0; i < this.kcc.numComputedCollisions(); i++) {
+      const n = this.kcc.computedCollision(i)?.normal1;
+      if (!n || n.y > WALKABLE_NY) continue;
+      const hl = Math.hypot(n.x, n.z);
+      if (hl < 1e-4) continue;
+      const nx = n.x / hl;
+      const nz = n.z / hl;
+      const into = v.x * nx + v.z * nz;
+      if (into < 0) {
+        v.x -= into * nx;
+        v.z -= into * nz;
+      }
     }
     this.airTime = this.grounded ? 0 : this.airTime + dt;
     void wasGrounded;
