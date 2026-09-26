@@ -420,9 +420,9 @@ export class Game {
     this.onExplode(this.welcome.id, v, p.y - this.terrain.height(p.x, p.z) < 1.2 ? { x: v[0], z: v[2], r: 2.4, d: 1 } : undefined);
   }
 
-  /** Advance `frames` fixed steps; renders only the last one unless `renderAll`. */
-  step(frames = 1, dt = 1 / 30) {
-    for (let i = 0; i < frames; i++) this.tick(dt, i === frames - 1);
+  /** Advance `frames` frames of `dt`; renders only the last one (none with render = false). */
+  step(frames = 1, dt = 1 / 30, render = true) {
+    for (let i = 0; i < frames; i++) this.tick(dt, render && i === frames - 1);
   }
 
   get pointerLocked() {

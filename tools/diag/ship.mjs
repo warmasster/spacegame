@@ -214,6 +214,30 @@ if (mode === 'checks' || mode === 'all') {
   check('open ramp lets you in', m.rampOpen);
 
   P.step('puertas y rampa');
+  // before anything blows up: craters or thrown crates would change the ground at the ramp
+  // --- walk up the ramp into the cargo bay ------------------------------------------------------------
+  const wk = await page.evaluate(() => {
+    const g = window.game;
+    const s = g.ships[0];
+    const c = g.debug.controller;
+    window.diag.stand([0, 0, 9.4], [0, 1.6, 0]);
+    const p0 = c.position.clone();
+    c.teleport(p0.setY(g.debug.game.terrain.height(p0.x, p0.z) + 0.05));
+    g.step(10, 1 / 30, false);
+    g.debug.input.setKey('KeyW', true);
+    let maxLocalY = -9;
+    for (let i = 0; i < 36; i++) {
+      g.step(5, 1 / 30, false);
+      maxLocalY = Math.max(maxLocalY, window.diag.local(c.position).y);
+    }
+    g.debug.input.setKey('KeyW', false);
+    g.step(20, 1 / 30, false);
+    const l = window.diag.local(c.position);
+    return { x: l.x, y: l.y, z: l.z, zone: s.zoneAt(c.position.clone().setY(c.position.y + 1))?.id ?? 'fuera', grounded: c.grounded };
+  });
+  check('walks up the ramp onto the deck', Math.abs(wk.y) < 0.12 && wk.z < 5.4, `local ${wk.x.toFixed(2)}, ${wk.y.toFixed(2)}, ${wk.z.toFixed(2)} · ${wk.zone}`);
+  check('ends inside the cargo bay', wk.zone === 'cargo' || wk.zone === 'corridor');
+  P.step('subir la rampa andando');
   // --- damage: blasts blow a wall panel out; its collider goes; conduit cut kills its bus ------------
   const d = await page.evaluate(() => {
     const g = window.game;
@@ -398,29 +422,6 @@ if (mode === 'checks' || mode === 'all') {
   check('right mouse zooms in', zm.held < 30 && zm.released > 65, `fov ${zm.held.toFixed(1)} → ${zm.released.toFixed(1)}`);
 
   P.step('zoom');
-  // --- walk up the ramp into the cargo bay ------------------------------------------------------------
-  const wk = await page.evaluate(() => {
-    const g = window.game;
-    const s = g.ships[0];
-    const c = g.debug.controller;
-    window.diag.stand([0, 0, 9.4], [0, 1.6, 0]);
-    const p0 = c.position.clone();
-    c.teleport(p0.setY(g.debug.game.terrain.height(p0.x, p0.z) + 0.05));
-    g.step(10, 1 / 30, false);
-    g.debug.input.setKey('KeyW', true);
-    let maxLocalY = -9;
-    for (let i = 0; i < 180; i++) {
-      g.step(1, 1 / 30, false);
-      maxLocalY = Math.max(maxLocalY, window.diag.local(c.position).y);
-    }
-    g.debug.input.setKey('KeyW', false);
-    g.step(20, 1 / 30, false);
-    const l = window.diag.local(c.position);
-    return { x: l.x, y: l.y, z: l.z, zone: s.zoneAt(c.position.clone().setY(c.position.y + 1))?.id ?? 'fuera', grounded: c.grounded };
-  });
-  check('walks up the ramp onto the deck', Math.abs(wk.y) < 0.12 && wk.z < 5.4, `local ${wk.x.toFixed(2)}, ${wk.y.toFixed(2)}, ${wk.z.toFixed(2)} · ${wk.zone}`);
-  check('ends inside the cargo bay', wk.zone === 'cargo' || wk.zone === 'corridor');
-  P.step('subir la rampa andando');
 }
 
 if (mode === 'views' || mode === 'all') {
