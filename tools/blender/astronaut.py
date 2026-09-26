@@ -53,7 +53,7 @@ for side, sx in (('L', 1), ('R', -1)):
         f'toe.{side}': ((0.138 * sx, -0.10, 0.045), (0.14 * sx, -0.17, 0.04), f'foot.{side}', True),
     })
 
-HELMET_C = Vector((0.0, -0.005, 1.672))   # centre of the helmet sphere
+HELMET_C = Vector((0.0, -0.005, 1.622))   # centre of the helmet sphere
 HELMET_R = 0.172
 
 

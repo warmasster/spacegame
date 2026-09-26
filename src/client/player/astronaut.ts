@@ -13,7 +13,7 @@ const THIGH = 0.4;
 const SHIN = 0.397;
 const HIP_Y = 0.92;
 const ANKLE_Y = 0.125;
-const EYE = new THREE.Vector3(0, 1.7, 0.085);
+const EYE = new THREE.Vector3(0, 1.65, 0.085);
 
 /** Shared GLB template + material upgrades. */
 export class AstronautAsset {
@@ -247,10 +247,10 @@ export class Astronaut {
     const dark = new THREE.MeshStandardMaterial({ color: 0x151618, roughness: 0.6, metalness: 0.3 });
     void dark;
     const inner = new THREE.Mesh(
-      new THREE.SphereGeometry(0.166, 40, 20, 0, Math.PI * 2, 0, Math.acos((1.556 - 1.672) / 0.166)),
+      new THREE.SphereGeometry(0.166, 40, 20, 0, Math.PI * 2, 0, Math.acos((1.506 - 1.622) / 0.166)),
       new THREE.MeshStandardMaterial({ color: 0x0b0b0c, roughness: 0.8, side: THREE.DoubleSide }),
     );
-    inner.position.set(0, 1.672, 0.005);
+    inner.position.set(0, 1.622, 0.005);
     for (const m of [inner]) {
       m.castShadow = true;
       m.applyMatrix4(inv);
