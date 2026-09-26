@@ -176,7 +176,7 @@ export class Astronaut {
   private weaponInv: THREE.Matrix4 | null = null;
   private weaponInvQ: THREE.Quaternion | null = null;
   private armed = false;
-  private isLocal = false;
+  isLocal = false;
   private lookPitch = 0;
   private armBlend = 0;
   private weaponDef: WeaponDef | null = null;
