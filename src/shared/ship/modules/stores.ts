@@ -45,20 +45,20 @@ export class Stores implements ShipModule {
   }
 
   private take(st: Float64Array, list: Store[], kg: number) {
-    const have = list.filter((s) => this.sys.health(st, s.part) > 0 && st[s.kg] > 0);
-    const sum = have.reduce((a, s) => a + st[s.kg], 0);
+    let sum = 0;
+    for (const s of list) if (this.sys.health(st, s.part) > 0 && st[s.kg] > 0) sum += st[s.kg];
     if (sum <= 0) return 0;
     const out = Math.min(kg, sum);
-    for (const s of have) st[s.kg] -= out * (st[s.kg] / sum);
+    for (const s of list) if (this.sys.health(st, s.part) > 0 && st[s.kg] > 0) st[s.kg] -= out * (st[s.kg] / sum);
     return out;
   }
 
   private put(st: Float64Array, list: Store[], kg: number) {
-    const into = list.filter((s) => this.sys.health(st, s.part) > 0);
-    const room = into.reduce((a, s) => a + Math.max(0, s.cap - st[s.kg]), 0);
+    let room = 0;
+    for (const s of list) if (this.sys.health(st, s.part) > 0) room += Math.max(0, s.cap - st[s.kg]);
     if (room <= 0) return 0;
     const put = Math.min(kg, room);
-    for (const s of into) st[s.kg] += put * (Math.max(0, s.cap - st[s.kg]) / room);
+    for (const s of list) if (this.sys.health(st, s.part) > 0) st[s.kg] += put * (Math.max(0, s.cap - st[s.kg]) / room);
     return put;
   }
 
@@ -69,7 +69,8 @@ export class Stores implements ShipModule {
 
   step(t: Tick) {
     const { dt, st, sw, ctx } = t;
-    const aboard = ctx.crew.reduce((a, n) => a + n, 0);
+    let aboard = 0;
+    for (let i = 0; i < ctx.crew.length; i++) aboard += ctx.crew[i];
     st[this.iAboard] = aboard;
     const drunk = this.take(st, this.water, STORES.water * aboard * dt);
     st[this.iGrey] += drunk;
@@ -89,8 +90,12 @@ export class Stores implements ShipModule {
       const h = this.sys.health(st, s.part);
       if (h < 0.5 && st[s.kg] > 0) st[s.kg] = Math.max(0, st[s.kg] - (h <= 0 ? 3 : 0.2 * (1 - h / 0.5)) * dt);
     }
-    st[this.iWater] = this.water.reduce((a, s) => a + st[s.kg], 0);
-    st[this.iFood] = this.food.reduce((a, s) => a + st[s.kg], 0);
+    let water = 0;
+    for (const s of this.water) water += st[s.kg];
+    st[this.iWater] = water;
+    let food = 0;
+    for (const s of this.food) food += st[s.kg];
+    st[this.iFood] = food;
   }
 
   alerts(): AlertDef[] {
@@ -98,7 +103,18 @@ export class Stores implements ShipModule {
     if (this.water.length)
       out.push({ id: 'water', label: 'AGUA POTABLE BAJA', level: 1, lamp: 'AGUA', help: 'Queda menos del 15 % del agua. Enciende el reciclador (recupera casi toda el agua usada) y reposta agua en la base.', on: (st) => st[this.iWater] < st[this.iWaterCap] * 0.15 });
     if (this.recyclers.length)
-      out.push({ id: 'recycler', label: 'RECICLADOR DE AGUA PARADO', level: 1, lamp: 'AGUA', help: 'Se acumula agua gris y el reciclador no la procesa (apagado, sin energía o dañado). Sin él el agua potable dura diez veces menos.', on: (st, sw) => st[this.iGrey] > 0.5 && !this.recyclers.some((r) => this.running(st, sw, r)) });
+      out.push({
+        id: 'recycler',
+        label: 'RECICLADOR DE AGUA PARADO',
+        level: 1,
+        lamp: 'AGUA',
+        help: 'Se acumula agua gris y el reciclador no la procesa (apagado, sin energía o dañado). Sin él el agua potable dura diez veces menos.',
+        on: (st, sw) => {
+          if (st[this.iGrey] <= 0.5) return false;
+          for (const r of this.recyclers) if (this.running(st, sw, r)) return false;
+          return true;
+        },
+      });
     if (this.food.length)
       out.push({ id: 'food', label: 'VÍVERES BAJOS', level: 1, lamp: 'VÍVERES', help: 'Queda menos del 15 % de las raciones de la despensa. Planifica la vuelta o reabastece en la base.', on: (st) => st[this.iFood] < st[this.iFoodCap] * 0.15 });
     return out;

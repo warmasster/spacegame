@@ -5,7 +5,7 @@
 
 import { partKey, partTag, type PartDef } from '../def.js';
 import type { ShipSystems } from '../systems.js';
-import { partsOf, type ShipModule, type SystemFactory, type Tick } from './api.js';
+import { partsOf, type PowerSource, type ShipModule, type SystemFactory, type Tick } from './api.js';
 
 export const SOLAR = { kw: 3.5, stowedFrac: 0.12 };
 
@@ -16,6 +16,8 @@ export class SolarArray implements ShipModule {
   readonly k: typeof SOLAR;
   /** kW it can give right now (offered to the grid). */
   readonly iKw: number;
+  /** What it offers the grid (one object, refilled every tick). */
+  private offer: PowerSource;
 
   constructor(
     private sys: ShipSystems,
@@ -26,6 +28,7 @@ export class SolarArray implements ShipModule {
     this.deployKey = partKey(part, 'deploy', `${part.id}.deploy`);
     this.k = { ...SOLAR, ...part.p } as typeof SOLAR;
     this.iKw = sys.vars.define(`${this.tag}.kw`, 0.05);
+    this.offer = { id: this.tag, kw: 0, quality: 1, order: -1 };
   }
 
   /** Fraction of the rated output its position allows (0 → folded, 1 → deployed). */
@@ -37,7 +40,10 @@ export class SolarArray implements ShipModule {
   loads(t: Tick) {
     const kw = this.k.kw * this.exposure(t.st) * this.sys.health(t.st, this.part) * Math.max(0, Math.min(1, t.ctx.sun));
     t.st[this.iKw] = kw;
-    if (kw > 0.01) t.source({ id: this.tag, kw, quality: 1, order: -1 });
+    if (kw > 0.01) {
+      this.offer.kw = kw;
+      t.source(this.offer);
+    }
   }
 }
 

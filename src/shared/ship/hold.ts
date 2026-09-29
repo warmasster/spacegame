@@ -4,13 +4,13 @@
  * settle the helmet would scold you for the thing you just asked for.
  */
 export class ReasonHold {
-  private held = new Map<string, { reason: string; since: number }>();
-  private pinned = new Set<string>();
+  private held = new Map<string | number, { reason: string; since: number }>();
+  private pinned = new Set<string | number>();
 
   constructor(private readonly settle: number) {}
 
   /** Show this one immediately (the authority refused and the local mirror hadn't noticed yet). */
-  pin(id: string) {
+  pin(id: string | number) {
     this.pinned.add(id);
   }
 
@@ -18,10 +18,10 @@ export class ReasonHold {
    * The reason to act on. Null while it is still new, or when there is nothing to refuse.
    * A different reason starts the wait over.
    */
-  live(id: string, reason: string | null, now: number): string | null {
+  live(id: string | number, reason: string | null, now: number): string | null {
     if (!reason) {
-      this.held.delete(id);
-      this.pinned.delete(id);
+      if (this.held.size) this.held.delete(id);
+      if (this.pinned.size) this.pinned.delete(id);
       return null;
     }
     let h = this.held.get(id);

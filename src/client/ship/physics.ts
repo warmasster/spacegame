@@ -1,6 +1,7 @@
 import type RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
-import { doorAxis, SEAT_BOXES, nacellePylons, seatFrame } from '../../shared/ship/def';
+import { doorAxis, hatchPlate, keelModules, SEAT_BOXES, nacellePylons, seatFrame } from '../../shared/ship/def';
+import type { ShipPose } from '../../shared/ship/flight';
 import type { V3 } from '../../shared/ship/geom';
 import type { ShipSim } from '../../shared/ship/sim';
 import type { Physics } from '../world/physics';
@@ -15,39 +16,33 @@ const q = (e: THREE.Euler) => {
 };
 
 /**
- * Rapier side of a ship: one fixed body at the ship pose, a convex hull per solid panel (removed
- * when it is blown out, re-created when repaired), static props, and colliders that follow the
- * doors, the ramp and the canopy shutters.
+ * One copy of a ship's colliders, in ship space, on a body of some Rapier world: a convex hull per
+ * solid panel (removed when it is blown out, re-created when repaired), static props and machines,
+ * seats, consoles, and colliders that follow the doors, the ramp, the canopy shutters and the gear.
  */
-export class ShipPhysics {
-  private body: RAPIER.RigidBody;
+class ShipColliders {
   private panels: Array<RAPIER.Collider | null>;
-  private owners = new Map<number, Owner>();
+  readonly owners = new Map<number, Owner>();
   private doors = new Map<string, RAPIER.Collider[]>();
+  private hatches = new Map<string, RAPIER.Collider>();
   private ramp: RAPIER.Collider | null = null;
   private shutters: RAPIER.Collider[] = [];
   private mounted: Array<{ host: number; collider: RAPIER.Collider }> = [];
-  private R: typeof RAPIER;
-  private world: RAPIER.World;
+  private legs: Array<{ strut: RAPIER.Collider; pad: RAPIER.Collider; len: number }> = [];
 
   constructor(
-    physics: Physics,
+    private R: typeof RAPIER,
+    readonly world: RAPIER.World,
+    readonly body: RAPIER.RigidBody,
     private sim: ShipSim,
-    ground: (x: number, z: number) => number,
   ) {
-    const R = (this.R = physics.rapier);
-    const world = (this.world = physics.world);
-    // parked ships are fixed bodies at their pose; flight will make this kinematic (docs/SHIPS.md §7)
-    const pose = sim.pose;
-    this.body = world.createRigidBody(R.RigidBodyDesc.fixed().setTranslation(...pose.p).setRotation({ x: pose.q[0], y: pose.q[1], z: pose.q[2], w: pose.q[3] }));
-    const p = sim.place;
     this.panels = sim.def.panels.map(() => null);
     this.syncPanels();
 
     const def = sim.def;
     let seat = false;
     const solid = (d: RAPIER.ColliderDesc) => {
-      const c = world.createCollider(d.setFriction(0.8), this.body);
+      const c = world.createCollider(d.setFriction(0.8), body);
       this.owners.set(c.handle, { kind: 'solid', seat });
       return c;
     };
@@ -57,7 +52,7 @@ export class ShipPhysics {
       return solid(d);
     };
     const T = 0.1;
-    for (const m of def.modules) {
+    for (const m of keelModules(def.modules)) {
       const hw = m.profile[m.profile.length - 1][0] + T;
       const zc = (m.z0 + m.z1) / 2;
       const hz = (m.z1 - m.z0) / 2;
@@ -78,15 +73,11 @@ export class ShipPhysics {
         if (d) solid(d);
       }
     }
-    // gear
-    const m = new THREE.Matrix4().compose(new THREE.Vector3(p.x, p.y, p.z), new THREE.Quaternion().setFromEuler(new THREE.Euler(0, p.yaw, 0)), new THREE.Vector3(1, 1, 1));
-    const inv = m.clone().invert();
+    // gear: a strut from the hip and a foot pad, moved every step with the travel and the ground
     for (const leg of def.gear?.legs ?? []) {
-      const w = new THREE.Vector3(...leg).applyMatrix4(m);
-      const footY = new THREE.Vector3(w.x, ground(w.x, w.z), w.z).applyMatrix4(inv).y;
-      const hh = (-0.45 - footY) / 2;
-      if (hh > 0.05) solid(R.ColliderDesc.cylinder(hh, 0.12).setTranslation(leg[0], footY + hh, leg[2]));
-      solid(R.ColliderDesc.cylinder(0.065, 0.34).setTranslation(leg[0], footY + 0.065, leg[2]));
+      const strut = solid(R.ColliderDesc.cylinder(0.3, 0.1).setTranslation(leg[0], leg[1] - 0.3, leg[2]));
+      const pad = solid(R.ColliderDesc.cylinder(0.065, 0.34).setTranslation(leg[0], leg[1] - 0.6, leg[2]));
+      this.legs.push({ strut, pad, len: 0.6 });
     }
     seat = true;
     for (const st of def.seats) {
@@ -113,6 +104,10 @@ export class ShipPhysics {
       const leaves = [-1, 1].map(() => solid(R.ColliderDesc.cuboid(d.w / 4 + 0.01, d.h / 2, 0.025).setTranslation(d.c[0], d.c[1] + d.h / 2, d.c[2] + d.offset).setRotation(rot)));
       this.doors.set(d.key, leaves);
     }
+    for (const h of def.hatches) {
+      const b = hatchPlate(h, 0);
+      this.hatches.set(h.key, solid(R.ColliderDesc.cuboid(...b.half).setTranslation(...b.c)));
+    }
     const r = def.ramp;
     if (r) this.ramp = solid(R.ColliderDesc.cuboid(r.w / 2, r.length / 2, r.t / 2).setTranslation(r.hinge[0], r.hinge[1] + r.length / 2, r.hinge[2] + r.t / 2));
     for (const pl of def.shield?.plates ?? []) {
@@ -124,7 +119,6 @@ export class ShipPhysics {
     }
   }
 
-  /** Add / remove panel hulls to match the integrity state. Returns how many changed. */
   /** Consoles mounted on a panel that is blown out lose their collider with it. */
   private syncMounted() {
     for (const m of this.mounted) {
@@ -133,6 +127,7 @@ export class ShipPhysics {
     }
   }
 
+  /** Add / remove panel hulls to match the integrity state. Returns how many changed. */
   syncPanels() {
     let n = 0;
     for (const p of this.sim.def.panels) {
@@ -167,8 +162,8 @@ export class ShipPhysics {
     return !!this.panels[i];
   }
 
-  /** Follow the animated parts (fixed step). */
-  update(anim: ShipAnimState, rampPhi: number) {
+  /** Follow the animated parts (fixed step). `feet`: where each gear foot is (ship space). */
+  update(anim: ShipAnimState, rampPhi: number, feet: V3[]) {
     const def = this.sim.def;
     for (const d of def.doors) {
       const open = anim.movers[d.key] ?? 0;
@@ -178,6 +173,10 @@ export class ShipPhysics {
         const s = side * (d.w / 4 + open * (d.w / 2 - 0.03));
         c.setTranslationWrtParent({ x: d.c[0] + a[0] * s + d.n[0] * d.offset, y: d.c[1] + d.h / 2, z: d.c[2] + a[2] * s + d.n[2] * d.offset });
       });
+    }
+    for (const h of def.hatches) {
+      const b = hatchPlate(h, anim.movers[h.key] ?? 0);
+      this.hatches.get(h.key)!.setTranslationWrtParent({ x: b.c[0], y: b.c[1], z: b.c[2] });
     }
     const r = def.ramp;
     if (r && this.ramp) {
@@ -191,11 +190,23 @@ export class ShipPhysics {
     }
     const shut = !!def.shield && (anim.movers[def.shield.key] ?? 0) > 0.95;
     for (const c of this.shutters) if (c.isEnabled() !== shut) c.setEnabled(shut);
+    this.legs.forEach((leg, i) => {
+      const hip = def.gear!.legs[i];
+      const foot = feet[i];
+      if (!foot) return;
+      const len = Math.max(0.05, hip[1] - foot[1]);
+      if (Math.abs(len - leg.len) > 0.01) {
+        leg.strut.setShape(new this.R.Cylinder(len / 2, 0.1));
+        leg.len = len;
+      }
+      leg.strut.setTranslationWrtParent({ x: foot[0], y: (hip[1] + foot[1]) / 2, z: foot[2] });
+      leg.pad.setTranslationWrtParent({ x: foot[0], y: foot[1] + 0.065, z: foot[2] });
+    });
   }
 
-  /** Closest ship surface along a world ray (panel index or -1 for other parts). */
-  castRay(o: THREE.Vector3, d: THREE.Vector3, max: number, also?: (handle: number) => boolean, skipSeats = false): { t: number; panel: number } | null {
-    const ray = new this.R.Ray({ x: o.x, y: o.y, z: o.z }, { x: d.x, y: d.y, z: d.z });
+  /** Closest of these colliders along a ray in this body's space (panel index or -1 for other parts). */
+  castRay(o: V3, d: V3, max: number, also?: (handle: number) => boolean, skipSeats = false): { t: number; panel: number } | null {
+    const ray = new this.R.Ray({ x: o[0], y: o[1], z: o[2] }, { x: d[0], y: d[1], z: d[2] });
     const hit = this.world.castRay(ray, max, true, undefined, undefined, undefined, undefined, (c) => {
       const own = this.owners.get(c.handle);
       if (own) return !(skipSeats && own.kind === 'solid' && own.seat);
@@ -204,5 +215,98 @@ export class ShipPhysics {
     if (!hit) return null;
     const own = this.owners.get(hit.collider.handle);
     return { t: hit.timeOfImpact, panel: own?.kind === 'panel' ? own.index : -1 };
+  }
+}
+
+/**
+ * Rapier side of a ship, in two copies of the same colliders:
+ *
+ *   outer — in the lunar world (the physics bubble, frames/bubble.ts: its coordinates, not the
+ *           world's), on a kinematic body that follows the ship's pose every step: walk up to it
+ *           and onto it, bump into it, crates and debris outside hit it.
+ *   inner — in the ship's own interior world (ShipSpace), at rest in ship space: the crew and the
+ *           cargo aboard live there, so nothing aboard ever slips through a hull that moves.
+ *
+ * Rays (picking controls, rockets, the camera) are cast against the inner copy in ship space.
+ */
+export class ShipPhysics {
+  readonly outer: ShipColliders;
+  readonly inner: ShipColliders;
+
+  private R: typeof RAPIER;
+
+  /** `pose`: the ship in the bubble's coordinates. */
+  constructor(physics: Physics, interior: RAPIER.World, sim: ShipSim, pose: ShipPose) {
+    const R = (this.R = physics.rapier);
+    const body = physics.world.createRigidBody(R.RigidBodyDesc.kinematicPositionBased().setTranslation(...pose.p).setRotation({ x: pose.q[0], y: pose.q[1], z: pose.q[2], w: pose.q[3] }));
+    this.outer = new ShipColliders(R, physics.world, body, sim);
+    this.inner = new ShipColliders(R, interior, interior.createRigidBody(R.RigidBodyDesc.fixed()), sim);
+  }
+
+  syncPanels() {
+    this.inner.syncPanels();
+    return this.outer.syncPanels();
+  }
+
+  hasPanel(i: number) {
+    return this.inner.hasPanel(i);
+  }
+
+  /** Follow the animated parts (fixed step). */
+  update(anim: ShipAnimState, rampPhi: number, feet: V3[]) {
+    this.outer.update(anim, rampPhi, feet);
+    this.inner.update(anim, rampPhi, feet);
+  }
+
+  /**
+   * Where the outer body goes on the lunar world's next step. Moving, it is kinematic and sweeps
+   * there, pushing what it meets. Still (parked, or hovering dead still), it is a fixed body:
+   * Rapier's character controller catches on a kinematic body's colliders where they meet the
+   * ground (the foot of the stairs, the lip of the ramp) and the astronaut could not walk on or
+   * off without jumping.
+   */
+  follow(pose: ShipPose) {
+    const b = this.outer.body;
+    const t = b.translation();
+    const r = b.rotation();
+    const still =
+      Math.abs(t.x - pose.p[0]) + Math.abs(t.y - pose.p[1]) + Math.abs(t.z - pose.p[2]) < 1e-5 &&
+      Math.abs(r.x - pose.q[0]) + Math.abs(r.y - pose.q[1]) + Math.abs(r.z - pose.q[2]) + Math.abs(r.w - pose.q[3]) < 1e-6;
+    const R = this.R;
+    if (still) {
+      if (b.bodyType() !== R.RigidBodyType.Fixed) b.setBodyType(R.RigidBodyType.Fixed, true);
+      return;
+    }
+    if (b.bodyType() !== R.RigidBodyType.KinematicPositionBased) b.setBodyType(R.RigidBodyType.KinematicPositionBased, true);
+    b.setNextKinematicTranslation({ x: pose.p[0], y: pose.p[1], z: pose.p[2] });
+    b.setNextKinematicRotation({ x: pose.q[0], y: pose.q[1], z: pose.q[2], w: pose.q[3] });
+  }
+
+  /** The bubble was re-laid: the outer body jumps to the ship's pose in the new coordinates (no sweep). */
+  teleport(pose: ShipPose) {
+    const b = this.outer.body;
+    const t = { x: pose.p[0], y: pose.p[1], z: pose.p[2] };
+    const r = { x: pose.q[0], y: pose.q[1], z: pose.q[2], w: pose.q[3] };
+    b.setTranslation(t, true);
+    b.setRotation(r, true);
+    if (b.bodyType() === this.R.RigidBodyType.KinematicPositionBased) {
+      b.setNextKinematicTranslation(t);
+      b.setNextKinematicRotation(r);
+    }
+  }
+
+  /** A lunar-world collider belongs to this ship. */
+  ownsOuter(handle: number) {
+    return this.outer.owners.has(handle);
+  }
+
+  /** An interior-world collider belongs to the ship itself (not a crate or a crew member aboard). */
+  ownsInner(handle: number) {
+    return this.inner.owners.has(handle);
+  }
+
+  /** Closest ship surface along a ray in ship space (panel index or -1 for other parts). */
+  castRay(o: V3, d: V3, max: number, also?: (handle: number) => boolean, skipSeats = false) {
+    return this.inner.castRay(o, d, max, also, skipSeats);
   }
 }

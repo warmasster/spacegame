@@ -54,7 +54,8 @@ P.step('cliente A dentro');
 const B = await joinGame('netB');
 P.step('cliente B dentro');
 await run(1500, [A, B]);
-check('both clients see the ship', await B.evaluate(() => window.game.ships.length === 1) && (await A.evaluate(() => window.game.ships.length === 1)));
+const nShips = await A.evaluate(() => window.game.ships.length);
+check('both clients see the same ships', nShips > 0 && (await B.evaluate(() => window.game.ships.length)) === nShips, `${nShips} naves`);
 
 // --- a control operated by A reaches B -------------------------------------------------------------
 const before = await B.evaluate(() => window.game.ships[0].sim.sw.ramp);
@@ -62,7 +63,7 @@ await A.evaluate(() => {
   const g = window.game;
   const c = g.ships[0].sim.def.controls.find((x) => x.id === 'ext.ramp/ramp');
   const at = window.diag.w(c.c[0], 0, c.c[2] + 0.7);
-  g.debug.controller.teleport(at.setY(g.debug.game.terrain.height(at.x, at.z) + 0.05));
+  g.teleport(at.setY(g.debug.game.groundY(at.x, at.z) + 0.05));
 });
 await run(600, [A, B]);
 const reason = await A.evaluate(() => window.game.shipControl('ext.ramp/ramp'));
@@ -81,8 +82,8 @@ const hit = await A.evaluate(() => {
   const out = window.diag.w(p.c[0] + p.n[0] * 0.25, p.c[1] + p.n[1] * 0.25, p.c[2] + p.n[2] * 0.25);
   const from = out.clone().add(g.debug.camera.position.clone().set(p.n[0], p.n[1], p.n[2]).transformDirection(s.view.root.matrixWorld).multiplyScalar(10));
   const d = out.clone().sub(from).normalize();
-  g.net.sendFire([from.x, from.y, from.z], [d.x, d.y, d.z]);
-  g.net.sendHit([out.x, out.y, out.z]);
+  g.net.sendFire('launcher', [from.x, from.y, from.z], [d.x, d.y, d.z]);
+  g.net.sendHit('rocket', [out.x, out.y, out.z]);
   return { index: p.index, hpA: s.sim.hp[p.index] };
 });
 await run(800, [A, B]);
@@ -99,7 +100,7 @@ await A.evaluate((i) => {
   g.me.equip('welder');
   g.me.setArmed(true);
   const at = window.diag.w(p.c[0] - p.n[0] * 1.3, 0.05, p.c[2]);
-  g.debug.controller.teleport(at);
+  g.teleport(at);
   g.inspectCam = null;
 }, hit.index);
 for (let k = 0; k < 3; k++) {

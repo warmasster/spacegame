@@ -31,6 +31,13 @@ export interface SysContext {
   onPad: boolean;
   /** Sunlight on the hull, 0 (night / shadow) … 1 (full sun): solar arrays scale with it. */
   sun: number;
+  /** Height of the gear feet (or hull) above the ground (m): the autopilot's gear automation. */
+  agl: number;
+  /** World position and velocity of the ship (m, m/s): the autopilot's arrival checks. */
+  pos: V3;
+  vel: V3;
+  /** Compass heading of the nose (rad, 0 = north, clockwise). */
+  heading: number;
   /** Random numbers (deterministic in tests). */
   rand: () => number;
 }
@@ -60,6 +67,9 @@ export interface Tick {
   /** Panel `i` is blown out / its crack area (m²). */
   hole(i: number): boolean;
   crack(i: number): number;
+  /** Integrity of panel `i`, and damage to it (a panel tearing under pressure); the authority broadcasts the change. */
+  panelHp(i: number): number;
+  damagePanel(i: number, amount: number): void;
   /** Move a switch from the simulation (lever dropping out, pulse consumed…): broadcast to all. */
   setSw(key: string, v: number): void;
   emit(e: SysEvent): void;
@@ -74,11 +84,16 @@ export interface Tick {
   burn(consumer: string, kgs: number): void;
   /** Keep the pressure control off a compartment this tick (an airlock pumping down). */
   hold(zone: string): void;
-  readonly holds: ReadonlySet<string>;
-  /** Declared this tick (read by the networks in `solve`). */
-  readonly demand: Record<string, number>;
+  /** Compartments held this tick (by compartment index: 1 = held). */
+  readonly held: Uint8Array;
+  /**
+   * Declared this tick (read by the networks in `solve`): kW asked of each circuit (by index in
+   * `def.subsystems`), the sources offered, propellant each part wants (kg/s, by index in
+   * `def.parts`). The kernel reuses all of it tick after tick: read it, don't keep it.
+   */
+  readonly demand: Float64Array;
   readonly sources: PowerSource[];
-  readonly fuel: Record<string, number>;
+  readonly fuel: Float64Array;
 }
 
 /** A condition shown on the MFDs and the annunciator. */
@@ -94,10 +109,58 @@ export interface AlertDef {
   on(st: Float64Array, sw: Record<string, number>): boolean;
 }
 
+/**
+ * How a machine sounds: declared by its module like its alerts, played by the client
+ * (client/audio/shipSounds.ts) from where it is on the ship — through the air of its compartment,
+ * the structure and the ground — for any ship, from the replicated state. The simulation never
+ * reads it. `sound` names an entry of the client's bank (client/audio/sounds/); a part can give
+ * the role its own voice (`PartDef.sounds[role]`, from its catalog component). Read only
+ * replicated variables: a negative quantum never reaches the clients.
+ */
+export interface SoundCue {
+  /** Bank id (the default voice of this role). */
+  sound: string;
+  /** Role of the sound on its part ('run', 'start'…): `part.sounds[role]` replaces `sound`. */
+  role?: string;
+  /** The machine it comes from: its place and compartment, its size (bigger sounds deeper) and its health (a wreck is silent). */
+  part?: PartDef;
+  /** Ship-space point (default: the part's centre, else the ship's centre). A function for one that moves: fill `out` and return it. */
+  at?: V3 | ((st: Float64Array, sw: Record<string, number>, out: V3) => V3);
+  /** Compartment it sounds in (default: the part's zone; null = outside the hull). */
+  zone?: string | null;
+  /** Continuous (a loop): how loud now, 0..1 (0 = silent). */
+  level?: (st: Float64Array, sw: Record<string, number>) => number;
+  /** Continuous: playback rate (1 = as made): spool, rpm, flow. */
+  pitch?: (st: Float64Array, sw: Record<string, number>) => number;
+  /** One-shot: plays each time this turns true (never on the first look). */
+  on?: (st: Float64Array, sw: Record<string, number>) => boolean;
+  /** Loudness scale (default 1). */
+  gain?: number;
+  /**
+   * Continuous, from motion: a value whose change makes the sound (a travel, a level). The loop
+   * plays while it changes, as loud as its speed ÷ `rate` (change per second at full level).
+   */
+  motion?: { value: (st: Float64Array, sw: Record<string, number>) => number; rate: number };
+  /** Carried by the hull only (a machine bolted inside a wall): no air path. */
+  structural?: boolean;
+  /** A default any other cue of the same part and role replaces (switched loads' generic hum). */
+  generic?: boolean;
+}
+
+/** The hull as a tick sees it (ShipSim owns the panel integrity). */
+export interface HullView {
+  hole(i: number): boolean;
+  crack(i: number): number;
+  hp(i: number): number;
+  damage(i: number, amount: number): void;
+}
+
 /** What an interlock knows beyond the state tables. */
 export interface InterlockEnv {
   landed: boolean;
   onPad: boolean;
+  /** Fast across the ground or high above it (space/body.ts `orbitalRegime`). */
+  orbital?: boolean;
 }
 
 export interface ShipModule {
@@ -116,6 +179,8 @@ export interface ShipModule {
    */
   interlock?(c: ControlDef, next: number, st: Float64Array, sw: Record<string, number>, env: InterlockEnv): string | null;
   alerts?(): AlertDef[];
+  /** What it sounds like (the client plays it; see SoundCue). Asked once per ship. */
+  sounds?(): SoundCue[];
   /** A part just reached 0 integrity (blast, fire): react to it (a full tank goes up…). */
   destroyed?(st: Float64Array, p: PartDef, events: SysEvent[]): void;
 }

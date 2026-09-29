@@ -5,6 +5,8 @@ import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import type { Grip, WeaponDef } from '../fx/weapons';
 import { patchInteriorLights } from '../ship/interiorLights';
+import { lights } from '../render/lightPool';
+import { origin } from '../render/origin';
 
 /** Layer used for helmet meshes: hidden from the first-person camera, still casts shadows. */
 export const HELMET_LAYER = 1;
@@ -26,12 +28,26 @@ export class AstronautAsset {
   static async load(url: string, csm: CSM | null): Promise<AstronautAsset> {
     const gltf = await new GLTFLoader().loadAsync(url);
     const root = gltf.scene;
+    root.updateMatrixWorld(true);
+    const scale = new THREE.Vector3();
     root.traverse((o) => {
       const mesh = o as THREE.Mesh;
       if (!mesh.isMesh) return;
       mesh.castShadow = true;
       mesh.receiveShadow = true;
-      mesh.frustumCulled = false; // skinned bounds are unreliable
+      // skinned bounds follow the rest pose only: a fixed sphere (rest pose + a metre every way)
+      // covers any pose, so the suit is culled in the view and in every shadow cascade again
+      const skinned = mesh as THREE.SkinnedMesh;
+      const s = Math.max(1e-6, mesh.getWorldScale(scale).x);
+      if (skinned.isSkinnedMesh) {
+        mesh.geometry.computeBoundingSphere();
+        const sphere = mesh.geometry.boundingSphere!.clone();
+        sphere.radius += 1 / s;
+        skinned.boundingSphere = sphere;
+      }
+      mesh.frustumCulled = true;
+      // levels of detail: the same vertices (skin weights, UVs), fewer triangles
+      if (mesh.geometry.index && !SUIT_LODS.has(mesh.geometry)) SUIT_LODS.set(mesh.geometry, [mesh.geometry, ...LOD_CELLS.map((c) => clusterLod(mesh.geometry, c / s))]);
       const mat = mesh.material as THREE.MeshStandardMaterial;
       mat.userData.bakedAO = mat.vertexColors;
       mat.vertexColors = false;
@@ -146,6 +162,55 @@ export interface BoneRig {
   az: THREE.Vector3;
 }
 
+/** Cell sizes (m) of the suit's levels of detail after the full mesh: ~12 K and ~2 K triangles from 89 K. */
+const LOD_CELLS = [0.025, 0.06];
+/** The template's geometries and their levels of detail (clones share the geometry objects). */
+const SUIT_LODS = new WeakMap<THREE.BufferGeometry, THREE.BufferGeometry[]>();
+
+/**
+ * A lower level of detail by vertex clustering: every vertex moves onto the first vertex of its
+ * grid cell (`cell`, in the mesh's own units) and the triangles that collapse are dropped. Only a
+ * new index over the same vertex buffers: skinning, UVs and materials carry over unchanged, and
+ * the buffers are uploaded once for all levels.
+ */
+function clusterLod(base: THREE.BufferGeometry, cell: number): THREE.BufferGeometry {
+  const pos = base.getAttribute('position') as THREE.BufferAttribute;
+  const idx = base.getIndex()!;
+  const rep = new Int32Array(pos.count);
+  const cells = new Map<number, number>();
+  for (let v = 0; v < pos.count; v++) {
+    const x = Math.floor(pos.getX(v) / cell) + 4096;
+    const y = Math.floor(pos.getY(v) / cell) + 4096;
+    const z = Math.floor(pos.getZ(v) / cell) + 4096;
+    const key = (x * 8192 + y) * 8192 + z;
+    let r = cells.get(key);
+    if (r === undefined) {
+      r = v;
+      cells.set(key, v);
+    }
+    rep[v] = r;
+  }
+  const out: number[] = [];
+  for (let t = 0; t + 2 < idx.count; t += 3) {
+    const a = rep[idx.getX(t)];
+    const b = rep[idx.getX(t + 1)];
+    const c = rep[idx.getX(t + 2)];
+    if (a === b || b === c || a === c) continue;
+    out.push(a, b, c);
+  }
+  const g = new THREE.BufferGeometry();
+  for (const name of Object.keys(base.attributes)) g.setAttribute(name, base.getAttribute(name));
+  g.setIndex(new THREE.BufferAttribute(pos.count > 65535 ? Uint32Array.from(out) : Uint16Array.from(out), 1));
+  g.boundingBox = base.boundingBox;
+  g.boundingSphere = base.boundingSphere;
+  return g;
+}
+
+/** Frames between two full searches of the best grasp (the one in hand is refined every frame). */
+const GRASP_SEARCH_EVERY = 8;
+const _lampP = new THREE.Vector3();
+const _lampD = new THREE.Vector3();
+const LAMP_ANGLE = THREE.MathUtils.degToRad(32);
 const _q = new THREE.Quaternion();
 const _q2 = new THREE.Quaternion();
 const _m = new THREE.Matrix4();
@@ -159,9 +224,23 @@ export class Astronaut {
   private model: THREE.Object3D;
   readonly rig = {} as Record<BoneName, BoneRig>;
   private materials: THREE.MeshStandardMaterial[] = [];
-  private lamp: THREE.SpotLight;
+  /** Where the helmet lamps sit and aim (the light itself comes from the pool: render/lightPool.ts). */
+  private lamp = new THREE.Object3D();
   private lampTarget = new THREE.Object3D();
   private lampsOn = false;
+  /** Level of animation detail: 1 full, 0 far away (no arm IK). Set by whoever draws it. */
+  detail = 1;
+  private graspTick = 0;
+  /** Suit meshes and their levels of detail (0 = full). */
+  private lodMeshes: Array<{ mesh: THREE.Mesh; lods: THREE.BufferGeometry[] }> = [];
+  private lod = 0;
+
+  /** Mesh level of detail: 0 full, then fewer triangles (the same skin, the same materials). */
+  setLod(level: number) {
+    if (level === this.lod) return;
+    this.lod = level;
+    for (const m of this.lodMeshes) m.mesh.geometry = m.lods[Math.min(level, m.lods.length - 1)];
+  }
   private eyeLocal = new THREE.Vector3();
   private helmetMeshes: THREE.Mesh[] = [];
 
@@ -195,6 +274,12 @@ export class Astronaut {
   private torsoVel = 0;
   private kick = 0;
   private kickVel = 0;
+  /** Where each foot was in its gait cycle (0..1) last frame: a wrap is a heel strike. */
+  private footCycle = [0, 0];
+  /** A foot comes down (0 left, 1 right; strength 0..1 from a stroll to a lope): footsteps. */
+  onStep: ((foot: number, strength: number) => void) | null = null;
+  /** Back on the ground after being off it (`speed`: m/s coming down). */
+  onLand: ((speed: number) => void) | null = null;
 
   constructor(asset: AstronautAsset) {
     this.model = SkeletonUtils.clone(asset.template);
@@ -204,6 +289,8 @@ export class Astronaut {
     this.model.traverse((o) => {
       const mesh = o as THREE.Mesh;
       if (!mesh.isMesh) return;
+      const lods = SUIT_LODS.get(mesh.geometry);
+      if (lods) this.lodMeshes.push({ mesh, lods });
       const mat = asset.instanceMaterial(mesh.material as THREE.MeshStandardMaterial);
       mesh.material = mat;
       this.materials.push(mat);
@@ -237,11 +324,9 @@ export class Astronaut {
       };
     }
 
-    // helmet lamps (one spot, no shadows) attached to the chest
-    this.lamp = new THREE.SpotLight(0xfff1dc, 0, 40, THREE.MathUtils.degToRad(32), 0.55, 1.6);
+    // helmet lamps (one spot from the pool, no shadows) attached to the chest
     this.lamp.position.set(0, 1.78, 0.12);
     this.lampTarget.position.set(0, 1.2, 4);
-    this.lamp.target = this.lampTarget;
     const chest = this.rig.chest.bone;
     const chestInv = new THREE.Matrix4().copy(chest.matrixWorld).invert().multiply(this.model.matrixWorld);
     this.lamp.position.applyMatrix4(chestInv);
@@ -463,7 +548,7 @@ export class Astronaut {
   muzzle(out: THREE.Vector3) {
     if (!this.weapon || !this.weaponDef) return null;
     this.weapon.updateWorldMatrix(true, true);
-    return this.weapon.children[0].localToWorld(out.copy(this.weaponDef.muzzle));
+    return origin.toWorld(this.weapon.children[0].localToWorld(out.copy(this.weaponDef.muzzle)));
   }
 
   /** Current recoil pitch (rad) for the camera. */
@@ -489,11 +574,14 @@ export class Astronaut {
     obj.quaternion.copy(this.weaponInvQ!).multiply(_wq);
   }
 
-  /** Hide suit geometry within `radius` of `eye` (first-person body awareness without clipping). */
+  /**
+   * Hide suit geometry within `radius` of `eye` (world; first-person body awareness without
+   * clipping). The shader compares render-space positions: set it after the origin moved this frame.
+   */
   setEyeClip(eye: THREE.Vector3 | null, radius = 0.24) {
     for (const m of this.materials) {
       const c = m.userData.clip as { value: THREE.Vector4 } | undefined;
-      if (c) c.value.set(eye?.x ?? 0, eye?.y ?? 0, eye?.z ?? 0, eye ? radius : 0);
+      if (c) c.value.set(eye ? eye.x - origin.x : 0, eye ? eye.y - origin.y : 0, eye ? eye.z - origin.z : 0, eye ? radius : 0);
     }
   }
 
@@ -502,8 +590,8 @@ export class Astronaut {
     const chest = this.rig.chest.bone;
     chest.updateWorldMatrix(true, false);
     const inv = this.nozzleLocal ?? (this.nozzleLocal = this.computeNozzles());
-    out[0].copy(inv[0]).applyMatrix4(chest.matrixWorld);
-    out[1].copy(inv[1]).applyMatrix4(chest.matrixWorld);
+    origin.toWorld(out[0].copy(inv[0]).applyMatrix4(chest.matrixWorld));
+    origin.toWorld(out[1].copy(inv[1]).applyMatrix4(chest.matrixWorld));
     return out;
   }
   private nozzleLocal: [THREE.Vector3, THREE.Vector3] | null = null;
@@ -531,7 +619,6 @@ export class Astronaut {
   setLamps(on: boolean) {
     if (on === this.lampsOn) return;
     this.lampsOn = on;
-    this.lamp.intensity = on ? 22 : 0;
     for (const m of this.materials) {
       if (m.name !== 'Lamp') continue;
       m.emissive.setRGB(1, 0.95, 0.85);
@@ -543,19 +630,34 @@ export class Astronaut {
     return this.lampsOn;
   }
 
+  /** While the lamps are on: ask the light pool for their spot (world pose of this frame). */
+  private emitLight() {
+    this.lamp.updateWorldMatrix(true, false);
+    this.lampTarget.updateWorldMatrix(false, false);
+    _lampP.setFromMatrixPosition(this.lamp.matrixWorld);
+    _lampD.setFromMatrixPosition(this.lampTarget.matrixWorld).sub(_lampP).normalize();
+    origin.toWorld(_lampP);
+    lights.spot(_lampP, _lampD, 0xfff1dc, 22, 40, LAMP_ANGLE, 0.55, 1.6);
+  }
+
   /** Eye position in world space (inside the helmet), following the chest. */
   /** World position of a rig bone (diagnostics / camera framing). */
   partPosition(part: BoneName, out: THREE.Vector3) {
-    return this.rig[part].bone.getWorldPosition(out);
+    return origin.worldOf(this.rig[part].bone, out);
   }
 
   eyePosition(out: THREE.Vector3) {
     const chest = this.rig.chest.bone;
     chest.updateWorldMatrix(true, false);
-    return out.copy(this.eyeLocal).applyMatrix4(chest.matrixWorld);
+    return origin.toWorld(out.copy(this.eyeLocal).applyMatrix4(chest.matrixWorld));
   }
 
   update(dt: number, input: AnimInput) {
+    this.animateBody(dt, input);
+    if (this.lampsOn && this.root.visible) this.emitLight();
+  }
+
+  private animateBody(dt: number, input: AnimInput) {
     this.frameDt = dt;
     this.time += dt;
     // death: topple onto the back (low g → slow fall), limbs splayed
@@ -583,7 +685,10 @@ export class Astronaut {
     const sb = smooth(this.seatBlend);
 
     // landing spring
-    if (input.grounded && !this.wasGrounded) this.landingVel += Math.min(3.5, Math.max(0, -this.lastVy)) * 1.2;
+    if (input.grounded && !this.wasGrounded) {
+      this.landingVel += Math.min(3.5, Math.max(0, -this.lastVy)) * 1.2;
+      if (!this.dead && !input.seated) this.onLand?.(Math.max(0, -this.lastVy));
+    }
     this.wasGrounded = input.grounded;
     this.lastVy = vel.y;
     this.landingVel += (-this.landing * 90 - this.landingVel * 11) * dt;
@@ -612,6 +717,9 @@ export class Astronaut {
     for (let li = 0; li < 2; li++) {
       const L = li === 0 ? 'L' : 'R';
       const p = wrap(this.phase + legPhase[li]) / (Math.PI * 2); // 0..1
+      // the cycle wrapping is the heel coming down (the start of the stance)
+      if (p < this.footCycle[li] - 0.5 && input.grounded && g > 0.35 && !this.dead && !input.seated) this.onStep?.(li, Math.min(1, 0.35 + 0.65 * this.runBlend + speed * 0.08));
+      this.footCycle[li] = p;
       let off = 0; // foot offset along travel direction
       let lift = 0;
       if (p < stance) {
@@ -708,11 +816,13 @@ export class Astronaut {
    * so the arms follow every weapon motion — gait bob, aim pitch, recoil — like the legs do.
    */
   private armIK(w: number) {
-    if (!this.weapon || !this.weaponDef || w < 0.01) {
+    // far away (`detail` 0) the hands need not find the grips: nobody can see them
+    if (!this.weapon || !this.weaponDef || w < 0.01 || this.detail < 1) {
       this.armPrev = {};
       this.graspPick = {};
       return;
     }
+    this.graspTick++;
     this.model.updateMatrixWorld(true);
     const prop = this.weapon.children[0];
     const modelQ = this.model.getWorldQuaternion(_mq);
@@ -754,16 +864,20 @@ export class Astronaut {
 
   private bestGrasp(U: THREE.Bone, F: THREE.Bone, H: THREE.Bone, grip: Grip, prop: THREE.Object3D, modelQ: THREE.Quaternion, key: 'L' | 'R') {
     let best = { sign: 1, roll: 0, cost: Infinity };
-    for (const sign of [1, -1]) {
-      for (let roll = -Math.PI; roll < Math.PI; roll += 0.2) {
-        const cost = this.graspCost(U, F, H, grip, prop, modelQ, key, sign, roll);
-        if (cost < best.cost) best = { sign, roll, cost };
+    const prev = this.graspPick[key];
+    // the full search (64 candidates) every few frames; in between the grasp only follows its
+    // optimum as it drifts (below) — the hysteresis keeps it anyway unless another is clearly better
+    if (!prev || this.graspTick % GRASP_SEARCH_EVERY === 0) {
+      for (const sign of [1, -1]) {
+        for (let roll = -Math.PI; roll < Math.PI; roll += 0.2) {
+          const cost = this.graspCost(U, F, H, grip, prop, modelQ, key, sign, roll);
+          if (cost < best.cost) best = { sign, roll, cost };
+        }
       }
     }
     // Hysteresis: keep last frame's grasp (following its optimum as it drifts) unless another
     // is clearly better. Two grasps of similar cost used to trade places twice per stride, and
     // while the arm eased from one to the other the hand was off the handle (up to 16 cm).
-    const prev = this.graspPick[key];
     if (prev) {
       let keep = { sign: prev.sign, roll: prev.roll, cost: this.graspCost(U, F, H, grip, prop, modelQ, key, prev.sign, prev.roll) };
       for (const dr of [-0.07, 0.07]) {

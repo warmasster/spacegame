@@ -8,11 +8,37 @@
 // manual valves) and a compressor that recovers the air of a compartment into the bottles.
 
 import type { CompartmentDef } from '../def.js';
+import type { V3 } from '../geom.js';
 import type { VarTable } from '../state.js';
 
-const R = 8.314;
+export const R = 8.314;
 const M = { o2: 0.032, n2: 0.028, co2: 0.044 };
 const CD = 0.65;
+
+/**
+ * Compressible orifice (γ = 1.4) from upstream `Pu` (Pa), `Tu` (K), molar mass `Mu` into `Pd`:
+ * mass flow (kg/s), the speed the gas leaves at (m/s, sonic when choked) and the thrust of the jet
+ * on whatever holds the orifice (N: momentum plus the pressure left at the throat).
+ */
+export function orifice(area: number, Pu: number, Tu: number, Mu: number, Pd: number) {
+  if (Pu <= 0 || area <= 0) return { mdot: 0, speed: 0, thrust: 0 };
+  const r = Math.max(0, Pd / Pu);
+  // choked below r* = 0.528; 2γ/(γ−1) = 7, 2/γ = 1.4286, (γ+1)/γ = 1.7143, (γ−1)/γ = 0.2857
+  const psi = r <= 0.5283 ? 0.6847 : Math.sqrt(Math.max(0, 7 * (r ** 1.4286 - r ** 1.7143)));
+  const mdot = CD * area * Pu * Math.sqrt(Mu / (R * Tu)) * psi;
+  const re = Math.max(r, 0.5283);
+  const speed = Math.sqrt(Math.max(0, ((7 * R * Tu) / Mu) * (1 - re ** 0.2857)));
+  const thrust = mdot * speed + Math.max(0, re * Pu - Pd) * CD * area;
+  return { mdot, speed, thrust };
+}
+
+/** Mass flow alone (kg/s) of `orifice` (same maths, no object: the atmosphere's sub-steps call it a lot). */
+export function orificeMdot(area: number, Pu: number, Tu: number, Mu: number, Pd: number) {
+  if (Pu <= 0 || area <= 0) return 0;
+  const r = Math.max(0, Pd / Pu);
+  const psi = r <= 0.5283 ? 0.6847 : Math.sqrt(Math.max(0, 7 * (r ** 1.4286 - r ** 1.7143)));
+  return CD * area * Pu * Math.sqrt(Mu / (R * Tu)) * psi;
+}
 /** Cabin set point and O2 partial pressure (kPa) — a 10 psi atmosphere like a real spacecraft. */
 export const CABIN = { p: 70, po2: 21 };
 /** Breathable: pressure, O2 and CO2 limits for helmet-off / suit refill (kPa). */
@@ -25,6 +51,11 @@ export interface GasPath {
   area: number;
   /** Duct: fans force a mixing exchange (m³/s) on top of the pressure-driven flow. */
   mix?: number;
+  /** Where the opening is (ship space) and its normal from a toward b, when it has a place (../airflow.ts). */
+  at?: V3;
+  n?: V3;
+  /** Hull panel it goes through (a breach or a crack). */
+  panel?: number;
 }
 
 /** The gas bottles as the atmosphere sees them (life.ts decides which ones can deliver). */
@@ -75,6 +106,12 @@ interface CompVars {
 export class Atmosphere {
   readonly v: CompVars[];
   private prevP: number[];
+  /** Scratch reused every step: union-find of big openings, vacuum area per group, sealed, mass out, live paths. */
+  private root: Int32Array;
+  private vac: Float64Array;
+  private sealed: Uint8Array;
+  private outKg: Float64Array;
+  private live: GasPath[] = [];
 
   constructor(
     readonly comps: CompartmentDef[],
@@ -97,6 +134,31 @@ export class Atmosphere {
       feed: vars.define(`${c.id}.feed`, 0.02),
     }));
     this.prevP = comps.map(() => 0);
+    const n = comps.length;
+    this.root = new Int32Array(n);
+    this.vac = new Float64Array(n);
+    this.sealed = new Uint8Array(n);
+    this.outKg = new Float64Array(n);
+  }
+
+  private find(i: number): number {
+    const r = this.root;
+    while (r[i] !== i) {
+      r[i] = r[r[i]];
+      i = r[i];
+    }
+    return i;
+  }
+
+  /** Add (or remove, negative) gas to a compartment; what comes in mixes its temperature in. */
+  private gasIn(st: Float64Array, i: number, o2: number, n2: number, co2: number, tIn = 294) {
+    const v = this.v[i];
+    const before = st[v.o2] + st[v.n2] + st[v.co2];
+    st[v.o2] = Math.max(0, st[v.o2] + o2);
+    st[v.n2] = Math.max(0, st[v.n2] + n2);
+    st[v.co2] = Math.max(0, st[v.co2] + co2);
+    const added = Math.max(0, o2) + Math.max(0, n2) + Math.max(0, co2);
+    if (added > 0) st[v.tk] = (st[v.tk] * before + tIn * added) / Math.max(1e-9, before + added);
   }
 
   /** Fill a compartment to cabin conditions (used for the initial state of sealed ships). */
@@ -127,26 +189,19 @@ export class Atmosphere {
     const V = this.v;
     const n = C.length;
     // --- groups of compartments joined by big openings, and their leaks to vacuum ------------------
-    const root = C.map((_, i) => i);
-    const find = (i: number): number => (root[i] === i ? i : (root[i] = find(root[i])));
-    for (const g of paths) if (g.b >= 0 && g.area > 0.05) root[find(g.a)] = find(g.b);
-    const vacuumArea = new Map<number, number>();
-    for (const g of paths) if (g.b < 0) vacuumArea.set(find(g.a), (vacuumArea.get(find(g.a)) ?? 0) + g.area);
-    const sealed = C.map((_, i) => (vacuumArea.get(find(i)) ?? 0) < 0.01);
+    const root = this.root;
+    for (let i = 0; i < n; i++) root[i] = i;
+    for (const g of paths) if (g.b >= 0 && g.area > 0.05) root[this.find(g.a)] = this.find(g.b);
+    const vac = this.vac;
+    vac.fill(0);
+    for (const g of paths) if (g.b < 0) vac[this.find(g.a)] += g.area;
+    const sealed = this.sealed;
+    for (let i = 0; i < n; i++) sealed[i] = vac[this.find(i)] < 0.01 ? 1 : 0;
 
     // --- life support sources and sinks --------------------------------------------------------------
-    const add = (i: number, o2: number, n2: number, co2: number, tIn = 294) => {
-      const v = V[i];
-      const before = st[v.o2] + st[v.n2] + st[v.co2];
-      st[v.o2] = Math.max(0, st[v.o2] + o2);
-      st[v.n2] = Math.max(0, st[v.n2] + n2);
-      st[v.co2] = Math.max(0, st[v.co2] + co2);
-      const added = Math.max(0, o2) + Math.max(0, n2) + Math.max(0, co2);
-      if (added > 0) st[v.tk] = (st[v.tk] * before + tIn * added) / Math.max(1e-9, before + added);
-    };
     // generators regulate on oxygen partial pressure: they top up what the crew breathes, they
     // do not keep pumping a sealed cabin toward pure oxygen
-    for (const g of life.o2gen) if (g.comp >= 0 && g.rate > 0 && this.pressure(st, g.comp) < 101000 && this.po2(st, g.comp) < CABIN.po2 + 1) add(g.comp, g.rate * dt, 0, 0);
+    for (const g of life.o2gen) if (g.comp >= 0 && g.rate > 0 && this.pressure(st, g.comp) < 101000 && this.po2(st, g.comp) < CABIN.po2 + 1) this.gasIn(st, g.comp, g.rate * dt, 0, 0);
     for (const s of life.scrub) {
       if (s.comp < 0 || s.eff <= 0) continue;
       const v = V[s.comp];
@@ -156,7 +211,7 @@ export class Atmosphere {
       const crew = life.crew[i] ?? 0;
       if (crew > 0) {
         const o2 = Math.min(st[V[i].o2], 0.012 * crew * dt);
-        add(i, -o2, 0, o2 * 0.85);
+        this.gasIn(st, i, -o2, 0, o2 * 0.85);
       }
     }
     // make-up gas from the bottles: AUTO keeps sealed groups at the set point, MANUAL feeds where
@@ -176,7 +231,7 @@ export class Atmosphere {
       const kgs = wantManual ? 0.6 : 1.0;
       const kO2 = life.gas.take('o2', ((kgs * needO2) / sum) * dt);
       const kN2 = life.gas.take('n2', ((kgs * needN2) / sum) * dt);
-      add(i, kO2 / M.o2, kN2 / M.n2, 0, 282);
+      this.gasIn(st, i, kO2 / M.o2, kN2 / M.n2, 0, 282);
       st[v.feed] = (kO2 + kN2) / dt;
     }
     // recovery compressor: pumps a compartment's air back into the bottles
@@ -198,8 +253,11 @@ export class Atmosphere {
     }
 
     // --- flows through the openings (sub-stepped: a big breach empties a cabin in ~1 s) ----------------
-    const out = C.map(() => 0);
-    const live = paths.filter((g) => g.area > 1e-7 || (g.mix ?? 0) > 0);
+    const out = this.outKg;
+    out.fill(0);
+    const live = this.live;
+    live.length = 0;
+    for (const g of paths) if (g.area > 1e-7 || (g.mix ?? 0) > 0) live.push(g);
     let fastest = 0;
     for (const g of live) {
       const pa = this.pressure(st, g.a);
@@ -274,15 +332,11 @@ export class Atmosphere {
     const Mu = (st[v.o2] * M.o2 + st[v.n2] * M.n2 + st[v.co2] * M.co2) / nt;
     const Tu = Math.max(150, st[v.tk]);
     const Pu = (nt * R * Tu) / this.comps[up].volume;
-    const r = Math.max(0, pDown / Pu);
-    // γ = 1.4: choked below r* = 0.528; 2γ/(γ−1) = 7, 2/γ = 1.4286, (γ+1)/γ = 1.7143
-    const psi = r <= 0.5283 ? 0.6847 : Math.sqrt(Math.max(0, 7 * (r ** 1.4286 - r ** 1.7143)));
-    const mdot = CD * g.area * Pu * Math.sqrt(Mu / (R * Tu)) * psi;
-    return mdot / Mu;
+    return orificeMdot(g.area, Pu, Tu, Mu, pDown) / Mu;
   }
 
   /** Move a fraction `k` of compartment `up`'s gas into `down` (or vacuum); the gas left behind expands and cools. */
-  private move(st: Float64Array, up: number, down: number, k: number, out: number[]) {
+  private move(st: Float64Array, up: number, down: number, k: number, out: Float64Array) {
     const vu = this.v[up];
     const o2 = st[vu.o2] * k;
     const n2 = st[vu.n2] * k;
@@ -307,12 +361,9 @@ export class Atmosphere {
   private exchange(st: Float64Array, a: number, b: number, ka: number, kb: number) {
     const va = this.v[a];
     const vb = this.v[b];
-    for (const key of ['o2', 'n2', 'co2'] as const) {
-      const fa = st[va[key]] * ka;
-      const fb = st[vb[key]] * kb;
-      st[va[key]] += fb - fa;
-      st[vb[key]] += fa - fb;
-    }
+    this.swap(st, va.o2, vb.o2, ka, kb);
+    this.swap(st, va.n2, vb.n2, ka, kb);
+    this.swap(st, va.co2, vb.co2, ka, kb);
     const na = st[va.o2] + st[va.n2] + st[va.co2];
     const nb = st[vb.o2] + st[vb.n2] + st[vb.co2];
     if (na > 1e-6 && nb > 1e-6) {
@@ -321,5 +372,12 @@ export class Atmosphere {
       st[va.tk] = ta * (1 - ka) + tb * ka;
       st[vb.tk] = tb * (1 - kb) + ta * kb;
     }
+  }
+
+  private swap(st: Float64Array, ia: number, ib: number, ka: number, kb: number) {
+    const fa = st[ia] * ka;
+    const fb = st[ib] * kb;
+    st[ia] += fb - fa;
+    st[ib] += fa - fb;
   }
 }

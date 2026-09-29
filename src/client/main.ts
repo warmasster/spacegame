@@ -1,4 +1,5 @@
 import { Game } from './game';
+import { sfx } from './audio/engine';
 
 const canvas = document.getElementById('view') as HTMLCanvasElement;
 const ui = document.getElementById('ui') as HTMLDivElement;
@@ -66,9 +67,24 @@ pause.innerHTML = `<div class="sc-pause">
   <small>EVA EN PAUSA · CONTROL LOCAL</small>
   <button type="button" class="sc-cta" id="resume"><span>REANUDAR</span><b>▸</b></button>
   <button type="button" class="sc-ghost" id="leave">ABANDONAR EVA</button>
+  <label class="sc-audio">VOLUMEN <input type="range" id="volume" min="0" max="100" step="1" /></label>
+  <label class="sc-audio">SONIDO EN EL VACÍO
+    <select id="vacuum">
+      <option value="physical">FÍSICO · solo lo que llega por aire, casco, suelo o traje</option>
+      <option value="muffled">AMORTIGUADO · todo se oye, apagado</option>
+    </select>
+  </label>
   <p>WASD moverse · Espacio saltar/jetpack · Clic disparar/soldar · E accionar/sentarse · 1/2 herramienta · rueda selector/zoom · M manual · V cámara · L luces · H ayuda</p>
 </div>`;
 ui.appendChild(pause);
+
+// sound settings (kept in the browser by the audio engine)
+const volume = pause.querySelector('#volume') as HTMLInputElement;
+const vacuum = pause.querySelector('#vacuum') as HTMLSelectElement;
+volume.value = String(Math.round(sfx.volume * 100));
+vacuum.value = sfx.mode;
+volume.addEventListener('input', () => sfx.setVolume(Number(volume.value) / 100));
+vacuum.addEventListener('change', () => sfx.setMode(vacuum.value === 'muffled' ? 'muffled' : 'physical'));
 
 const nameInput = menu.querySelector('#name') as HTMLInputElement;
 const quality = menu.querySelector('#quality') as HTMLSelectElement;

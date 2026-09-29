@@ -8,7 +8,7 @@ midiendo su propia suposición).
 
 | Tecla | Qué muestra |
 |---|---|
-| F3 | Frame (media/máx), draw calls, triángulos, cuerpos/colisiones, trabajos de terreno, **ms por sistema** |
+| F3 | Frame (media/máx); draw calls y triángulos **del frame entero** (todas las pasadas del postproceso y las cascadas de sombra, no solo la última); **draws por categoría** (naves, terreno, rocas, astronautas…: escena / sombras · triángulos); **basura JS** (MB/s, Chromium); **subidas de textura/s**; cuerpos/colisiones, trabajos de terreno, **ms por sistema** |
 | F4 | Terreno en alambre |
 | F5 | Colisiones de Rapier |
 | F6 | **Articulaciones**: tabla por hueso y ejes RGB dibujados sobre el astronauta |
@@ -35,6 +35,32 @@ EMU de la NASA, generoso) y velocidad angular máxima plausible. Fuera de rango 
 pico de velocidad = "pop" o salto entre frames. Los límites están en `jointDiag.ts` y se ajustan
 ahí (un solo sitio).
 
+Opciones de URL de render: `?rdepth` prueba la profundidad invertida (`reversedDepthBuffer`, conserva
+el early-Z que la logarítmica anula; necesita `EXT_clip_control`), `?ao`, `?nan`.
+
+Las categorías de F3 salen de `userData.cat` del objeto o de un antecesor (`game.ts` las pone en las
+raíces: naves, terreno, rocas, astronautas, partículas, cajas…). Un objeto nuevo en la escena debería
+llevar la suya.
+
+## Rendimiento (`npm run perf`)
+
+`tools/perf/perf.ts` mide sin navegador (Node + V8, sin GPU) lo que cuesta cada camino caliente y la
+**basura** que deja (perfilador de montículo de V8, contando también lo que recogen las GC menores):
+
+```bash
+npm run perf                 # todo
+npm run perf -- ships sim    # solo unas secciones: ships · sim · rocks · world · net
+npm run perf -- --json out.json
+```
+
+- `ships`: `ShipView` de cada nave (mallas, draws, sombras, triángulos, materiales, programas) y el
+  coste/basura de `update` por frame.
+- `sim`: `ShipSim.tick` (sistemas, 20 Hz) y `flight.step` despierta, en estacionario y dormida.
+- `rocks`, `world` (`terrain.height` con y sin 1.000 cráteres), `net` (tamaños de mensajes).
+
+Objetivo: < 20 KB de basura por frame en total y ~0 en una nave aparcada. Un cambio en un camino
+caliente (vuelo, sistemas, vista de nave, partículas…) se mide antes y después.
+
 ## Herramientas automáticas (`tools/diag/`)
 
 Requisitos: `npm run dev` corriendo y `npm i -D playwright && npx playwright install chromium`.
@@ -46,7 +72,7 @@ Salida en `tools/diag/out/` (ignorada por git).
 | `npm run diag:grasp` | Agarre del arma en 4 poses: separación palma–empuñadura, orientación de la palma, dedos cruzando el mango, **flexión y giro de muñeca**, medidos sobre la malla renderizada del guante. Primeros planos de cada mano + `grasp_sheet.png` | palma > 3,5 cm, mal orientada, o muñeca > 45° |
 | `npm run diag:pose` | Capturas del astronauta desde cámaras en órbita (`orbit,zoom,andar,armado;…`, `orbit -10` = primera persona) | — (revisión visual) |
 | `npm run diag:terrain` | Capturas de terreno desde cámaras libres (`x,z,yaw,pitch,altura;…`) | — (revisión visual) |
-| `npm run test:ship` | Nave sin navegador: definición (ayuda, tapas, manual, pilones), páginas de las pantallas, tapa de seguridad, escalas que no dan la vuelta y selectores que sí, casco abierto a 0 kPa, presurizar al cerrar, enclavamientos (reactor, rampa presurizada, motor destruido), una lámpara del anunciador por grupo de alarmas, referencias de datos válidas, fallo de la APU enclavado, umbilical sin O₂, una nave mínima hecha desde cero, un módulo de sistema nuevo y soldadura de una máquina. Imprime el porcentaje. `diag:ship` sigue siendo la pasada visual, mucho más lenta | alguna comprobación falla |
+| `npm run test:ship` | Nave sin navegador: definición, pantallas, tapas, atmósfera, enclavamientos, catálogo, Peregrina (esclusa, víveres, solar) y vuelo offline (quieta en el suelo, VTOL despega, el RCS guía, un punto a bordo sigue a la nave). Imprime el porcentaje. `diag:ship` sigue siendo la pasada visual, mucho más lenta | alguna comprobación falla |
 | `npm run diag:ship` | Nave (`?offline`): cada mando hace lo suyo o se niega con motivo (enclavamiento del tren), reactor/disyuntores cortan sus buses, puertas/rampa/escudo viajan y sus colisiones siguen, explosiones abren brechas (sin colisión, abiertas a rayos, alarma), conducto cortado deja sin energía, soldadora + clic reconstruye el panel (el lanzacohetes no), cajas dinámicas en reposo y lanzadas por una explosión, sentarse/levantarse, zoom, clic por la mirilla, **subir la rampa andando**, **cada luz exterior apoyada en el casco** (rayo desde fuera a lo largo de su normal) y **la mochila del astronauta sentado no atraviesa el asiento** (vértices de la malla renderizada contra las cajas de `SEAT_BOXES`). Capturas `ship_*.png` + `ship_sheet.png`, informe `ship_report.txt`. `node tools/diag/ship.mjs views\|checks` para una parte | alguna comprobación falla o hay errores de página/shader |
 | `npm run diag:manual` | Manual de la nave (M) en `?offline`: se abre con capítulos, fichas de mandos, plano con consolas y lecturas en vivo; capturas `manual_*.png` (inicio, plano, energía, alarmas, mandos, búsqueda) | el manual no se abre, le faltan partes generadas o hay errores de página |
 | `npm run diag:ship:net` | Dos clientes reales contra el servidor (**reinícialo** si cambió `src/server`): A pulsa la rampa → B la ve; impacto de cohete de A → el servidor daña el panel para ambos; A suelda (con la soldadora en mano) → B ve subir la integridad y chispas | alguna comprobación falla |

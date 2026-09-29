@@ -1,14 +1,17 @@
 import * as THREE from 'three';
 import { activePage, pageLabel, type ScreenDef, type ScreenPage } from '../../shared/ship/def';
 import type { Apu } from '../../shared/ship/modules/apu';
-import { ENG, type Engine } from '../../shared/ship/modules/engines';
+import { BOOST, ENG, type Engine } from '../../shared/ship/modules/engines';
+import { AP_FACE_KEY, AP_FACES } from '../../shared/ship/flight/autopilot';
+import { bodyAt, circularAt, type Surfaces } from '../../shared/space/body';
 import { REACTOR_SET, RX, type Reactor } from '../../shared/ship/modules/reactor';
 import { LOCK, LOCK_NAME } from '../../shared/ship/modules/airlock';
 import type { SolarArray } from '../../shared/ship/modules/solar';
 import { STORES, type Stores } from '../../shared/ship/modules/stores';
-import { engineFractions, performance, thrust, thrusters } from '../../shared/ship/flight';
+import { AP_KEY, apModes, bearingTo, flightReadout, mainUse, NAV_POINTS, performance, type FlightReadout } from '../../shared/ship/flight';
 import { MOON } from '../../shared/constants';
 import type { ShipSim } from '../../shared/ship/sim';
+import { sharpText } from './materials';
 
 /** Animated state the displays report: travel 0..1 of every mover (doors, ramp, shutters…) by key. */
 export interface ShipAnimState {
@@ -41,6 +44,8 @@ interface PageCtx {
   time: number;
   anim: ShipAnimState;
   sim: ShipSim;
+  /** Flight state as the displays read it (height above the terrain, speeds, autopilot). */
+  fl(): FlightReadout;
   /** Named state value. */
   n(name: string): number;
   header(title: string): void;
@@ -246,6 +251,11 @@ const PAGES: Record<ScreenPage, (p: PageCtx) => void> = {
       const s = Math.round(p.n(`${a.tag}.state`));
       r.row(a.part.name.toUpperCase(), `${ENG_NAME[s] ?? '?'} · ${(p.n(`${a.tag}.out`) * a.k.kw).toFixed(1)} kW`, s === ENG.fail ? C.bad : s === ENG.run ? C.ok : C.dim);
     }
+    const use = mainUse(sim);
+    if (use.count) {
+      r.row('EMPUJE PPAL', `${Math.round(use.thr * 100)} % · tope ${Math.round(use.throttle * 100)} % · ${use.mode}`, use.thr > 0.02 ? C.ok : C.dim);
+      r.row('', use.note, use.thr > 0.02 ? C.txt : C.warn);
+    }
     for (const key of sim.def.readouts?.engines ?? []) p.switchRow(r, key);
   },
 
@@ -289,41 +299,224 @@ const PAGES: Record<ScreenPage, (p: PageCtx) => void> = {
   },
 
   flight(p) {
-    const { sim, anim } = p;
+    const { g, sim, anim } = p;
     p.header('VUELO');
-    const r = p.rows(46);
+    const f = p.fl();
+    // attitude: the horizon moves against the ship's pitch and roll
+    const cx = 86;
+    const cy = 46 + (p.h - 46) / 2;
+    const R = Math.min(70, (p.h - 56) / 2);
+    g.save();
+    g.beginPath();
+    g.arc(cx, cy, R, 0, Math.PI * 2);
+    g.clip();
+    g.translate(cx, cy);
+    g.rotate(f.roll);
+    const off = (f.pitch * R) / 0.6;
+    g.fillStyle = '#123a52';
+    g.fillRect(-R * 2, -R * 2 + off, R * 4, R * 2);
+    g.fillStyle = '#3a2a16';
+    g.fillRect(-R * 2, off, R * 4, R * 2);
+    g.strokeStyle = C.txt;
+    g.lineWidth = 2;
+    line(g, -R * 2, off, R * 2, off);
+    g.lineWidth = 1;
+    g.strokeStyle = 'rgba(191,239,255,0.6)';
+    for (const deg of [-20, -10, 10, 20]) {
+      const y = off - ((deg * Math.PI) / 180) * (R / 0.6);
+      line(g, -R * 0.25, y, R * 0.25, y);
+    }
+    g.restore();
+    g.strokeStyle = C.warn;
+    g.lineWidth = 3;
+    line(g, cx - R * 0.55, cy, cx - R * 0.15, cy);
+    line(g, cx + R * 0.15, cy, cx + R * 0.55, cy);
+    g.fillStyle = C.warn;
+    g.fillRect(cx - 2, cy - 2, 4, 4);
+    g.lineWidth = 2;
+    g.strokeStyle = 'rgba(79,216,240,0.6)';
+    g.beginPath();
+    g.arc(cx, cy, R, 0, Math.PI * 2);
+    g.stroke();
+    g.lineWidth = 1;
+    // numbers
+    const x0 = 176;
+    let y = 46;
+    const row = (label: string, value: string, color: string) => {
+      g.font = `600 13px ${FONT}`;
+      g.fillStyle = C.dim;
+      g.fillText(label, x0, y);
+      g.font = `700 15px ${FONT}`;
+      g.fillStyle = color;
+      g.fillText(value, x0 + 104, y - 1);
+      y += 21;
+    };
+    if (f.orbital || f.alt > 3000) {
+      // high up or fast: the orbit instead of the ground
+      const o = f.orbit;
+      const km = (m: number) => (Number.isFinite(m) ? `${(m / 1000).toFixed(1)} km` : '∞');
+      row('ALTITUD', km(o.altitude), C.txt);
+      row('VELOCIDAD', `${Math.round(o.speed)} m/s`, o.speed >= o.circular * 0.99 ? C.ok : C.txt);
+      row('CIRCULAR', `${Math.round(o.circular)} m/s`, C.dim);
+      row('APOÁPSIDE', km(o.apoapsis), C.txt);
+      row('PERIÁPSIDE', km(o.periapsis), o.periapsis < 0 ? C.bad : o.orbiting ? C.ok : C.warn);
+      row('ÓRBITA', o.eccentricity >= 1 ? 'ESCAPE' : o.orbiting ? `ESTABLE · ${Math.floor(o.period / 60)} min` : 'SUBORBITAL', o.orbiting ? C.ok : C.warn);
+      row('BASE', `${Math.round(f.base.dist / 1000)} km · ${deg3(f.base.bearing)}°`, C.cyan);
+      const mode = f.direct ? 'DIRECTO' : f.orbital ? 'ORBITAL' : sim.sw['fa.hold'] !== 0 ? 'ACOPLADO' : 'DESACOPLADO';
+      row('MANDO', mode, f.direct ? C.bad : C.ok);
+      g.font = `700 12px ${FONT}`;
+      g.fillStyle = f.apOn ? C.ok : C.dim;
+      g.fillText(f.apOn ? `P.AUT  ${f.modes.join(' · ') || 'CONECTADO'}` : 'P.AUT  DESCONECTADO', 16, p.h - 8);
+      return;
+    }
+    row('ALTURA', `${f.agl.toFixed(1)} m`, f.agl < 3 && !f.landed ? C.warn : C.txt);
+    row('VERTICAL', `${f.vs >= 0 ? '+' : ''}${f.vs.toFixed(1)} m/s`, f.vs < -3 && f.agl < 20 ? C.bad : C.txt);
+    row('VELOCIDAD', `${f.gs.toFixed(1)} m/s`, C.txt);
+    row('RUMBO', `${deg3(f.heading)}°`, C.txt);
     const gear = sim.def.gear;
     if (gear) {
       const down = anim.movers[gear.key] ?? 0;
-      r.row('TREN', `${down > 0.99 ? 'ABAJO Y BLOCADO' : down < 0.01 ? 'ARRIBA' : 'EN TRÁNSITO'} · ${Math.round(down * 100)} %`, down > 0.99 ? C.ok : C.warn);
+      row('TREN', down > 0.99 ? 'ABAJO' : down < 0.01 ? 'ARRIBA' : 'EN TRÁNSITO', down > 0.99 ? C.ok : down < 0.01 ? C.txt : C.warn);
     }
-    for (const key of sim.def.readouts?.flight ?? []) p.switchRow(r, key);
-    if (sim.def.ramp) {
-      const ramp = anim.movers[sim.def.ramp.key] ?? 0;
-      r.row('RAMPA', `${Math.round(ramp * 100)} %`, ramp > 0.05 && ramp < 0.95 ? C.warn : C.txt);
+    const tw = f.weight > 0 ? f.thrust / f.weight : 0;
+    row('EMPUJE', `${(f.thrust / 1000).toFixed(1)} kN · ${tw.toFixed(2)}×P`, C.txt);
+    const mode = f.direct ? 'DIRECTO' : sim.sw['fa.hold'] !== 0 ? 'ACOPLADO' : 'DESACOPLADO';
+    row('MANDO', mode, f.direct ? C.bad : C.ok);
+    row('SUELO', f.landed ? 'EN TIERRA' : 'EN VUELO', f.landed ? C.ok : C.cyan);
+    g.font = `700 12px ${FONT}`;
+    g.fillStyle = f.apOn ? C.ok : C.dim;
+    g.fillText(f.apOn ? `P.AUT  ${f.modes.join(' · ') || 'CONECTADO'}` : 'P.AUT  DESCONECTADO', 16, p.h - 8);
+  },
+
+  ap(p) {
+    const { g, w, sim } = p;
+    p.header('PILOTO AUTOMÁTICO');
+    const ap = sim.def.autopilot;
+    if (!ap) return p.note('Esta nave no tiene piloto automático.', 56);
+    const f = p.fl();
+    g.font = `700 16px ${FONT}`;
+    g.fillStyle = f.direct ? C.bad : f.apOn ? C.ok : C.dim;
+    g.fillText(f.direct ? 'SIN ORDENADOR DE VUELO' : f.apOn ? 'CONECTADO' : 'DESCONECTADO', 16, 44);
+    // the drum's face out, and one lit box per mode on it (plus any engaged elsewhere)
+    const face = sim.sw[AP_FACE_KEY] ?? 0;
+    g.font = `700 13px ${FONT}`;
+    g.fillStyle = C.cyan;
+    g.fillText(`CARA ${AP_FACES[face] ?? face}`, w - 150, 44);
+    const modes = apModes(ap).filter((m) => m.face === face || sim.sw[AP_KEY(m.id)] === 1);
+    const cols = Math.max(1, Math.min(modes.length, 4));
+    const bw = (w - 32) / cols;
+    modes.forEach((m, i) => {
+      const x = 16 + (i % cols) * bw;
+      const y = 68 + Math.floor(i / cols) * 28;
+      const on = sim.sw[AP_KEY(m.id)] === 1;
+      g.fillStyle = on ? 'rgba(92,242,154,0.28)' : 'rgba(79,216,240,0.07)';
+      g.fillRect(x, y, bw - 6, 22);
+      g.fillStyle = on ? C.ok : C.dim;
+      g.font = `700 13px ${FONT}`;
+      g.fillText(m.label, x + 8, y + 4);
+    });
+    const r = p.rows(68 + Math.ceil(modes.length / cols) * 28 + 6);
+    const sel = f.sel!;
+    if (face === 0) {
+      r.row('ALTURA SEL.', `${sel.alt} m (ahora ${f.agl.toFixed(0)})`, C.txt);
+      r.row('RUMBO SEL.', `${deg3(sel.hdg)}° (ahora ${deg3(f.heading)}°)`, C.txt);
+      r.row('VELOC. SEL.', `${sel.spd} m/s (ahora ${f.gs.toFixed(1)})`, C.txt);
+      if (f.wp) r.row('PUNTO', `${f.wp.name} · ${fmtDist(f.wp.dist)} · ${deg3(f.wp.bearing)}°`, C.cyan);
+    } else {
+      const o = f.orbit;
+      r.row('ÓRBITA SEL.', `${(sel.orb / 1000).toFixed(0)} km · ${circularAt(bodyAt(sim.pose.p), sel.orb).toFixed(0)} m/s`, C.txt);
+      r.row('AHORA', `${(o.altitude / 1000).toFixed(1)} km · ${o.speed.toFixed(0)} m/s (circ. ${o.circular.toFixed(0)})`, C.txt);
+      r.row('PE / AP', `${(o.periapsis / 1000).toFixed(1)} / ${Number.isFinite(o.apoapsis) ? (o.apoapsis / 1000).toFixed(1) : '∞'} km`, o.orbiting ? C.ok : C.warn);
+      r.row('BASE', `${fmtDist(f.base.dist)} · ${deg3(f.base.bearing)}°`, C.cyan);
+      r.row('SOBREPOT.', sim.sw[BOOST.key] === 1 ? 'CONECTADA' : 'NORMAL', sim.sw[BOOST.key] === 1 ? C.warn : C.dim);
     }
-    const m = sim.massNow();
-    const perf = performance(sim.def, m, MOON.gravity);
-    const F = thrust(thrusters(sim.def), m.com, engineFractions(sim.def, p.n)).F;
-    r.row('EMPUJE', `${(Math.hypot(F[0], F[1], F[2]) / 1000).toFixed(1)} / ${(perf.maxN / 1000).toFixed(1)} kN`, C.txt);
-    r.row('EMPUJE/PESO', `${perf.twr.toFixed(2)} (Luna)`, perf.twr > 1 ? C.ok : C.warn);
-    p.note('El modelo de vuelo aún no mueve la nave. Los mandos sí quedan registrados.', r.y + 8);
+    if (f.modes.length) p.note(f.modes.join(' · '), Math.min(r.y + 4, p.h - 8));
+  },
+
+  nav(p) {
+    const { g, w, sim } = p;
+    p.header('NAVEGACIÓN');
+    const f = p.fl();
+    const body = bodyAt(sim.pose.p);
+    const top = 42;
+    const H = p.h - top;
+    const cx = w / 2;
+    const cy = top + H / 2;
+    // scale: the selected point and the base in view, between 150 m and 3 km across
+    const far = Math.max(150, Math.min(3000, Math.max(f.wp?.dist ?? 0, f.base.dist) * 1.25));
+    const k = (Math.min(w, H) * 0.46) / far;
+    g.strokeStyle = 'rgba(79,216,240,0.18)';
+    for (const ring of [0.33, 0.66, 1]) {
+      g.beginPath();
+      g.arc(cx, cy, far * ring * k, 0, Math.PI * 2);
+      g.stroke();
+    }
+    g.fillStyle = C.dim;
+    g.font = `600 11px ${FONT}`;
+    g.fillText(fmtDist(far), cx + far * k - 44, cy - 4);
+    g.fillText('N', cx - 4, top + 2);
+    // every point on the local horizon (north up), over the great circle from the ship
+    let sx = cx;
+    let sy = cy;
+    for (const pt of NAV_POINTS) {
+      if (pt.body !== body.def.id) continue;
+      const to = bearingTo(body, sim.pose.p, pt);
+      const x = cx + Math.sin(to.bearing) * to.dist * k;
+      const y = cy - Math.cos(to.bearing) * to.dist * k;
+      const selected = f.sel?.wp.id === pt.id;
+      if (selected) {
+        sx = x;
+        sy = y;
+      }
+      if (x < 8 || x > w - 8 || y < top || y > p.h) continue;
+      g.fillStyle = selected ? C.ok : pt.pad ? C.cyan : C.txt;
+      g.fillRect(x - 3, y - 3, 6, 6);
+      g.font = `700 11px ${FONT}`;
+      g.fillText(pt.name, x + 6, y - 8);
+    }
+    if (f.sel && (sx !== cx || sy !== cy)) {
+      g.strokeStyle = 'rgba(92,242,154,0.6)';
+      g.setLineDash([6, 5]);
+      line(g, cx, cy, sx, sy);
+      g.setLineDash([]);
+    }
+    // the ship: a triangle along its heading (north up)
+    g.save();
+    g.translate(cx, cy);
+    g.rotate(f.heading);
+    g.fillStyle = C.warn;
+    g.beginPath();
+    g.moveTo(0, -9);
+    g.lineTo(6, 7);
+    g.lineTo(-6, 7);
+    g.closePath();
+    g.fill();
+    g.restore();
+    g.font = `700 12px ${FONT}`;
+    g.fillStyle = C.txt;
+    g.fillText(`RUMBO ${deg3(f.heading)}°  ${f.gs.toFixed(1)} m/s`, 12, p.h - 8);
+    if (f.wp) {
+      g.textAlign = 'right';
+      g.fillStyle = C.ok;
+      g.fillText(`${f.wp.name} ${fmtDist(f.wp.dist)}`, w - 12, p.h - 8);
+      g.textAlign = 'left';
+    }
   },
 
   mass(p) {
     const { sim } = p;
     p.header('MASA Y EMPUJE');
     const r = p.rows(46);
-    const m = sim.massNow();
+    const m = sim.flight.mp;
     const perf = performance(sim.def, m, MOON.gravity);
     r.row('MASA', `${(m.mass / 1000).toFixed(2)} t`, C.txt);
     const g = m.groups;
     r.row('  SECA', `${((g.estructura + g.máquinas + g.mobiliario) / 1000).toFixed(2)} t`, C.dim);
     r.row('  PROPELENTE', `${g.propelente.toFixed(0)} kg`, C.dim);
-    r.row('  GAS · VÍVERES', `${g.gases.toFixed(0)} · ${g.víveres.toFixed(0)} kg`, C.dim);
+    r.row('  A BORDO', `${g.tripulación.toFixed(0)} kg gente · ${g.carga.toFixed(0)} kg carga`, C.dim);
     r.row('C. DE MASAS', `x ${m.com[0].toFixed(2)}  y ${m.com[1].toFixed(2)}  z ${m.com[2].toFixed(2)} m`, Math.abs(m.com[0]) > 0.2 ? C.warn : C.txt);
-    r.row('EMPUJE MÁX.', `${(perf.maxN / 1000).toFixed(1)} kN · Isp ${perf.isp.toFixed(0)} s`, C.txt);
-    r.row('EMPUJE/PESO', `${perf.twr.toFixed(2)} en la Luna`, perf.twr > 1.2 ? C.ok : C.warn);
+    r.row('SUSTENTACIÓN', `${(perf.liftN / 1000).toFixed(1)} kN · ${perf.liftTwr.toFixed(2)}× peso`, perf.liftTwr > 1.2 ? C.ok : C.warn);
+    r.row('MOTORES', `${(perf.maxN / 1000).toFixed(1)} kN · Isp ${perf.isp.toFixed(0)} s`, C.txt);
     r.row('Δv', `${perf.dv.toFixed(0)} m/s`, perf.dv > 500 ? C.ok : C.warn);
     r.row('BRAZO EMPUJE', `${perf.lever.toFixed(2)} m del c. de masas`, perf.lever > 0.3 ? C.warn : C.dim);
   },
@@ -412,15 +605,44 @@ const reactors = (sim: ShipSim) => sim.sys.modules.filter((m): m is Reactor => m
 const apus = (sim: ShipSim) => sim.sys.modules.filter((m): m is Apu => m.id.startsWith('apu:'));
 const engines = (sim: ShipSim) => sim.sys.modules.filter((m): m is Engine => m.id.startsWith('engine:'));
 
+/** Screens farther than this from the eye (m) keep their last picture: nobody can read them. */
+const SCREEN_READ_M = 16;
+const _sp = new THREE.Vector3();
+const _sn = new THREE.Vector3();
+
+/** The screen background (fill + grid), drawn once per size and blitted (one call, not 30 strokes). */
+const backgrounds = new Map<string, HTMLCanvasElement>();
+function background(w: number, h: number) {
+  const key = `${w}x${h}`;
+  let c = backgrounds.get(key);
+  if (!c) {
+    c = document.createElement('canvas');
+    c.width = w;
+    c.height = h;
+    const g = c.getContext('2d')!;
+    g.fillStyle = C.bg;
+    g.fillRect(0, 0, w, h);
+    g.strokeStyle = C.grid;
+    g.lineWidth = 1;
+    for (let x = 0; x < w; x += 32) line(g, x, 0, x, h);
+    for (let y = 0; y < h; y += 32) line(g, 0, y, w, y);
+    backgrounds.set(key, c);
+  }
+  return c;
+}
+
 /** Multi-function displays drawn into canvases (the ship's own diagnostics, readable in-world). */
 export class ShipScreens {
   readonly meshes: THREE.Mesh[] = [];
-  private items: Array<{ def: ScreenDef; mesh: THREE.Mesh; ctx: CanvasRenderingContext2D; tex: THREE.CanvasTexture; mat: THREE.MeshBasicMaterial; w: number; h: number }> = [];
-  private last = -1;
+  private items: Array<{ def: ScreenDef; mesh: THREE.Mesh; ctx: CanvasRenderingContext2D; tex: THREE.CanvasTexture; mat: THREE.MeshBasicMaterial; w: number; h: number; slot: number; phase: number; page: ScreenPage | null }> = [];
   /** Page each screen last drew (a new page is drawn at once, not at the next 4 Hz slot). */
   private shown = new Map<string, ScreenPage>();
 
-  constructor(private sim: ShipSim) {
+  constructor(
+    private sim: ShipSim,
+    /** The ground of each body (the flight displays measure the height above it). */
+    private surfaces: Surfaces,
+  ) {
     for (const def of sim.def.screens) {
       const w = 512;
       const h = Math.round((w * def.h) / def.w);
@@ -431,33 +653,56 @@ export class ShipScreens {
       const tex = new THREE.CanvasTexture(canvas);
       tex.colorSpace = THREE.SRGBColorSpace;
       tex.anisotropy = 4;
-      const mat = new THREE.MeshBasicMaterial({ map: tex, color: new THREE.Color(1.5, 1.5, 1.5) });
+      const mat = sharpText(new THREE.MeshBasicMaterial({ map: tex, color: new THREE.Color(1.5, 1.5, 1.5) }), -0.6);
       const mesh = new THREE.Mesh(new THREE.PlaneGeometry(def.w, def.h), mat);
       mesh.matrixAutoUpdate = false;
       mesh.matrix.makeBasis(new THREE.Vector3(...def.u), new THREE.Vector3(...def.v), new THREE.Vector3(...def.n)).setPosition(...def.c);
       mesh.name = def.id;
       this.meshes.push(mesh);
-      this.items.push({ def, mesh, ctx, tex, mat, w, h });
+      // each screen redraws on its own beat: they never all upload in the same frame
+      this.items.push({ def, mesh, ctx, tex, mat, w, h, slot: -1, phase: this.items.length / Math.max(1, sim.def.screens.length), page: null });
     }
   }
 
-  /** Redraw at ~4 Hz (they are text, nobody needs 60). */
-  update(time: number, anim: ShipAnimState, hidden: (host: number) => boolean) {
+  /** Someone can read it: close to the eye and facing it. */
+  private readable(mesh: THREE.Mesh, eye: THREE.Vector3) {
+    const M = mesh.matrixWorld;
+    _sp.setFromMatrixPosition(M);
+    const dx = eye.x - _sp.x;
+    const dy = eye.y - _sp.y;
+    const dz = eye.z - _sp.z;
+    if (dx * dx + dy * dy + dz * dz > SCREEN_READ_M * SCREEN_READ_M) return false;
+    _sn.setFromMatrixColumn(M, 2);
+    return _sn.x * dx + _sn.y * dy + _sn.z * dz > 0;
+  }
+
+  /**
+   * Redraw at ~4 Hz (they are text, nobody needs 60); flight instruments at 12 Hz. Only the screens
+   * someone can read are redrawn (`eye`: the camera, world), each on its own beat; a new page is
+   * drawn at once.
+   */
+  update(time: number, anim: ShipAnimState, hidden: (host: number) => boolean, eye?: THREE.Vector3) {
     const sim = this.sim;
-    const slot = Math.floor(time * 4);
-    const flipped = this.items.some((it) => this.shown.get(it.def.id) !== activePage(it.def, sim.sw));
-    if (slot === this.last && !flipped) return;
-    this.last = slot;
-    // the power page stays readable on battery, so a dead avionics bus does not hide the grid
-    const onBattery = !!sim.sys.power?.batteries.some((b) => sim.sw[b.key] === 1 && sim.st[b.iSoc] > 0.001);
+    let battery: boolean | null = null;
     for (const it of this.items) {
       const off = hidden(it.def.host);
       it.mesh.visible = !off;
       if (off) continue;
       const page = activePage(it.def, sim.sw);
+      const flipped = it.page !== page;
+      const slot = Math.floor(time * (LIVE_PAGES.has(page) ? 12 : 4) + it.phase);
+      if (slot === it.slot && !flipped) continue;
+      if (!flipped && eye && !this.readable(it.mesh, eye)) continue;
+      it.slot = slot;
+      it.page = page;
       this.shown.set(it.def.id, page);
       const idx = it.def.pages.indexOf(page);
-      const on = sim.powered(it.def.circuit) || (page === 'power' && onBattery);
+      // the power page stays readable on battery, so a dead avionics bus does not hide the grid
+      if (page === 'power' && battery === null) {
+        battery = false;
+        for (const b of sim.sys.power?.batteries ?? []) if (sim.sw[b.key] === 1 && sim.st[b.iSoc] > 0.001) battery = true;
+      }
+      const on = sim.powered(it.def.circuit) || (page === 'power' && !!battery);
       it.mat.color.setScalar(on ? 1.5 : 0.02);
       if (!on) continue;
       this.draw(it.ctx, it.w, it.h, page, idx, it.def.pages, time, anim);
@@ -467,13 +712,9 @@ export class ShipScreens {
 
   private draw(g: CanvasRenderingContext2D, w: number, h: number, page: ScreenPage, index: number, pages: ScreenPage[], time: number, anim: ShipAnimState) {
     const sim = this.sim;
-    g.fillStyle = C.bg;
-    g.fillRect(0, 0, w, h);
-    g.strokeStyle = C.grid;
-    g.lineWidth = 1;
-    for (let x = 0; x < w; x += 32) line(g, x, 0, x, h);
-    for (let y = 0; y < h; y += 32) line(g, 0, y, w, y);
+    g.drawImage(background(w, h), 0, 0);
     const n = (name: string) => (sim.vars.has(name) ? sim.st[sim.vars.idx(name)] : 0);
+    let fl: FlightReadout | null = null;
     const ctx: PageCtx = {
       g,
       w,
@@ -481,6 +722,7 @@ export class ShipScreens {
       time,
       anim,
       sim,
+      fl: () => (fl ??= flightReadout(sim, this.surfaces)),
       n,
       header: (title) => this.header(g, w, title, time),
       rows: (y0) => rows(g, y0),
@@ -545,6 +787,18 @@ export class ShipScreens {
       g.fillText(pageLabel(p), x + 4, y + 2);
     });
   }
+}
+
+/** Pages with moving instruments (redrawn faster). */
+const LIVE_PAGES = new Set<ScreenPage>(['flight', 'ap', 'nav']);
+
+/** Compass heading as three digits (000 = north). */
+function deg3(rad: number) {
+  return String(((Math.round((rad * 180) / Math.PI) % 360) + 360) % 360).padStart(3, '0');
+}
+
+function fmtDist(m: number) {
+  return m < 1000 ? `${Math.round(m)} m` : `${(m / 1000).toFixed(1)} km`;
 }
 
 function rows(g: CanvasRenderingContext2D, y0: number): Rows {

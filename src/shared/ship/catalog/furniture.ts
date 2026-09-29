@@ -45,6 +45,8 @@ export const FURNITURE_LIST: FurnitureDef[] = [
   { id: 'handrail', model: 'handrail', name: 'Pasamanos', half: [0.03, 0.05, 0.55], mass: 3, collide: 'none' },
   { id: 'rail', model: 'rail', name: 'Raíl de amarre', half: [0.025, 0.025, 3.7], mass: 20, collide: 'none' },
   { id: 'stick', model: 'stick', name: 'Palanca', half: [0.03, 0.08, 0.07], mass: 1, collide: 'none' },
+  // guard rail round a stairwell or along a catwalk: runs along local z, stops you walking off
+  { id: 'railing', model: 'railing', name: 'Barandilla', half: [0.03, 0.55, 1.0], mass: 18, collide: 'box' },
   { id: 'step', model: 'step', name: 'Estribo', half: [0.45, 0.04, 0.22], mass: 25, collide: 'box' },
   // boarding stairs rising toward local −x (the hull): collider = the wedge under the treads
   { id: 'stairs', model: 'stairs', name: 'Escalerilla', half: [0.95, 0.6, 0.48], mass: 80, collide: 'hull', look: { steps: 5 } },

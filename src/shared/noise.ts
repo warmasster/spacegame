@@ -107,3 +107,102 @@ export function smin(a: number, b: number, k: number) {
   return b + (a - b) * h - k * h * (1 - h);
 }
 export const smax = (a: number, b: number, k: number) => -smin(-a, -b, k);
+
+/** Integer hash of a 3D cell + salt → uint32. */
+export function hash3i(x: number, y: number, z: number, salt: number): number {
+  let h = Math.imul(x | 0, 0x27d4eb2d) ^ Math.imul(y | 0, 0x165667b1) ^ Math.imul(z | 0, 0x1b873593) ^ Math.imul(salt | 0, 0x9e3779b9);
+  h = Math.imul(h ^ (h >>> 15), 0x85ebca6b);
+  h = Math.imul(h ^ (h >>> 13), 0xc2b2ae35);
+  return (h ^ (h >>> 16)) >>> 0;
+}
+
+/** Successive uniform [0,1) values derived from one 3D cell hash. */
+export class CellRandom3 {
+  private s = 0;
+  reset(x: number, y: number, z: number, salt: number) {
+    this.s = hash3i(x, y, z, salt);
+    return this;
+  }
+  next(): number {
+    this.s = (this.s + 0x6d2b79f5) >>> 0;
+    let t = this.s;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  }
+}
+
+const fade = (t: number) => t * t * t * (t * (t * 6 - 15) + 10);
+const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
+function grad3(h: number, x: number, y: number, z: number) {
+  const g = h & 15;
+  const u = g < 8 ? x : y;
+  const v = g < 4 ? y : g === 12 || g === 14 ? x : z;
+  return ((g & 1) === 0 ? u : -u) + ((g & 2) === 0 ? v : -v);
+}
+
+/** Seeded 3D gradient noise (Perlin's improved noise), output roughly in [-1, 1]. For surfaces of spheres. */
+export class Noise3 {
+  private perm = new Uint8Array(512);
+
+  constructor(seed: number) {
+    const rnd = mulberry32(seed);
+    const p = new Uint8Array(256);
+    for (let i = 0; i < 256; i++) p[i] = i;
+    for (let i = 255; i > 0; i--) {
+      const j = Math.floor(rnd() * (i + 1));
+      const t = p[i];
+      p[i] = p[j];
+      p[j] = t;
+    }
+    for (let i = 0; i < 512; i++) this.perm[i] = p[i & 255];
+  }
+
+  noise(x: number, y: number, z: number): number {
+    const P = this.perm;
+    const fx = Math.floor(x);
+    const fy = Math.floor(y);
+    const fz = Math.floor(z);
+    const X = fx & 255;
+    const Y = fy & 255;
+    const Z = fz & 255;
+    x -= fx;
+    y -= fy;
+    z -= fz;
+    const u = fade(x);
+    const v = fade(y);
+    const w = fade(z);
+    const A = P[X] + Y;
+    const AA = P[A] + Z;
+    const AB = P[A + 1] + Z;
+    const B = P[X + 1] + Y;
+    const BA = P[B] + Z;
+    const BB = P[B + 1] + Z;
+    return lerp(
+      lerp(lerp(grad3(P[AA], x, y, z), grad3(P[BA], x - 1, y, z), u), lerp(grad3(P[AB], x, y - 1, z), grad3(P[BB], x - 1, y - 1, z), u), v),
+      lerp(lerp(grad3(P[AA + 1], x, y, z - 1), grad3(P[BA + 1], x - 1, y, z - 1), u), lerp(grad3(P[AB + 1], x, y - 1, z - 1), grad3(P[BB + 1], x - 1, y - 1, z - 1), u), v),
+      w,
+    );
+  }
+}
+
+/** Crater shape (after Lague): bowl + raised rim + flat floor, degraded with age. */
+export function craterProfile(r: number, radius: number, age: number): number {
+  const floor = -0.42 + 0.18 * age;
+  const rimWidth = 0.55 + 0.3 * age;
+  const rimSteep = 0.42;
+  const k = 0.16 + 0.45 * age;
+  const cavity = r * r - 1;
+  const rimX = Math.min(r - 1 - rimWidth, 0);
+  const rim = rimSteep * rimX * rimX;
+  let shape = smin(cavity, rim, k);
+  // floor blend radius must stay below |floor| or the smooth-max leaks a constant offset
+  // outside the crater (which then shows up as a cliff where the crater stops being evaluated)
+  shape = smax(shape, floor, Math.min(k, -floor * 0.9));
+  // faint ejecta blanket: continuous at the rim (constant inside) and faded to exactly zero
+  // before the evaluation cut-off, so the surface has no steps anywhere
+  const blanket = r > 1 ? Math.exp(-(r - 1) * 2.2) * (1 - smoothstep(1.6, 2.2, r)) : 1;
+  shape += 0.03 * blanket * (1 - age);
+  return shape * radius * 0.85 * (1 - 0.72 * age);
+}
+

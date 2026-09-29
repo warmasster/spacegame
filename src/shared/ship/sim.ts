@@ -7,12 +7,19 @@
 // systems.ts and modules/*.ts), replicated as quantised diffs.
 
 import { SUN } from '../constants.js';
+import { ventsOf, type Vent } from './airflow.js';
 import type { ControlDef, PanelDef, PartDef, ShipDef, SubsystemId } from './def.js';
-import { massProperties, type MassProps, type ShipPose } from './flight.js';
-import { add, closestInPoly, qConj, qRotate, qYaw, rotY, sub, toFrame, type V3 } from './geom.js';
+import { compassHeading, FlightModel, massProperties, type Lump, type MassProps, type ShipPose } from './flight/index.js';
+import { add, closestInPoly, qConj, qRotate, qYaw, rotY, sub, toFrame, type Quat, type V3 } from './geom.js';
+import type { SurfaceGround } from '../space/tangent.js';
 import type { Engine } from './modules/engines.js';
 import { quantize, VarTable } from './state.js';
 import { panelArea, ShipSystems, SYSTEMS_HZ, type SysContext, type SysEvent } from './systems.js';
+import type { HullView, InterlockEnv } from './modules/api.js';
+import { bodyAt, inShadow, orbitalRegime, sunDirection } from '../space/body.js';
+
+const NO_BODIES: V3[] = [];
+const SUN_DIR = sunDirection(SUN.az, SUN.el);
 
 /** Every ship the game knows, by id (ships/index.ts). */
 export { SHIP_DEFS } from './ships/index.js';
@@ -34,38 +41,46 @@ export const REACH = { control: 2.4, repair: 3.2 };
 export { DOOR_DP } from './modules/life.js';
 export { SYSTEMS_HZ };
 
+/** Where a ship was placed (world): on its gear on the ground, level on the local horizon. Its pad is there. */
 export interface ShipPlacement {
-  x: number;
-  y: number;
-  z: number;
-  yaw: number;
+  p: V3;
+  q: Quat;
 }
 
 export interface ShipSnapshot {
   id: number;
   def: string;
-  x: number;
-  z: number;
-  yaw: number;
+  place: ShipPlacement;
   sw: Record<string, number>;
   hp: number[];
   /** Continuous state (full table, quantised). */
   st?: number[];
-  /** World pose (flight groundwork; parked ships derive it from x, z, yaw). */
+  /** World pose (where it is now; `place` is where it started). */
   pose?: ShipPose;
 }
 
-type Ground = { height(x: number, z: number): number };
+/** Height of a world point over the ground under it (m): space/body.ts `heightAboveGround`. */
+export type GroundAlt = (p: readonly number[]) => number;
 
-/** World placement on its gear: floor at the mean ground height under the feet + clearance. */
-export function placeShip(def: ShipDef, x: number, z: number, yaw: number, ground: Ground): ShipPlacement {
+/** Nothing changed this tick (shared, never written). */
+const NO_SW: Record<string, number> = Object.freeze({}) as Record<string, number>;
+const NO_HP: Array<[number, number]> = Object.freeze([]) as unknown as Array<[number, number]>;
+
+/**
+ * Place a ship on its gear at (x, z) of a ground's tangent frame (space/tangent.ts: a site's, or
+ * one laid anywhere), heading `yaw` in that frame: the floor at the mean height of the ground under
+ * its feet plus its clearance, level on the frame's horizon. Works anywhere round any body.
+ */
+export function placeShip(def: ShipDef, ground: SurfaceGround, x: number, z: number, yaw: number): ShipPlacement {
   const legs: V3[] = def.gear?.legs.length ? def.gear.legs : [[0, 0, 0]];
   let sum = 0;
   for (const leg of legs) {
     const w = rotY(leg, yaw);
     sum += ground.height(x + w[0], z + w[2]);
   }
-  return { x, y: sum / legs.length + def.floorHeight, z, yaw };
+  const p = ground.toWorld(x, sum / legs.length + def.floorHeight, z, [0, 0, 0]) as V3;
+  const q = ground.rotOut(qYaw(yaw), [0, 0, 0, 1]) as Quat;
+  return { p, q };
 }
 
 export class ShipSim {
@@ -76,28 +91,51 @@ export class ShipSim {
   st: Float64Array;
   /** Ramp rest angle below horizontal when lowered (rad), so its lip sits on the ground. */
   readonly rampAngle: number;
-  /** Weight on wheels (always, until ships fly). */
+  /** Weight on the gear (or the hull resting on the ground). Set by the flight authority. */
   landed = true;
   /** Parked on a pad with a refuelling point. */
   onPad = true;
   /** Sunlight on the arrays (0..1): the landing site sits in the lunar day. */
   sun = SUN.el > 0 ? 1 : 0;
   /**
-   * Where the ship is and how it moves. Parked ships sit on `place`; the flight model (flight.ts)
-   * will move this. Every ship-space ↔ world conversion goes through it.
+   * Where the ship is and how it moves (world). The flight authority integrates it
+   * (`flight.step`), everyone else receives it. Every ship-space ↔ world conversion goes through it.
    */
   readonly pose: ShipPose;
+  private flightModel: FlightModel | null = null;
+  /** Reused every systems tick: the context, the hull as the tick sees it, panels it tore, the result. */
+  private sysCtx: SysContext | null = null;
+  private ilEnv: InterlockEnv = { landed: true, onPad: true, orbital: false };
+  private noCrew: number[];
+  private torn: number[] = [];
+  private tickOut: { sw: Record<string, number>; hp: Array<[number, number]>; events: SysEvent[] } = { sw: NO_SW, hp: NO_HP, events: [] };
+  private hullView: HullView = {
+    hole: (i) => this.hole(i),
+    crack: (i) => this.crack(i),
+    hp: (i) => this.hp[i],
+    damage: (i, amount) => {
+      if (amount <= 0 || this.hp[i] <= 0) return;
+      // below solid it blows out completely, like a blast
+      this.hp[i] = this.hp[i] - amount < SOLID_HP ? 0 : this.hp[i] - amount;
+      if (!this.torn.includes(i)) this.torn.push(i);
+    },
+  };
+  /** Crack area per panel (m² at full crack), and the panels on each circuit's conduit. */
+  private crackArea: Float64Array;
 
   constructor(
     readonly id: number,
     readonly def: ShipDef,
     readonly place: ShipPlacement,
-    ground: Ground,
+    /** The ground where it stands (its ramp is laid on it). */
+    groundAlt: GroundAlt,
     snap?: { sw: Record<string, number>; hp: number[]; st?: number[]; pose?: ShipPose },
   ) {
-    this.pose = snap?.pose ? { p: [...snap.pose.p], q: [...snap.pose.q], v: [...snap.pose.v], w: [...snap.pose.w] } : { p: [place.x, place.y, place.z], q: qYaw(place.yaw), v: [0, 0, 0], w: [0, 0, 0] };
+    this.pose = snap?.pose ? { p: [...snap.pose.p], q: [...snap.pose.q], v: [...snap.pose.v], w: [...snap.pose.w] } : { p: [...place.p], q: [...place.q], v: [0, 0, 0], w: [0, 0, 0] };
     this.sw = { ...def.defaults, ...(snap?.sw ?? {}) };
     this.hp = def.panels.map((p, i) => snap?.hp[i] ?? p.maxHp);
+    this.crackArea = Float64Array.from(def.panels, (p) => panelArea(p.poly));
+    this.noCrew = def.compartments.map(() => 0);
     this.sys = new ShipSystems(def, this.vars);
     this.st = Float64Array.from(this.vars.initial);
     if (snap?.st && snap.st.length === this.st.length) this.st.set(snap.st);
@@ -108,8 +146,8 @@ export class ShipSim {
     if (r) {
       a = Math.asin(Math.min(0.95, def.floorHeight / r.length));
       for (let k = 0; k < 3; k++) {
-        const tip = this.toWorld([r.hinge[0], r.hinge[1] - Math.sin(a) * r.length, r.hinge[2] + Math.cos(a) * r.length]);
-        const drop = place.y - ground.height(tip[0], tip[2]);
+        // how far the ground under the tip is below the deck (the ship stands level)
+        const drop = groundAlt(this.toWorld([r.hinge[0], 0, r.hinge[2] + Math.cos(a) * r.length]));
         a = Math.asin(Math.max(0.1, Math.min(0.7, drop / r.length)));
       }
     }
@@ -121,9 +159,7 @@ export class ShipSim {
     return {
       id: this.id,
       def: this.def.id,
-      x: this.place.x,
-      z: this.place.z,
-      yaw: this.place.yaw,
+      place: { p: [...this.place.p], q: [...this.place.q] },
       sw: { ...this.sw },
       hp: this.hp.map((h) => Math.round(h * 10) / 10),
       st: Array.from(this.st, (v, i) => +quantize(v, Math.max(0, q[i])).toFixed(6)),
@@ -148,9 +184,29 @@ export class ShipSim {
     return qRotate(qConj(this.pose.q), d);
   }
 
-  /** Mass properties with the consumables aboard right now (flight.ts). */
-  massNow(crew: V3[] = []): MassProps {
-    return massProperties(this.def, (p) => (this.vars.has(`${p.id}.kg`) ? Math.max(0, this.get(`${p.id}.kg`)) : 0), crew);
+  /** Flight model (thrusters, flight computer, contact): used by whoever flies the ship. */
+  get flight(): FlightModel {
+    return (this.flightModel ??= new FlightModel(this));
+  }
+
+  /** State index of what each part holds (kg), for the mass. */
+  private kgIndex: Map<PartDef, number> | null = null;
+
+  private contentKg = (p: PartDef) => {
+    if (!this.kgIndex) {
+      this.kgIndex = new Map();
+      for (const part of this.def.parts) if (this.vars.has(`${part.id}.kg`)) this.kgIndex.set(part, this.vars.idx(`${part.id}.kg`));
+    }
+    const i = this.kgIndex.get(p);
+    return i === undefined ? 0 : Math.max(0, this.st[i]);
+  };
+
+  /**
+   * Mass properties with the consumables aboard right now and anything else aboard (crew, crates).
+   * `out`: an object to fill instead of a new one (the flight model reuses its own every step).
+   */
+  massNow(extra: readonly Lump[] = [], out?: MassProps): MassProps {
+    return massProperties(this.def, this.contentKg, extra, out);
   }
 
   /** Panel is blown out (or still being rebuilt). */
@@ -163,13 +219,15 @@ export class ShipSim {
     const p = this.def.panels[i];
     const r = this.hp[i] / p.maxHp;
     if (this.hole(i) || r >= 0.6) return 0;
-    return 0.004 * ((0.6 - r) / 0.6) ** 2 * panelArea(p.poly);
+    return 0.004 * ((0.6 - r) / 0.6) ** 2 * this.crackArea[i];
   }
+
+  private holeFn = (i: number) => this.hole(i);
 
   /** First blown-out panel on a subsystem's conduit, if any. */
   conduitCut(sub: SubsystemId): PanelDef | null {
-    for (const p of this.def.panels) if (p.conduits.includes(sub) && this.hole(p.index)) return p;
-    return null;
+    const i = this.sys.conduitCut(sub, this.holeFn);
+    return i < 0 ? null : this.def.panels[i];
   }
 
   /** Circuit energised (breaker closed, conduit intact, enough supply). */
@@ -215,17 +273,21 @@ export class ShipSim {
   blocked(c: ControlDef, dir = 0): string | null {
     if (c.host >= 0 && this.hole(c.host)) return 'Mando destruido';
     if (c.hostPart >= 0 && this.partHp(c.hostPart) <= 0) return 'Mando destruido';
+    if (c.drum && (this.sw[c.drum.key] ?? 0) !== c.drum.face) return 'Cara del tambor escondida: gíralo con GIRAR';
     if (c.guard && this.sw[c.guard] !== 1) return 'Tapa de seguridad cerrada';
     if (c.requires) {
-      const s = this.def.subsystems.find((x) => x.id === c.requires)!;
       // a closed breaker and an intact cable accept the command; the motor waits if the bus is starved
-      if (this.sw[s.breaker] !== 1) return `Sin energía · disyuntor ${s.label} abierto`;
+      if (this.sw[this.sys.breakerOf(c.requires) ?? ''] !== 1) return `Sin energía · disyuntor ${this.circuitLabel(c.requires)} abierto`;
       const cut = this.conduitCut(c.requires);
-      if (cut) return `Sin energía · conducto de ${s.label} cortado (${cut.id})`;
+      if (cut) return `Sin energía · conducto de ${this.circuitLabel(c.requires)} cortado (${cut.id})`;
     }
     const next = this.next(c, dir);
     if (next === (this.sw[c.key] ?? 0)) return null;
-    return this.sys.interlock(c, next, this.st, this.sw, { landed: this.landed, onPad: this.onPad });
+    const env = this.ilEnv;
+    env.landed = this.landed;
+    env.onPad = this.onPad;
+    env.orbital = orbitalRegime(bodyAt(this.pose.p), this.pose.p, this.pose.v);
+    return this.sys.interlock(c, next, this.st, this.sw, env);
   }
 
   /**
@@ -241,25 +303,55 @@ export class ShipSim {
     const v = this.next(c, dir);
     if (cur === v) return { changed: {} };
     this.sw[c.key] = v;
+    this.version++;
     return { changed: { [c.key]: v } };
   }
 
   /**
-   * One systems step (authority only). Returns switch changes to broadcast and events such as
-   * internal explosions (ship space) for the authority to resolve.
+   * One systems step (authority only). Returns switch changes and panels that changed (a panel
+   * tearing under pressure) to broadcast, and events such as internal explosions (ship space) for
+   * the authority to resolve.
    */
-  tick(dt: number, ctx: Partial<SysContext> = {}): { sw: Record<string, number>; events: SysEvent[] } {
-    const full: SysContext = {
-      crew: ctx.crew ?? this.def.compartments.map(() => 0),
-      docked: ctx.docked ?? 0,
-      bodies: ctx.bodies ?? [],
-      landed: ctx.landed ?? this.landed,
-      onPad: ctx.onPad ?? this.onPad,
-      sun: ctx.sun ?? this.sun,
-      rand: ctx.rand ?? Math.random,
-    };
-    const r = this.sys.tick(dt, this.st, this.sw, full, (i) => this.hole(i), (i) => this.crack(i));
-    return { sw: r.sw, events: r.events };
+  /** Label of a circuit (messages). */
+  private circuitLabel(c: SubsystemId) {
+    const i = this.sys.circuitIndex(c);
+    return i < 0 ? c : this.def.subsystems[i].label;
+  }
+
+  /**
+   * One systems step. The result is reused by the next tick: read it right away (the server and the
+   * offline client broadcast and apply it on the spot).
+   */
+  tick(dt: number, ctx: Partial<SysContext> = {}): { sw: Record<string, number>; hp: Array<[number, number]>; events: SysEvent[] } {
+    const full = (this.sysCtx ??= { crew: this.noCrew, docked: 0, bodies: [], landed: true, onPad: true, sun: 0, agl: 0, pos: this.pose.p, vel: this.pose.v, heading: 0, rand: Math.random });
+    full.crew = ctx.crew ?? this.noCrew;
+    full.docked = ctx.docked ?? 0;
+    full.bodies = ctx.bodies ?? NO_BODIES;
+    full.landed = ctx.landed ?? this.landed;
+    full.onPad = ctx.onPad ?? this.onPad;
+    // the arrays see the sun unless the Moon is in the way (the night side of an orbit)
+    full.sun = ctx.sun ?? (inShadow(bodyAt(this.pose.p), this.pose.p, SUN_DIR) ? 0 : this.sun);
+    full.agl = ctx.agl ?? this.flight.agl;
+    full.pos = ctx.pos ?? this.pose.p;
+    full.vel = ctx.vel ?? this.pose.v;
+    full.heading = ctx.heading ?? compassHeading(this.pose.q);
+    full.rand = ctx.rand ?? Math.random;
+    this.torn.length = 0;
+    const r = this.sys.tick(dt, this.st, this.sw, full, this.hullView);
+    this.version++;
+    const out = this.tickOut;
+    out.sw = r.sw;
+    out.events = r.events;
+    out.hp = this.torn.length ? this.torn.map((i): [number, number] => [i, Math.round(this.hp[i] * 10) / 10]) : NO_HP;
+    return out;
+  }
+
+  /**
+   * Gas leaving through breaches, cracks and open doors right now, with its place and push
+   * (airflow.ts). `out`: an array to refill (callers asking every step keep their own).
+   */
+  vents(out?: Vent[]): Vent[] {
+    return ventsOf(this, out);
   }
 
   /**
@@ -270,6 +362,8 @@ export class ShipSim {
   explode(pWorld: V3, blast = BLAST): { hp: Array<[number, number]>; sw: Record<string, number>; events: SysEvent[] } {
     const p = this.toLocal(pWorld);
     const changed: Array<[number, number]> = [];
+    // nothing of the ship within reach: skip the per-panel and per-part work
+    if (this.outOfReach(p, blast.radius * 1.15)) return { hp: changed, sw: {}, events: [] };
     let breach = false;
     for (const pn of this.def.panels) {
       if (this.hp[pn.index] <= 0) continue;
@@ -298,7 +392,44 @@ export class ShipSim {
     const sw: Record<string, number> = {};
     const caution = this.def.caution;
     if (breach && this.sw[caution] !== 1) sw[caution] = this.sw[caution] = 1;
+    this.version++;
     return { hp: changed, sw, events };
+  }
+
+  /** Ship-space box around every panel and part (m), for the quick rejections. */
+  private box: { min: V3; max: V3 } | null = null;
+
+  /** A ship-space point is farther than `r` from anything of the ship. */
+  outOfReach(p: V3, r: number) {
+    const b = this.localBox();
+    const dx = Math.max(b.min[0] - p[0], 0, p[0] - b.max[0]);
+    const dy = Math.max(b.min[1] - p[1], 0, p[1] - b.max[1]);
+    const dz = Math.max(b.min[2] - p[2], 0, p[2] - b.max[2]);
+    return dx * dx + dy * dy + dz * dz > r * r;
+  }
+
+  /** Ship-space box around every panel and part (m). */
+  localBox(): { min: V3; max: V3 } {
+    if (!this.box) {
+      const min: V3 = [Infinity, Infinity, Infinity];
+      const max: V3 = [-Infinity, -Infinity, -Infinity];
+      const grow = (x: number, y: number, z: number, e: number) => {
+        min[0] = Math.min(min[0], x - e);
+        min[1] = Math.min(min[1], y - e);
+        min[2] = Math.min(min[2], z - e);
+        max[0] = Math.max(max[0], x + e);
+        max[1] = Math.max(max[1], y + e);
+        max[2] = Math.max(max[2], z + e);
+      };
+      for (const pn of this.def.panels) {
+        let e = 0;
+        for (const [u, v] of pn.poly) e = Math.max(e, Math.hypot(u, v));
+        grow(pn.c[0], pn.c[1], pn.c[2], e + pn.t);
+      }
+      for (const part of this.def.parts) grow(part.c[0], part.c[1], part.c[2], Math.hypot(part.half[0], part.half[1], part.half[2]));
+      this.box = { min, max };
+    }
+    return this.box;
   }
 
   /** Restore integrity (repair tool). Returns the new HP or null when nothing changed. */
@@ -306,6 +437,7 @@ export class ShipSim {
     const pn = this.def.panels[index];
     if (!pn || this.hp[index] >= pn.maxHp) return null;
     this.hp[index] = Math.min(pn.maxHp, this.hp[index] + amount);
+    this.version++;
     return Math.round(this.hp[index] * 10) / 10;
   }
 
@@ -316,12 +448,19 @@ export class ShipSim {
     const i = this.sys.hpIndex(part.id);
     if (this.st[i] >= part.maxHp) return null;
     this.st[i] = Math.min(part.maxHp, this.st[i] + amount * 0.6);
+    this.version++;
     return this.st[i];
   }
 
+  /**
+   * Bumped whenever the switches, the panels or the continuous state change through `apply` /
+   * `applyState` / `tick` (views redraw only what changed).
+   */
+  version = 0;
+
   /** Apply a server update (client mirror). Returns panels that switched between solid and hole. */
   apply(sw?: Record<string, number>, hp?: Array<[number, number]>) {
-    if (sw) for (const [k, v] of Object.entries(sw)) this.sw[k] = v;
+    if (sw) for (const k in sw) this.sw[k] = sw[k];
     const flipped: number[] = [];
     if (hp) {
       for (const [i, v] of hp) {
@@ -331,6 +470,7 @@ export class ShipSim {
         if (was !== this.hole(i)) flipped.push(i);
       }
     }
+    this.version++;
     return flipped;
   }
 
@@ -340,6 +480,7 @@ export class ShipSim {
       const i = d[k];
       if (i >= 0 && i < this.st.length) this.st[i] = d[k + 1];
     }
+    this.version++;
   }
 
   /** Overall hull integrity 0..1. */

@@ -50,21 +50,36 @@ await page.evaluate(() => {
       const d = b.clone().sub(a);
       const yaw = Math.atan2(-d.x, -d.z);
       const pitch = Math.atan2(d.y, Math.hypot(d.x, d.z));
-      g.inspectCam = [a.x, a.z, yaw, pitch, a.y - g.debug.game.terrain.height(a.x, a.z)];
+      g.inspectCam = [a.x, a.z, yaw, pitch, a.y - g.debug.game.groundY(a.x, a.z)];
     },
     /** place the astronaut at ship-space `at` facing ship-space `to` (first person) */
     stand(at, to) {
       const a = this.w(...at);
       const b = this.w(...to);
       const c = g.debug.controller;
-      c.teleport(a);
-      const d = b.clone().sub(a.clone().setY(a.y + 1.6));
+      g.teleport(a);
+      // the look is in the astronaut's frame (the ship's, once it is aboard)
+      const fq = g.frames.quat(c.frame);
+      const d = b.clone().sub(a.clone().setY(a.y + 1.6)).applyQuaternion(g.debug.camera.quaternion.clone().set(fq[0], fq[1], fq[2], fq[3]).invert());
       c.yaw = Math.atan2(-d.x, -d.z);
       c.pitch = Math.atan2(d.y, Math.hypot(d.x, d.z));
       g.inspectCam = null;
     },
     local(p) {
       return g.ships[0].local(p);
+    },
+    /** the astronaut's feet in ship space */
+    me() {
+      return g.ships[0].local(g.playerWorld().p);
+    },
+    /** crates stowed aboard ship 0 at start (the order of its cargo list) */
+    crates() {
+      return g.crates.list.filter((c) => c.id <= g.ships[0].sim.def.cargo.length);
+    },
+    /** a crate's centre in ship space, as drawn */
+    crateLocal(c) {
+      const w = g.crates.worldPose(c).p;
+      return g.ships[0].local(THREE_V(w[0], w[1], w[2]));
     },
     /** seat collision boxes in ship space (seats face the nose: yaw 0) */
     seatBoxes(i) {
@@ -155,26 +170,24 @@ if (mode === 'checks' || mode === 'all') {
     const g = window.game;
     const s = g.ships[0];
     g.step(60, 1 / 30, false);
-    return s.cargo.bodies.map((b, i) => {
-      const t = b.translation();
-      return window.diag.local(g.debug.camera.position.clone().set(t.x, t.y, t.z)).y - s.sim.def.cargo[i].pos[1];
-    });
+    return window.diag.crates().map((c, i) => window.diag.crateLocal(c).y - s.sim.def.cargo[i].pos[1]);
   });
   // walking into a crate shoves it
   const push = await page.evaluate(() => {
     const g = window.game;
     const s = g.ships[0];
-    const b = s.cargo.bodies[6];
-    const t0 = b.translation();
-    const l0 = window.diag.local(g.debug.camera.position.clone().set(t0.x, t0.y, t0.z));
+    const list = window.diag.crates();
+    const b = list[Math.min(6, list.length - 1)];
+    const l0 = window.diag.crateLocal(b);
     window.diag.stand([l0.x, 0.02, l0.z + 1.2], [l0.x, 0.3, l0.z - 3]);
     g.step(5, 1 / 30, false);
     g.debug.input.setKey('KeyW', true);
     g.step(60, 1 / 30, false);
     g.debug.input.setKey('KeyW', false);
     g.step(20, 1 / 30, false);
-    const t1 = b.translation();
-    return Math.hypot(t1.x - t0.x, t1.z - t0.z);
+    const l1 = window.diag.crateLocal(b);
+    void s;
+    return Math.hypot(l1.x - l0.x, l1.z - l0.z);
   });
   check('walking into a crate pushes it', push > 0.5, `${push.toFixed(2)} m`);
   check('crates rest where they are stowed', rest.every((d) => Math.abs(d) < 0.06), rest.map((d) => d.toFixed(3)).join(' '));
@@ -252,7 +265,7 @@ if (mode === 'checks' || mode === 'all') {
     const g = window.game;
     const s = g.ships[0];
     const o = {};
-    g.debug.controller.teleport(window.diag.w(0, 0.05, 12)); // out of the way
+    g.teleport(window.diag.w(0, 0.05, 12)); // out of the way
     // life support off: sealing the doors must not pressurise one side and lock them shut
     const auth = [...g.debug.game.shipAuthority.values()].find((x) => x.id === s.id);
     const mode = auth.sw['ls.mode'];
@@ -297,22 +310,24 @@ if (mode === 'checks' || mode === 'all') {
     const s = g.ships[0];
     const c = g.debug.controller;
     window.diag.stand([0, 0, 9.4], [0, 1.6, 0]);
-    const p0 = c.position.clone();
-    c.teleport(p0.setY(g.debug.game.terrain.height(p0.x, p0.z) + 0.05));
+    const p0 = g.playerWorld().p;
+    g.teleport(p0.setY(g.debug.game.groundY(p0.x, p0.z) + 0.05));
     g.step(10, 1 / 30, false);
     g.debug.input.setKey('KeyW', true);
     let maxLocalY = -9;
     for (let i = 0; i < 36; i++) {
       g.step(5, 1 / 30, false);
-      maxLocalY = Math.max(maxLocalY, window.diag.local(c.position).y);
+      maxLocalY = Math.max(maxLocalY, window.diag.me().y);
     }
     g.debug.input.setKey('KeyW', false);
     g.step(20, 1 / 30, false);
-    const l = window.diag.local(c.position);
-    return { x: l.x, y: l.y, z: l.z, zone: s.zoneAt(c.position.clone().setY(c.position.y + 1))?.id ?? 'fuera', grounded: c.grounded };
+    const l = window.diag.me();
+    const pw = g.playerWorld();
+    return { x: l.x, y: l.y, z: l.z, zone: s.zoneAt(pw.p.clone().setY(pw.p.y + 1))?.id ?? 'fuera', grounded: c.grounded, frame: pw.frame };
   });
   check('walks up the ramp onto the deck', Math.abs(wk.y) < 0.12 && wk.z < 5.4, `local ${wk.x.toFixed(2)}, ${wk.y.toFixed(2)}, ${wk.z.toFixed(2)} · ${wk.zone}`);
   check('ends inside the cargo bay', wk.zone === 'cargo' || wk.zone === 'corridor');
+  check('boarding moves the astronaut into the ship frame', wk.frame === 1, `marco ${wk.frame}`);
   P.step('subir la rampa andando');
   // --- damage: blasts blow a wall panel out; its collider goes; conduit cut kills its bus ------------
   const d = await page.evaluate(() => {
@@ -443,12 +458,15 @@ if (mode === 'checks' || mode === 'all') {
     const g = window.game;
     const s = g.ships[0];
     g.step(30, 1 / 30, false);
-    const b = s.cargo.bodies[5];
-    const p0 = b.translation();
-    g.blast(g.debug.camera.position.clone().set(p0.x + 0.8, p0.y + 0.2, p0.z));
+    const list = window.diag.crates();
+    const b = list[Math.min(5, list.length - 1)];
+    const l0 = window.diag.crateLocal(b);
+    const w0 = g.crates.worldPose(b).p;
+    g.blast(g.debug.camera.position.clone().set(w0[0] + 0.8, w0[1] + 0.2, w0[2]));
     g.step(60, 1 / 30, false);
-    const p1 = b.translation();
-    return { moved: Math.hypot(p1.x - p0.x, p1.z - p0.z) };
+    const l1 = window.diag.crateLocal(b);
+    void s;
+    return { moved: Math.hypot(l1.x - l0.x, l1.z - l0.z) };
   });
   check('blast throws a crate', cg.moved > 0.3, `${cg.moved.toFixed(2)} m`);
 
@@ -473,7 +491,7 @@ if (mode === 'checks' || mode === 'all') {
     g.debug.input.setKey('KeyW', true);
     g.step(40, 1 / 30);
     g.debug.input.setKey('KeyW', false);
-    const sat = window.diag.local(g.debug.controller.position);
+    const sat = window.diag.me();
     const seated = !!g.seat;
     const eyeY = window.diag.local(g.me.eyePosition(g.debug.camera.position.clone())).y;
     // the seated suit (PLSS, helmet) must not cut into the seat frame: sample the hard-shell meshes
@@ -495,7 +513,7 @@ if (mode === 'checks' || mode === 'all') {
     });
     g.standUp();
     g.step(10, 1 / 30);
-    return { aimed, seated, sat: sat.toArray(), eyeY, root: seat.root, exit: seat.exit, after: window.diag.local(g.debug.controller.position).toArray(), standing: !g.seat, clear: worst.d < 0.015, clearDetail: worst.d > 0 ? `peor ${worst.part} ${(worst.d * 100).toFixed(1)} cm` : 'sin contacto' };
+    return { aimed, seated, sat: sat.toArray(), eyeY, root: seat.root, exit: seat.exit, after: window.diag.me().toArray(), standing: !g.seat, clear: worst.d < 0.015, clearDetail: worst.d > 0 ? `peor ${worst.part} ${(worst.d * 100).toFixed(1)} cm` : 'sin contacto' };
   });
   check('crosshair finds the seat', /^seat:0:true$/.test(st.aimed), st.aimed);
   check('sits down and stays put', st.seated && Math.hypot(st.sat[0] - st.root[0], st.sat[2] - st.root[2]) < 0.05, `local ${st.sat.map((v) => v.toFixed(2))}`);
@@ -523,7 +541,7 @@ if (mode === 'checks' || mode === 'all') {
 if (mode === 'views' || mode === 'all') {
   await page.evaluate(() => {
     const g = window.game;
-    g.debug.controller.teleport(window.diag.w(6.5, 0, 14));
+    g.teleport(window.diag.w(6.5, 0, 14));
   });
   await shot('ext_rear34', () => window.diag.look([7, 1.0, 13], [0, 0.6, 1]));
   await shot('ext_side', () => window.diag.look([-11, 1.6, -3], [0, 0.8, -2]));

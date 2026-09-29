@@ -49,7 +49,7 @@ await page.evaluate(() => {
       const a = this.w(...from);
       const b = this.w(...to);
       const d = b.clone().sub(a);
-      g.inspectCam = [a.x, a.z, Math.atan2(-d.x, -d.z), Math.atan2(d.y, Math.hypot(d.x, d.z)), a.y - g.debug.game.terrain.height(a.x, a.z)];
+      g.inspectCam = [a.x, a.z, Math.atan2(-d.x, -d.z), Math.atan2(d.y, Math.hypot(d.x, d.z)), a.y - g.debug.game.groundY(a.x, a.z)];
     },
     stand(at, to) {
       const a = this.w(...at);
@@ -167,7 +167,7 @@ if (mode === 'checks' || mode === 'all') {
     const c = g.debug.controller;
     window.prg.stand([5.4, 0, 4.1], [0, 1.6, 4.1]);
     const p0 = c.position.clone();
-    c.teleport(p0.setY(g.debug.game.terrain.height(p0.x, p0.z) + 0.05));
+    c.teleport(p0.setY(g.debug.game.groundY(p0.x, p0.z) + 0.05));
     g.step(10, 1 / 30, false);
     g.debug.input.setKey('KeyW', true);
     for (let i = 0; i < 56; i++) g.step(5, 1 / 30, false);
@@ -218,11 +218,11 @@ if (mode === 'checks' || mode === 'all') {
     const seat = s.sim.def.seats[1];
     g.sitDown(s, 1);
     g.step(20, 1 / 30);
-    const sat = window.prg.local(g.debug.controller.position);
+    const sat = window.prg.local(g.playerWorld().p);
     const seated = !!g.seat;
     g.standUp();
     g.step(10, 1 / 30);
-    const after = window.prg.local(g.debug.controller.position);
+    const after = window.prg.local(g.playerWorld().p);
     return { seated, sat: sat.toArray(), root: seat.root, after: after.toArray(), exit: seat.exit, standing: !g.seat };
   });
   check('passenger sits down', st.seated && Math.hypot(st.sat[0] - st.root[0], st.sat[2] - st.root[2]) < 0.06, `local ${st.sat.map((v) => v.toFixed(2))}`);
@@ -264,7 +264,7 @@ if (mode === 'checks' || mode === 'all') {
 }
 
 if (mode === 'views' || mode === 'all') {
-  await page.evaluate(() => window.game.debug.controller.teleport(window.prg.w(9, 0, 0)));
+  await page.evaluate(() => window.game.teleport(window.prg.w(9, 0, 0)));
   await shot('ext_hatch', () => window.prg.look([6.5, 1.2, 6.5], [0, 0.8, 2.5]));
   await shot('ext_front', () => window.prg.look([-3.5, 1.4, -11], [0, 0.8, -3]));
   await shot('ext_rear', () => window.prg.look([-4, 2.6, 11], [0, 1, 4]));
@@ -284,7 +284,7 @@ if (mode === 'views' || mode === 'all') {
     const mid = a.clone().add(b).multiplyScalar(0.5);
     const from = mid.clone().add(g.debug.camera.position.clone().set(-14, 9, 26));
     const d = mid.clone().sub(from);
-    g.inspectCam = [from.x, from.z, Math.atan2(-d.x, -d.z), Math.atan2(d.y, Math.hypot(d.x, d.z)), from.y - g.debug.game.terrain.height(from.x, from.z)];
+    g.inspectCam = [from.x, from.z, Math.atan2(-d.x, -d.z), Math.atan2(d.y, Math.hypot(d.x, d.z)), from.y - g.debug.game.groundY(from.x, from.z)];
   });
   await shot('ext_deployed', () => window.prg.look([7, 4.5, -4], [0, 2.2, 1.5]));
 }

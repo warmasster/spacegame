@@ -1,12 +1,16 @@
 import {
   PROTOCOL_VERSION,
   type ClientMessage,
+  type CrateWire,
   type PlayerInfo,
   type PlayerState,
+  type PoseWire,
   type ServerMessage,
-  type TerrainEdit,
+  type TerrainMod,
   type Vec3,
 } from '../../shared/protocol';
+import { decodeServer, encodeClient } from '../../shared/wire';
+import type { ShipSnapshot } from '../../shared/ship/sim';
 
 export type Welcome = Extract<ServerMessage, { type: 'welcome' }>;
 
@@ -15,13 +19,20 @@ export interface NetEvents {
   leave(id: number): void;
   state(id: number, serverTime: number, s: PlayerState): void;
   disconnect(reason: string): void;
-  fire(id: number, o: Vec3, d: Vec3): void;
-  explode(id: number, p: Vec3, edit?: TerrainEdit): void;
+  /** A shot of weapon `w`; `fr`: fired aboard that ship (`o`, `d`, `v` in its space). */
+  fire(id: number, w: string, o: Vec3, d: Vec3, v?: Vec3, fr?: number): void;
+  /** `aboard`: it happened in or against that ship, at `l` in its space; `k`: the projectile kind (none: a ship's own blast). */
+  explode(id: number, p: Vec3, mod?: TerrainMod, aboard?: { fr: number; l: Vec3 }, k?: string): void;
   health(id: number, hp: number, by?: number, dead?: boolean): void;
   respawn(id: number, spawn: Vec3): void;
   ship(ship: number, sw: Record<string, number> | undefined, hp: Array<[number, number]> | undefined, by?: number): void;
   shipDenied(ship: number, ctl: number, reason: string): void;
   shipState(ship: number, d: number[]): void;
+  /** A ship's whole state (it came back into interest). */
+  shipSync(snap: ShipSnapshot): void;
+  shipPose(ship: number, t: number, pose: PoseWire): void;
+  pilot(ship: number, id: number): void;
+  crate(c: CrateWire, rest: boolean): void;
   say(ship: number, text: string): void;
   vitals(o2: number, cabin: boolean): void;
 }
@@ -34,12 +45,16 @@ export class NetClient {
   private pingTimer = 0;
   rtt = 0;
   connected = false;
+  /** Our player id (the server sends everyone the same snapshot, ours included). */
+  private selfId = -1;
 
   constructor(private events: NetEvents) {}
 
   connect(name: string, url?: string, seed?: number): Promise<Welcome> {
     return new Promise((resolve, reject) => {
       const ws = new WebSocket(url ?? defaultUrl());
+      // the frequent messages come in binary (shared/wire.ts)
+      ws.binaryType = 'arraybuffer';
       this.ws = ws;
       let welcomed = false;
       ws.onopen = () => this.send({ type: 'hello', version: PROTOCOL_VERSION, name, seed });
@@ -54,15 +69,22 @@ export class NetClient {
       };
       ws.onmessage = (e) => {
         let msg: ServerMessage;
-        try {
-          msg = JSON.parse(e.data);
-        } catch {
-          return;
+        if (typeof e.data !== 'string') {
+          const m = decodeServer(new DataView(e.data as ArrayBuffer));
+          if (!m) return;
+          msg = m;
+        } else {
+          try {
+            msg = JSON.parse(e.data);
+          } catch {
+            return;
+          }
         }
         switch (msg.type) {
           case 'welcome':
             welcomed = true;
             this.connected = true;
+            this.selfId = msg.id;
             this.clockOffset = msg.serverTime - performance.now();
             this.pingTimer = window.setInterval(() => this.send({ type: 'ping', t: performance.now() }), 2000);
             this.send({ type: 'ping', t: performance.now() });
@@ -78,13 +100,13 @@ export class NetClient {
             this.events.leave(msg.id);
             break;
           case 'snapshot':
-            for (const st of msg.states) this.events.state(st.id, st.t, st.s);
+            for (const st of msg.states) if (st.id !== this.selfId) this.events.state(st.id, st.t, st.s);
             break;
           case 'fire':
-            this.events.fire(msg.id, msg.o, msg.d);
+            this.events.fire(msg.id, msg.w, msg.o, msg.d, msg.v, msg.fr);
             break;
           case 'explode':
-            this.events.explode(msg.id, msg.p, msg.edit);
+            this.events.explode(msg.id, msg.p, msg.mod, msg.fr !== undefined && msg.l ? { fr: msg.fr, l: msg.l } : undefined, msg.k);
             break;
           case 'health':
             this.events.health(msg.id, msg.hp, msg.by, msg.dead);
@@ -100,6 +122,18 @@ export class NetClient {
             break;
           case 'shipSt':
             this.events.shipState(msg.ship, msg.d);
+            break;
+          case 'shipSync':
+            this.events.shipSync(msg.snap);
+            break;
+          case 'shipPose':
+            this.events.shipPose(msg.ship, msg.t, msg);
+            break;
+          case 'pilot':
+            this.events.pilot(msg.ship, msg.id);
+            break;
+          case 'crate':
+            this.events.crate(msg.c, msg.rest === true);
             break;
           case 'say':
             this.events.say(msg.ship, msg.text);
@@ -132,12 +166,12 @@ export class NetClient {
     this.send({ type: 'state', s });
   }
 
-  sendFire(o: Vec3, d: Vec3) {
-    this.send({ type: 'fire', o, d });
+  sendFire(w: string, o: Vec3, d: Vec3, v?: Vec3, fr?: number) {
+    this.send({ type: 'fire', w, o, d, v, fr });
   }
 
-  sendHit(p: Vec3) {
-    this.send({ type: 'hit', p });
+  sendHit(k: string, p: Vec3, fr?: number) {
+    this.send({ type: 'hit', k, p, fr });
   }
 
   sendInteract(ship: number, ctl: number, dir = 0) {
@@ -152,8 +186,26 @@ export class NetClient {
     this.send({ type: 'repairPart', ship, part });
   }
 
+  /** Take (on) or leave the helm. */
+  sendPilot(ship: number, on: boolean) {
+    this.send({ type: 'pilot', ship, on });
+  }
+
+  /** Our flight of a ship we pilot (pose at server time `t`, height above ground, thruster outputs). */
+  sendFlight(ship: number, t: number, agl: number, out: number[], pose: PoseWire) {
+    this.send({ type: 'flight', ship, t, agl, out, p: pose.p, q: pose.q, v: pose.v, w: pose.w, landed: pose.landed, pad: pose.pad });
+  }
+
+  sendCrateTake(id: number) {
+    this.send({ type: 'crateTake', id });
+  }
+
+  sendCrate(c: Omit<CrateWire, 'owner'>, rest: boolean) {
+    this.send({ type: 'crate', c, rest: rest || undefined });
+  }
+
   private send(msg: ClientMessage) {
-    if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(msg));
+    if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(encodeClient(msg) ?? JSON.stringify(msg));
   }
 
   close() {

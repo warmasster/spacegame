@@ -5,10 +5,11 @@
 // the hull (blown-out panels, cracks). Doors and ramps refuse to open across a pressure difference.
 // Seat umbilicals feed docked suits from the O2 bottles.
 
-import { partKey, type ControlDef, type PartDef } from '../def.js';
+import { facing, partKey, type ControlDef, type PartDef } from '../def.js';
+import type { V3 } from '../geom.js';
 import type { ShipSystems } from '../systems.js';
-import { panelArea, partsOf, type AlertDef, type ShipModule, type SystemFactory, type Tick } from './api.js';
-import { Atmosphere, BREATHABLE, type GasPath, type GasStore } from './atmos.js';
+import { panelArea, partsOf, type AlertDef, type ShipModule, type SoundCue, type SystemFactory, type Tick } from './api.js';
+import { Atmosphere, BREATHABLE, type GasPath, type GasStore, type LifeInput } from './atmos.js';
 
 /** Pressure difference (kPa) across a door or ramp above which it refuses to open. */
 export const DOOR_DP = 5;
@@ -23,6 +24,51 @@ interface Bottle {
   cap: number;
 }
 
+/**
+ * The bottles as the atmosphere sees them this tick: only open, intact ones deliver. One per ship,
+ * pointed at the tick's tables before each solve (no closures per tick).
+ */
+class BottleStore implements GasStore {
+  st: Float64Array = new Float64Array(0);
+  sw: Record<string, number> = {};
+  powered = false;
+
+  constructor(
+    private sys: ShipSystems,
+    private bottles: Bottle[],
+  ) {}
+
+  private usable(b: Bottle) {
+    return this.powered && this.sw[b.valve] === 1 && this.sys.health(this.st, b.part) > 0 && this.st[b.kg] > 0;
+  }
+
+  take(gas: 'o2' | 'n2', kg: number) {
+    const st = this.st;
+    let have = 0;
+    for (const b of this.bottles) if (b.gas === gas && this.usable(b)) have += st[b.kg];
+    if (have <= 0 || kg <= 0) return 0;
+    const out = Math.min(kg, have);
+    for (const b of this.bottles) if (b.gas === gas && this.usable(b)) st[b.kg] -= out * (st[b.kg] / have);
+    return out;
+  }
+
+  put(gas: 'o2' | 'n2', kg: number) {
+    const st = this.st;
+    let room = 0;
+    for (const b of this.bottles) if (b.gas === gas && this.sys.health(st, b.part) > 0) room += Math.max(0, b.cap - st[b.kg]);
+    if (room <= 0 || kg <= 0) return 0;
+    const put = Math.min(kg, room);
+    for (const b of this.bottles) if (b.gas === gas && this.sys.health(st, b.part) > 0) st[b.kg] += put * (Math.max(0, b.cap - st[b.kg]) / room);
+    return put;
+  }
+
+  room() {
+    let r = 0;
+    for (const b of this.bottles) r += Math.max(0, b.cap - this.st[b.kg]);
+    return r;
+  }
+}
+
 export class LifeSupport implements ShipModule {
   readonly id = 'life';
   readonly order = 30;
@@ -35,6 +81,23 @@ export class LifeSupport implements ShipModule {
   private iLeak: number;
   /** Seat umbilicals can deliver O2 (1) or not (0). */
   readonly iUmb: number;
+  /** Each panel's normal turned the way its gas goes when it breaks: out of its zone (into `other`, or out of the ship). */
+  private out: V3[];
+  /** Reused every solve: the bottles, what the atmosphere is given, run switches, repress valve keys. */
+  private store: BottleStore;
+  private lifeIn: LifeInput;
+  private genRun: string[];
+  private scrubRun: string[];
+  private repressKey: string[];
+  /** Compartment index of each opening's sides and of each panel's zone / other side. */
+  private opA: Int32Array;
+  private opB: Int32Array;
+  private pnA: Int32Array;
+  private pnB: Int32Array;
+  private pnArea: Float64Array;
+  /** Gas paths handed out by `paths` (reused: the result is valid until the next call). */
+  private pool: GasPath[] = [];
+  private pathOut: GasPath[] = [];
 
   constructor(private sys: ShipSystems) {
     const def = sys.def;
@@ -53,6 +116,27 @@ export class LifeSupport implements ShipModule {
     this.iScrub = vars.define('ls.scrub', 0.01);
     this.iLeak = vars.define('ls.leak', 1);
     this.iUmb = vars.define('ls.umb', 1);
+    this.out = def.panels.map((p) => facing(def.zones, p.zone, p.other ?? null, p.c, p.n));
+    this.store = new BottleStore(sys, this.bottles);
+    this.genRun = this.gens.map((g) => partKey(g, 'run', g.id));
+    this.scrubRun = this.scrubs.map((s) => partKey(s, 'run', s.id));
+    this.repressKey = def.compartments.map((comp) => `${def.life?.repress ?? 'repress.'}${comp.id}`);
+    this.lifeIn = {
+      o2gen: this.gens.map((g) => ({ comp: sys.compIndex(g.zone), rate: 0 })),
+      scrub: this.scrubs.map((s) => ({ comp: sys.compIndex(s.zone), eff: 0 })),
+      mode: 2,
+      manual: def.compartments.map(() => false),
+      gas: this.store,
+      recover: -1,
+      crew: [],
+      heat: false,
+      hold: def.compartments.map(() => false),
+    };
+    this.opA = Int32Array.from(def.openings, (o) => sys.compIndex(o.a));
+    this.opB = Int32Array.from(def.openings, (o) => (o.b === null ? -1 : sys.compIndex(o.b)));
+    this.pnA = Int32Array.from(def.panels, (p) => sys.compIndex(p.zone));
+    this.pnB = Int32Array.from(def.panels, (p) => (p.other !== undefined ? sys.compIndex(p.other) : -1));
+    this.pnArea = Float64Array.from(def.panels, (p) => panelArea(p.poly));
     sys.provide('life', this);
   }
 
@@ -89,30 +173,6 @@ export class LifeSupport implements ShipModule {
     return this.sys.supply(st, this.cfg?.circuit) >= 0.5;
   }
 
-  /** The bottles as the atmosphere sees them this tick: only open, intact ones deliver. */
-  private store(st: Float64Array, sw: Record<string, number>, powered: boolean): GasStore {
-    const usable = (b: Bottle) => powered && sw[b.valve] === 1 && this.sys.health(st, b.part) > 0 && st[b.kg] > 0;
-    return {
-      take: (gas, kg) => {
-        const from = this.bottles.filter((b) => b.gas === gas && usable(b));
-        const have = from.reduce((a, b) => a + st[b.kg], 0);
-        if (have <= 0 || kg <= 0) return 0;
-        const out = Math.min(kg, have);
-        for (const b of from) st[b.kg] -= out * (st[b.kg] / have);
-        return out;
-      },
-      put: (gas, kg) => {
-        const into = this.bottles.filter((b) => b.gas === gas && this.sys.health(st, b.part) > 0);
-        const room = into.reduce((a, b) => a + Math.max(0, b.cap - st[b.kg]), 0);
-        if (room <= 0 || kg <= 0) return 0;
-        const put = Math.min(kg, room);
-        for (const b of into) st[b.kg] += put * (Math.max(0, b.cap - st[b.kg]) / room);
-        return put;
-      },
-      room: () => this.bottles.reduce((a, b) => a + Math.max(0, b.cap - st[b.kg]), 0),
-    };
-  }
-
   init(st: Float64Array) {
     this.sys.def.compartments.forEach((c, i) => {
       const p0 = this.sys.def.defaults[`${c.id}.p0`] ?? 0;
@@ -126,7 +186,8 @@ export class LifeSupport implements ShipModule {
   loads(t: Tick) {
     const c = this.cfg;
     if (!c || t.sw[c.heat] !== 1) return;
-    const warm = this.sys.def.compartments.filter((_, i) => t.st[this.atmos.v[i].p] > 5).length;
+    let warm = 0;
+    for (let i = 0; i < this.atmos.v.length; i++) if (t.st[this.atmos.v[i].p] > 5) warm++;
     t.load(c.circuit, (c.heatKw ?? 0.6) * warm);
   }
 
@@ -134,14 +195,26 @@ export class LifeSupport implements ShipModule {
     const { dt, st, sw, ctx } = t;
     const sys = this.sys;
     const c = this.cfg;
+    const L = this.lifeIn;
     const lifeOk = !!c && this.powered(st);
     const q2 = sys.power ? st[sys.power.iQuality] ** 2 : 1;
-    const run = (p: PartDef, fallback: string) => sw[partKey(p, 'run', fallback)] === 1 && sys.supply(st, p.circuit) >= 0.5;
-    const o2gen = this.gens.map((g) => ({ comp: sys.compIndex(g.zone), rate: run(g, g.id) ? (g.p.rate ?? 0.125) * sys.health(st, g) * q2 : 0 }));
-    st[this.iO2] = o2gen.reduce((a, g) => a + g.rate, 0);
-    const scrub = this.scrubs.map((s) => ({ comp: sys.compIndex(s.zone), eff: run(s, s.id) ? sys.health(st, s) * (s.p.rate ?? 1) : 0 }));
-    st[this.iScrub] = scrub.reduce((a, s) => Math.max(a, s.eff), 0);
-    const paths = this.gasPaths(t, lifeOk && !!c && sw[c.fans] === 1);
+    let o2 = 0;
+    for (let k = 0; k < this.gens.length; k++) {
+      const g = this.gens[k];
+      const e = L.o2gen[k];
+      e.rate = sw[this.genRun[k]] === 1 && sys.supply(st, g.circuit) >= 0.5 ? (g.p.rate ?? 0.125) * sys.health(st, g) * q2 : 0;
+      o2 += e.rate;
+    }
+    st[this.iO2] = o2;
+    let best = 0;
+    for (let k = 0; k < this.scrubs.length; k++) {
+      const s = this.scrubs[k];
+      const e = L.scrub[k];
+      e.eff = sw[this.scrubRun[k]] === 1 && sys.supply(st, s.circuit) >= 0.5 ? sys.health(st, s) * (s.p.rate ?? 1) : 0;
+      best = Math.max(best, e.eff);
+    }
+    st[this.iScrub] = best;
+    const paths = this.paths(st, sw, t, lifeOk && !!c && sw[c.fans] === 1);
     // a holed bottle bleeds into its compartment
     for (const b of this.bottles) {
       const h = sys.health(st, b.part);
@@ -155,49 +228,94 @@ export class LifeSupport implements ShipModule {
         else st[v.n2] += kg / 0.028;
       }
     }
-    const gas = this.store(st, sw, lifeOk);
+    const gas = this.store;
+    gas.st = st;
+    gas.sw = sw;
+    gas.powered = lifeOk;
     // seat umbilicals: docked suits drink from the O2 bottles (valve open, solenoids powered)
-    const umb = lifeOk && this.bottles.some((b) => b.gas === 'o2' && sw[b.valve] === 1 && sys.health(st, b.part) > 0 && st[b.kg] > 0);
+    let umb = false;
+    if (lifeOk) {
+      for (const b of this.bottles) {
+        if (b.gas === 'o2' && sw[b.valve] === 1 && sys.health(st, b.part) > 0 && st[b.kg] > 0) {
+          umb = true;
+          break;
+        }
+      }
+    }
     st[this.iUmb] = umb ? 1 : 0;
     if (ctx.docked > 0) gas.take('o2', ctx.docked * UMBILICAL_KGS * dt);
-    const recover = c?.recover && lifeOk && sw[c.recover.key] === 1 ? sys.compIndex(c.recover.zone) : -1;
-    this.atmos.step(dt, st, paths, {
-      o2gen,
-      scrub,
-      mode: c ? Math.round(sw[c.mode] ?? 0) : 2,
-      manual: sys.def.compartments.map((comp) => !!c && lifeOk && sw[`${c.repress ?? 'repress.'}${comp.id}`] === 1),
-      gas,
-      recover,
-      crew: ctx.crew,
-      heat: !!c && sw[c.heat] === 1 && lifeOk,
-      hold: sys.def.compartments.map((comp) => t.holds.has(comp.id)),
-    });
-    st[this.iLeak] = sys.def.compartments.some((_, i) => st[this.atmos.v[i].sealed] === 0 && st[this.atmos.v[i].p] > 2) ? 1 : 0;
+    L.recover = c?.recover && lifeOk && sw[c.recover.key] === 1 ? sys.compIndex(c.recover.zone) : -1;
+    L.mode = c ? Math.round(sw[c.mode] ?? 0) : 2;
+    const n = this.atmos.v.length;
+    for (let i = 0; i < n; i++) {
+      L.manual[i] = !!c && lifeOk && sw[this.repressKey[i]] === 1;
+      L.hold![i] = t.held[i] === 1;
+    }
+    L.crew = ctx.crew;
+    L.heat = !!c && sw[c.heat] === 1 && lifeOk;
+    this.atmos.step(dt, st, paths, L);
+    let leak = 0;
+    for (let i = 0; i < n; i++) {
+      const v = this.atmos.v[i];
+      if (st[v.sealed] === 0 && st[v.p] > 2) {
+        leak = 1;
+        break;
+      }
+    }
+    st[this.iLeak] = leak;
   }
 
-  /** Doors / ramp / vents / ducts from the definition, breaches and cracks from the panels. */
-  private gasPaths(t: Tick, fans: boolean): GasPath[] {
+  /** A path from the pool (every field set, so they all share one shape). */
+  private path(k: number, a: number, b: number, area: number, mix: number | undefined, at: V3 | undefined, n: V3 | undefined, panel: number | undefined) {
+    let g = this.pool[k];
+    if (!g) {
+      g = { a: 0, b: 0, area: 0, mix: undefined, at: undefined, n: undefined, panel: undefined };
+      this.pool[k] = g;
+    }
+    g.a = a;
+    g.b = b;
+    g.area = area;
+    g.mix = mix;
+    g.at = at;
+    g.n = n;
+    g.panel = panel;
+    this.pathOut.push(g);
+  }
+
+  /**
+   * Gas paths open right now: doors / ramp / vents / ducts from the definition (with their place,
+   * when they have one), breaches and cracks from the panels. Also read by ../airflow.ts. The array
+   * and its paths are reused by the next call: read them right away.
+   */
+  paths(st: Float64Array, sw: Record<string, number>, hull: { hole(i: number): boolean; crack(i: number): number }, fans = false): GasPath[] {
     const sys = this.sys;
-    const out: GasPath[] = [];
-    for (const o of sys.def.openings) {
-      const a = sys.compIndex(o.a);
-      const b = o.b === null ? -1 : sys.compIndex(o.b);
+    const def = sys.def;
+    this.pathOut.length = 0;
+    let k = 0;
+    for (let j = 0; j < def.openings.length; j++) {
+      const o = def.openings[j];
+      const a = this.opA[j];
+      const b = this.opB[j];
       if (o.kind === 'duct') {
-        if (t.sw[o.key] === 1) out.push({ a, b, area: o.area, mix: fans ? 0.4 : 0 });
+        if (sw[o.key] === 1) this.path(k++, a, b, o.area, fans ? 0.4 : 0, undefined, undefined, undefined);
         continue;
       }
-      const open = o.kind === 'vent' ? (t.sw[o.key] === 1 ? 1 : 0) : sys.mover(t.st, o.key);
-      if (open > 0) out.push({ a, b, area: o.area * open });
+      const open = o.kind === 'vent' ? (sw[o.key] === 1 ? 1 : 0) : sys.mover(st, o.key);
+      if (open > 0) this.path(k++, a, b, o.area * open, undefined, o.at, o.n, undefined);
     }
-    for (const p of sys.def.panels) {
-      const a = sys.compIndex(p.zone);
+    const panels = def.panels;
+    for (let j = 0; j < panels.length; j++) {
+      const a = this.pnA[j];
       if (a < 0) continue;
-      const b = p.kind === 'bulkhead' ? sys.compIndex(p.other ?? null) : -1;
-      const area = t.hole(p.index) ? panelArea(p.poly) : t.crack(p.index);
-      if (area > 0) out.push({ a, b, area });
+      const i = panels[j].index;
+      const area = hull.hole(i) ? this.pnArea[j] : hull.crack(i);
+      if (area > 0) this.path(k++, a, this.pnB[j], area, undefined, panels[j].c, this.out[i], i);
     }
-    return out;
+    return this.pathOut;
   }
+
+  /** Last refusal text per opening and the whole kPa it was written for (the displays ask ~20 times a second). */
+  private refusal = new Map<string, { kpa: number; text: string }>();
 
   /** Doors and ramps don't open across a pressure difference (vents and ducts are guarded instead). */
   interlock(c: ControlDef, next: number, st: Float64Array) {
@@ -207,11 +325,52 @@ export class LifeSupport implements ShipModule {
       const pa = this.pressure(st, o.a);
       const pb = this.pressure(st, o.b);
       if (Math.abs(pa - pb) <= DOOR_DP) continue;
-      if (o.b !== null) return `Enclavamiento: diferencia de presión ${Math.abs(pa - pb).toFixed(0)} kPa`;
-      const label = this.sys.def.compartments.find((x) => x.id === o.a)?.label.toLowerCase() ?? o.a;
-      return `Enclavamiento: ${label} presurizada (${pa.toFixed(0)} kPa) — ventéala o recupera el aire`;
+      const kpa = Math.round(o.b !== null ? Math.abs(pa - pb) : pa);
+      const hit = this.refusal.get(o.id);
+      if (hit && hit.kpa === kpa) return hit.text;
+      let text: string;
+      if (o.b !== null) text = `Enclavamiento: diferencia de presión ${kpa} kPa`;
+      else {
+        const label = this.sys.def.compartments.find((x) => x.id === o.a)?.label.toLowerCase() ?? o.a;
+        text = `Enclavamiento: ${label} presurizada (${kpa} kPa) — ventéala o recupera el aire`;
+      }
+      this.refusal.set(o.id, { kpa, text });
+      return text;
     }
     return null;
+  }
+
+  /** The fans in every room with air, gas hissing in where it is fed, the recovery compressor. */
+  sounds(): SoundCue[] {
+    const sys = this.sys;
+    const c = sys.def.life;
+    if (!c) return [];
+    const out: SoundCue[] = [];
+    const powered = (st: Float64Array) => sys.supply(st, c.circuit) >= 0.5;
+    for (const comp of sys.def.compartments) {
+      out.push({ sound: 'mach.fan', role: 'fans', zone: comp.id, level: (st, sw) => (sw[c.fans] === 1 && powered(st) && sys.pressure(st, comp.id) > 5 ? 1 : 0) });
+      const feed = `${comp.id}.feed`;
+      if (sys.vars.has(feed)) {
+        const i = sys.vars.idx(feed);
+        out.push({ sound: 'air.hiss', role: 'feed', zone: comp.id, gain: 0.6, level: (st) => Math.min(1, st[i] * 0.5) });
+      }
+    }
+    const r = c.recover;
+    if (r) out.push({ sound: 'mach.compressor', role: 'recover', zone: r.zone, level: (st, sw) => (sw[r.key] === 1 && powered(st) ? 1 : 0) });
+    // vent valves and ducts with no place of their own (the airflow jets sound the ones that have
+    // one): gas roaring through the valve's pipe, as loud as the pressure across it
+    for (const o of sys.def.openings) {
+      if ((o.kind !== 'vent' && o.kind !== 'duct') || o.at) continue;
+      const drop = (st: Float64Array) => Math.abs(sys.pressure(st, o.a) - (o.b ? sys.pressure(st, o.b) : 0));
+      out.push({
+        sound: o.kind === 'vent' ? 'air.vent' : 'air.rush',
+        role: o.id,
+        zone: o.a,
+        level: (st, sw) => (sw[o.key] === 1 && drop(st) > 0.5 ? Math.min(1, 0.25 + Math.sqrt(drop(st) / 101)) : 0),
+        pitch: (st) => 0.8 + 0.6 * Math.sqrt(Math.min(1, drop(st) / 101)),
+      });
+    }
+    return out;
   }
 
   alerts(): AlertDef[] {
@@ -224,27 +383,40 @@ export class LifeSupport implements ShipModule {
     });
     const cfg = this.cfg;
     if (cfg) out.push({ id: 'leak', label: 'FUGA DE AIRE · REPRESURIZACIÓN SUSPENDIDA', level: 1, lamp: 'FUGA AIRE', help: 'El control automático no mete gas en un compartimento abierto al vacío (lo tiraría). Cierra la abertura o repara la brecha; si hace falta aire ya, usa el modo MANUAL y su válvula.', on: (st, sw) => st[this.iLeak] === 1 && (sw[cfg.mode] ?? 0) === 0 });
-    if (this.bottles.length)
+    if (this.bottles.length) {
+      const low = (st: Float64Array, gas: 'o2' | 'n2') => {
+        let kg = 0;
+        let cap = 0;
+        for (const b of this.bottles) {
+          if (b.gas !== gas) continue;
+          kg += st[b.kg];
+          cap += b.cap;
+        }
+        return cap > 0 && kg < cap * 0.15;
+      };
       out.push({
         id: 'gas',
         label: 'RESERVA DE O₂/N₂ BAJA',
         level: 1,
         lamp: 'GAS',
         help: 'Queda poco O₂ o N₂ en las botellas: la represurización y los umbilicales de los asientos dependen de ellas. Recupera el aire con el compresor en vez de ventearlo.',
-        on: (st) => (['o2', 'n2'] as const).some((g) => {
-          const s = this.stock(st, g);
-          return s.cap > 0 && s.kg < s.cap * 0.15;
-        }),
+        on: (st) => low(st, 'o2') || low(st, 'n2'),
       });
+    }
     if (this.gens.length || this.scrubs.length) {
-      const bad = (p: PartDef, sw: Record<string, number>, st: Float64Array) => sw[partKey(p, 'run', p.id)] !== 1 || this.sys.health(st, p) < 0.5;
+      const bad = (p: PartDef, key: string, sw: Record<string, number>, st: Float64Array) => sw[key] !== 1 || this.sys.health(st, p) < 0.5;
       out.push({
         id: 'life',
         label: 'SOPORTE VITAL DEGRADADO',
         level: 1,
         lamp: 'SOP VITAL',
         help: 'El generador de O₂ o el depurador de CO₂ están apagados, sin energía o dañados. Enciéndelos, comprueba el circuito SOPORTE VITAL y suelda la máquina.',
-        on: (st, sw) => this.gens.some((g) => bad(g, sw, st)) || (this.gens.length > 0 && st[this.iO2] < 0.06) || this.scrubs.some((s) => bad(s, sw, st)),
+        on: (st, sw) => {
+          for (let k = 0; k < this.gens.length; k++) if (bad(this.gens[k], this.genRun[k], sw, st)) return true;
+          if (this.gens.length > 0 && st[this.iO2] < 0.06) return true;
+          for (let k = 0; k < this.scrubs.length; k++) if (bad(this.scrubs[k], this.scrubRun[k], sw, st)) return true;
+          return false;
+        },
       });
     }
     return out;

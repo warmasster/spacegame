@@ -154,8 +154,9 @@ Decisiones tomadas para el MVP:
   física pasará al servidor cuando haya naves y daños.
 - **Estilo realista**: el traje es un modelo propio generado en Blender por script; terreno, rocas,
   texturas y cielo son procedurales o datos reales (catálogo estelar, texturas NASA de la Tierra).
-- El terreno se define como función determinista compartida (`src/shared/terrain.ts`) con curvatura
-  real del cuerpo; los cuerpos celestes siguen siendo datos (`BodyDef`), no código fijo.
+- El suelo de cada cuerpo es una función determinista compartida (`src/shared/space/surface.ts`:
+  relieve global + modificadores de terreno), sobre la esfera real; los cuerpos celestes y los
+  lugares (sitios) son datos, no código fijo.
 
 Incluido: dos astronautas con animación procedural, FPV con cuerpo visible y 3ª persona, gravedad lunar,
 física, terreno con LOD, sombras, cielo real, HUD de casco, luces del casco sincronizadas, nombres.

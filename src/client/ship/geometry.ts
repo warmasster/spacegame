@@ -171,6 +171,61 @@ export function buildFrames(def: ShipDef) {
 }
 
 /** Position + normal only, non-indexed (so heterogeneous parts merge). */
+/**
+ * Indexed copy of a non-indexed geometry: vertices equal in every attribute (to 1e-4) are shared,
+ * so the GPU shades each once (its post-transform cache). Hard edges stay hard: their normals
+ * differ. Groups and the draw range carry over (they count indices, which here are the old
+ * vertices one to one). Numeric hashing: three's mergeVertices builds a string per vertex, far too
+ * slow for a ship's quarter of a million.
+ */
+export function indexGeometry(g: THREE.BufferGeometry): THREE.BufferGeometry {
+  if (g.index) return g;
+  const names = Object.keys(g.attributes);
+  const attrs = names.map((n) => g.getAttribute(n) as THREE.BufferAttribute);
+  const count = attrs[0]?.count ?? 0;
+  if (!count) return g;
+  const q = (v: number) => Math.round(v * 1e4);
+  const same = (a: number, b: number) => {
+    for (const at of attrs) for (let c = 0; c < at.itemSize; c++) if (q(at.array[a * at.itemSize + c]) !== q(at.array[b * at.itemSize + c])) return false;
+    return true;
+  };
+  const heads = new Map<number, number>();
+  const next = new Int32Array(count).fill(-1);
+  const first = new Int32Array(count);
+  const index = new Uint32Array(count);
+  let unique = 0;
+  for (let v = 0; v < count; v++) {
+    let h = 0x811c9dc5;
+    for (const at of attrs) for (let c = 0; c < at.itemSize; c++) h = Math.imul(h ^ q(at.array[v * at.itemSize + c]), 16777619);
+    const head = heads.get(h) ?? -1;
+    let u = head;
+    while (u >= 0 && !same(first[u], v)) u = next[u];
+    if (u < 0) {
+      u = unique++;
+      first[u] = v;
+      next[u] = head;
+      heads.set(h, u);
+    }
+    index[v] = u;
+  }
+  if (unique > count * 0.9) return g; // nothing to share: keep it as it is
+  const out = new THREE.BufferGeometry();
+  names.forEach((name, k) => {
+    const at = attrs[k];
+    const size = at.itemSize;
+    const arr = new (at.array.constructor as Float32ArrayConstructor)(unique * size);
+    for (let u = 0; u < unique; u++) for (let c = 0; c < size; c++) arr[u * size + c] = at.array[first[u] * size + c];
+    out.setAttribute(name, new THREE.BufferAttribute(arr, size, at.normalized));
+  });
+  out.setIndex(new THREE.BufferAttribute(unique < 65536 ? Uint16Array.from(index) : index, 1));
+  for (const gr of g.groups) out.addGroup(gr.start, gr.count, gr.materialIndex);
+  out.setDrawRange(g.drawRange.start, g.drawRange.count);
+  out.boundingBox = g.boundingBox?.clone() ?? null;
+  out.boundingSphere = g.boundingSphere?.clone() ?? null;
+  g.dispose();
+  return out;
+}
+
 export function strip(g: THREE.BufferGeometry) {
   const n = g.index ? g.toNonIndexed() : g;
   for (const name of Object.keys(n.attributes)) if (name !== 'position' && name !== 'normal') n.deleteAttribute(name);

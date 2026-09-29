@@ -34,7 +34,7 @@ import {
 } from '../def.js';
 import { clipPoly, norm, type V2, type V3 } from '../geom.js';
 import { part, prop } from '../catalog/index.js';
-import { loadOf } from './kit.js';
+import { AP_SPACE_MANUAL, SPACE_MANUAL, autopilotConsole, decompressionManual, loadOf } from './kit.js';
 
 const T = 0.1; // hull skin
 const FLOOR_T = 0.08;
@@ -177,8 +177,16 @@ const PARTS: PartSpec[] = [
   part('tank.cyl.M', { id: 'tank.L', name: 'Depósito izquierdo', c: [-3.45, 1.15, 0.05], zone: null, mount: 'nacelle.L', p: { fill: 1000 } }),
   part('tank.cyl.M', { id: 'tank.R', name: 'Depósito derecho', c: [3.45, 1.15, 0.05], zone: null, mount: 'nacelle.R', p: { fill: 1000 } }),
   part('tank.cyl.S', { id: 'tank.C', name: 'Depósito de reserva', c: [0, -0.64, 2.0], zone: null }),
-  part('engine.main.M', { id: 'eng.L', name: 'Motor izquierdo', c: [-3.45, 1.15, 4.75], zone: null, circuit: 'prop', feed: 'eng.L', mount: 'nacelle.L', lamp: 'MOTOR IZQ' }),
-  part('engine.main.M', { id: 'eng.R', name: 'Motor derecho', c: [3.45, 1.15, 4.75], zone: null, circuit: 'prop', feed: 'eng.R', mount: 'nacelle.R', lamp: 'MOTOR DER' }),
+  // VTOL: the nacelle lever ducts each engine's exhaust to a belly nozzle under the tank, beside the
+  // centre of mass, so full thrust downward does not tip the ship
+  part('engine.main.M', { id: 'eng.L', name: 'Motor izquierdo', c: [-3.45, 1.15, 4.75], zone: null, circuit: 'prop', feed: 'eng.L', mount: 'nacelle.L', lamp: 'MOTOR IZQ', gimbal: { key: 'nacelle', rad: Math.PI / 2, at: [-3.45, 0.36, -0.6] } }),
+  part('engine.main.M', { id: 'eng.R', name: 'Motor derecho', c: [3.45, 1.15, 4.75], zone: null, circuit: 'prop', feed: 'eng.R', mount: 'nacelle.R', lamp: 'MOTOR DER', gimbal: { key: 'nacelle', rad: Math.PI / 2, at: [3.45, 0.36, -0.6] } }),
+  // VTOL lift pads under the keel, around the centre of mass (front pair under the corridor, rear
+  // pair under the bay): hover, climb and fine attitude without the main engines
+  part('lift.M', { id: 'lift.FL', name: 'Sustentación delantera izq.', c: [-1.2, -0.62, -4.7], zone: null, circuit: 'prop', feed: 'lift.FL' }),
+  part('lift.M', { id: 'lift.FR', name: 'Sustentación delantera der.', c: [1.2, -0.62, -4.7], zone: null, circuit: 'prop', feed: 'lift.FR' }),
+  part('lift.M', { id: 'lift.RL', name: 'Sustentación trasera izq.', c: [-1.5, -0.62, 3.54], zone: null, circuit: 'prop', feed: 'lift.RL' }),
+  part('lift.M', { id: 'lift.RR', name: 'Sustentación trasera der.', c: [1.5, -0.62, 3.54], zone: null, circuit: 'prop', feed: 'lift.RR' }),
   part('apu.M', { id: 'apu', c: [2.78, 0.76, 3.2], zone: null, circuit: 'prop', feed: 'apu', lamp: 'APU' }),
   part('rcs.M', { id: 'rcs.FL', name: 'RCS delantero izq.', c: [-1.72, 1.3, -8.7], zone: null, circuit: 'prop', feed: 'rcs.FL' }),
   part('rcs.M', { id: 'rcs.FR', name: 'RCS delantero der.', c: [1.72, 1.3, -8.7], zone: null, circuit: 'prop', feed: 'rcs.FR' }),
@@ -208,6 +216,11 @@ const FLUID: FluidNetDef = {
     { a: 'mRCS', b: 'rcs.FR' },
     { a: 'mRCS', b: 'rcs.RL' },
     { a: 'mRCS', b: 'rcs.RR' },
+    // lift pads drink from their own side's manifold
+    { a: 'mL', b: 'lift.FL', valve: 'v.lift' },
+    { a: 'mL', b: 'lift.RL', valve: 'v.lift' },
+    { a: 'mR', b: 'lift.FR', valve: 'v.lift' },
+    { a: 'mR', b: 'lift.RR', valve: 'v.lift' },
   ],
   circuit: 'prop',
   transfer: { key: 'xfer', modes: [null, ['tank.C', 'tank.L'], ['tank.C', 'tank.R'], ['tank.L', 'tank.R'], ['tank.R', 'tank.L']] },
@@ -250,6 +263,7 @@ const MOVERS: MoverDef[] = [
   { key: RAMP.key, rate: 1 / 4.5, circuit: 'hyd', load: 3.5, sensor: rampSensor(RAMP) },
   { key: 'shield', rate: 1 / 2.4, circuit: 'shield', load: 2 },
   { key: 'gear', rate: 1 / 6, circuit: 'hyd', load: 3 },
+  { key: 'nacelle', rate: 1 / 3.5, circuit: 'hyd', load: 2.5 },
   { key: 'rad', rate: 1 / 5, circuit: 'cool', load: 0.8 },
 ];
 
@@ -266,6 +280,7 @@ const LOADS: LoadDef[] = [
   { key: 'light.beacon', circuit: 'ext', kw: 0.1 },
   { key: 'light.landing', circuit: 'ext', kw: 2 },
   { key: 'rcs', circuit: 'prop', kw: 0.4 },
+  { key: 'lift', circuit: 'prop', kw: 0.8 },
   // machines draw what their catalog component says
   loadOf(PARTS, 'coolpump'),
   loadOf(PARTS, 'o2gen'),
@@ -295,16 +310,18 @@ const HELP: Record<string, string> = {
   'eng.R.arm': 'Arma el motor derecho: da tensión al encendido y a su control. Sin armar no arranca. Desarmarlo apaga el motor y, con la alimentación cerrada, lo deja seguro si está dañado.',
   'eng.L.start': 'Arranca el motor izquierdo (unos 3 s hasta régimen). Necesita el motor armado, el circuito PROPULSIÓN con energía y propelente llegando por su válvula. Un motor muy dañado puede explotar al encenderse.',
   'eng.R.start': 'Arranca el motor derecho (unos 3 s hasta régimen). Necesita el motor armado, el circuito PROPULSIÓN con energía y propelente llegando por su válvula. Un motor muy dañado puede explotar al encenderse.',
-  'helm.throttle': 'Acelerador: empuje pedido a los dos motores principales, de 0 a 100 %. Cada motor lo sigue si está en marcha (armado y arrancado). Gasta propelente en proporción; el vuelo aún no mueve la nave.',
-  nacelle: 'Gira las góndolas de los motores: CRUCERO empuja hacia delante, VTOL hacia abajo para despegar y aterrizar en vertical. Hidráulica. Aún sin efecto hasta que exista el vuelo.',
-  rcs: 'Activa los propulsores de maniobra (cuatro toberas pequeñas, 0,4 kW). Beben propelente del colector central a través de su válvula AL.RCS.',
-  'fa.sas': 'Asistencia de vuelo: amortigua los giros para que la nave no siga rotando al soltar los mandos. Aún sin efecto hasta que exista el vuelo.',
-  'fa.hold': 'ACOPLADO mantiene la velocidad que pides; DESACOPLADO deja la nave en inercia pura (newtoniana). Aún sin efecto hasta que exista el vuelo.',
-  'fa.land': 'Asistente de aterrizaje: limita la velocidad de descenso cerca del suelo. Aún sin efecto hasta que exista el vuelo.',
+  'helm.throttle': 'Acelerador de los dos motores principales. En vuelo ACOPLADO y con el piloto automático es lo más que el ordenador de vuelo puede usar de ellos para alcanzar la velocidad pedida (W/S, o VEL / NAV del piloto automático; 0 % = solo sustentación y RCS). DESACOPLADO es su empuje directo (control manual). En tierra y ACOPLADO no empujan: despega primero. El casco muestra MOTOR: lo que empujan y por qué. Los motores tienen que estar armados y en marcha. Gasta propelente en proporción.',
+  nacelle: 'Góndolas: CRUCERO empuja hacia la proa; VTOL desvía el chorro de los motores a las toberas ventrales, junto al centro de masas, para levantar cargas pesadas o subir deprisa (el ordenador de vuelo los usa como sustentación). Hidráulica, unos 3 s.',
+  rcs: 'Activa los propulsores de maniobra (cuatro bloques de toberas en los seis ejes, 0,4 kW): giros finos y desplazamientos laterales. Beben propelente del colector central a través de su válvula AL.RCS.',
+  lift: 'Activa los cuatro propulsores de sustentación VTOL bajo la quilla (12 kN cada uno, 0,8 kW): son los que mantienen la nave en el aire sin los motores principales. Beben de los colectores laterales por la válvula AL.VTOL.',
+  'v.lift': 'Válvula de alimentación de los cuatro propulsores de sustentación desde los colectores izquierdo y derecho. Cerrada, la nave no puede quedarse en el aire con ellos.',
+  'fa.sas': 'Estabilizador: con los mandos de giro sueltos, frena los giros y mantiene la actitud (y el rumbo). Sin él, las teclas de giro dan par directo y la nave sigue girando por inercia.',
+  'fa.hold': 'ACOPLADO: los mandos de traslación piden una velocidad (adelante, lateral, subir) y al soltarlos la nave se para y mantiene la altura. DESACOPLADO: piden aceleración y la nave sigue en inercia; el ordenador solo compensa la gravedad.',
+  'fa.land': 'Asistente de aterrizaje: cerca del suelo limita la velocidad de bajada según la altura y, con el tren abajo, nivela la nave para posarla.',
   'light.landing': 'Focos bajo el morro que iluminan el suelo delante de la nave (2 kW del circuito LUCES EXTERIORES).',
   'v.tank.L': 'Une el depósito izquierdo a su colector. Cerrada lo aísla: no alimenta nada, no recibe transferencia ni repostaje. Ciérrala si el depósito tiene una fuga.',
   'v.tank.R': 'Une el depósito derecho a su colector. Cerrada lo aísla: no alimenta nada, no recibe transferencia ni repostaje. Ciérrala si el depósito tiene una fuga.',
-  'v.tank.C': 'Une el depósito de reserva al colector central, del que beben la APU y los RCS. Viene cerrada: ábrela (o una alimentación cruzada) para arrancar la APU.',
+  'v.tank.C': 'Une el depósito de reserva al colector central, del que beben la APU y los RCS. Viene abierta: sin ella los RCS se quedan secos y la nave pierde los giros finos.',
   'pump.tank.L': 'Bomba de refuerzo del depósito izquierdo: sube el caudal que puede dar de 1,2 a 6 kg/s. Sin ella un motor a plena potencia se queda sin propelente. 0,8 kW de PROPULSIÓN.',
   'pump.tank.R': 'Bomba de refuerzo del depósito derecho: sube el caudal que puede dar de 1,2 a 6 kg/s. Sin ella un motor a plena potencia se queda sin propelente. 0,8 kW de PROPULSIÓN.',
   'pump.tank.C': 'Bomba de refuerzo del depósito de reserva: sube el caudal que puede dar de 1,2 a 6 kg/s. 0,8 kW de PROPULSIÓN.',
@@ -326,7 +343,7 @@ const HELP: Record<string, string> = {
   bat: 'Conecta el banco de baterías (12 kWh) a la red. Cubre lo que los generadores no dan (hasta 30 kW) y se carga con lo que sobra. Hace falta para arrancar el reactor o la APU con todo parado.',
   apu: 'Turbina auxiliar de 15 kW que quema propelente. Tarda unos 8 s en arrancar y necesita energía de arranque (batería o reactor), el circuito PROPULSIÓN y propelente en el colector central. Si falla, apágala y vuelve a encenderla.',
   rad: 'Despliega las alas de los radiadores sobre el lomo: de 8 a 28 m² para echar el calor del reactor al espacio. A potencias altas hace falta tenerlos fuera o el refrigerante se calienta.',
-  grav: 'Compensador inercial (6 kW): reduce las aceleraciones que siente la tripulación. Consume y se puede dañar; su efecto llegará con el vuelo.',
+  grav: 'Compensador inercial (6 kW): a bordo el suelo sigue siendo «abajo» aunque la nave se incline, frene o acelere, así que la carga y la tripulación no resbalan. Apagado o sin energía se nota todo; en caída libre, se flota.',
   heat: 'Calefacción de los compartimentos presurizados (0,6 kW cada uno). Sin ella el aire se enfría poco a poco hacia −18 °C.',
   turret: 'Da energía a la torreta de minimisiles del lomo (1,5 kW de ARMAMENTO). Aún no dispara.',
   'ls.mode': 'AUTOMÁTICO mantiene cada compartimento estanco a 70 kPa con gas de las botellas (se suspende si hay fuga). MANUAL solo mete gas donde abras la válvula de represurización. APAGADO no repone nada.',
@@ -364,7 +381,11 @@ function PART_NAME(id: string) {
   return PARTS.find((p) => p.id === id)?.name ?? id;
 }
 
+// autopilot board on the glareshield, above the dash between the two displays
+const AP = autopilotConsole({ frame: boardFrame([0, 1.19, -9.37], norm([0, 0.35, 1])), circuit: 'avionics', w: 1.0, h: 0.22 });
+
 const CONSOLES: ConsoleSpec[] = [
+  ...AP.consoles,
   {
     id: 'ck.main',
     title: 'CONTROL DE VUELO',
@@ -374,7 +395,7 @@ const CONSOLES: ConsoleSpec[] = [
     depth: 0.12,
     free: true,
     screens: [
-      { id: 'mfd.pilot', pages: ['flight', 'mass', 'nav', 'engines', 'fuel', 'alerts'], at: [-0.56, 0.04], w: 0.54, h: 0.32 },
+      { id: 'mfd.pilot', pages: ['flight', 'ap', 'nav', 'mass', 'engines', 'fuel', 'alerts'], at: [-0.56, 0.04], w: 0.54, h: 0.32 },
       { id: 'mfd.copilot', pages: ['status', 'power', 'fuel', 'atmos', 'hull', 'alerts'], at: [0.56, 0.04], w: 0.54, h: 0.32 },
     ],
     indicators: [{ kind: 'gear-greens', at: [1.2, 0.22], ref: 'gear' }],
@@ -406,6 +427,7 @@ const CONSOLES: ConsoleSpec[] = [
       { key: 'fa.hold', kind: 'toggle', label: 'ACOPLADO', name: 'Vuelo acoplado (mantiene velocidad)', states: ['DESACOPLADO', 'ACOPLADO'], at: [0, -0.22] },
       { key: 'fa.land', kind: 'toggle', label: 'ATERRIZ.', name: 'Asistente de aterrizaje', states: ON_OFF, at: [0.12, -0.22] },
       { key: 'light.landing', kind: 'toggle', label: 'FOCOS', name: 'Focos de aterrizaje', states: ON_OFF, at: [-0.1, -0.38] },
+      { key: 'lift', kind: 'toggle', label: 'VTOL', name: 'Propulsores de sustentación (VTOL)', states: ON_OFF, at: [0.1, -0.38] },
     ],
   },
   {
@@ -424,6 +446,7 @@ const CONSOLES: ConsoleSpec[] = [
       pump('tank.R', 'B.DER', [0.12, 0.23]),
       { key: 'v.xfeed.L', kind: 'toggle', label: 'XF IZQ', name: 'Alimentación cruzada izquierda', states: VALVE, at: [-0.08, 0.09] },
       { key: 'v.xfeed.R', kind: 'toggle', label: 'XF DER', name: 'Alimentación cruzada derecha', states: VALVE, at: [0.08, 0.09] },
+      { key: 'v.lift', kind: 'toggle', label: 'AL.VTOL', name: 'Alimentación de la sustentación VTOL', states: VALVE, at: [0, 0.09] },
       { key: 'v.eng.L', kind: 'toggle', label: 'AL.M.IZQ', name: 'Alimentación del motor izquierdo', states: VALVE, at: [-0.08, -0.05] },
       { key: 'v.eng.R', kind: 'toggle', label: 'AL.M.DER', name: 'Alimentación del motor derecho', states: VALVE, at: [0.08, -0.05] },
       { key: 'v.apu', kind: 'toggle', label: 'AL.APU', name: 'Alimentación de la APU', states: VALVE, at: [-0.12, -0.19] },
@@ -634,10 +657,10 @@ const CONSOLES: ConsoleSpec[] = [
 /** Annunciator panel on the dash: one lamp per alert group (lit when any alert of the group is on). */
 const ANNUNCIATOR = {
   console: 'ck.main',
-  at: [0, 0.1] as V2,
+  at: [0, 0.17] as V2,
   cols: 7,
   cell: [0.07, 0.036] as V2,
-  lamps: ['CASCO', 'DESCOMP', 'O2', 'CO2', 'FUGA AIRE', 'GAS', 'SOP VITAL', 'REACTOR', 'SCRAM', 'REFRIG', 'BATERÍA', 'DESLASTRE', 'DISYUNTOR', 'APU', 'COMBUST', 'FUGA COMB', 'DESEQUIL', 'MOTOR IZQ', 'MOTOR DER'],
+  lamps: ['CASCO', 'DESCOMP', 'O2', 'CO2', 'FUGA AIRE', 'GAS', 'SOP VITAL', 'REACTOR', 'SCRAM', 'REFRIG', 'BATERÍA', 'DESLASTRE', 'DISYUNTOR', 'APU', 'COMBUST', 'FUGA COMB', 'DESEQUIL', 'MOTOR IZQ', 'MOTOR DER', 'VTOL', 'GRAVEDAD'],
 };
 
 function buildDef(): ShipDef {
@@ -698,7 +721,7 @@ function buildDef(): ShipDef {
     // propellant: each side feeds its own engine; the reserve stays isolated
     'v.tank.L': 1,
     'v.tank.R': 1,
-    'v.tank.C': 0,
+    'v.tank.C': 1,
     'pump.tank.L': 1,
     'pump.tank.R': 1,
     'pump.tank.C': 0,
@@ -713,10 +736,13 @@ function buildDef(): ShipDef {
     'helm.throttle': 0,
     'eng.L.arm': 0,
     'eng.R.arm': 0,
-    nacelle: 1,
+    nacelle: 0,
+    lift: 1,
+    'v.lift': 1,
     'fa.sas': 1,
     'fa.hold': 1,
     'fa.land': 1,
+    ...AP.defaults,
     refuel: 0,
     // life support: automatic pressure control, generator, scrubber, fans, heaters on
     'ls.mode': 0,
@@ -782,6 +808,9 @@ function buildDef(): ShipDef {
       { pos: [2.0, 0.87, 3.2], half: [0.35, 0.35, 0.35], yaw: 0.1, mass: 35, paint: 'orange' },
       { pos: [-1.6, 0.3, 3.9], half: [0.3, 0.3, 0.3], yaw: 0.3, mass: 25, paint: 'grey' },
       { pos: [1.3, 0.3, 2.4], half: [0.3, 0.3, 0.3], yaw: -0.2, mass: 25, paint: 'orange' },
+      // spare parts on top of the small crates
+      { kind: 'spare', pos: [1.3, 0.72, 2.4], half: [0.16, 0.11, 0.16], yaw: 0.5, mass: 9, paint: 'grey' },
+      { kind: 'spare', pos: [-1.6, 0.72, 3.9], half: [0.16, 0.11, 0.16], yaw: -0.4, mass: 9, paint: 'orange' },
     ],
     // every fixture sits on a surface (checked by diag:ship): nav lights on the outboard flank of the
     // nacelles, strobe on the fin top, beacons on the dorsal spine and the keel, floodlights in the
@@ -805,8 +834,11 @@ function buildDef(): ShipDef {
     movers: MOVERS,
     life: LIFE,
     caution: 'caution',
-    readouts: { flight: ['fa.sas', 'fa.hold', 'fa.land', 'nacelle', 'helm.throttle'], engines: ['rcs', 'nacelle', 'helm.throttle'], radar: ['radar.mode', 'radar.range'], weapons: ['turret'] },
-    helm: { throttle: 'helm.throttle' },
+    readouts: { flight: ['fa.sas', 'fa.hold', 'fa.land', 'nacelle', 'helm.throttle'], engines: ['rcs', 'lift', 'nacelle', 'helm.throttle'], radar: ['radar.mode', 'radar.range'], weapons: ['turret'] },
+    helm: { throttle: 'helm.throttle', seat: 'ck.pilot' },
+    autopilot: AP.autopilot,
+    // a heavy freighter: slower and steadier than the shuttle
+    flight: { vmax: 22, vside: 6, vz: 4.5, rate: [0.3, 0.35, 0.4], accel: 2.5 },
     annunciator: ANNUNCIATOR,
     defaults,
     modules: MODULES,
@@ -917,7 +949,7 @@ const MANUAL: ManualSection[] = [
     body: [
       'Tres depósitos: izquierdo y derecho en la proa de las góndolas (1100 kg cada uno) y la reserva bajo la panza (300 kg). Cada uno tiene válvula de salida hacia su colector y bomba de refuerzo. Las alimentaciones cruzadas unen los colectores laterales con el central, del que beben la APU y los RCS.',
       { live: 'fuel' },
-      { warn: 'La reserva viene aislada y las cruzadas cerradas: así el colector central no tiene propelente y la APU no arranca. Abre la reserva o una cruzada antes.' },
+      { warn: 'Si cierras la reserva con las cruzadas cerradas, el colector central se queda sin propelente: la APU no arranca y los RCS no empujan. Abre la reserva o una cruzada.' },
       'Un depósito dañado pierde propelente (alarma FUGA COMB): pásalo a otro con la transferencia y suéldalo. Si revienta con más de 60 kg dentro, explota.',
       'Repostaje: en la plataforma de la base, conecta la toma exterior ([[ext.fuel/refuel]]). Llena los depósitos con la válvula de salida abierta.',
       { controls: ['v.tank.L', 'v.tank.R', 'v.tank.C', 'pump.tank.L', 'v.xfeed.L', 'v.xfeed.R', 'xfer'] },
@@ -938,9 +970,34 @@ const MANUAL: ManualSection[] = [
       },
       { warn: 'Un motor por debajo del 35 % de integridad, con energía y propelente llegando, puede explotar, más aún si está en marcha. Ciérrale la alimentación, desármalo y suéldalo.' },
       'La APU ([[ck.over/apu]]) es un generador de respaldo de 15 kW que quema propelente del colector central. Si falla (sin energía de arranque, sin propelente, dañada) se queda en FALLO: apágala, arregla la causa y enciéndela otra vez.',
-      'El vuelo todavía no está simulado: armar, arrancar y el consumo de los motores sí funcionan, pero la nave no se mueve. Góndolas, RCS y asistencias quedan registrados para cuando exista.',
+      'La APU se puede arrancar con la nave en vuelo; los motores principales, igual. Para volar mira el capítulo «Vuelo».',
     ],
   },
+  {
+    id: 'flight',
+    title: 'Vuelo',
+    lead: 'Despegar, volar, aterrizar y el piloto automático',
+    body: [
+      'La Selene se sostiene en el aire con cuatro propulsores de sustentación bajo la quilla (VTOL), corre con los dos motores principales y afina los giros con los RCS. El ordenador de vuelo lo reparte todo: desde el asiento del piloto tú pides velocidades y giros, no empujes.',
+      {
+        steps: [
+          'Siéntate en el asiento del piloto. La sustentación y su alimentación vienen encendidas ([[ck.pl/lift]], [[ck.cp/v.lift]]).',
+          'R sube, F baja. W/S adelante y atrás, A/D gira el morro, Z/C desplaza de lado; las flechas cabecean y alabean. Suéltalo todo y la nave frena y se queda a esa altura (vuelo ACOPLADO, [[ck.pl/fa.hold]]).',
+          'Para correr: arma y arranca los motores ([[ck.pl/eng.L.arm]], [[ck.pl/eng.L.start]]) despega y sube el acelerador ([[ck.main/helm.throttle]]): ACOPLADO es el tope de motor que el ordenador puede usar (W o VEL del piloto automático piden la velocidad); DESACOPLADO es el empuje directo.',
+          'Tren arriba en vuelo ([[ck.main/gear]]) y abajo antes de posarte. Cerca del suelo el asistente ([[ck.pl/fa.land]]) frena la bajada y nivela la nave.',
+          'Góndolas en VTOL ([[ck.pl/nacelle]]): el chorro de los motores sale por las toberas ventrales, junto al centro de masas; sirve para subir cargada o deprisa.',
+        ],
+      },
+      { live: 'flight' },
+      'Piloto automático, en el tablero sobre el salpicadero: [[ck.ap/ap.on]] lo conecta (tecla P desde el asiento). Cada modo tiene su botón; cualquier mando tuyo manda en su eje mientras lo pulsas.',
+      { controls: ['ap.on', 'ap.lvl', 'ap.alt', 'ap.hdg', 'ap.spd', 'ap.nav', 'ap.to', 'ap.land', 'ap.alt.sel', 'ap.hdg.sel', 'ap.spd.sel', 'ap.wp'] },
+      ...AP_SPACE_MANUAL,
+      { note: 'Ir a un sitio: elige el punto ([[ck.ap/ap.wp]]) y la altura ([[ck.ap/ap.alt.sel]]), pulsa DESPEG. y luego NAV. Al llegar se queda en vuelo estacionario encima; ATERRIZ. la posa y se desconecta.' },
+      { warn: 'Sin energía en AVIÓNICA se apaga el ordenador de vuelo: mando DIRECTO, sin estabilizador, sin piloto automático y sin compensar la gravedad. Baja despacio.' },
+      'El compensador inercial ([[ck.over/grav]]) mantiene el suelo como «abajo» a bordo: con él, la tripulación camina y la carga se queda donde está aunque la nave se incline o frene. Apagado, se nota todo.',
+    ],
+  },
+  SPACE_MANUAL,
   {
     id: 'damage',
     title: 'Daños y reparación',
@@ -949,6 +1006,7 @@ const MANUAL: ManualSection[] = [
       'Las explosiones dañan los paneles del casco y las máquinas cercanas. Un panel por debajo del 60 % tiene grietas y pierde aire despacio; por debajo de 30 es un agujero. Una ventana reventada vacía la cabina en un par de segundos.',
       'La soldadora (tecla 2) repara: mantenla apuntada a un panel o a una máquina con el clic pulsado. Con ella en la mano las máquinas se tiñen según su daño (rojo = grave). Un agujero se rellena hasta cerrarse.',
       'Una consola montada en un panel que revienta desaparece con él, y con ella sus mandos, hasta que se suelda el panel. Un cable que pasa por detrás de un agujero deja su circuito sin energía.',
+      ...decompressionManual(),
       { warn: 'Depósitos llenos y motores dañados pueden explotar y encadenar más daños. Aíslalos antes de soldar.' },
     ],
   },

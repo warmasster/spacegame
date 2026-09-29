@@ -2,9 +2,10 @@
 // (and a spawn in shared/constants.ts if it should be parked in the world). See docs/SHIPS.md.
 
 import type { ShipDef } from '../def.js';
+import { ALBATROS } from './albatros.js';
 import { PEREGRINA } from './peregrina.js';
 import { HAULER } from './selene.js';
 
-export { HAULER, PEREGRINA };
+export { ALBATROS, HAULER, PEREGRINA };
 
-export const SHIP_DEFS: Record<string, ShipDef> = Object.fromEntries([HAULER, PEREGRINA].map((d) => [d.id, d]));
+export const SHIP_DEFS: Record<string, ShipDef> = Object.fromEntries([HAULER, PEREGRINA, ALBATROS].map((d) => [d.id, d]));

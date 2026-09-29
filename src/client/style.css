@@ -230,6 +230,11 @@ html, body { margin: 0; height: 100%; background: #000; overflow: hidden; color:
   clip-path: polygon(0 14px, 14px 0, 100% 0, 100% calc(100% - 14px), calc(100% - 14px) 100%, 0 100%); }
 .pause .sc-pause small { font-size: 10px; letter-spacing: 0.3em; color: var(--holo); }
 .pause .sc-pause p { margin: 4px 0 0; font-size: 10px; line-height: 1.6; color: var(--holo-dim); }
+.pause .sc-audio { display: grid; gap: 6px; font-size: 10px; letter-spacing: 0.3em; color: var(--holo-dim); }
+.pause .sc-audio input[type='range'] { width: 100%; accent-color: var(--holo); }
+.pause .sc-audio select { font: 500 11px/1.2 var(--mono); color: #eafcff; background: rgba(0, 20, 28, 0.6); border: 1px solid var(--holo-dim);
+  padding: 8px; outline: none; letter-spacing: 0.04em; }
+.pause .sc-audio select option { background: #031018; }
 @media (max-width: 760px) { .sc-frame { grid-template-columns: 1fr; } .sc-panel { border-left: 0; } }
 
 /* ---------- diagnostics (F3) ---------- */
@@ -285,6 +290,9 @@ html, body { margin: 0; height: 100%; background: #000; overflow: hidden; color:
 /* plan */
 .mn-plan .pl-hull { fill: #111a2a; stroke: #6fb2d8; stroke-width: 1.4; }
 .mn-plan .pl-zone { fill: #6fb2d8; font: 600 10px var(--mono); letter-spacing: 0.14em; }
+.mn-plan .pl-room { fill: #16233a; stroke: #6fb2d8; stroke-width: 1; stroke-dasharray: 4 3; }
+.mn-plan .pl-deck { fill: #9fd0ee; font: 700 11px var(--mono); letter-spacing: 0.2em; }
+.mn-plan .pl-hatch { fill: rgba(255, 179, 71, 0.18); stroke: #ffb347; stroke-width: 1; stroke-dasharray: 3 2; }
 .mn-plan .pl-part { fill: rgba(140, 150, 170, 0.28); stroke: rgba(170, 185, 205, 0.55); stroke-width: 0.8; }
 .mn-plan .pl-part.in { fill: rgba(140, 150, 170, 0.4); }
 .mn-plan .pl-seat { fill: #3a4a60; stroke: #9ab; }

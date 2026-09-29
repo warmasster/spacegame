@@ -150,6 +150,16 @@ export const FURNITURE_MODELS: Record<string, ModelBuilder> = {
     }
   },
 
+  railing(k, h) {
+    const [, hy, hz] = h;
+    // guard rail along local z: a post at least every metre, top rail, knee rail, toe board
+    const n = Math.max(1, Math.ceil((hz * 2) / 1.0));
+    for (let i = 0; i <= n; i++) k.rod('chrome', [0, -hy, -hz + (i * 2 * hz) / n], [0, hy, -hz + (i * 2 * hz) / n], 0.02);
+    k.rod('chrome', [0, hy, -hz], [0, hy, hz], 0.022);
+    k.rod('chrome', [0, 0, -hz], [0, 0, hz], 0.016);
+    k.box('accent', 0.02, 0.1, hz * 2, 0, -hy + 0.05, 0);
+  },
+
   chin(k, h) {
     k.extrudeX('paintDark', scaled(PROFILES.chin, h), -h[0], h[0], 0.02);
   },

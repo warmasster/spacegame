@@ -6,7 +6,7 @@
 
 import { partKey, partTag, type ControlDef, type PartDef } from '../def.js';
 import type { ShipSystems } from '../systems.js';
-import { partsOf, type AlertDef, type ShipModule, type SystemFactory, type Tick } from './api.js';
+import { partsOf, type AlertDef, type PowerSource, type ShipModule, type SoundCue, type SystemFactory, type Tick } from './api.js';
 
 /** Output selector positions (fraction of rated power). */
 export const REACTOR_SET = [0, 0.25, 0.5, 0.75, 1, 1.1];
@@ -27,6 +27,11 @@ export class Reactor implements ShipModule {
   readonly pumps: PartDef[];
   readonly radiators: PartDef[];
   private v: Record<string, number> = {};
+  /** Switch keys looked up once: each pump's run switch, each radiator's deploy mover. */
+  private pumpRun: string[];
+  private radDeploy: string[];
+  /** What it offers the grid (one object, refilled every tick). */
+  private offer: PowerSource;
 
   constructor(
     private sys: ShipSystems,
@@ -40,6 +45,9 @@ export class Reactor implements ShipModule {
     const mine = (p: PartDef) => p.link === part.id || (!p.link && first);
     this.pumps = partsOf(sys, 'coolpump').filter(mine);
     this.radiators = partsOf(sys, 'radiator').filter(mine);
+    this.pumpRun = this.pumps.map((p) => partKey(p, 'run', p.id));
+    this.radDeploy = this.radiators.map((r) => partKey(r, 'deploy', `${r.id}.deploy`));
+    this.offer = { id: tag, kw: 0, quality: 1, order: 0 };
     const defaults = sys.def.defaults;
     const on = defaults[this.keys.run] === 1;
     const d = (name: string, q: number, init = 0) => (this.v[name] = sys.vars.define(`${tag}.${name}`, q, init));
@@ -88,8 +96,9 @@ export class Reactor implements ShipModule {
   /** Coolant flow the loop's pumps can give now (0..1). */
   coolFlow(st: Float64Array, sw: Record<string, number>) {
     let flow = 0;
-    for (const pump of this.pumps) {
-      if (sw[partKey(pump, 'run', pump.id)] !== 1 || this.sys.supply(st, pump.circuit) < 0.5) continue;
+    for (let k = 0; k < this.pumps.length; k++) {
+      const pump = this.pumps[k];
+      if (sw[this.pumpRun[k]] !== 1 || this.sys.supply(st, pump.circuit) < 0.5) continue;
       const h = this.H(st, pump);
       if (h > 0) flow += 0.35 + 0.65 * h;
     }
@@ -134,7 +143,9 @@ export class Reactor implements ShipModule {
       const h = this.H(st);
       let q = Math.max(0.25, Math.min(1, (h - 0.2) / 0.6));
       if (h < 0.4) q *= 0.85 + 0.15 * t.ctx.rand(); // damaged core: output sags and flickers
-      t.source({ id: this.tag, kw, quality: q, order: 0 });
+      this.offer.kw = kw;
+      this.offer.quality = q;
+      t.source(this.offer);
     }
     if (st[V.state] === RX.starting) t.load(this.part.circuit, this.k.startKw);
   }
@@ -192,8 +203,9 @@ export class Reactor implements ShipModule {
     const tCool = st[V['cool.temp']];
     const toCool = ua * (tCore - tCool);
     let area = 0;
-    for (const r of this.radiators) {
-      const deployed = this.sys.mover(st, partKey(r, 'deploy', `${r.id}.deploy`));
+    for (let k = 0; k < this.radiators.length; k++) {
+      const r = this.radiators[k];
+      const deployed = this.sys.mover(st, this.radDeploy[k]);
       area += (r.p.stowed + (r.p.deployed - r.p.stowed) * deployed) * this.H(st, r);
     }
     const K = tCool + 273.15;
@@ -216,6 +228,23 @@ export class Reactor implements ShipModule {
       if (st[this.v.temp] >= this.k.resetC) return `Núcleo demasiado caliente para rearmar (${Math.round(st[this.v.temp])} °C)`;
     }
     return null;
+  }
+
+  sounds(): SoundCue[] {
+    const V = this.v;
+    const part = this.part;
+    const { warnC, scramC } = this.k;
+    const running = (st: Float64Array) => st[V.state] === RX.online || st[V.state] === RX.starting;
+    return [
+      // the core and its loop: a deep hum that swells with the output, low and uneven while it comes up
+      { sound: 'mach.reactor', role: 'run', part, level: (st) => (st[V.state] === RX.online ? 0.45 + 0.55 * Math.min(1, st[V.out]) : st[V.state] === RX.starting ? 0.1 + 0.35 * st[V.start] : 0), pitch: (st) => (st[V.state] === RX.starting ? 0.6 + 0.3 * st[V.start] : 0.9 + 0.15 * Math.min(1.1, st[V.out])) },
+      // too hot: the coolant knocks and boils in the loop
+      { sound: 'mach.overheat', role: 'hot', part, level: (st) => Math.max(0, Math.min(1, (st[V.temp] - warnC) / (scramC - warnC))) },
+      { sound: 'rx.start', role: 'start', part, on: (st) => st[V.state] === RX.starting },
+      { sound: 'rx.online', role: 'online', part, on: (st) => st[V.state] === RX.online },
+      { sound: 'rx.scram', role: 'scram', part, on: (st) => st[V.state] === RX.scram },
+      { sound: 'rx.down', role: 'stop', part, on: (st) => !running(st) },
+    ];
   }
 
   alerts(): AlertDef[] {

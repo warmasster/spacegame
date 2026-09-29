@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { SEAT_PICK, boxFrame, coverHit, seatFrame, type ConsoleDef } from '../../shared/ship/def';
 import { REACH, SOLID_HP } from '../../shared/ship/sim';
 import type { Particles } from '../fx/particles';
+import { origin } from '../render/origin';
 import type { ShipClient, ShipHit } from './ship';
 
 export interface InteractionSink {
@@ -27,6 +28,8 @@ export interface PromptInfo {
 }
 
 export type Target = ShipHit & { ship: ShipClient; inReach: boolean };
+
+const _h = new THREE.Vector3();
 
 const KIND: Record<string, string> = { hull: 'casco', glass: 'ventana', floor: 'cubierta', bulkhead: 'mamparo' };
 
@@ -81,15 +84,16 @@ export class Interaction {
     this.seated = ctx.seated;
     for (const ship of ctx.ships) ship.view.setWelder(ctx.tool);
     const { camera, eye, ships } = ctx;
-    const origin = camera.getWorldPosition(new THREE.Vector3());
+    // the game asks in world coordinates; the camera's matrices are in render space
+    const from = origin.worldOf(camera, new THREE.Vector3());
     const dir = camera.getWorldDirection(new THREE.Vector3());
     // third person: the ray starts behind the astronaut; reach is still measured from the eye
-    const max = origin.distanceTo(eye) + REACH.repair + 0.5;
+    const max = from.distanceTo(eye) + REACH.repair + 0.5;
     let best: Target | null = null;
     if (!ctx.disabled) {
       for (const ship of ships) {
         if (ship.position.distanceTo(eye) > 40) continue;
-        const h = ship.pick(origin, dir, max, ctx.seated);
+        const h = ship.pick(from, dir, max, ctx.seated);
         if (h && (!best || h.dist < best.dist)) best = { ...h, ship, inReach: false };
       }
     }
@@ -110,7 +114,7 @@ export class Interaction {
         else this.sink.repair(t!.ship, t!.index, this.tick);
         this.tick = 0;
       }
-      this.weldFx(dt, ctx.hand, t!.point, t!.normal);
+      this.weldFx(dt, ctx.hand, t!.point, t!.normal, t!.ship.render.v);
     } else this.tick = 0;
     this.beam.visible = canWeld;
     this.draw(t);
@@ -127,19 +131,24 @@ export class Interaction {
       return true;
     }
     if (t.kind !== 'control') return false;
-    // a settled refusal is the amber light; the click does not also fire or print a line
-    if (t.ship.view.isRefused(t.index)) return true;
+    // a settled refusal is the amber light (and its buzzer); the click does not also fire or print a line
+    if (t.ship.view.isRefused(t.index)) {
+      t.ship.sounds.control(t.index);
+      t.ship.sounds.control(t.index, true);
+      return true;
+    }
     t.ship.view.pressed(t.index);
     this.sink.interact(t.ship, t.index);
     return true;
   }
 
-  private weldFx(dt: number, hand: THREE.Vector3, at: THREE.Vector3, n: THREE.Vector3) {
+  private weldFx(dt: number, hand: THREE.Vector3, at: THREE.Vector3, n: THREE.Vector3, carry: readonly number[]) {
     const d = at.clone().sub(hand);
     const L = d.length();
     const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), d.normalize());
     const flicker = 0.6 + Math.random() * 0.8;
-    this.beam.matrix.compose(hand, q, new THREE.Vector3(flicker, L, flicker));
+    // drawn straight in render space (the beam's matrixWorld is written by hand)
+    this.beam.matrix.compose(origin.toRender(_h.copy(hand)), q, new THREE.Vector3(flicker, L, flicker));
     this.beam.matrixWorld.copy(this.beam.matrix);
     this.sparkT -= dt;
     if (this.sparkT > 0) return;
@@ -148,13 +157,14 @@ export class Interaction {
       this.particles.emit('glow', {
         pos: at,
         vel: new THREE.Vector3().randomDirection().multiplyScalar(0.6 + Math.random() * 2.2).addScaledVector(n, 1.2),
+        carry,
         color: Math.random() < 0.5 ? [2.4, 3, 4.5] : [4, 2.6, 1],
         life: 0.1 + Math.random() * 0.35,
         size: 0.012 + Math.random() * 0.018,
         gravity: 1.62,
       });
     }
-    this.particles.emit('glow', { pos: at, vel: n.clone().multiplyScalar(0.05), color: [3, 4, 6], life: 0.05, size: 0.12 + Math.random() * 0.1 });
+    this.particles.emit('glow', { pos: at, vel: n.clone().multiplyScalar(0.05), carry, color: [3, 4, 6], life: 0.05, size: 0.12 + Math.random() * 0.1 });
   }
 
   private draw(t: Target | null) {

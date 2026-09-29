@@ -4,7 +4,7 @@
 
 import { partKey, partTag, type ControlDef, type PartDef } from '../def.js';
 import type { ShipSystems } from '../systems.js';
-import { partsOf, type AlertDef, type ShipModule, type SystemFactory, type Tick } from './api.js';
+import { partsOf, type AlertDef, type PowerSource, type ShipModule, type SoundCue, type SystemFactory, type Tick } from './api.js';
 
 export const APU = { kw: 15, startS: 8, spoolKw: 3 };
 /** Engine / APU states. */
@@ -16,6 +16,8 @@ export class Apu implements ShipModule {
   readonly key: string;
   readonly k: typeof APU;
   private v: Record<string, number> = {};
+  /** What it offers the grid (one object, refilled every tick). */
+  private offer: PowerSource;
 
   constructor(
     private sys: ShipSystems,
@@ -25,6 +27,7 @@ export class Apu implements ShipModule {
     this.tag = partTag(part);
     this.key = partKey(part, 'run', part.id);
     this.k = { ...APU, ...part.p } as typeof APU;
+    this.offer = { id: this.tag, kw: 0, quality: 1, order: 1 };
     for (const [name, q] of [
       ['state', 1],
       ['t', 0.1],
@@ -60,7 +63,10 @@ export class Apu implements ShipModule {
     const { st } = t;
     const s = st[this.v.state];
     if (s === ENG.spool) t.load(this.part.circuit, this.k.spoolKw);
-    if (s === ENG.run) t.source({ id: this.tag, kw: this.k.kw * (0.4 + 0.6 * this.sys.health(st, this.part)), quality: 1, order: 1 });
+    if (s === ENG.run) {
+      this.offer.kw = this.k.kw * (0.4 + 0.6 * this.sys.health(st, this.part));
+      t.source(this.offer);
+    }
     // a failed or stopped unit burns nothing
     if ((s === ENG.spool || s === ENG.run) && this.part.feed) t.burn(this.part.id, 0.003 + 0.012 * st[this.v.out]);
   }
@@ -101,6 +107,18 @@ export class Apu implements ShipModule {
   interlock(c: ControlDef, next: number, st: Float64Array, sw: Record<string, number>) {
     if (c.key === this.key && next === 1) return this.startBlock(st, sw);
     return null;
+  }
+
+  sounds(): SoundCue[] {
+    const V = this.v;
+    const part = this.part;
+    return [
+      // the turbine: the starter winds it up, running it whines and roars with the load
+      { sound: 'mach.turbine', role: 'run', part, level: (st) => (st[V.state] === ENG.run ? 0.7 + 0.3 * st[V.out] : st[V.state] === ENG.spool ? 0.15 + 0.6 * st[V.t] : 0), pitch: (st) => (st[V.state] === ENG.run ? 1 + 0.08 * st[V.out] : 0.3 + 0.7 * st[V.t]) },
+      { sound: 'turbine.start', role: 'start', part, on: (st) => st[V.state] === ENG.spool },
+      { sound: 'turbine.down', role: 'stop', part, on: (st) => st[V.state] !== ENG.run && st[V.state] !== ENG.spool },
+      { sound: 'turbine.fail', role: 'fail', part, on: (st) => st[V.state] === ENG.fail },
+    ];
   }
 
   alerts(): AlertDef[] {

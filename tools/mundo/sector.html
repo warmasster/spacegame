@@ -1,0 +1,4421 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sector vivo</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,560;9..144,640&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  color-scheme: dark;
+  --bg: #12160f;
+  --panel: #181d14;
+  --ink: #e4dece;
+  --dim: #8f8878;
+  --faint: #2c3326;
+  --mark: #e2b15c;
+  --bad: #d85a3a;
+  --good: #8fb56a;
+  --paper: #c4bfb2;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: 400 12px/1.45 "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+  overflow: hidden;
+}
+button, input { font: inherit; color: inherit; }
+button { cursor: pointer; }
+button:focus-visible { outline: 1px solid var(--mark); outline-offset: 2px; }
+#app { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 380px); height: 100%; }
+#map { position: relative; min-width: 0; min-height: 0; }
+canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: crosshair; }
+#hud {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  top: 14px;
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+  pointer-events: none;
+}
+h1 {
+  font-family: Fraunces, "Iowan Old Style", Palatino, "Palatino Linotype", serif;
+  font-weight: 560;
+  font-size: 22px;
+  line-height: 1.15;
+  margin: 0;
+  letter-spacing: -0.02em;
+  text-wrap: balance;
+  border-bottom: 1px solid var(--mark);
+  width: fit-content;
+}
+#status, #day { color: var(--dim); margin: 4px 0 0; }
+#day { font-variant-numeric: tabular-nums; text-align: right; }
+#now {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: 64px;
+  margin: 0;
+  color: var(--paper);
+  pointer-events: none;
+  max-width: 62ch;
+}
+#legend {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: 12px;
+  color: var(--dim);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  pointer-events: none;
+}
+#legend span::before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  margin-right: 6px;
+  background: var(--c);
+  vertical-align: 1px;
+}
+aside {
+  background: var(--panel);
+  border-left: 1px solid var(--faint);
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 16px 16px;
+}
+.ctl { display: flex; flex-wrap: wrap; gap: 6px; }
+.ctl button {
+  background: transparent;
+  border: 1px solid var(--faint);
+  padding: 4px 8px;
+  border-radius: 0;
+}
+.ctl button:hover { border-color: var(--dim); }
+.ctl button[aria-pressed="true"] { border-color: var(--mark); color: var(--mark); }
+#seedline, .hint, .more { color: var(--dim); margin: 0; }
+h2 {
+  margin: 0 0 4px;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+.tabs { display: flex; flex-wrap: wrap; gap: 4px; margin: 0; }
+.nav { display: flex; flex-direction: column; gap: 6px; }
+#back { align-self: flex-start; }
+#back[hidden] { display: none; }
+#pane { flex: 1; min-height: 0; overflow: auto; padding-right: 2px; }
+#pane h2 { margin-top: 12px; }
+#zoomctl {
+  position: absolute;
+  right: 16px;
+  bottom: 12px;
+  display: flex;
+  gap: 6px;
+  z-index: 2;
+}
+#zoomctl button {
+  background: rgba(18, 22, 15, 0.82);
+  border: 1px solid var(--faint);
+  color: var(--dim);
+  padding: 4px 8px;
+}
+#zoomctl button:hover { border-color: var(--mark); color: var(--mark); }
+.tabs button, .act, #followline button {
+  background: transparent;
+  border: 1px solid var(--faint);
+  padding: 2px 7px;
+  color: var(--dim);
+}
+.tabs button[aria-pressed="true"], .act, #followline button { border-color: var(--mark); color: var(--mark); }
+#followline { min-height: 1.2em; }
+#pane button.dead { color: var(--dim); }
+#pane .feedp { margin: 0 0 5px; padding-left: 8px; border-left: 2px solid var(--k, var(--faint)); }
+.who {
+  font-family: Fraunces, "Iowan Old Style", Palatino, "Palatino Linotype", serif;
+  font-size: 22px;
+  font-weight: 560;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+  text-wrap: balance;
+  margin: 0;
+}
+.sub { color: var(--dim); margin: 2px 0 8px; }
+.row { display: flex; justify-content: space-between; gap: 10px; font-variant-numeric: tabular-nums; }
+.grp { margin: 0 0 8px; }
+#pane button[data-k], #pane button.gh {
+  display: flex;
+  width: 100%;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  text-align: left;
+  background: none;
+  border: 0;
+  padding: 1px 0;
+}
+#pane button[data-k] .nm, #pane button.gh .nm { text-align: right; }
+.gh { font-weight: 500; }
+.gh i {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 6px;
+  vertical-align: 1px;
+}
+.role { color: var(--dim); }
+.plain { margin: 2px 0; color: var(--dim); letter-spacing: 0.08em; text-transform: uppercase; font-size: 10px; }
+.d, .rumor .d { color: var(--dim); margin-right: 6px; font-variant-numeric: tabular-nums; }
+.bar { height: 5px; background: var(--faint); margin: 1px 0 7px; }
+.bar i { display: block; height: 100%; background: var(--mark); }
+.bar.bad i { background: var(--bad); }
+.bar.good i { background: var(--good); }
+.bar.dim i { background: var(--dim); }
+.rumor { margin: 4px 0; }
+b[data-k] { font-weight: 500; cursor: pointer; }
+b[data-k]:hover, #pane button:hover .nm { color: var(--mark); }
+.sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}
+@media (max-width: 800px) {
+  body { overflow: auto; }
+  #app { grid-template-columns: 1fr; grid-template-rows: 58vh auto; height: auto; }
+  #map { height: 58vh; }
+  aside { border-left: 0; border-top: 1px solid var(--faint); }
+  #pane { max-height: 48vh; }
+}
+@media (prefers-reduced-motion: reduce) {
+  * { scroll-behavior: auto !important; }
+}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="map">
+    <canvas id="cv" aria-label="Mapa del sector"></canvas>
+    <div id="hud">
+      <div>
+        <h1 id="title">Sector</h1>
+        <p id="status"></p>
+      </div>
+      <p id="day">día 0</p>
+    </div>
+    <p id="now"></p>
+    <div id="zoomctl">
+      <button type="button" id="zin" title="Acercar">+</button>
+      <button type="button" id="zout" title="Alejar">−</button>
+      <button type="button" id="zfit">encuadrar</button>
+    </div>
+    <div id="legend">
+      <span style="--c:#e7e1d4">mercader</span>
+      <span style="--c:#8eabcf">patrulla</span>
+      <span style="--c:#d85a3a">pirata</span>
+      <span style="--c:#b9a6e0">casco civil</span>
+      <span style="--c:#d7a35a">carroñero</span>
+      <span style="--c:#e2b15c">baliza</span>
+      <span style="--c:#8a8474">pecio</span>
+    </div>
+  </div>
+  <aside id="side">
+    <div class="ctl">
+      <button type="button" id="play" aria-pressed="true">en marcha</button>
+      <button type="button" data-sp="1" aria-pressed="true">1×</button>
+      <button type="button" data-sp="8">8×</button>
+      <button type="button" data-sp="32">32×</button>
+      <button type="button" id="reset">otro sector</button>
+    </div>
+    <p id="seedline"></p>
+    <div class="nav">
+      <button type="button" id="back" data-act="back" hidden>volver</button>
+      <div class="tabs" id="lists">
+        <button type="button" data-act="list" data-list="escena" aria-pressed="true">escena</button>
+        <button type="button" data-act="list" data-list="imperios">imperios</button>
+        <button type="button" data-act="list" data-list="ricos">ricos</button>
+        <button type="button" data-act="list" data-list="fama">fama</button>
+        <button type="button" data-act="list" data-list="cronica">crónica</button>
+        <button type="button" data-act="list" data-list="batallas">batallas</button>
+        <button type="button" data-act="list" data-list="guerras">guerras</button>
+        <button type="button" data-act="list" data-list="gremios">gremios</button>
+      </div>
+    </div>
+    <p class="hint">Día 0 al empezar. Rueda: zoom. Arrastra el mapa. Clic abre la ficha en toda la barra.</p>
+    <p id="followline" class="hint"></p>
+    <div id="pane"></div>
+  </aside>
+</div>
+<p id="live" class="sr" aria-live="polite"></p>
+<script>
+/* Sector vivo.
+   Los precios salen de la escasez. Las noticias viajan con el tráfico.
+   Facciones, gremios, revueltas y cismas no están escritos: salen de personas. */
+'use strict';
+const GOODS = [
+  { id: 'comida', base: 10 },
+  { id: 'agua', base: 7 },
+  { id: 'propelente', base: 16 },
+  { id: 'piezas', base: 32 }
+];
+const NEED = [0.32, 0.22, 0.07, 0.045];
+const PLANTS = {
+  granja: { label: 'granja', out: 0, rate: 3.5, inp: 1, inRate: 0.55, dry: 0.38 },
+  pozo: { label: 'pozo', out: 1, rate: 5.4 },
+  refineria: { label: 'refinería', out: 2, rate: 3.4, inp: 1, inRate: 0.22, dry: 0.25 },
+  fundicion: { label: 'fundición', out: 3, rate: 0.8 },
+  astillero: { label: 'astillero', service: true, inp: 3, inRate: 0.1 }
+};
+const PAL = ['#d36b4f', '#d9a441', '#7ea16b', '#6f8fbf', '#c47d9a', '#8d7cc4', '#5aa8a0', '#c4b48a'];
+const SY = ['ka','ro','mi','ta','vel','sa','dor','en','lu','vi','ra','no','zar','el','ti','mar','os','be','quin','ya','ge','hul','ir','ax','nes','cor','bri','hol','sen','lir','pem','vos','tal','dre','cal','mur','pio','rez','sul','teo','isa','bel','car','dio','gus','hel','jor','kin','lea','mon','nur','ol','rel','sio','tor','ul','van','yor','zal','nal','ser','vim','dal','oro','rin','sol','vea','lun'];
+const HULL = ['Casco','Bruma','Óxido','Lima','Clavo','Faro','Sello','Maza','Lana','Vela','Yunque','Cieno','Sal','Cera','Traba','Nudo','Lastre','Grava'];
+const MODS = [
+  'un motor de remolque soldado al costado',
+  'la bodega vaciada para meter gente',
+  'un arpón de minero en la proa',
+  'placas de un pecio remachadas al casco',
+  'el soplete de una soldadora fijado a la rampa'
+];
+const TUNE = { split: 0.05, band: 0.02, battle: 0.07, warDeclare: 0.011, coup: 0.012, guild: 0.06, distress: 0.0032 };
+const KIND = {
+  guerra: '#d85a3a', pirata: '#d85a3a', rebelion: '#b9a6e0', politica: '#8eabcf',
+  economia: '#8fb56a', comercio: '#e2b15c', gremio: '#e2b15c', rescate: '#e4dece',
+  figura: '#e2b15c', carroña: '#d7a35a'
+};
+const SHIPWORD = { trade: 'mercante', patrol: 'patrulla', pirate: 'pirata', skiff: 'casco civil', escort: 'escolta', refugee: 'pasaje' };
+
+let R = Math.random;
+let S = null;
+
+function mulberry32(a) {
+  return function () {
+    a |= 0;
+    a = a + 0x6D2B79F5 | 0;
+    let t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+function rand() { return R(); }
+function rnd(a, b) { return a + R() * (b - a); }
+function irand(n) { return Math.floor(R() * n); }
+function pick(a) { return a.length ? a[irand(a.length)] : null; }
+function clamp(v, a, b) { return v < a ? a : v > b ? b : v; }
+function dist(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
+function key(a, b) { return a < b ? a + '-' + b : b + '-' + a; }
+function esc(s) { return String(s).replace(/[&<>]/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]; }); }
+function strip(html) { return String(html).replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim(); }
+function word(n) {
+  let s = '';
+  for (let i = 0; i < n; i++) s += SY[irand(SY.length)];
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+function uniqueName(factory) {
+  for (let i = 0; i < 40; i++) {
+    const n = factory();
+    if (!S.names.has(n)) { S.names.add(n); return n; }
+  }
+  const n = factory() + ' ' + irand(90);
+  S.names.add(n);
+  return n;
+}
+function personName() { return uniqueName(function () { return word(rand() < 0.2 ? 3 : 2) + ' ' + word(2); }); }
+function placeName() { return uniqueName(function () { return word(rand() < 0.35 ? 3 : 2); }); }
+function hullName() { return pick(HULL) + ' ' + word(2); }
+
+function cn(c) { return c ? '<b data-k="c" data-id="' + c.id + '">' + esc(c.name) + '</b>' : 'alguien'; }
+function caePlanta(type) {
+  if (!type || !PLANTS[type]) return '';
+  const fem = type === 'granja' || type === 'refineria' || type === 'fundicion';
+  return ' Cae ' + (fem ? 'la ' : 'el ') + PLANTS[type].label + '.';
+}
+function seVan(n) {
+  if (n === 0) return 'No se le va ningún capitán';
+  if (n === 1) return 'Se le va 1 capitán';
+  return 'Se le van ' + n + ' capitanes';
+}
+function seQuedan(n) {
+  if (n === 0) return 'no se queda nadie';
+  if (n === 1) return 'se queda 1';
+  return 'se quedan ' + n;
+}
+function pn(p) { return p ? '<b data-k="p" data-id="' + p.id + '">' + esc(p.name) + '</b>' : 'un puerto'; }
+function fn(f) { return f ? '<b data-k="f" data-id="' + f.id + '" style="color:' + f.color + '">' + esc(f.name) + '</b>' : 'una bandera'; }
+function gn(g) { return g ? '<b data-k="g" data-id="' + g.id + '">' + esc(g.name) + '</b>' : 'un gremio'; }
+
+function needStock(p, g) { return p.pop * NEED[g] * 10 + 1.4; }
+function price(p, g) {
+  const n = needStock(p, g);
+  if (!(n > 0)) return GOODS[g].base;
+  return GOODS[g].base * clamp(n / (p.stock[g] + n * 0.01), 0.32, 100);
+}
+const AIMS = [
+  { id: 'dinero', label: 'hacer fortuna' },
+  { id: 'honor', label: 'guardar el honor' },
+  { id: 'poder', label: 'mandar una bandera' },
+  { id: 'venganza', label: 'cobrarse a alguien concreto' },
+  { id: 'fama', label: 'que se diga su nombre' },
+  { id: 'flota', label: 'tener naves propias' },
+  { id: 'tierra', label: 'poseer un suelo' },
+  { id: 'oficio', label: 'llegar a maestro de su oficio' },
+  { id: 'paz', label: 'que calle la guerra' },
+  { id: 'sangre', label: 'ganar combates' },
+  { id: 'gremio', label: 'levantar un gremio' },
+  { id: 'libertad', label: 'no deber bandera a nadie' },
+  { id: 'legado', label: 'dejar gente en los puestos que abre' },
+  { id: 'miedo', label: 'que le teman' },
+  { id: 'refugio', label: 'sacar a la gente del peligro' },
+  { id: 'mesa', label: 'poner él el precio de un bien' },
+  { id: 'mapa', label: 'atraer en todos los puertos' },
+  { id: 'lealtad', label: 'no soltar su bandera' },
+  { id: 'trono', label: 'quedarse un mundo' },
+  { id: 'vida', label: 'seguir vivo' }
+];
+function aimLabel(id) {
+  for (const a of AIMS) if (a.id === id) return a.label;
+  return 'salir adelante';
+}
+function craftOf(c, k) {
+  if (!c || !c.craft) return 0.05;
+  return c.craft[k] || 0;
+}
+function practice(c, k, amt) {
+  if (!c || !c.alive) return;
+  if (!c.craft) c.craft = { trato: 0.05, combate: 0.05, piloto: 0.05, mando: 0.05 };
+  const cur = c.craft[k] || 0;
+  c.craft[k] = Math.min(1, cur + amt * (1 - cur) * (1 - cur));
+}
+function haggle(c) { return 1 + 0.4 * craftOf(c, 'trato'); }
+function aimProgress(c) {
+  if (!c) return 0;
+  const ships = S.ships.filter(function (s) { return s.alive && (s.owner === c.id || s.cap === c.id); }).length;
+  const seen = c.seen ? Object.keys(c.seen).length : 0;
+  const ports = S.P.length || 1;
+  switch (c.aim) {
+    case 'dinero': return clamp(c.wealth / 2500, 0, 1);
+    case 'honor': return clamp(c.saves * 0.22 + c.fame * 0.08 + (c.flags.fled ? 0 : 0.15), 0, 1);
+    case 'poder': return (c.role === 'líder' || c.role === 'caudillo') ? 1 : clamp(c.fame / 5, 0, 0.75);
+    case 'venganza': return c.flags.avenged ? 1 : (c.flags.vendetta != null ? 0.15 : 0);
+    case 'fama': return clamp(c.fame / 6, 0, 1);
+    case 'flota': return clamp(ships / 4, 0, 1);
+    case 'tierra': return clamp((c.flags.plants || 0) / 2, 0, 1);
+    case 'oficio': return Math.max(craftOf(c, 'trato'), craftOf(c, 'combate'), craftOf(c, 'piloto'), craftOf(c, 'mando'));
+    case 'paz': return c.faction != null && S.F[c.faction] && S.F[c.faction].alive && !S.F[c.faction].wars.size ? clamp(0.3 + c.fame * 0.1, 0, 1) : 0.1;
+    case 'sangre': return clamp((c.kills || 0) / 4, 0, 1);
+    case 'gremio': return c.role === 'maestre' ? 1 : (c.guild != null ? 0.45 : 0);
+    case 'libertad': return c.faction == null && c.role !== 'pirata' ? clamp(0.4 + c.wealth / 2000, 0, 1) : 0.15;
+    case 'legado': return clamp((c.flags.hired || 0) / 3, 0, 1);
+    case 'miedo': return clamp((c.fame * 0.1) + (c.kills || 0) * 0.2, 0, 1);
+    case 'refugio': return clamp((c.saves || 0) / 4, 0, 1);
+    case 'mesa': return clamp((c.flags.plants || 0) / 2 + c.wealth / 4000, 0, 1);
+    case 'mapa': return clamp(seen / ports, 0, 1);
+    case 'lealtad': return c.faction != null ? clamp(0.25 + c.loy * 0.5 + c.fame * 0.05, 0, 1) : 0.05;
+    case 'trono': return (c.role === 'líder' || c.role === 'caudillo' || c.role === 'gobernador') ? clamp(0.55 + c.fame * 0.08, 0, 1) : clamp(c.fame / 8, 0, 0.4);
+    case 'vida': return c.alive ? clamp(0.35 + (1 - (c.fear || 0)) * 0.4 + (S.day > 30 ? 0.2 : S.day / 150), 0, 1) : 0;
+    default: return 0;
+  }
+}
+function bar(label, v, kind) {
+  const p = Math.round(clamp(v, 0, 1) * 100);
+  return '<div class="row"><span>' + esc(label) + '</span><span>' + p + '%</span></div><div class="bar ' + (kind || '') + '"><i style="width:' + p + '%"></i></div>';
+}
+function hurt(s, dmg, by) {
+  if (!s || !s.alive) return false;
+  if (s.hull == null) s.hull = 1;
+  const cap = S.C[s.cap];
+  s.hull = Math.max(0, s.hull - dmg * (1 - craftOf(cap, 'mando') * 0.25));
+  if (cap && cap.alive) {
+    practice(cap, 'combate', 0.008);
+    cap.fear = Math.min(1, (cap.fear || 0) + dmg * 0.4);
+  }
+  for (const o of S.ships) {
+    if (!o.alive || o.id === s.id || dist(o, s) > 0.12) continue;
+    const oc = S.C[o.cap];
+    if (oc && oc.alive) oc.fear = Math.min(1, (oc.fear || 0) + 0.04);
+  }
+  if (s.hull > 0) return false;
+  s.alive = false;
+  s.doomed = true;
+  addWreck(s.x, s.y, rnd(2, 5), s.name, null);
+  if (cap && cap.alive) {
+    const cling = (cap.life || 0.5) > 0.55 && (cap.aim === 'vida' || (cap.fear || 0) > 0.45);
+    if (cling && rand() < (cap.life || 0.5)) {
+      cap.fear = Math.min(1, (cap.fear || 0) + 0.22);
+      if (!cap.marks) cap.marks = [];
+      cap.marks.unshift({ day: Math.floor(S.day), text: 'Pierde ' + s.name + ' y sale con vida. Desde entonces mira el casco antes que el encargo.' });
+      if (cap.marks.length > 6) cap.marks.pop();
+      if (cap.role !== 'líder' && cap.role !== 'caudillo' && cap.role !== 'jefe') cap.role = 'náufrago';
+    } else killChar(cap, by || null);
+  }
+  return true;
+}
+function facAlive(id) {
+  const f = id == null ? null : S.F[id];
+  return f && f.alive ? f : null;
+}
+function leader(f) {
+  if (!f) return null;
+  const c = S.C[f.leader];
+  return c && c.alive ? c : null;
+}
+function styleOf(l) {
+  if (!l) return { trade: 0.5, repress: 0.3, war: 0.4 };
+  return {
+    trade: clamp(l.greed * 0.35 + (1 - l.cru) * 0.55, 0, 1),
+    repress: l.cru,
+    war: clamp(l.amb * 0.55 + l.cru * 0.45, 0, 1)
+  };
+}
+function style(f) {
+  const l = f ? S.C[f.leader] : null;
+  return styleOf(l);
+}
+function motto(l) {
+  if (!l) return 'Aquí se atraca si se paga.';
+  if (l.cru > 0.7) return 'El que debe, calla.';
+  if (l.greed > 0.7 && l.caut > 0.5) return 'Primero el flete, luego la bandera.';
+  if (l.amb > 0.75) return 'El mapa se corrige con naves.';
+  if (l.caut > 0.7) return 'Quien espera, cobra.';
+  if (l.charm > 0.7) return 'Entra, si traes algo.';
+  return 'Aquí se atraca si se paga.';
+}
+function makeTic(c) {
+  const t = [];
+  if (c.cru > 0.72) t.push('por radio corta las frases');
+  if (c.caut > 0.72) t.push('repite el destino antes de soltar amarras');
+  if (c.greed > 0.72) t.push('pregunta el precio antes que el nombre');
+  if (c.charm > 0.72) t.push('en el puerto le contestan');
+  if (c.loy < 0.28) t.push('cambia de bandera sin alzar la voz');
+  if (c.amb > 0.78) t.push('habla como si el muelle ya fuera suyo');
+  if (c.skill > 0.8) t.push('atrae la nave en silencio');
+  if (!t.length) t.push(pick(['poca conversación', 'se le conoce por la nave', 'firma con el nombre de pila']));
+  return t.slice(0, 2).join('. ') + '.';
+}
+function nearest(o) {
+  let b = S.P[0], bd = 1e9;
+  for (const p of S.P) {
+    const d = dist(p, o);
+    if (d < bd) { bd = d; b = p; }
+  }
+  return b;
+}
+function capital(f) {
+  if (!f) return null;
+  const p = S.P[f.capital];
+  if (p && p.fac === f.id) return p;
+  const own = S.P.filter(function (q) { return q.fac === f.id; });
+  if (!own.length) return null;
+  own.sort(function (a, b) { return b.pop - a.pop; });
+  f.capital = own[0].id;
+  return own[0];
+}
+function hostile(a, b) {
+  if (a == null || b == null || a === b) return false;
+  const A = S.F[a], B = S.F[b];
+  if (!A || !B || !A.alive || !B.alive) return false;
+  return A.wars.has(b) || A.embargo.has(b);
+}
+function allied(a, b) {
+  if (a == null || b == null || a === b) return false;
+  const A = S.F[a];
+  return !!(A && A.allies && A.allies.has(b));
+}
+function endWar(a, b) {
+  a.wars.delete(b.id);
+  b.wars.delete(a.id);
+  a.embargo.delete(b.id);
+  b.embargo.delete(a.id);
+  if (S.wars) for (const rec of S.wars) {
+    if (rec.open && ((rec.a === a.id && rec.b === b.id) || (rec.a === b.id && rec.b === a.id))) rec.open = false;
+  }
+}
+function breakAlliance(a, b, why) {
+  if (!a || !b) return;
+  if (a.allies) a.allies.delete(b.id);
+  if (b.allies) b.allies.delete(a.id);
+  if (a.pact) delete a.pact[b.id];
+  if (b.pact) delete b.pact[a.id];
+  log('politica', fn(a) + ' y ' + fn(b) + ' rompen la alianza. ' + why, { who: [leader(a), leader(b)], place: a.capital, fac: [a.id, b.id] });
+}
+function makeAlliance(a, b, why) {
+  if (!a || !b || !a.alive || !b.alive || a.id === b.id) return;
+  if (a.wars.has(b.id) || a.embargo.has(b.id) || b.embargo.has(a.id)) return;
+  if (allied(a.id, b.id)) return;
+  if (!a.allies) a.allies = new Set();
+  if (!b.allies) b.allies = new Set();
+  if (!a.pact) a.pact = {};
+  if (!b.pact) b.pact = {};
+  const day = Math.floor(S.day);
+  a.allies.add(b.id);
+  b.allies.add(a.id);
+  a.pact[b.id] = { since: day, cause: why };
+  b.pact[a.id] = { since: day, cause: why };
+  log('politica', 'Alianza entre ' + fn(a) + ' y ' + fn(b) + '. ' + why, { who: [leader(a), leader(b)], place: a.capital, fac: [a.id, b.id] });
+}
+function peaceUrge(f) {
+  const lead = leader(f);
+  let w = 0;
+  if (lead && (lead.aim === 'paz' || lead.aim === 'vida')) w += 0.06;
+  if (lead && (lead.aim === 'sangre' || lead.aim === 'trono')) w -= 0.03;
+  if (f.treasury < 45) w += 0.05;
+  if (f.defeats > 1.2) w += 0.03;
+  if (S.P.some(function (p) { return p.fac === f.id && price(p, 0) > GOODS[0].base * 4; })) w += 0.04;
+  return w;
+}
+function addRisk(pid, route, amt) {
+  const p = S.P[pid];
+  if (!p || !route) return;
+  p.risk[route] = Math.min(2.2, (p.risk[route] || 0) + amt);
+}
+function rumor(route) {
+  let max = 0, n = 0;
+  for (const p of S.P) {
+    const v = p.risk[route] || 0;
+    if (v > 0.04) { n++; if (v > max) max = v; }
+  }
+  if (!n) return 0;
+  return max * (n / S.P.length);
+}
+function riskAt(port, route, captain) {
+  let v = port.risk[route] || 0;
+  if (captain && captain.guild != null) {
+    const g = S.G[captain.guild];
+    if (g && g.alive) v = Math.max(v, (S.P[g.port].risk[route] || 0));
+  }
+  return v;
+}
+function hear(pid, html) {
+  const p = S.P[pid];
+  if (!p || !html) return;
+  p.heard.unshift({ day: Math.floor(S.day), html: html });
+  if (p.heard.length > 6) p.heard.pop();
+}
+function log(kind, html, opt) {
+  opt = opt || {};
+  const day = Math.floor(S.day);
+  if (kind === 'economia' || kind === 'comercio') {
+    if (S.spam[kind] !== day) { S.spam[kind] = day; S.spamN[kind] = 0; }
+    S.spamN[kind]++;
+    if (S.spamN[kind] > 3) return;
+  }
+  const who = opt.who || [];
+  const whoIds = [];
+  for (const c of who) if (c && c.id != null) whoIds.push(c.id);
+  const fac = [];
+  if (opt.fac) for (const id of opt.fac) if (fac.indexOf(id) < 0) fac.push(id);
+  if (opt.place != null && S.P[opt.place] && S.P[opt.place].fac != null && fac.indexOf(S.P[opt.place].fac) < 0) fac.push(S.P[opt.place].fac);
+  S.feed.unshift({
+    day: day, kind: kind, html: html, plain: strip(html),
+    who: whoIds, fac: fac, place: opt.place != null ? opt.place : null
+  });
+  if (S.feed.length > 200) S.feed.pop();
+  if (opt.place != null && S.P[opt.place]) {
+    const news = {
+      id: S.nid++, day: day, kind: kind, html: html, place: opt.place,
+      route: opt.route || null, risk: opt.risk || 0, routes: opt.routes || null,
+      quote: opt.quote || null, bounty: opt.bounty == null ? null : opt.bounty,
+      know: new Set([opt.place]), told: new Set([opt.place])
+    };
+    S.news.push(news);
+    if (news.route && news.risk) addRisk(opt.place, news.route, news.risk);
+    if (news.routes) for (const r of news.routes) addRisk(opt.place, r.k, r.amt);
+    if (news.quote) S.P[opt.place].quote[news.quote.k] = news.quote.v;
+    hear(opt.place, html);
+  }
+  for (const c of who) {
+    if (!c) continue;
+    if (!c.hist) c.hist = [];
+    c.hist.unshift({ day: day, html: html });
+    if (c.hist.length > 8) c.hist.pop();
+  }
+  S.feedDirty = true;
+}
+function knows(port, pred) {
+  for (let i = S.news.length - 1; i >= 0; i--) {
+    const n = S.news[i];
+    if (n.know.has(port.id) && pred(n)) return true;
+  }
+  return false;
+}
+function publish(p) {
+  for (let g = 0; g < 4; g++) p.quote[p.id + ':' + g] = price(p, g);
+}
+function exchangeInfo(a, b) {
+  if (!a || !b || a.id === b.id) return;
+  for (let g = 0; g < 4; g++) {
+    a.quote[b.id + ':' + g] = price(b, g);
+    b.quote[a.id + ':' + g] = price(a, g);
+  }
+  const ak = Object.keys(a.quote), bk = Object.keys(b.quote);
+  for (const k of bk) if (a.quote[k] == null) a.quote[k] = b.quote[k];
+  for (const k of ak) if (b.quote[k] == null) b.quote[k] = a.quote[k];
+}
+
+function newChar(home, o) {
+  o = o || {};
+  const place = S.P[home];
+  const c = {
+    id: S.C.length,
+    name: personName(),
+    home: home,
+    wealth: rnd(8, 40),
+    amb: rand(), cru: rand(), greed: rand(), caut: rand(), loy: rand(), charm: rand(), skill: rand(),
+    fame: 0, role: null, notable: false, alive: true,
+    hist: [], employer: null,
+    faction: place ? place.fac : null,
+    guild: null, band: null, grudges: [], debts: [],
+    saves: 0, dissident: false, broke: 0, flags: {}, fromCrowd: false, ship: null,
+    bonds: [], marks: []
+  };
+  Object.assign(c, o);
+  if (!c.flags) c.flags = {};
+  if (!c.grudges) c.grudges = [];
+  if (!c.debts) c.debts = [];
+  if (!c.hist) c.hist = [];
+  if (!c.bonds) c.bonds = [];
+  if (!c.marks) c.marks = [];
+  if (!c.aim) c.aim = AIMS[irand(AIMS.length)].id;
+  if (c.fear == null) c.fear = rnd(0.06, 0.38);
+  if (c.life == null) c.life = rnd(0.22, 0.92);
+  if (!c.craft) c.craft = { trato: rnd(0.02, 0.14), combate: rnd(0.02, 0.12), piloto: rnd(0.02, 0.12), mando: rnd(0.02, 0.1) };
+  if (!c.seen) c.seen = {};
+  if (c.kills == null) c.kills = 0;
+  c.tic = makeTic(c);
+  S.C.push(c);
+  return c;
+}
+function emerge(place, o) {
+  if (place && place.crowd > 0) place.crowd--;
+  const c = newChar(place.id, o || {});
+  c.fromCrowd = true;
+  return c;
+}
+function newShip(kind, x, y, o) {
+  const s = Object.assign({
+    id: S.sid++, kind: kind, name: hullName(), x: x, y: y, tx: x, ty: y,
+    moving: false, at: null, cargo: null, timer: rnd(0.2, 1.3), alive: true,
+    cap: null, fac: null, owner: null, guild: null, band: null, base: null,
+    bunker: 3.4, bunkerPx: 16, cover: null, lastBill: null,
+    route: null, task: null, fromPort: null, smuggle: false, distress: 0,
+    path: null, goal: null, trail: null, prey: null,
+    hitUntil: 0, mod: null, people: 0, state: 'idle', rescuer: null, doomed: false,
+    hull: rnd(0.82, 1)
+  }, o || {});
+  s.kind = kind;
+  s.x = x;
+  s.y = y;
+  S.ships.push(s);
+  return s;
+}
+function willDodge(s) {
+  return s.kind === 'trade' || s.kind === 'escort' || s.kind === 'refugee' || s.kind === 'skiff';
+}
+function skirt(s) {
+  const c = S.C[s.cap];
+  return 0.075 + ((c && c.caut) || 0.35) * 0.11;
+}
+function sight(s) {
+  const c = S.C[s.cap];
+  return 0.18 + ((c && c.caut) || 0.35) * 0.2;
+}
+function threatsFor(s) {
+  const see = sight(s);
+  const r = skirt(s);
+  const list = [];
+  for (const o of S.ships) {
+    if (!o.alive || o.id === s.id || o.kind !== 'pirate') continue;
+    if (dist(s, o) <= see) list.push({ x: o.x, y: o.y, r: r });
+  }
+  const home = s.fromPort != null ? S.P[s.fromPort] : (s.at != null ? S.P[s.at] : null);
+  const heard = home && knows(home, function (n) { return n.kind === 'pirata' && S.day - n.day < 22; });
+  for (const b of S.bases) {
+    if (!b.alive) continue;
+    if (heard || dist(s, b) <= see) list.push({ x: b.x, y: b.y, r: r * 1.15 });
+  }
+  if (heard) {
+    for (const d of S.scares) {
+      if (d.until <= S.day) continue;
+      list.push({ x: d.x, y: d.y, r: r * 0.85 });
+    }
+  }
+  return list;
+}
+function lineHits(x0, y0, x1, y1, threats) {
+  if (!threats.length) return null;
+  const n = 7;
+  for (let i = 1; i < n; i++) {
+    const t = i / n;
+    const x = x0 + (x1 - x0) * t;
+    const y = y0 + (y1 - y0) * t;
+    if (Math.hypot(x - x1, y - y1) < 0.05) continue;
+    for (const h of threats) if (Math.hypot(x - h.x, y - h.y) < h.r) return h;
+  }
+  return null;
+}
+function routeAround(x0, y0, x1, y1, threats) {
+  const goal = { x: x1, y: y1 };
+  const hit = lineHits(x0, y0, x1, y1, threats);
+  if (!hit) return [goal];
+  const dx = x1 - x0, dy = y1 - y0;
+  const len = Math.hypot(dx, dy) || 0.001;
+  const px = -dy / len, py = dx / len;
+  let best = null, bd = 1e9;
+  const consider = threats.slice(0, 5);
+  for (let i = 0; i < consider.length; i++) {
+    const h = consider[i];
+    const gap = h.r + 0.045;
+    for (let side = 0; side < 2; side++) {
+      const sign = side ? -1 : 1;
+      const wx = clamp(h.x + px * sign * gap, 0.03, 0.97);
+      const wy = clamp(h.y + py * sign * gap, 0.03, 0.97);
+      if (lineHits(x0, y0, wx, wy, threats)) continue;
+      const second = lineHits(wx, wy, x1, y1, threats);
+      let path, cost;
+      if (second) {
+        const vx = clamp(second.x + px * sign * (second.r + 0.045), 0.03, 0.97);
+        const vy = clamp(second.y + py * sign * (second.r + 0.045), 0.03, 0.97);
+        if (lineHits(wx, wy, vx, vy, threats) || lineHits(vx, vy, x1, y1, threats)) continue;
+        path = [{ x: wx, y: wy }, { x: vx, y: vy }, goal];
+        cost = Math.hypot(wx - x0, wy - y0) + Math.hypot(vx - wx, vy - wy) + Math.hypot(x1 - vx, y1 - vy);
+      } else {
+        path = [{ x: wx, y: wy }, goal];
+        cost = Math.hypot(wx - x0, wy - y0) + Math.hypot(x1 - wx, y1 - wy);
+      }
+      if (cost < bd) { bd = cost; best = path; }
+    }
+  }
+  if (best) return best;
+  const gap = hit.r + 0.06;
+  return [{ x: clamp(hit.x + px * gap, 0.03, 0.97), y: clamp(hit.y + py * gap, 0.03, 0.97) }, goal];
+}
+function sail(s, x, y) {
+  const gx = clamp(x, 0.02, 0.98);
+  const gy = clamp(y, 0.02, 0.98);
+  s.goal = { x: gx, y: gy };
+  s.path = willDodge(s) ? routeAround(s.x, s.y, gx, gy, threatsFor(s)) : [{ x: gx, y: gy }];
+  s.tx = s.path[0].x;
+  s.ty = s.path[0].y;
+  s.moving = true;
+  s.at = null;
+}
+function goTo(s, x, y) { sail(s, x, y); }
+function addWreck(x, y, parts, origin, battle) {
+  S.wrecks.push({
+    id: S.wid++,
+    x: x + rnd(-0.012, 0.012),
+    y: y + rnd(-0.01, 0.01),
+    parts: Math.max(1, Math.round(parts)),
+    age: 0,
+    origin: origin || 'un casco',
+    battle: battle == null ? null : battle
+  });
+  S.flash.push({ x: x, y: y, t: 0 });
+}
+function sink(s, battle) {
+  if (!s || !s.alive) return;
+  s.alive = false;
+  addWreck(s.x, s.y, rnd(2, 5), s.name, battle == null ? null : battle);
+}
+
+function polityName(place, leader, rebel) {
+  let w;
+  if (rebel) w = rand() < 0.5 ? 'Comuna' : 'Célula';
+  else if (leader && leader.greed > 0.68 && leader.cru < 0.55) w = pick(['Compañía', 'Consorcio', 'Casa']);
+  else if (leader && leader.cru > 0.68) w = pick(['Orden', 'Prefectura', 'Mano']);
+  else if (leader && (leader.amb * 0.55 + leader.cru * 0.45) > 0.62) w = pick(['Armada', 'Hueste']);
+  else w = pick(['Liga', 'Concordia', 'Pacto', 'Cabildo']);
+  let name = w + ' de ' + place.name;
+  if (S.F.some(function (f) { return f.name === name; })) name = w + ' ' + word(2);
+  return name;
+}
+function tie(a, b, kind, w) {
+  if (!a || !b || !a.alive || !b.alive || a.id === b.id) return;
+  if (!a.bonds) a.bonds = [];
+  let t = null;
+  for (const x of a.bonds) if (x.id === b.id) t = x;
+  if (!t) {
+    if (a.bonds.length >= 6 && kind !== 'rival') return;
+    t = { id: b.id, kind: kind, w: 0, since: Math.floor(S.day) };
+    a.bonds.push(t);
+  }
+  if (kind === 'rival' || t.kind !== 'amigo') t.kind = kind;
+  t.w = Math.min(1, (t.w || 0) + w);
+}
+function mourn(dead, by) {
+  if (!dead) return;
+  for (const o of S.C) {
+    if (!o.alive || o.id === dead.id || !o.bonds) continue;
+    const t = o.bonds.find(function (b) { return b.id === dead.id && b.kind === 'amigo'; });
+    if (!t || t.w < 0.2) continue;
+    o.caut = Math.min(0.96, o.caut + 0.07);
+    o.loy = Math.max(0.04, o.loy - 0.07);
+    const bitter = o.cru > 0.5;
+    if (bitter) o.cru = Math.min(0.96, o.cru + 0.06);
+    const line = 'Pierde a ' + dead.name + (by && by.alive ? ', a manos de ' + by.name : '') + '. ' + (bitter ? 'Desde entonces busca a quién cobrárselo.' : 'Se le queda el silencio.');
+    if (!o.marks) o.marks = [];
+    o.marks.unshift({ day: Math.floor(S.day), text: line });
+    if (o.marks.length > 6) o.marks.pop();
+    if (!o.hist) o.hist = [];
+    o.hist.unshift({ day: Math.floor(S.day), html: esc(line) });
+    if (o.hist.length > 8) o.hist.pop();
+    if (by && by.alive && by.id !== o.id) {
+      tie(o, by, 'rival', 0.5);
+      if (o.faction != null && by.faction != null && o.faction !== by.faction) {
+        const A = S.F[o.faction];
+        if (A && A.alive) {
+          if (!A.grudge) A.grudge = {};
+          A.grudge[by.faction] = (A.grudge[by.faction] || 0) + 1;
+        }
+      }
+    }
+    o.fear = Math.min(1, (o.fear || 0) + 0.14);
+    o.bonds = o.bonds.filter(function (b) { return b.id !== dead.id; });
+  }
+}
+function createFaction(name, leader, capitalId, origin) {
+  const used = {};
+  for (const f of S.F) used[f.color] = true;
+  let color = PAL[S.F.length % PAL.length];
+  for (const c of PAL) if (!used[c]) { color = c; break; }
+  const f = {
+    id: S.F.length, name: name, color: color, leader: leader.id, capital: capitalId,
+    treasury: 80, coh: 0.74, leg: 0.7, defeats: 0, alive: true,
+    wars: new Map(), embargo: new Set(), allies: new Set(), pact: {}, born: Math.floor(S.day),
+    coolSplit: 0, coolCoup: 0, bounty: null, motto: motto(leader), broke: 0,
+    origin: origin || 'alguien tenía el muelle y lo dijo en voz alta', grudge: {}, why: {}
+  };
+  S.F.push(f);
+  leader.faction = f.id;
+  leader.notable = true;
+  if (leader.role !== 'caudillo') leader.role = 'líder';
+  if (S.P[capitalId]) S.P[capitalId].fac = f.id;
+  return f;
+}
+function plant(type) { return { type: type, owner: -1, hp: 1, rebuild: 0 }; }
+
+function init(seed) {
+  R = mulberry32(seed >>> 0);
+  S = {
+    seed: seed >>> 0, day: 0, lastDay: 0, lastEnc: 0, name: '',
+    names: new Set(), P: [], F: [], C: [], G: [], B: [], bases: [], slots: [],
+    ships: [], wrecks: [], battles: [], news: [], feed: [], flash: [],
+    traffic: {}, watch: {}, sid: 1, wid: 1, nid: 1, scares: [],
+    wars: [], warN: 1,
+    sel: null, follow: null, list: 'escena',
+    view: { t: 'list', list: 'escena' }, stack: [],
+    feedDirty: true, spam: {}, spamN: {}, coolSplit: 0, stars: []
+  };
+  for (let i = 0; i < 160; i++) S.stars.push([rand(), rand(), 0.2 + rand() * 0.8]);
+  S.name = 'Sector ' + placeName();
+  genPlaces();
+  assignTags();
+  genPlants();
+  seedStocks();
+  seedQuotes();
+  genFactions();
+  genPeople();
+  genMerchants();
+  genPatrols();
+  genHideouts();
+  genPirate();
+}
+function genPlaces() {
+  const spots = [];
+  let guard = 0;
+  const nWorld = 7 + irand(3);
+  while (spots.length < nWorld && guard++ < 4000) {
+    const x = rnd(0.12, 0.88), y = rnd(0.12, 0.88);
+    if (spots.every(function (p) { return Math.hypot(p.x - x, p.y - y) > 0.16; })) spots.push({ x: x, y: y });
+  }
+  for (const w of spots) addPlace('mundo', w.x, w.y, null);
+  const worlds = S.P.slice();
+  for (const w of worlds) {
+    if (rand() > 0.48) continue;
+    const ang = rnd(0, 6.28), d = rnd(0.055, 0.082);
+    const x = w.x + Math.cos(ang) * d, y = w.y + Math.sin(ang) * d;
+    if (x < 0.04 || y < 0.04 || x > 0.96 || y > 0.96) continue;
+    if (S.P.some(function (p) { return Math.hypot(p.x - x, p.y - y) < 0.045; })) continue;
+    addPlace('luna', x, y, w.id);
+  }
+  for (let k = 0; k < 2; k++) {
+    let bx = 0.5, by = 0.5, bd = -1;
+    for (let t = 0; t < 70; t++) {
+      const x = rnd(0.16, 0.84), y = rnd(0.16, 0.84);
+      let d = 1e9;
+      for (const p of S.P) d = Math.min(d, Math.hypot(p.x - x, p.y - y));
+      if (d > bd) { bd = d; bx = x; by = y; }
+    }
+    if (bd > 0.07) addPlace('estacion', bx, by, null);
+  }
+  const nOut = 1 + (rand() < 0.55 ? 1 : 0);
+  for (let k = 0; k < nOut; k++) {
+    const x = rand() < 0.5 ? rnd(0.04, 0.12) : rnd(0.88, 0.96);
+    const y = rnd(0.1, 0.9);
+    if (S.P.some(function (p) { return Math.hypot(p.x - x, p.y - y) < 0.08; })) continue;
+    addPlace('puesto', x, y, null);
+  }
+}
+function addPlace(kind, x, y, parent) {
+  const pop = kind === 'mundo' ? rnd(6.4, 11) : kind === 'estacion' ? rnd(3.2, 5.6) : kind === 'luna' ? rnd(1.3, 2.8) : rnd(1.6, 3.1);
+  const p = {
+    id: S.P.length, name: placeName(), kind: kind, x: x, y: y, parent: parent,
+    pop: pop, fac: null, unrest: rnd(0.06, 0.18), stress: 0,
+    defense: pop * 3, stock: [0, 0, 0, 0], plants: [],
+    tags: { soil: false, ice: false, ore: false },
+    risk: {}, quote: {}, heard: [], board: [],
+    relay: kind === 'estacion',
+    crowd: Math.max(4, Math.round(pop * 2)),
+    held: null, spike: [0, 0, 0, 0], lastSpike: -99
+  };
+  S.P.push(p);
+  return p;
+}
+function assignTags() {
+  for (const p of S.P) {
+    if (p.kind === 'estacion') continue;
+    if (p.kind === 'luna' || p.kind === 'puesto') {
+      p.tags[rand() < 0.55 ? 'ice' : 'ore'] = true;
+      continue;
+    }
+    const r = rand();
+    if (r < 0.42) p.tags.soil = true;
+    else if (r < 0.72) p.tags.ice = true;
+    else p.tags.ore = true;
+    if (rand() < 0.28) p.tags[pick(['soil', 'ice', 'ore'])] = true;
+  }
+  function ensure(tag) {
+    if (S.P.some(function (p) { return p.tags[tag]; })) return;
+    const p = S.P.find(function (q) { return q.kind === 'mundo'; });
+    if (p) p.tags[tag] = true;
+  }
+  ensure('soil'); ensure('ice'); ensure('ore');
+  while (S.P.filter(function (p) { return p.tags.soil; }).length < 3) {
+    const p = S.P.find(function (q) { return q.kind === 'mundo' && !q.tags.soil; });
+    if (!p) break;
+    p.tags.soil = true;
+  }
+  if (S.P.filter(function (p) { return p.tags.ice; }).length < 2) {
+    const p = S.P.find(function (q) { return q.kind === 'mundo' && !q.tags.ice; });
+    if (p) p.tags.ice = true;
+  }
+  while (S.P.filter(function (p) { return p.kind === 'mundo' && p.tags.ice; }).length < 2) {
+    const p = S.P.find(function (q) { return q.kind === 'mundo' && !q.tags.ice; });
+    if (!p) break;
+    p.tags.ice = true;
+  }
+}
+function genPlants() {
+  for (const p of S.P) {
+    if (p.tags.soil) p.plants.push(plant('granja'));
+    if (p.tags.ice) p.plants.push(plant('pozo'));
+    if (p.tags.ice && (p.kind === 'mundo' || rand() < 0.75)) p.plants.push(plant('refineria'));
+    if (p.tags.ore) p.plants.push(plant('fundicion'));
+    if (p.kind === 'estacion') p.plants.push(plant('astillero'));
+  }
+  if (!S.P.some(function (p) { return p.plants.some(function (pl) { return pl.type === 'astillero'; }); })) {
+    const m = S.P.filter(function (p) { return p.kind === 'mundo'; }).sort(function (a, b) { return b.pop - a.pop; })[0];
+    if (m) m.plants.push(plant('astillero'));
+  }
+  if (!S.P.some(function (p) { return p.plants.some(function (pl) { return pl.type === 'refineria'; }); })) {
+    const ice = S.P.find(function (p) { return p.tags.ice; });
+    if (ice) ice.plants.push(plant('refineria'));
+  }
+}
+function seedStocks() {
+  for (const p of S.P) {
+    for (let g = 0; g < 4; g++) {
+      const dayUse = Math.max(0.25, p.pop * NEED[g]);
+      const makes = p.plants.some(function (pl) { return PLANTS[pl.type].out === g; });
+      p.stock[g] = dayUse * (makes ? rnd(12, 18) : rnd(14, 22));
+    }
+    if (p.tags.soil && !p.tags.ice) p.stock[1] += 0.55 * 32;
+  }
+}
+function seedQuotes() {
+  for (const p of S.P) publish(p);
+  for (let i = 0; i < S.P.length; i++) {
+    for (let j = i + 1; j < S.P.length; j++) {
+      if (dist(S.P[i], S.P[j]) < 0.34) exchangeInfo(S.P[i], S.P[j]);
+    }
+  }
+}
+function pickSeeds(worlds, k) {
+  if (!worlds.length) return [];
+  const seeds = [pick(worlds)];
+  while (seeds.length < k) {
+    let b = null, bv = -1;
+    for (const w of worlds) {
+      if (seeds.indexOf(w) >= 0) continue;
+      let d = 1e9;
+      for (const s of seeds) d = Math.min(d, dist(s, w));
+      if (d > bv) { bv = d; b = w; }
+    }
+    if (!b) break;
+    seeds.push(b);
+  }
+  return seeds;
+}
+function foundingCause(p, leader) {
+  const who = leader.name.split(' ')[0];
+  const lines = [];
+  if (p.tags.soil) lines.push('En ' + p.name + ' el grano ya no cabía en los silos. ' + who + ' dijo que quien come junto puede cobijarse bajo la misma bandera.');
+  if (p.tags.ice) lines.push(who + ' vendió el hielo de ' + p.name + ' hasta que el muelle le pidió un nombre para lo que ya mandaba.');
+  if (p.tags.ore) lines.push('La mena de ' + p.name + ' pagaba las naves, y ' + who + ' comprendió que el que paga el astillero acaba eligiendo el color.');
+  if (leader.cru > 0.66) lines.push(who + ' no pidió ' + p.name + '. Lo cerró una noche y al día siguiente ya había letrero.');
+  if (leader.charm > 0.66) lines.push('En ' + p.name + ' le abrían la puerta antes de preguntar el nombre. ' + who + ' llamó a eso un gobierno.');
+  if (leader.caut > 0.66) lines.push(who + ' esperó a que ' + p.name + ' se quedara sin escolta ajena. Entonces izó, despacio, lo que ya era suyo.');
+  if (leader.greed > 0.66) lines.push('El atraque de ' + p.name + ' dejaba más que el flete. ' + who + ' dejó de salir y se quedó a cobrarlo.');
+  if (p.pop > 3.4) lines.push('Había en ' + p.name + ' gente bastante para una deuda común. ' + who + ' la escribió y le puso su apellido.');
+  if (!lines.length) lines.push(who + ' llegó a ' + p.name + ' con una nave y se fue con una bandera, porque nadie más quería el muelle de noche.');
+  return pick(lines);
+}
+function romanticBreak(who, world, cause) {
+  const n = who.name.split(' ')[0];
+  return pick([
+    n + ' miró ' + world.name + ' y ya no reconoció la bandera de la que había salido. Lo dijo así: ' + cause + '.',
+    'En ' + world.name + ' se acabó la paciencia antes que el pan. ' + n + ' lo dejó escrito: ' + cause + '.',
+    'Cuentan que ' + n + ' durmió en ' + world.name + ' y amaneció con otra lealtad. El motivo, dicho sin adorno: ' + cause + '.',
+    n + ' no rompió por gusto. En ' + world.name + ' ya no quedaba otra frase que esta: ' + cause + '.'
+  ]);
+}
+function genFactions() {
+  const worlds = S.P.filter(function (p) { return p.kind === 'mundo'; });
+  const k = worlds.length >= 6 && rand() < 0.62 ? 3 : 2;
+  const seeds = pickSeeds(worlds, k);
+  seeds.forEach(function (p, i) { p._seed = i; });
+  for (const p of S.P) {
+    if (p.kind === 'luna') continue;
+    let best = null, bd = 1e9;
+    for (const s of seeds) {
+      const d = dist(p, s);
+      if (d < bd) { bd = d; best = s; }
+    }
+    const lim = p.kind === 'puesto' ? 0.24 : 0.33;
+    if (best && (seeds.indexOf(p) >= 0 || bd <= lim)) p._seed = best._seed;
+  }
+  const free = S.P.filter(function (p) { return p.kind !== 'luna' && p._seed == null; });
+  if (!free.length && S.P.length > 8) {
+    let far = null, fd = -1;
+    for (const p of S.P) {
+      if (p.kind === 'luna' || seeds.indexOf(p) >= 0) continue;
+      let d = 1e9;
+      for (const s of seeds) d = Math.min(d, dist(p, s));
+      if (d > fd) { fd = d; far = p; }
+    }
+    if (far) far._seed = null;
+  }
+  for (const seedPlace of seeds) {
+    const leader = newChar(seedPlace.id, {
+      role: 'líder', amb: rnd(0.42, 0.92), cru: rnd(0.12, 0.88),
+      greed: rnd(0.2, 0.88), wealth: rnd(150, 240), loy: 0.82, fame: 1.3, notable: true
+    });
+    const why = foundingCause(seedPlace, leader);
+    const f = createFaction(polityName(seedPlace, leader, false), leader, seedPlace.id, why);
+    f.treasury = rnd(200, 340);
+    for (const p of S.P) if (p._seed === seedPlace._seed) p.fac = f.id;
+    log('politica', 'Se funda ' + fn(f) + '. La dirige ' + cn(leader) + ', desde ' + pn(seedPlace) + '. El motivo: ' + why, { place: seedPlace.id, who: [leader], fac: [f.id] });
+  }
+  for (const p of S.P) {
+    if (p.kind === 'luna' && p.parent != null) p.fac = S.P[p.parent].fac;
+    delete p._seed;
+  }
+}
+function genPeople() {
+  for (const f of S.F) {
+    for (const p of S.P) {
+      if (p.fac !== f.id || p.id === f.capital) continue;
+      if (p.kind === 'luna' && rand() < 0.45) continue;
+      newChar(p.id, {
+        role: 'gobernador', amb: rnd(0.32, 0.92), loy: rnd(0.16, 0.9),
+        cru: rnd(0.1, 0.82), wealth: rnd(40, 120), faction: f.id, fame: rand() * 0.4
+      });
+    }
+  }
+  for (const p of S.P) {
+    if (p.fac == null && p.kind !== 'luna') {
+      newChar(p.id, { role: 'alcalde', amb: rnd(0.28, 0.82), wealth: rnd(30, 100), faction: null, loy: rnd(0.3, 0.75) });
+    }
+  }
+}
+function addTrader(p) {
+  const c = newChar(p.id, {
+    role: 'capitán', wealth: rnd(60, 130), caut: rnd(0.12, 0.88), greed: rnd(0.25, 0.92), faction: null
+  });
+  const s = newShip('trade', p.x, p.y, { cap: c.id, at: p.id, fromPort: p.id, owner: c.id });
+  c.ship = s.id;
+  return c;
+}
+function genMerchants() {
+  const pool = S.P.slice();
+  const markets = [];
+  while (markets.length < 4 && pool.length) markets.push(pool.splice(irand(pool.length), 1)[0]);
+  for (const m of markets) for (let i = 0; i < 3; i++) addTrader(m);
+  for (let i = 0; i < 6; i++) addTrader(pick(S.P));
+}
+function genPatrols() {
+  for (const f of S.F) {
+    const list = S.P.filter(function (p) { return p.fac === f.id && p.kind !== 'luna'; });
+    const homes = list.length ? list : S.P.filter(function (p) { return p.fac === f.id; });
+    for (const p of homes) {
+      const c = newChar(p.id, { role: 'capitán', wealth: rnd(18, 45), faction: f.id, loy: rnd(0.22, 0.92), skill: rnd(0.25, 0.92) });
+      const s = newShip('patrol', p.x, p.y, { cap: c.id, fac: f.id, at: p.id, fromPort: p.id });
+      c.ship = s.id;
+    }
+    const cap = S.P[f.capital];
+    if (cap) {
+      const c = newChar(cap.id, { role: 'capitán', wealth: 36, faction: f.id, loy: rnd(0.45, 0.95), skill: rnd(0.4, 0.95) });
+      newShip('patrol', cap.x, cap.y, { cap: c.id, fac: f.id, at: cap.id, fromPort: cap.id });
+    }
+  }
+}
+function genHideouts() {
+  const corners = [[0.07, 0.08], [0.93, 0.1], [0.08, 0.92], [0.92, 0.9]];
+  const prefix = ['Fosa', 'Cinta', 'Sombra', 'Pozo', 'Anillo', 'Nube', 'Grieta'];
+  for (let i = 0; i < corners.length; i++) {
+    S.slots.push({
+      id: i,
+      name: pick(prefix) + ' ' + word(2),
+      x: clamp(corners[i][0] + rnd(-0.03, 0.03), 0.04, 0.96),
+      y: clamp(corners[i][1] + rnd(-0.03, 0.03), 0.04, 0.96)
+    });
+  }
+}
+function genPirate() {
+  const slot = S.slots[0];
+  const home = pick(S.P);
+  const c = newChar(home.id, {
+    role: 'jefe', amb: rnd(0.6, 0.95), cru: rnd(0.55, 0.95), wealth: rnd(50, 90),
+    notable: true, fame: 1, faction: null
+  });
+  const b = { id: 0, name: slot.name, x: slot.x, y: slot.y, chief: c.id, alive: true, slot: slot.id };
+  S.bases.push(b);
+  for (let i = 0; i < 2; i++) {
+    const cap = newChar(home.id, { role: 'pirata', wealth: 12, faction: null, employer: c.id, cru: rnd(0.4, 0.9) });
+    newShip('pirate', slot.x, slot.y, { cap: cap.id, base: b.id, state: 'home', owner: c.id });
+  }
+  log('pirata', cn(c) + ' manda en ' + esc(b.name) + ', con dos naves y poca bandera.', { who: [c], place: home.id });
+}
+
+function runPlant(p, pl) {
+  const t = PLANTS[pl.type];
+  if (!t || pl.hp < 1) return;
+  let scale = 1;
+  if (t.inp != null) {
+    const use = Math.min(t.inRate, p.stock[t.inp]);
+    p.stock[t.inp] -= use;
+    const full = t.inRate <= 0 ? 1 : use / t.inRate;
+    scale = t.dry != null ? t.dry + (1 - t.dry) * full : full;
+  }
+  if (t.service) {
+    if (scale > 0.35) payPlant(p, pl, 7 * scale);
+    return;
+  }
+  const hands = 0.65 + p.pop * 0.32;
+  const out = t.rate * scale * hands;
+  p.stock[t.out] += out;
+  payPlant(p, pl, out * price(p, t.out) * 0.14);
+}
+function payPlant(p, pl, inc) {
+  if (!(inc > 0)) return;
+  if (pl.owner >= 0) {
+    const o = S.C[pl.owner];
+    if (o && o.alive) o.wealth += inc;
+    else pl.owner = -1;
+  } else {
+    const f = facAlive(p.fac);
+    if (f) f.treasury += inc;
+  }
+}
+function economy() {
+  for (const p of S.P) {
+    for (const pl of p.plants) {
+      if (pl.hp < 1) {
+        if (pl.rebuild > 0 && --pl.rebuild <= 0) {
+          pl.hp = 1;
+          log('economia', 'Vuelve a funcionar la ' + PLANTS[pl.type].label + ' de ' + pn(p) + '.', { place: p.id });
+        }
+        continue;
+      }
+      runPlant(p, pl);
+    }
+    for (let g = 0; g < 4; g++) {
+      const makes = p.plants.some(function (pl) { return pl.hp >= 1 && PLANTS[pl.type].out === g; });
+      const cut = p.held != null && S.day - p.held < 36;
+      if (!makes && !cut) p.stock[g] += p.pop * NEED[g] * 0.97;
+      p.stock[g] = Math.max(0, p.stock[g] - p.pop * NEED[g]);
+      const cap = needStock(p, g) * 16;
+      if (p.stock[g] > cap) p.stock[g] = cap;
+    }
+    const f = facAlive(p.fac);
+    const l = f ? S.C[f.leader] : null;
+    const tax = f && l ? 0.04 + 0.1 * l.cru : 0.02;
+    const food = price(p, 0) / GOODS[0].base;
+    const water = price(p, 1) / GOODS[1].base;
+    let target = 0.08;
+    target += clamp((food - 1.15) * 0.38, 0, 0.48);
+    target += clamp((water - 1.45) * 0.16, 0, 0.2);
+    target += tax * 1.35;
+    if (f && f.wars.size) target += 0.1;
+    if (p.held != null && S.day - p.held < 48) target += 0.1;
+    target += p.plants.filter(function (pl) { return pl.hp < 1; }).length * 0.06;
+    p.unrest += (clamp(target, 0.02, 0.95) - p.unrest) * 0.05;
+    if (food > 1.65) p.stress++;
+    else p.stress = Math.max(0, p.stress - 1);
+    publish(p);
+    for (let g = 0; g < 4; g++) {
+      const ratio = price(p, g) / GOODS[g].base;
+      if (ratio > 2.45 && !p.spike[g] && S.day > 6 && S.day - p.lastSpike > 14) {
+        p.spike[g] = 1;
+        p.lastSpike = S.day;
+        log('economia', 'Falta ' + GOODS[g].id + ' en ' + pn(p) + ': se paga a ' + ratio.toFixed(1) + '×.', {
+          place: p.id,
+          quote: { k: p.id + ':' + g, v: price(p, g) }
+        });
+      }
+      if (ratio < 1.3) p.spike[g] = 0;
+    }
+    if (food < 0.9 && rand() < 0.02) p.pop = Math.min(16, p.pop + 0.15);
+    if (food > 3 && p.pop > 1.2 && rand() < 0.03) p.pop = Math.max(0.8, p.pop - 0.25);
+  }
+}
+function spread() {
+  for (const n of S.news) {
+    if (S.day - n.day > 46) continue;
+    const know = Array.from(n.know);
+    for (const pid of know) {
+      const a = S.P[pid];
+      if (!a) continue;
+      for (const b of S.P) {
+        if (n.know.has(b.id)) continue;
+        let reach = (a.relay || b.relay) ? 0.4 : 0.24;
+        if ((S.traffic[key(a.id, b.id)] || 0) > 12) reach = Math.max(reach, 0.62);
+        if (dist(a, b) <= reach) n.know.add(b.id);
+      }
+    }
+    for (const pid of Array.from(n.know)) {
+      if (n.told.has(pid)) continue;
+      n.told.add(pid);
+      if (n.route && n.risk) addRisk(pid, n.route, n.risk);
+      if (n.routes) for (const r of n.routes) addRisk(pid, r.k, r.amt);
+      if (n.quote && S.P[pid]) S.P[pid].quote[n.quote.k] = n.quote.v;
+      if (n.html) hear(pid, n.html);
+    }
+  }
+  if (S.news.length > 120) S.news.splice(0, S.news.length - 120);
+  for (const p of S.P) {
+    for (const k in p.risk) {
+      p.risk[k] *= 0.982;
+      if (p.risk[k] < 0.02) delete p.risk[k];
+    }
+  }
+  for (const k in S.traffic) {
+    S.traffic[k] *= 0.9;
+    if (S.traffic[k] < 1) delete S.traffic[k];
+  }
+  for (const k in S.watch) {
+    S.watch[k] *= 0.88;
+    if (S.watch[k] < 0.05) delete S.watch[k];
+  }
+}
+
+function killChar(c, by) {
+  if (!c || !c.alive || c._dying) return;
+  c._dying = true;
+  c.alive = false;
+  const home = S.P[c.home] || S.P[0];
+  for (const s of S.ships) {
+    if (!s.alive || s.cap !== c.id) continue;
+    const owner = s.owner != null ? S.C[s.owner] : null;
+    if (!s.doomed && owner && owner.alive && owner.id !== c.id && !owner._dying) {
+      const n = emerge(home, { role: 'capitán', wealth: 22, employer: owner.id, faction: null });
+      n.employer = owner.id;
+      if (owner.guild != null && S.G[owner.guild]) {
+        n.guild = owner.guild;
+        S.G[owner.guild].members.add(n.id);
+      }
+      s.cap = n.id;
+    } else sink(s, null);
+  }
+  for (const p of S.P) for (const pl of p.plants) if (pl.owner === c.id) pl.owner = -1;
+  for (const g of S.G) {
+    if (!g.alive) continue;
+    g.members.delete(c.id);
+    if (g.master === c.id) {
+      let next = null, w = -1;
+      for (const id of g.members) {
+        const x = S.C[id];
+        if (x && x.alive && x.wealth > w) { w = x.wealth; next = x; }
+      }
+      if (next) {
+        g.master = next.id;
+        if (next.role !== 'líder' && next.role !== 'caudillo') next.role = 'maestre';
+        if (c.notable) log('gremio', cn(next) + ' hereda ' + gn(g) + ' tras la muerte de ' + cn(c) + '.', { who: [next, c], place: g.port });
+      } else g.alive = false;
+    }
+  }
+  for (const b of S.B) {
+    if (!b.alive || b.speaker !== c.id) continue;
+    const next = b.members.map(function (id) { return S.C[id]; }).filter(function (x) { return x && x.alive && x.id !== c.id; })[0];
+    if (next) {
+      b.speaker = next.id;
+      next.role = 'cabecilla';
+      next.notable = true;
+    } else {
+      b.alive = false;
+      for (const s of S.ships) if (s.alive && s.band === b.id) sink(s, null);
+    }
+  }
+  for (const base of S.bases) {
+    if (!base.alive || base.chief !== c.id) continue;
+    const mate = S.ships.find(function (s) { return s.alive && s.base === base.id && s.kind === 'pirate' && S.C[s.cap] && S.C[s.cap].alive; });
+    if (mate) {
+      base.chief = mate.cap;
+      S.C[mate.cap].role = 'jefe';
+      S.C[mate.cap].notable = true;
+      if (c.notable) log('pirata', cn(S.C[mate.cap]) + ' se queda ' + esc(base.name) + ' al caer ' + cn(c) + '.', { who: [S.C[mate.cap], c] });
+    } else base.alive = false;
+  }
+  for (const f of S.F) if (f.alive && f.leader === c.id) succession(f, 'tras su muerte');
+  mourn(c, by || null);
+}
+function succession(f, why) {
+  if (!f || !f.alive || f._succ) return;
+  f._succ = true;
+  const homes = new Set(S.P.filter(function (p) { return p.fac === f.id; }).map(function (p) { return p.id; }));
+  let best = null, bv = -1;
+  const before = styleOf(S.C[f.leader]).war;
+  for (const c of S.C) {
+    if (!c.alive || c._dying || c.id === f.leader) continue;
+    if (!homes.has(c.home) && c.faction !== f.id) continue;
+    if (c.role === 'jefe' || c.role === 'pirata') continue;
+    const v = c.fame * 0.7 + c.charm * 2 + c.amb * 1.4 + c.skill + c.wealth / 400 + (c.role === 'gobernador' ? 0.9 : 0) + (c.role === 'capitán' ? 0.35 : 0);
+    if (v > bv) { bv = v; best = c; }
+  }
+  if (!best) { f._succ = false; dieFaction(f); return; }
+  f.leader = best.id;
+  best.role = best.role === 'caudillo' ? 'caudillo' : 'líder';
+  best.faction = f.id;
+  best.fame += 1.4;
+  best.notable = true;
+  f.motto = motto(best);
+  const after = styleOf(best).war;
+  const turn = after < before - 0.12 ? 'El puerto se abre.' : after > before + 0.12 ? 'Promete mano dura.' : 'Sigue la misma línea.';
+  log('politica', cn(best) + ' toma ' + fn(f) + (why ? ' ' + why : '') + '. ' + turn, { who: [best], place: f.capital });
+  f._succ = false;
+}
+function dieFaction(f) {
+  if (!f || !f.alive) return;
+  f.alive = false;
+  for (const p of S.P) if (p.fac === f.id) p.fac = null;
+  for (const g of S.F) { g.wars.delete(f.id); g.embargo.delete(f.id); }
+  const l = S.C[f.leader];
+  if (l && l.alive && !l._dying) { l.role = 'exiliado'; l.faction = null; l.notable = true; }
+  for (const c of S.C) {
+    if (!c.alive || c.faction !== f.id) continue;
+    c.faction = null;
+    if (c.role === 'gobernador') c.role = 'alcalde';
+  }
+  for (const s of S.ships) {
+    if (s.alive && s.fac === f.id && s.kind === 'patrol') {
+      s.fac = null;
+      s.kind = 'trade';
+      const c = S.C[s.cap];
+      if (c && c.alive) c.role = 'capitán';
+    }
+  }
+  log('guerra', fn(f) + ' se disuelve. Los puertos quedan sin bandera.', { who: l && l.alive ? [l] : [], place: f.capital });
+}
+function takeWorld(p, nf, oldId) {
+  p.fac = nf.id;
+  p.held = S.day;
+  p.unrest = clamp(p.unrest * 0.7 + 0.12, 0, 1);
+  for (const c of S.C) {
+    if (!c.alive || c.home !== p.id) continue;
+    if (c.id === nf.leader) { c.faction = nf.id; continue; }
+    if (oldId == null) {
+      if (c.role === 'alcalde') { c.faction = nf.id; c.role = 'gobernador'; }
+      continue;
+    }
+    if (c.faction !== oldId) continue;
+    if (c.loy > 0.74) c.dissident = true;
+    else c.faction = nf.id;
+  }
+}
+function declareWar(a, b, cause) {
+  if (!a || !b || !a.alive || !b.alive || a.id === b.id || a.wars.has(b.id)) return;
+  const since = Math.floor(S.day);
+  const why = cause || 'un agravio que nadie escribió';
+  const rec = { id: S.warN++, a: a.id, b: b.id, since: since, cause: why, open: true };
+  if (!S.wars) S.wars = [];
+  S.wars.push(rec);
+  a.wars.set(b.id, { since: since, cause: why, wid: rec.id });
+  b.wars.set(a.id, { since: since, cause: why, wid: rec.id });
+  a.embargo.delete(b.id);
+  b.embargo.delete(a.id);
+}
+function setEmbargo(a, b, cause) {
+  if (!a || !b || a.id === b.id) return;
+  a.embargo.add(b.id);
+  b.embargo.add(a.id);
+  if (!a.why) a.why = {};
+  if (!b.why) b.why = {};
+  a.why[b.id] = cause;
+  b.why[a.id] = cause;
+}
+function battleName(place) {
+  const n = S.battles.filter(function (b) { return b.placeId === place.id; }).length + 1;
+  if (n === 1) return 'Batalla de ' + place.name;
+  const ord = ['Segunda', 'Tercera', 'Cuarta', 'Quinta', 'Sexta', 'Séptima'];
+  return (ord[n - 2] || (n + 'ª')) + ' batalla de ' + place.name;
+}
+function pushBattle(o) {
+  const b = {
+    id: S.battles.length,
+    day: Math.floor(S.day),
+    name: o.name,
+    placeId: o.place.id,
+    placeName: o.place.name,
+    attId: o.att ? o.att.id : null,
+    defId: o.def ? o.def.id : null,
+    winId: o.win ? o.win.id : null,
+    html: o.html,
+    plant: o.plant || null,
+    wrecks: o.wrecks || 0,
+    cause: o.cause || '',
+    warId: null
+  };
+  if (!b.cause && o.att && o.def && o.att.wars && o.att.wars.get(o.def.id)) b.cause = o.att.wars.get(o.def.id).cause || '';
+  if (o.att && o.def && o.att.wars && o.att.wars.get(o.def.id)) b.warId = o.att.wars.get(o.def.id).wid;
+  if (o.cause) b.cause = o.cause;
+  if (o.warId != null) b.warId = o.warId;
+  S.battles.push(b);
+  const routes = [];
+  for (const q of S.P) if (q.id !== o.place.id && dist(q, o.place) < 0.55) routes.push({ k: key(o.place.id, q.id), amt: 0.32 });
+  log(o.kind || 'guerra', o.html, { place: o.place.id, who: o.who || [], routes: routes });
+  for (let i = 0; i < b.wrecks; i++) addWreck(o.place.x + rnd(-0.04, 0.04), o.place.y + rnd(-0.03, 0.03), rnd(3, 6), b.name, b.id);
+  return b;
+}
+function strength(f, place) {
+  if (!f || !place) return 0;
+  let ships = 0;
+  for (const s of S.ships) {
+    if (!s.alive || s.fac !== f.id) continue;
+    if (s.kind !== 'patrol' && s.kind !== 'escort') continue;
+    if (s.at === place.id || dist(s, place) < 0.22) ships++;
+  }
+  const st = style(f);
+  const home = place.fac === f.id ? place.pop * 2 + place.defense * 0.35 : 0;
+  return ships * 16 + Math.sqrt(Math.max(0, f.treasury)) * 1.05 + st.war * 16 + home;
+}
+function causeOf(p, f) {
+  const food = price(p, 0) / GOODS[0].base;
+  if (food > 1.7) return 'el hambre: la comida está a ' + food.toFixed(1) + '×';
+  if (f && style(f).repress > 0.6) return 'los impuestos';
+  if (f && f.wars.size) return 'la leva';
+  return 'el descontento';
+}
+
+function doSplit(f, world, who, cause) {
+  const wasRebel = who.role === 'caudillo';
+  const nf = createFaction(polityName(world, who, wasRebel), who, world.id, romanticBreak(who, world, cause));
+  nf.coolSplit = S.day + 36;
+  f.coolSplit = S.day + 48;
+  S.coolSplit = S.day + 16;
+  who.home = world.id;
+  who.notable = true;
+  who.fame += 1.6;
+  who.loy = Math.max(who.loy, 0.55);
+  const cap = capital(f);
+  const join = [world];
+  if (cap) {
+    for (const q of S.P) {
+      if (q.fac !== f.id || q.id === cap.id || q.id === world.id) continue;
+      if (dist(q, world) + 0.03 < dist(q, cap) && (q.unrest > 0.42 || dist(q, world) < 0.22)) join.push(q);
+    }
+  }
+  for (const q of join) if (q.id !== world.id) takeWorld(q, nf, f.id);
+  world.held = S.day;
+  let popN = 0, popT = 0;
+  for (const q of S.P) {
+    if (q.fac === nf.id) popN += q.pop;
+    if (q.fac === nf.id || q.fac === f.id) popT += q.pop;
+  }
+  const share = popT > 0 ? (f.treasury * (popN / popT) * 0.75) : 0;
+  f.treasury = Math.max(0, f.treasury - share);
+  nf.treasury += share + 30;
+  f.coh = Math.max(0.18, f.coh - 0.18);
+  let left = 0, stayed = 0;
+  const joined = {};
+  for (const q of join) joined[q.id] = true;
+  for (const s of S.ships) {
+    if (!s.alive || s.kind !== 'patrol' || s.fac !== f.id) continue;
+    const c = S.C[s.cap];
+    if (!c || !c.alive) continue;
+    if (joined[c.home] || c.loy < 0.4) {
+      s.fac = nf.id;
+      c.faction = nf.id;
+      left++;
+    } else stayed++;
+  }
+  const hot = who.cru > 0.58 || style(f).war > 0.6;
+  if (hot) declareWar(f, nf, 'la ruptura: ' + cause);
+  else setEmbargo(f, nf, 'la ruptura: ' + cause);
+  const names = join.map(pn).join(', ');
+  const kind = wasRebel ? 'rebelion' : (hot ? 'guerra' : 'politica');
+  log(kind, cn(who) + ' rompe ' + fn(f) + '. Se lleva ' + names + '. ' + seVan(left) + '; ' + seQuedan(stayed) + '. ' + (hot ? 'Es guerra.' : 'Cierran los puertos y no disparan.') + ' El pretexto: ' + cause + '.', {
+    who: [who, leader(f)],
+    place: world.id
+  });
+}
+function trySplit(f) {
+  if (!f.alive || S.day < S.coolSplit || S.day < (f.coolSplit || 0)) return;
+  if (S.F.filter(function (x) { return x.alive; }).length >= 7) return;
+  const worlds = S.P.filter(function (p) { return p.fac === f.id; });
+  if (worlds.length < 2) return;
+  const cap = capital(f);
+  if (!cap) return;
+  let best = null, score = 0;
+  for (const p of worlds) {
+    if (p.id === cap.id) continue;
+    const hungry = p.stress > 10 && p.unrest > 0.54;
+    const distant = worlds.length >= 3 && dist(p, cap) > 0.28 && f.coh < 0.5 && p.unrest > 0.36;
+    if (!hungry && !distant) continue;
+    const gov = S.C.find(function (c) {
+      return c.alive && c.home === p.id && c.role === 'gobernador' && c.amb > 0.58 && c.loy < 0.62;
+    });
+    const sc = (hungry ? 2 : 0) + (distant ? 1.2 : 0) + (gov ? gov.amb : 0.2);
+    if (sc > score) { score = sc; best = { p: p, gov: gov || null, hungry: hungry, distant: distant }; }
+  }
+  if (!best || rand() > TUNE.split) return;
+  let who = best.gov;
+  const cause = best.hungry ? causeOf(best.p, f) : 'la distancia: del centro no llega nada';
+  if (!who) {
+    if (!best.hungry) return;
+    who = emerge(best.p, {
+      amb: rnd(0.72, 0.96), cru: rnd(0.35, 0.86), charm: rnd(0.4, 0.9),
+      loy: 0.15, role: 'caudillo', wealth: rnd(12, 36), faction: f.id
+    });
+  }
+  doSplit(f, best.p, who, cause);
+}
+function considerWar(f) {
+  if (!f.alive || f.wars.size || f.treasury < 80) return;
+  const st = style(f);
+  const own = S.P.filter(function (p) { return p.fac === f.id; });
+  const capP = capital(f);
+  if (!own.length || !capP) return;
+  let shortage = null;
+  for (let g = 0; g < 4; g++) {
+    let worst = 0, where = null;
+    for (const p of own) {
+      const r = price(p, g) / GOODS[g].base;
+      if (r > worst) { worst = r; where = p; }
+    }
+    if (where && worst > (shortage ? shortage.r : 1.7)) shortage = { g: g, r: worst, where: where };
+  }
+  let blood = null, bloodN = 0;
+  if (f.grudge) {
+    for (const id in f.grudge) {
+      const o = facAlive(+id);
+      if (o && f.grudge[id] > bloodN) { bloodN = f.grudge[id]; blood = o; }
+    }
+  }
+  if (!shortage && bloodN < 2) {
+    const lead0 = leader(f);
+    const hungry = lead0 && (lead0.aim === 'sangre' || lead0.aim === 'trono' || lead0.aim === 'poder');
+    if (hungry && f.treasury > 150 && st.war > 0.5 && rand() < 0.012) {
+      let foe = null;
+      for (const o of S.F) {
+        if (!o.alive || o.id === f.id || allied(f.id, o.id) || f.wars.has(o.id)) continue;
+        if (!foe || o.treasury < foe.treasury) foe = o;
+      }
+      if (foe) {
+        const why = 'en ' + capP.name + ' quieren el muelle de ' + foe.name + ' y ya no piden permiso';
+        declareWar(f, foe, why);
+        log('guerra', fn(f) + ' declara la guerra a ' + fn(foe) + '. El motivo: ' + why + '.', {
+          who: [lead0, leader(foe)], place: capP.id, fac: [f.id, foe.id]
+        });
+      }
+    }
+    return;
+  }
+  let target = null, other = null, cause = '', good = null;
+  if (blood && allied(f.id, blood.id)) {
+    if (bloodN >= 3) breakAlliance(f, blood, 'hay ' + bloodN + ' muertos y el pacto no los tapa.');
+    else blood = null;
+  }
+  if (blood && bloodN >= 2) {
+    other = blood;
+    target = capital(blood);
+    cause = 'hay ' + bloodN + (bloodN === 1 ? ' muerto' : ' muertos') + ' entre las dos banderas';
+  }
+  if (shortage) {
+    let best = null, bv = 0, bestOther = null;
+    for (const p of S.P) {
+      if (p.fac === f.id) continue;
+      if (p.fac != null && allied(f.id, p.fac)) continue;
+      if (!p.plants.some(function (pl) { return pl.hp >= 1 && PLANTS[pl.type].out === shortage.g; })) continue;
+      const v = shortage.r / (0.35 + dist(p, capP));
+      if (v > bv) { bv = v; best = p; bestOther = facAlive(p.fac); }
+    }
+    if (best) {
+      const line = 'en ' + shortage.where.name + ' el ' + GOODS[shortage.g].id + ' está a ' + shortage.r.toFixed(1) + '× y ' + (bestOther ? bestOther.name : best.name) + ' lo tiene';
+      if (!cause || shortage.r >= 2.2) {
+        target = best;
+        other = bestOther;
+        cause = line;
+        good = shortage.g;
+      }
+    }
+  }
+  if (!cause) return;
+  if (!other) {
+    if (st.war > 0.62 && shortage && shortage.r > 1.9 && f.treasury > 100 && rand() < 0.04) raidFree(f, target, good);
+    return;
+  }
+  if (!target) target = capital(other);
+  const stronger = target && strength(other, target) > strength(f, capP) * 1.45;
+  if (stronger || st.war < 0.55 || f.treasury < 130) {
+    if (!f.embargo.has(other.id) && rand() < 0.22) {
+      setEmbargo(f, other, cause);
+      log('politica', fn(f) + ' cierra los puertos a ' + fn(other) + '. El motivo: ' + cause + '.', {
+        who: [leader(f), leader(other)], place: capP.id, fac: [f.id, other.id]
+      });
+    }
+    return;
+  }
+  const lead = leader(f);
+  const urge = lead && (lead.aim === 'sangre' || lead.aim === 'poder' || lead.aim === 'trono') ? 0.12 : lead && (lead.aim === 'paz' || lead.aim === 'vida') ? 0.03 : 0.07;
+  if (rand() > urge) return;
+  declareWar(f, other, cause);
+  log('guerra', fn(f) + ' declara la guerra a ' + fn(other) + '. El motivo: ' + cause + '.', {
+    who: [leader(f), leader(other)], place: capP.id, fac: [f.id, other.id]
+  });
+}
+function raidFree(f, place, g) {
+  const as = strength(f, place) * rnd(0.78, 1.18);
+  const ds = place.defense + place.pop * 2.2 + rnd(0, 18);
+  const win = as > ds;
+  let plantType = null;
+  const intact = place.plants.filter(function (pl) { return pl.hp >= 1; });
+  if (intact.length && rand() < 0.4) {
+    const pl = pick(intact);
+    pl.hp = 0;
+    plantType = pl.type;
+  }
+  if (win) {
+    takeWorld(place, f, null);
+    place.defense = place.pop * 1.4;
+  }
+  const name = battleName(place);
+  const html = esc(name) + '. ' + fn(f) + (win ? ' ocupa ' : ' no puede con ') + pn(place) + (g != null ? ', iba a por ' + GOODS[g].id : '') + '.' + caePlanta(plantType) + ' Pecios: 4.';
+  pushBattle({ name: name, place: place, att: f, def: null, win: win ? f : null, html: html, plant: plantType, wrecks: 4, who: [leader(f)], cause: (g != null ? 'Iban a por ' + GOODS[g].id + '. ' : '') + place.name + ' no tenía bandera que lo defendiera.' });
+}
+function resolveBattle(att, def) {
+  const from = capital(att);
+  if (!from) return;
+  let target = null, bd = 1e9;
+  for (const p of S.P) if (p.fac === def.id) {
+    const d = dist(p, from);
+    if (d < bd) { bd = d; target = p; }
+  }
+  if (!target) return;
+  const as = strength(att, target) * rnd(0.78, 1.2);
+  const ds = strength(def, target) * rnd(0.78, 1.2);
+  att.treasury = Math.max(0, att.treasury - rnd(12, 26));
+  def.treasury = Math.max(0, def.treasury - rnd(8, 20));
+  const flipped = as > ds * 1.16;
+  const win = flipped ? att : def;
+  const lose = flipped ? def : att;
+  lose.defeats += 1;
+  let plantType = null;
+  const intact = target.plants.filter(function (pl) { return pl.hp >= 1; });
+  if (intact.length && rand() < 0.5) {
+    const pl = pick(intact);
+    pl.hp = 0;
+    plantType = pl.type;
+  }
+  const pool = S.ships.filter(function (s) {
+    return s.alive && s.fac === lose.id && s.kind === 'patrol' && dist(s, target) < 0.24;
+  });
+  if (pool.length && rand() < 0.5) {
+    const s = pick(pool);
+    s.doomed = true;
+    if (S.C[s.cap]) killChar(S.C[s.cap], leader(win));
+  }
+  const wasCap = target.id === def.capital;
+  let flee = '';
+  if (flipped) {
+    const l = leader(def);
+    takeWorld(target, att, def.id);
+    target.defense = target.pop * 1.25;
+    const rest = S.P.filter(function (p) { return p.fac === def.id; });
+    if (!rest.length) {
+      flee = ' No les queda puerto.';
+      dieFaction(def);
+    } else if (wasCap) {
+      rest.sort(function (a, b) { return b.pop - a.pop; });
+      def.capital = rest[0].id;
+      if (l && l.alive && l.home === target.id) {
+        l.home = def.capital;
+        l.dissident = false;
+        l.faction = def.id;
+        flee = ' ' + cn(l) + ' huye a ' + pn(S.P[def.capital]) + '.';
+        l.fear = Math.min(1, (l.fear || 0) + 0.28);
+        if (!l.marks) l.marks = [];
+        l.marks.unshift({ day: Math.floor(S.day), text: 'Pierde ' + target.name + ', que era el centro. El poder se le va de las manos y le queda el miedo.' });
+      }
+    }
+  }
+  if (!att.alive && !def.alive) return;
+  const name = battleName(target);
+  const html = esc(name) + '. ' + (flipped ? fn(att) + ' se queda con ' + pn(target) : fn(def) + ' aguanta ' + pn(target)) + '.' + caePlanta(plantType) + ' Quedan pecios.' + flee;
+  pushBattle({
+    name: name, place: target, att: att.alive ? att : null, def: def.alive ? def : null,
+    win: win.alive ? win : null, html: html, plant: plantType, wrecks: 3 + irand(4),
+    who: [leader(att), leader(def)]
+  });
+}
+function wars() {
+  const pairs = [];
+  const seen = new Set();
+  const drop = [];
+  for (const f of S.F) {
+    if (!f.alive) continue;
+    for (const [eid, w] of f.wars) {
+      const e = S.F[eid];
+      if (!e || !e.alive) { drop.push([f, eid]); continue; }
+      const k = f.id < eid ? f.id + ':' + eid : eid + ':' + f.id;
+      if (seen.has(k)) continue;
+      seen.add(k);
+      pairs.push([f, e, w]);
+    }
+  }
+  for (const d of drop) d[0].wars.delete(d[1]);
+  for (const pair of pairs) {
+    const a = pair[0], b = pair[1], w = pair[2];
+    if (!a.alive || !b.alive || !a.wars.has(b.id)) continue;
+    const age = Math.floor(S.day) - w.since;
+    const urge = peaceUrge(a) + peaceUrge(b);
+    const tired = (age > 14 && (style(a).war < 0.48 || style(b).war < 0.48 || a.treasury < 40 || b.treasury < 40 || urge > 0.08)) || age > 64;
+    if (age > 10 && tired && rand() < 0.018 + urge + (age > 36 ? 0.025 : 0)) {
+      endWar(a, b);
+      log('politica', 'Paz entre ' + fn(a) + ' y ' + fn(b) + ', después de ' + age + ' días.', { who: [leader(a), leader(b)], place: a.capital, fac: [a.id, b.id] });
+      const la = leader(a), lb = leader(b);
+      const soft = (!la || (la.aim !== 'sangre' && la.aim !== 'trono')) && (!lb || (lb.aim !== 'sangre' && lb.aim !== 'trono'));
+      if (soft && rand() < 0.5) makeAlliance(a, b, 'la paz queda escrita: puerto abierto y escolta compartida.');
+      continue;
+    }
+    if (age >= 4 && rand() < TUNE.battle) {
+      if (style(a).war >= style(b).war) resolveBattle(a, b);
+      else resolveBattle(b, a);
+    }
+  }
+}
+function diplomacy() {
+  const live = S.F.filter(function (f) { return f.alive; });
+  for (let i = 0; i < live.length; i++) {
+    for (let j = i + 1; j < live.length; j++) {
+      const a = live[i], b = live[j];
+      if (a.wars.has(b.id)) continue;
+      if (allied(a.id, b.id)) {
+        const g = ((a.grudge && a.grudge[b.id]) || 0) + ((b.grudge && b.grudge[a.id]) || 0);
+        const la = leader(a), lb = leader(b);
+        const blood = (la && la.aim === 'sangre') || (lb && lb.aim === 'sangre');
+        if (g >= 3 || (blood && g >= 1 && rand() < 0.025)) {
+          breakAlliance(a, b, g ? 'hay muertos que el pacto no tapa.' : 'una de las dos banderas quiere otra cosa.');
+        }
+        continue;
+      }
+      if (a.embargo.has(b.id) || b.embargo.has(a.id)) {
+        if (rand() < 0.025 + peaceUrge(a) + peaceUrge(b)) {
+          a.embargo.delete(b.id);
+          b.embargo.delete(a.id);
+          log('politica', fn(a) + ' y ' + fn(b) + ' abren otra vez los puertos.', { who: [leader(a), leader(b)], place: a.capital, fac: [a.id, b.id] });
+        }
+        continue;
+      }
+      let trade = 0;
+      for (const p of S.P) if (p.fac === a.id) {
+        for (const q of S.P) if (q.fac === b.id) trade += (S.traffic[key(p.id, q.id)] || 0);
+      }
+      let shared = false;
+      for (const eid of a.wars.keys()) if (b.wars.has(eid)) shared = true;
+      const la = leader(a), lb = leader(b);
+      const kindred = (la && (la.aim === 'paz' || la.aim === 'lealtad')) || (lb && (lb.aim === 'paz' || lb.aim === 'lealtad'));
+      let chance = 0;
+      const calm = la && lb && la.aim !== 'sangre' && lb.aim !== 'sangre' && la.aim !== 'trono' && lb.aim !== 'trono';
+      if (trade > 50) chance += 0.04;
+      if (shared) chance += 0.05;
+      if (kindred && trade > 20) chance += 0.02;
+      if (calm && S.day > 24 && !a.wars.size && !b.wars.size) chance += 0.008;
+      if (S.day > 6 && chance > 0 && rand() < chance) {
+        const why = shared ? 'las dos disparan contra la misma bandera.' : trade > 50 ? 'el flete ya es más viejo que el recelo.' : 'ninguna de las dos tiene un muerto que cobrar, y firman.';
+        makeAlliance(a, b, why);
+      }
+    }
+  }
+}
+function factions() {
+  const list = S.F.slice();
+  for (const f of list) {
+    if (!f.alive) continue;
+    const own = S.P.filter(function (p) { return p.fac === f.id; });
+    if (!own.length) { dieFaction(f); continue; }
+    capital(f);
+    const unrest = own.reduce(function (a, p) { return a + p.unrest; }, 0) / own.length;
+    let target = 0.78 - unrest * 0.95 - f.defeats * 0.07 - Math.max(0, own.length - 3) * 0.055;
+    if (f.wars.size) target -= 0.05;
+    f.coh += (clamp(target, 0.05, 0.92) - f.coh) * 0.045;
+    f.leg += ((1 - unrest) * 0.85 - f.leg) * 0.03;
+    f.defeats *= 0.99;
+    const pats = S.ships.filter(function (s) { return s.alive && s.kind === 'patrol' && s.fac === f.id; }).length;
+    f.treasury = Math.max(0, f.treasury - pats * 1.5);
+    if (f.treasury <= 0) f.broke = (f.broke || 0) + 1;
+    else f.broke = 0;
+    if (f.broke === 22) {
+      f.broke = 0;
+      const s = S.ships.find(function (sh) { return sh.alive && sh.kind === 'patrol' && sh.fac === f.id; });
+      if (s) {
+        const c = S.C[s.cap];
+        s.fac = null;
+        s.kind = 'trade';
+        if (c && c.alive) { c.faction = null; c.role = 'capitán'; }
+        log('politica', 'Una patrulla de ' + fn(f) + ' deja la bandera' + (c ? ': ' + cn(c) + ' ya no cobra' : '') + '.', { who: c ? [c] : [], place: f.capital });
+      }
+    }
+    const want = Math.max(1, own.filter(function (p) { return p.kind !== 'luna'; }).length);
+    if (pats < want && f.treasury > 90 && rand() < 0.1) {
+      f.treasury -= 50;
+      const home = pick(own);
+      const c = newChar(home.id, { role: 'capitán', wealth: 24, faction: f.id, loy: rnd(0.35, 0.9), skill: rnd(0.3, 0.85) });
+      newShip('patrol', home.x, home.y, { cap: c.id, fac: f.id, at: home.id, fromPort: home.id });
+    }
+    if (f.coh < 0.38 && S.day > (f.coolCoup || 0) && rand() < TUNE.coup) {
+      const rivals = S.C.filter(function (c) {
+        return c.alive && c.faction === f.id && c.id !== f.leader && c.amb > 0.68 && c.loy < 0.46 &&
+          (c.role === 'gobernador' || c.role === 'capitán');
+      }).sort(function (a, b) { return b.amb - a.amb; });
+      const rival = rivals[0];
+      if (rival) {
+        f.coolCoup = S.day + 70;
+        const old = S.C[f.leader];
+        const before = styleOf(old).war;
+        f.leader = rival.id;
+        rival.role = 'líder';
+        rival.loy = 0.8;
+        rival.fame += 2;
+        rival.notable = true;
+        f.motto = motto(rival);
+        const after = styleOf(rival).war;
+        const turn = after < before - 0.12 ? 'Abre el comercio.' : after > before + 0.12 ? 'Aprieta la mano.' : 'No cambia el tono.';
+        log('politica', 'Golpe en ' + fn(f) + ': ' + cn(rival) + ' aparta a ' + cn(old) + '. ' + turn, { who: [rival, old], place: f.capital });
+        if (old && old.alive) killChar(old, rival);
+        f.coh = Math.min(0.6, f.coh + 0.08);
+      }
+    }
+    trySplit(f);
+    considerWar(f);
+    const warIds = [];
+    for (const eid of f.wars.keys()) warIds.push(eid);
+    for (const eid of warIds) {
+      const e = S.F[eid];
+      if (!e || !e.alive || e.bounty) continue;
+      const el = leader(e);
+      if (!el || el.cru < 0.64 || f.treasury < 150 || rand() > 0.02) continue;
+      f.treasury -= 110;
+      e.bounty = { by: f.id, pay: 180, day: Math.floor(S.day) };
+      log('politica', fn(f) + ' clava el nombre de ' + cn(el) + '. Paga 180 cr a quien lo encuentre.', {
+        who: [el, leader(f)], place: f.capital, bounty: e.id
+      });
+    }
+  }
+}
+
+function tryBand(p) {
+  if (p.unrest < 0.6 || p.pop < 1.6) return;
+  if (p.held != null && S.day - p.held < 10) return;
+  if (S.B.some(function (b) { return b.alive && b.home === p.id; })) return;
+  const food = price(p, 0) / GOODS[0].base;
+  if (food < 1.7 && p.unrest < 0.78) return;
+  if (rand() > TUNE.band) return;
+  const f = facAlive(p.fac);
+  let speaker = null;
+  for (const c of S.C) {
+    if (!c.alive || c.home !== p.id || c.role === 'líder' || c.role === 'jefe' || c.role === 'caudillo') continue;
+    if (c.marks && c.marks.length && c.cru > 0.4) { speaker = c; break; }
+  }
+  const grief = speaker && speaker.marks && speaker.marks.length;
+  if (!speaker) speaker = emerge(p, {
+    amb: rnd(0.62, 0.95), cru: rnd(0.28, 0.8), charm: rnd(0.35, 0.92),
+    wealth: rnd(8, 28), role: 'cabecilla', faction: null, loy: rnd(0.1, 0.4)
+  });
+  else speaker.faction = null;
+  const members = [speaker];
+  const extra = 2 + (rand() < 0.45 ? 1 : 0);
+  for (let i = 0; i < extra; i++) {
+    members.push(emerge(p, { role: 'civil', wealth: rnd(4, 18), amb: rnd(0.35, 0.8), faction: null }));
+  }
+  const band = {
+    id: S.B.length, name: 'Los de ' + speaker.name.split(' ').slice(-1)[0],
+    home: p.id, speaker: speaker.id, members: members.map(function (m) { return m.id; }),
+    alive: true, day: Math.floor(S.day), heat: 0,
+    grievance: (grief ? 'perdió a alguien y el puerto no responde. ' : '') + causeOf(p, f),
+    fought: -99
+  };
+  S.B.push(band);
+  speaker.role = 'cabecilla';
+  speaker.notable = true;
+  members.forEach(function (m, i) {
+    m.band = band.id;
+    const s = newShip('skiff', p.x + rnd(-0.01, 0.01), p.y + rnd(-0.01, 0.01), {
+      cap: m.id, band: band.id, mod: pick(MODS), owner: m.id, at: p.id
+    });
+    m.ship = s.id;
+    if (i > 0) m.role = 'civil';
+  });
+  log('rebelion', cn(speaker) + ', hasta ahora un nombre más de ' + pn(p) + ', suelda ' + members.length + ' cascos y saca a los suyos del puerto. El motivo: ' + band.grievance + '.', {
+    who: members, place: p.id
+  });
+}
+function sabotage(band, p) {
+  if (band.did === Math.floor(S.day)) return;
+  band.did = Math.floor(S.day);
+  const plants = p.plants.filter(function (pl) { return pl.hp >= 1; });
+  const who = S.C[band.speaker];
+  if (plants.length && rand() < 0.34) {
+    const pl = pick(plants);
+    pl.hp = 0;
+    band.heat = (band.heat || 0) + 1;
+    log('rebelion', esc(band.name) + ' dejan rota la ' + PLANTS[pl.type].label + ' de ' + pn(p) + '.', { who: who ? [who] : [], place: p.id });
+  } else {
+    p.unrest = Math.min(1, p.unrest + 0.035);
+    band.heat = (band.heat || 0) + 0.25;
+  }
+}
+function endBand(band, why) {
+  band.alive = false;
+  for (const s of S.ships) if (s.alive && s.band === band.id) sink(s, null);
+  const who = S.C[band.speaker];
+  log('rebelion', esc(band.name) + ' ' + why + '.', { who: who ? [who] : [], place: band.home });
+}
+function seize(band) {
+  const p = S.P[band.home];
+  const speaker = S.C[band.speaker];
+  if (!p || !speaker || !speaker.alive) return;
+  const old = facAlive(p.fac);
+  speaker.role = 'caudillo';
+  const nf = createFaction(polityName(p, speaker, true), speaker, p.id, romanticBreak(speaker, p, band.grievance));
+  nf.treasury = 36 + p.pop * 5;
+  const prev = old;
+  takeWorld(p, nf, old ? old.id : null);
+  p.unrest *= 0.5;
+  for (const s of S.ships) if (s.alive && s.band === band.id) {
+    s.kind = 'patrol';
+    s.fac = nf.id;
+    s.band = null;
+  }
+  for (const id of band.members) {
+    const c = S.C[id];
+    if (c && c.alive) { c.faction = nf.id; if (c.id !== speaker.id && c.role === 'civil') c.role = 'capitán'; }
+  }
+  band.alive = false;
+  band.faction = nf.id;
+  if (prev) {
+    declareWar(prev, nf, band.grievance);
+    log('rebelion', cn(speaker) + ' se queda ' + pn(p) + ' y llama a esto ' + fn(nf) + '. ' + fn(prev) + ' lo trata como guerra.', {
+      who: [speaker, leader(prev)], place: p.id
+    });
+  } else {
+    log('rebelion', cn(speaker) + ' iza bandera en ' + pn(p) + ': ' + fn(nf) + '.', { who: [speaker], place: p.id });
+  }
+}
+function bandBattle(band, factionAttacks) {
+  const p = S.P[band.home];
+  const f = facAlive(p.fac);
+  if (!p || band.fought === Math.floor(S.day)) return;
+  band.fought = Math.floor(S.day);
+  const bStr = band.members.length * 7 + band.heat * 4 + rnd(0, 10);
+  const fStr = (f ? strength(f, p) * 0.45 : p.defense) + rnd(0, 10);
+  const bandWins = factionAttacks ? bStr > fStr : bStr > fStr * 0.9;
+  const who = S.C[band.speaker];
+  const name = 'Revuelta de ' + p.name;
+  if (bandWins && !factionAttacks) {
+    pushBattle({
+      name: name, place: p, att: null, def: f, win: null, wrecks: 3,
+      html: esc(name) + '. ' + esc(band.name) + ' entran en ' + pn(p) + '.',
+      who: who ? [who] : [], kind: 'rebelion', cause: band.grievance || 'la revuelta'
+    });
+    seize(band);
+    return;
+  }
+  if (!bandWins && factionAttacks) {
+    if (who && rand() < 0.65) killChar(who);
+    pushBattle({
+      name: name, place: p, att: f, def: null, win: f, wrecks: 3,
+      html: esc(name) + '. ' + (f ? fn(f) : 'El puerto') + ' aplasta a ' + esc(band.name) + '.',
+      who: who ? [who, f ? leader(f) : null] : [], kind: 'rebelion', cause: band.grievance || 'la revuelta'
+    });
+    band.alive = false;
+    for (const s of S.ships) if (s.alive && s.band === band.id) { s.doomed = true; if (S.C[s.cap] && S.C[s.cap].alive) killChar(S.C[s.cap]); else sink(s, null); }
+    return;
+  }
+  band.heat += bandWins ? 1 : -0.5;
+  const skiff = S.ships.find(function (s) { return s.alive && s.band === band.id; });
+  if (!bandWins && skiff) { skiff.doomed = true; if (S.C[skiff.cap]) killChar(S.C[skiff.cap]); }
+  if (bandWins && f) {
+    const pat = S.ships.find(function (s) { return s.alive && s.kind === 'patrol' && s.fac === f.id && dist(s, p) < 0.2; });
+    if (pat) { pat.doomed = true; if (S.C[pat.cap]) killChar(S.C[pat.cap]); }
+  }
+  log('rebelion', esc(name) + ': ' + (bandWins ? esc(band.name) + ' aguantan' : (f ? fn(f) : 'la milicia') + ' los rechaza') + '.', {
+    who: who ? [who] : [], place: p.id
+  });
+  const left = S.ships.filter(function (s) { return s.alive && s.band === band.id; }).length;
+  if (!left || !S.C[band.speaker] || !S.C[band.speaker].alive) band.alive = false;
+}
+function bandsTick() {
+  for (const p of S.P) tryBand(p);
+  for (const band of S.B) {
+    if (!band.alive) continue;
+    const p = S.P[band.home];
+    const age = Math.floor(S.day) - band.day;
+    if (!p) { band.alive = false; continue; }
+    const speaker = S.C[band.speaker];
+    if (!speaker || !speaker.alive) {
+      const next = band.members.map(function (id) { return S.C[id]; }).find(function (c) { return c && c.alive; });
+      if (next) { band.speaker = next.id; next.role = 'cabecilla'; }
+      else { band.alive = false; continue; }
+    }
+    if (age > 18 && band.heat < 1 && speaker.greed > 0.58 && rand() < 0.04) {
+      const slot = S.slots.find(function (sl) { return !S.bases.some(function (b) { return b.alive && b.slot === sl.id; }); });
+      if (slot) {
+        const base = { id: S.bases.length, name: slot.name, x: slot.x, y: slot.y, chief: speaker.id, alive: true, slot: slot.id };
+        S.bases.push(base);
+        speaker.role = 'jefe';
+        for (const s of S.ships) if (s.alive && s.band === band.id) {
+          s.kind = 'pirate'; s.band = null; s.base = base.id; s.state = 'home'; s.fac = null;
+          const c = S.C[s.cap];
+          if (c && c.alive && c.id !== speaker.id) c.role = 'pirata';
+        }
+        band.alive = false;
+        log('pirata', esc(band.name) + ' dejan la revuelta y abren ' + esc(base.name) + '. Manda ' + cn(speaker) + '.', { who: [speaker], place: p.id });
+        continue;
+      }
+    }
+    if (age > 36 && band.heat < 2 && rand() < 0.03) {
+      for (const s of S.ships) if (s.alive && s.band === band.id) {
+        s.kind = 'trade'; s.band = null; s.fac = null;
+        const c = S.C[s.cap];
+        if (c && c.alive) c.role = 'capitán';
+      }
+      band.alive = false;
+      log('rebelion', esc(band.name) + ' se cansan y vuelven al flete.', { who: [speaker], place: p.id });
+      continue;
+    }
+    const f = facAlive(p.fac);
+    const near = f ? S.ships.filter(function (s) { return s.alive && s.kind === 'patrol' && s.fac === f.id && dist(s, p) < 0.12; }).length : 0;
+    if (f && near > 0 && age > 5 && rand() < 0.035) bandBattle(band, true);
+    else if (band.heat >= 2 && p.unrest > 0.66 && rand() < 0.08) bandBattle(band, false);
+  }
+}
+
+function guildName(p) {
+  let worst = 0, wi = 0;
+  for (let g = 0; g < 4; g++) {
+    const r = price(p, g) / GOODS[g].base;
+    if (r > worst) { worst = r; wi = g; }
+  }
+  if (worst > 1.4) return 'Gremio de ' + GOODS[wi].id + ', ' + p.name;
+  return 'Colegio de ' + p.name;
+}
+function tryGuild(p) {
+  if (S.G.some(function (g) { return g.alive && g.port === p.id; })) return;
+  const caps = [];
+  for (const c of S.C) {
+    if (!c.alive || c.home !== p.id) continue;
+    if (c.role === 'líder' || c.role === 'jefe' || c.role === 'pirata') continue;
+    if (!S.ships.some(function (s) { return s.alive && s.cap === c.id && s.kind === 'trade'; })) continue;
+    caps.push(c);
+  }
+  if (caps.length < 3) return;
+  const sum = caps.reduce(function (a, c) { return a + c.wealth; }, 0);
+  if (sum < 190 || rand() > TUNE.guild) return;
+  caps.sort(function (a, b) { return b.wealth - a.wealth; });
+  const master = caps[0];
+  const g = {
+    id: S.G.length, name: guildName(p), port: p.id, master: master.id,
+    members: new Set(caps.map(function (c) { return c.id; })),
+    treasury: 36, alive: true, day: Math.floor(S.day), state: null,
+    why: 'En ' + p.name + ' unos pocos ya repetían la misma ruta. ' + master.name.split(' ')[0] + ' les puso nombre y caja.'
+  };
+  S.G.push(g);
+  for (const c of caps) c.guild = g.id;
+  if (master.role !== 'líder' && master.role !== 'caudillo') master.role = 'maestre';
+  master.notable = true;
+  log('gremio', 'En ' + pn(p) + ', ' + caps.length + ' capitanes juntan rutas. Maestre: ' + cn(master) + '. Lo llaman ' + gn(g) + '.', { who: [master], place: p.id });
+}
+function tryCompany(g) {
+  const m = S.C[g.master];
+  const port = S.P[g.port];
+  if (!m || !m.alive || !port || port.fac != null) return;
+  if (g.treasury < 240 || m.amb < 0.64 || m.wealth < 80 || S.day - g.day < 12 || rand() > 0.025) return;
+  const oldName = g.name;
+  m.role = 'líder';
+  const why = pick([
+    'Durante ' + Math.max(1, Math.floor(S.day - g.day)) + ' días el gremio cobró ' + port.name + ' como si ya fuera suyo, y al final lo fue.',
+    m.name.split(' ')[0] + ' miró ' + port.name + ', que no tenía bandera, y entendió que un colegio con caja es ya un reino pequeño.',
+    'El puerto no tenía dueño y el gremio sí tenía deudas que cobrar. ' + port.name + ' cambió de nombre una mañana.'
+  ]);
+  const nf = createFaction(polityName(port, m, false), m, port.id, why);
+  nf.treasury += g.treasury;
+  g.treasury = 0;
+  g.state = nf.id;
+  for (const id of g.members) {
+    const c = S.C[id];
+    if (c && c.alive) c.faction = nf.id;
+  }
+  for (const s of S.ships) if (s.alive && s.guild === g.id && s.kind === 'escort') {
+    s.kind = 'patrol';
+    s.fac = nf.id;
+  }
+  log('gremio', esc(oldName) + ' compra ' + pn(port) + '. ' + cn(m) + ' iza bandera: ' + fn(nf) + '. El motivo: ' + why + '.', { who: [m], place: port.id, fac: [nf.id] });
+  g.alive = false;
+}
+function guilds() {
+  for (const p of S.P) tryGuild(p);
+  for (const g of S.G) {
+    if (!g.alive) continue;
+    const port = S.P[g.port];
+    const m = S.C[g.master];
+    if (!port || !m || !m.alive) { g.alive = false; continue; }
+    let risky = false;
+    for (const k in port.risk) if (port.risk[k] > 0.16) risky = true;
+    const has = S.ships.some(function (s) { return s.alive && s.guild === g.id && s.kind === 'escort'; });
+    if (!has && risky && g.treasury > 85 && rand() < 0.12) {
+      g.treasury -= 70;
+      const c = newChar(port.id, { role: 'capitán', wealth: 18, guild: g.id, faction: null, skill: rnd(0.35, 0.9) });
+      g.members.add(c.id);
+      const s = newShip('escort', port.x, port.y, { cap: c.id, guild: g.id, at: port.id, owner: m.id });
+      log('gremio', gn(g) + ' arma ' + esc(s.name) + ' para escoltar. La lleva ' + cn(c) + '.', { who: [c, m], place: port.id });
+    }
+    if (g.treasury > 190 && rand() < 0.03) buyPlant(m, g);
+    tryCompany(g);
+  }
+}
+function buyPlant(c, guild) {
+  let best = null, bv = 0;
+  for (const p of S.P) for (const pl of p.plants) {
+    if (pl.owner === c.id || pl.hp < 1) continue;
+    const t = PLANTS[pl.type];
+    if (t.out == null) continue;
+    const v = price(p, t.out) / GOODS[t.out].base * rnd(0.85, 1.1);
+    if (v > bv) { bv = v; best = { p: p, pl: pl }; }
+  }
+  if (!best || bv < 1.12) return;
+  const cost = 160;
+  if (guild) {
+    if (guild.treasury < cost) return;
+    guild.treasury -= cost;
+  } else {
+    if (c.wealth < cost + 50) return;
+    c.wealth -= cost;
+  }
+  if (best.pl.owner >= 0 && S.C[best.pl.owner] && S.C[best.pl.owner].alive) S.C[best.pl.owner].wealth += cost * 0.8;
+  else {
+    const f = facAlive(best.p.fac);
+    if (f) f.treasury += cost * 0.8;
+  }
+  best.pl.owner = c.id;
+  c.flags.plants = (c.flags.plants || 0) + 1;
+  if (c.role !== 'líder' && c.role !== 'caudillo' && c.role !== 'maestre') c.role = 'magnate';
+  c.notable = true;
+  c.fame += 0.7;
+  const how = guild ? gn(guild) + ' compra, a nombre de ' + cn(c) + ', ' : cn(c) + ' compra ';
+  log('economia', how + 'la ' + PLANTS[best.pl.type].label + ' de ' + pn(best.p) + '.', { who: [c], place: best.p.id });
+}
+
+function peopleActs() {
+  const n = S.C.length;
+  for (let i = 0; i < n; i++) {
+    const c = S.C[i];
+    if (!c.alive) continue;
+    if (c.aim === 'venganza' && c.flags.vendetta == null && S.C.length > 6 && rand() < 0.35) {
+      const pool = [];
+      for (const o of S.C) if (o.alive && o.id !== c.id && (o.notable || o.role === 'líder' || o.role === 'capitán')) pool.push(o);
+      if (pool.length) {
+        const t = pick(pool);
+        c.flags.vendetta = t.id;
+        if (!c.marks) c.marks = [];
+        c.marks.unshift({ day: Math.floor(S.day), text: 'Se propone cobrarle a ' + t.name + '.' });
+      }
+    }
+    if (c.aim === 'venganza' && c.flags.vendetta != null && !c.flags.avenged) {
+      const t = S.C[c.flags.vendetta];
+      if (!t || !t.alive) {
+        c.flags.avenged = 1;
+        log('figura', cn(c) + ' ve cumplido lo que buscaba: ' + (t ? esc(t.name) : 'aquel nombre') + ' ya no está.', { who: [c], place: c.home });
+      }
+    }
+    if (!S.ships.some(function (s) { return s.alive && s.cap === c.id && s.moving; })) c.fear = Math.max(0, (c.fear || 0) - 0.012);
+    const prog = aimProgress(c);
+    const ping = prog >= 1 ? 2 : prog >= 0.5 ? 1 : 0;
+    if (ping > (c.flags.aimPing || 0)) {
+      c.flags.aimPing = ping;
+      if (ping === 2) log('figura', cn(c) + ' llega a donde se había propuesto: ' + aimLabel(c.aim) + '.', { who: [c], place: c.home });
+    }
+    if ((c.bonds || []).length < 4 && rand() < 0.05) {
+      const pool = [];
+      for (const o of S.C) {
+        if (!o.alive || o.id === c.id) continue;
+        if (o.home === c.home || (c.guild != null && o.guild === c.guild)) pool.push(o);
+      }
+      if (pool.length) {
+        const o = pick(pool);
+        const close = 1 - Math.abs((c.loy || 0.5) - (o.loy || 0.5));
+        if (close > 0.45 && c.charm + o.charm > 0.7 && !(c.grudges || []).includes(o.id) && !(o.grudges || []).includes(c.id)) {
+          tie(c, o, 'amigo', 0.16);
+          tie(o, c, 'amigo', 0.12);
+        }
+      }
+    }
+    if (c.wealth > 300 && !c.notable && c.role !== 'líder' && c.role !== 'jefe') {
+      c.notable = true;
+      log('figura', cn(c) + ' empieza a ser alguien: amasa ' + Math.round(c.wealth) + ' cr desde ' + pn(S.P[c.home]) + '.', { who: [c], place: c.home });
+    }
+    const owned = S.ships.filter(function (s) { return s.alive && s.owner === c.id; }).length;
+    const traders = S.ships.filter(function (s) { return s.alive && s.kind === 'trade'; }).length;
+    if ((c.role === 'capitán' || c.role === 'armador' || c.role === 'maestre' || c.role === 'magnate' || c.role === 'carroñero' || c.role === 'rescatista') && c.wealth > 210 && c.amb > 0.46 && owned < 4 && traders < 36 && rand() < 0.035) {
+      const home = S.P[c.home];
+      if (home) {
+        const cost = home.plants.some(function (pl) { return pl.type === 'astillero' && pl.hp >= 1; }) ? 85 : 115;
+        if (c.wealth > cost + 40) {
+          c.wealth -= cost;
+          const hire = newChar(home.id, { role: 'capitán', wealth: 28, employer: c.id, faction: null });
+          if (c.guild != null && S.G[c.guild] && S.G[c.guild].alive) {
+            hire.guild = c.guild;
+            S.G[c.guild].members.add(hire.id);
+          }
+          const s = newShip('trade', home.x, home.y, { cap: hire.id, owner: c.id, at: home.id, fromPort: home.id });
+          if (c.role !== 'líder' && c.role !== 'maestre' && c.role !== 'magnate' && c.role !== 'caudillo') c.role = 'armador';
+          tie(hire, c, 'patron', 0.45);
+          tie(c, hire, 'amigo', 0.2);
+          c.flags.hired = (c.flags.hired || 0) + 1;
+          practice(c, 'mando', 0.02);
+          c.notable = true;
+          log('economia', cn(c) + ' compra ' + esc(s.name) + ' y pone a ' + cn(hire) + ' al mando.', { who: [c, hire], place: home.id });
+        }
+      }
+    }
+    if (c.wealth > 360 && c.greed > 0.34 && !['jefe', 'pirata', 'civil'].includes(c.role) && rand() < 0.028) buyPlant(c, null);
+    if (c.debts && c.debts.length) {
+      const left = [];
+      for (const d of c.debts) {
+        if (d.due > S.day) { left.push(d); continue; }
+        const cr = S.C[d.to];
+        if (!cr || !cr.alive) continue;
+        if (c.wealth >= d.amt) {
+          c.wealth -= d.amt;
+          cr.wealth += d.amt;
+        } else if (cr.cru > 0.52) {
+          const port = S.P[c.home];
+          const ship = S.ships.find(function (s) { return s.alive && (s.cap === c.id || s.owner === c.id); });
+          if (ship) ship.owner = cr.id;
+          c.grudges.push(cr.id);
+          tie(c, cr, 'rival', 0.6);
+          tie(cr, c, 'rival', 0.35);
+          log('politica', cn(cr) + ' aparece en ' + pn(port) + ' con dos armados. ' + cn(c) + ' pierde la nave por una deuda de ' + d.amt + ' cr.', { who: [cr, c], place: c.home });
+        }
+      }
+      c.debts = left;
+    }
+    if (c.wealth < 22 && (c.role === 'capitán' || c.role === 'carroñero') && rand() < 0.01 && c.debts.length < 2) {
+      let lender = null, w = 180;
+      for (const o of S.C) if (o.alive && o.id !== c.id && o.wealth > w && o.greed > 0.45) { w = o.wealth; lender = o; }
+      if (lender) {
+        lender.wealth -= 60;
+        c.wealth += 60;
+        c.debts.push({ to: lender.id, amt: 85, due: S.day + 26 });
+        tie(c, lender, 'deuda', 0.45);
+        if (c.notable || lender.notable) log('economia', cn(lender) + ' le deja 60 cr a ' + cn(c) + '. Lo quiere de vuelta en 26 días.', { who: [lender, c], place: c.home });
+      }
+    }
+    if (c.notable && c.role !== 'líder' && c.role !== 'caudillo' && rand() < 0.0011) {
+      log('figura', 'Muere ' + cn(c) + (c.role ? ', ' + c.role : '') + '.', { who: [c], place: c.home });
+      killChar(c);
+    }
+  }
+}
+function papers() {
+  for (const p of S.P) {
+    const next = [];
+    for (const paper of p.board) {
+      if (paper.done) continue;
+      if (S.day - paper.day < 20) next.push(paper);
+      else if (paper.escrow != null && S.F[paper.escrow] && S.F[paper.escrow].alive) S.F[paper.escrow].treasury += paper.pay;
+    }
+    p.board = next;
+    const food = price(p, 0) / GOODS[0].base;
+    if (food > 1.85 && !p.board.some(function (c) { return c.kind === 'comida'; }) && rand() < 0.12) {
+      const pay = Math.round(price(p, 0) * 7);
+      const f = facAlive(p.fac);
+      if (f && f.treasury < pay) continue;
+      if (f) f.treasury -= pay;
+      p.board.push({ kind: 'comida', pay: pay, day: S.day, escrow: f ? f.id : null, done: false });
+      if (rand() < 0.45) log('comercio', 'En ' + pn(p) + ' clavan un papel: pagan ' + pay + ' cr por comida.', { place: p.id });
+    }
+  }
+}
+function foundSlot() {
+  return S.slots.find(function (sl) { return !S.bases.some(function (b) { return b.alive && b.slot === sl.id; }); }) || null;
+}
+function pirateTick() {
+  for (const b of S.bases) {
+    if (!b.alive) continue;
+    const ch = S.C[b.chief];
+    if (!ch || !ch.alive) { b.alive = false; continue; }
+    const n = S.ships.filter(function (s) { return s.alive && s.kind === 'pirate' && s.base === b.id; }).length;
+    if (ch.wealth > 100 && n < 5 && rand() < 0.08) {
+      ch.wealth -= 55;
+      const cap = newChar(ch.home, { role: 'pirata', wealth: 10, employer: ch.id, faction: null, cru: rnd(0.35, 0.9) });
+      newShip('pirate', b.x, b.y, { cap: cap.id, base: b.id, state: 'home', owner: ch.id });
+    }
+  }
+  const angry = S.P.filter(function (p) { return p.unrest > 0.56; });
+  if (angry.length && rand() < 0.004 * angry.length) {
+    const slot = foundSlot();
+    const p = pick(angry);
+    if (slot && p) {
+      let who = S.C.find(function (c) {
+        return c.alive && c.home === p.id && c.cru > 0.5 && c.amb > 0.5 && c.role !== 'líder' && c.role !== 'jefe' && c.role !== 'caudillo';
+      });
+      if (!who) who = emerge(p, { amb: rnd(0.6, 0.92), cru: rnd(0.55, 0.92), wealth: rnd(8, 24), role: 'jefe', faction: null });
+      const b = { id: S.bases.length, name: slot.name, x: slot.x, y: slot.y, chief: who.id, alive: true, slot: slot.id };
+      S.bases.push(b);
+      who.role = 'jefe';
+      who.notable = true;
+      who.faction = null;
+      for (let i = 0; i < 2; i++) {
+        const cap = newChar(p.id, { role: 'pirata', wealth: 8, employer: who.id, faction: null });
+        newShip('pirate', b.x, b.y, { cap: cap.id, base: b.id, state: 'home', owner: who.id });
+      }
+      log('pirata', cn(who) + ' sale de ' + pn(p) + ' con gente sin sueldo y funda ' + esc(b.name) + '.', { who: [who], place: p.id });
+    }
+  }
+  for (const f of S.F) {
+    if (!f.alive || f.wars.size || f.treasury < 200) continue;
+    for (const b of S.bases) {
+      if (!b.alive) continue;
+      const ch = S.C[b.chief];
+      if (!ch || ch.fame < 1.6 || rand() > 0.004) continue;
+      f.treasury -= 90;
+      if (rand() < 0.55) {
+        b.alive = false;
+        log('guerra', fn(f) + ' arrasa ' + esc(b.name) + '. Cae ' + cn(ch) + '.', { who: [ch, leader(f)], place: nearest(b).id });
+        killChar(ch, leader(f));
+      } else {
+        log('guerra', fn(f) + ' no consigue entrar en ' + esc(b.name) + '.', { who: [ch, leader(f)] });
+      }
+      break;
+    }
+  }
+}
+function distressTick() {
+  for (const s of S.ships) {
+    if (!s.alive || s.kind !== 'trade' || s.distress) continue;
+    if (rand() < TUNE.distress) {
+      s.distress = S.day;
+      s.moving = false;
+      s.task = null;
+      const p = nearest(s);
+      const c = S.C[s.cap];
+      log('rescate', 'Baliza de ' + esc(s.name) + (c ? ', nave de ' + cn(c) : '') + ', a la deriva cerca de ' + pn(p) + '.', { who: c ? [c] : [], place: p.id });
+    }
+  }
+  for (const s of S.ships) {
+    if (!s.alive || !s.distress) continue;
+    if (S.day - s.distress > 15) {
+      const p = nearest(s);
+      const c = S.C[s.cap];
+      s.distress = 0;
+      s.doomed = true;
+      log('rescate', 'La baliza de ' + esc(s.name) + ' se apaga cerca de ' + pn(p) + '. Nadie llegó.', { who: c ? [c] : [], place: p.id });
+      if (c && c.alive) killChar(c);
+      else sink(s, null);
+    }
+  }
+}
+function migrate() {
+  if (S.ships.filter(function (s) { return s.alive && s.kind === 'refugee'; }).length > 4) return;
+  for (const p of S.P) {
+    const food = price(p, 0) / GOODS[0].base;
+    if (food < 2.5 || p.pop < 3.2 || rand() > 0.025) continue;
+    let dest = null, bp = 1e9;
+    for (const q of S.P) {
+      if (q.id === p.id) continue;
+      const pr = price(q, 0);
+      if (pr < bp) { bp = pr; dest = q; }
+    }
+    if (!dest || price(dest, 0) > price(p, 0) * 0.72) continue;
+    const c = emerge(p, { role: 'refugiado', wealth: rnd(6, 18), caut: rnd(0.4, 0.8), faction: null });
+    const people = Math.min(0.7, p.pop * 0.12);
+    p.pop = Math.max(1, p.pop - people);
+    const s = newShip('refugee', p.x, p.y, { cap: c.id, owner: c.id, people: people, from: p.id, at: p.id });
+    s.task = { type: 'flee', dest: dest.id };
+    goTo(s, dest.x, dest.y);
+    log('economia', 'Unas ' + Math.round(people * 1000) + ' personas salen de ' + pn(p) + ' hacia ' + pn(dest) + '. Los lleva ' + cn(c) + '.', { who: [c], place: p.id });
+    break;
+  }
+}
+function refillTraders() {
+  const n = S.ships.filter(function (s) { return s.alive && s.kind === 'trade'; }).length;
+  if (n < 12 && rand() < 0.35) addTrader(pick(S.P));
+}
+
+function moveShip(s, dt) {
+  if (!s.moving) return;
+  if (!s.trail) s.trail = [];
+  if (s._trailT == null || S.day - s._trailT > 0.16) {
+    s._trailT = S.day;
+    s.trail.push({ x: s.x, y: s.y });
+    if (s.trail.length > 42) s.trail.shift();
+  }
+  if (s.goal && willDodge(s) && (s._replan == null || S.day - s._replan > 0.45)) {
+    s._replan = S.day;
+    const threats = threatsFor(s);
+    let bad = lineHits(s.x, s.y, s.tx, s.ty, threats);
+    if (!bad && s.path) {
+      let ax = s.tx, ay = s.ty;
+      for (let i = 1; i < s.path.length; i++) {
+        if (lineHits(ax, ay, s.path[i].x, s.path[i].y, threats)) { bad = true; break; }
+        ax = s.path[i].x;
+        ay = s.path[i].y;
+      }
+    }
+    if (bad) sail(s, s.goal.x, s.goal.y);
+  }
+  if (s.kind === 'pirate' && s.state === 'lurk' && s.prey != null && (s._aim == null || S.day - s._aim > 0.4)) {
+    s._aim = S.day;
+    const prey = S.ships.find(function (o) { return o.id === s.prey && o.alive && (o.cargo || o.kind === 'refugee'); });
+    if (prey) {
+      const dx = prey.tx - prey.x, dy = prey.ty - prey.y;
+      const len = Math.hypot(dx, dy) || 1;
+      const lead = Math.min(0.12, dist(s, prey) * 0.4);
+      sail(s, prey.x + dx / len * lead, prey.y + dy / len * lead);
+    } else s.prey = null;
+  }
+  const sp = (s.kind === 'pirate' ? 0.09 : s.kind === 'skiff' ? 0.052 : s.kind === 'refugee' ? 0.06 : s.kind === 'patrol' ? 0.084 : 0.074) * dt * (0.72 + (s.hull == null ? 1 : s.hull) * 0.28);
+  if (s.hull == null) s.hull = 1;
+  const pilot = craftOf(S.C[s.cap], 'piloto');
+  s.hull = Math.max(0.04, s.hull - dt * 0.0035 * (1 - pilot * 0.55));
+  if (S.C[s.cap]) practice(S.C[s.cap], 'piloto', dt * 0.004);
+  const dx = s.tx - s.x, dy = s.ty - s.y;
+  const d = Math.hypot(dx, dy);
+  if (d <= sp) {
+    s.x = s.tx;
+    s.y = s.ty;
+    if (s.path && s.path.length) s.path.shift();
+    if (s.path && s.path.length) {
+      s.tx = s.path[0].x;
+      s.ty = s.path[0].y;
+      return;
+    }
+    s.moving = false;
+    arrive(s);
+  } else {
+    s.x += dx / d * sp;
+    s.y += dy / d * sp;
+  }
+}
+function arrive(s) {
+  s.moving = false;
+  if (s.distress) return;
+  if (s.kind === 'refugee' && s.task && s.task.type === 'flee') { arriveRefugee(s); return; }
+  if (s.kind === 'trade' || s.kind === 'escort' && s.task) { arriveTrade(s); return; }
+  if (s.kind === 'trade') { arriveTrade(s); return; }
+  if (s.kind === 'pirate') { s.timer = s.state === 'lurk' ? rnd(4.5, 9) : rnd(0.6, 1.6); return; }
+  if (s.kind === 'patrol' || s.kind === 'escort' || s.kind === 'skiff') {
+    s.at = nearest(s).id;
+    s.timer = rnd(0.45, 1.5);
+    if (s.kind === 'skiff') {
+      const band = S.B[s.band];
+      const home = band ? S.P[band.home] : null;
+      if (band && band.alive && home && dist(s, home) < 0.05) sabotage(band, home);
+    }
+    return;
+  }
+  s.timer = 1;
+}
+function arriveRefugee(s) {
+  const c = S.C[s.cap];
+  const dest = S.P[s.task.dest];
+  if (dest) dest.pop = Math.min(18, dest.pop + (s.people || 0.4));
+  if (c && c.alive) {
+    c.home = dest ? dest.id : c.home;
+    c.role = 'capitán';
+    c.wealth += 12;
+  }
+  s.kind = 'trade';
+  s.people = 0;
+  s.at = dest ? dest.id : nearest(s).id;
+  s.fromPort = s.at;
+  s.task = null;
+  s.timer = rnd(0.3, 1);
+}
+function sellCargo(s, p) {
+  const c = S.C[s.cap];
+  if (!c || !c.alive || !s.cargo) return;
+  const g = s.cargo.g, q = s.cargo.q;
+  const pr = price(p, g);
+  const deal = haggle(c);
+  const rev = pr * q * 0.92 * deal;
+  practice(c, 'trato', 0.012);
+  if (!c.seen) c.seen = {};
+  c.seen[p.id] = 1;
+  p.stock[g] += q;
+  const f = facAlive(p.fac);
+  const taxR = f ? 0.04 + 0.1 * style(f).repress : 0.02;
+  const tax = rev * taxR;
+  if (f) f.treasury += tax;
+  let gain = rev - tax;
+  if (s.lien > 0 && gain > 0) {
+    const pay = Math.min(s.lien, Math.max(0, gain - 48));
+    gain -= pay;
+    s.lien -= pay;
+    const owed = s.lienPort != null ? S.P[s.lienPort] : null;
+    const owedF = owed && facAlive(owed.fac);
+    if (owedF) owedF.treasury += pay;
+    if (s.lien <= 0.5) { s.lien = 0; s.lienPort = null; }
+  }
+  if (c.guild != null) {
+    const gld = S.G[c.guild];
+    if (gld && gld.alive) {
+      const due = gain * 0.05;
+      gld.treasury += due;
+      gain -= due;
+    }
+  }
+  if (c.employer != null) {
+    const e = S.C[c.employer];
+    if (e && e.alive) {
+      const cut = gain * 0.25;
+      e.wealth += cut;
+      gain -= cut;
+    }
+  }
+  c.wealth += gain;
+  const profit = gain - (s.cargo.cost || 0);
+  if (g === 0) {
+    const paper = (p.board || []).find(function (x) { return x.kind === 'comida' && !x.done; });
+    if (paper) {
+      paper.done = true;
+      c.wealth += paper.pay;
+      c.fame += 0.2;
+      log('comercio', cn(c) + ' cobra el papel de comida en ' + pn(p) + ': ' + paper.pay + ' cr.', { who: [c], place: p.id });
+    }
+  }
+  if (pr > GOODS[g].base * 2.35 && profit > 60) {
+    c.fame += 0.45;
+    c.flags.hot = (c.flags.hot || 0) + 1;
+    if (c.flags.hot === 2) {
+      c.notable = true;
+      log('comercio', cn(c) + ' hace fortuna con ' + GOODS[g].id + ' en ' + pn(p) + ', a ' + (pr / GOODS[g].base).toFixed(1) + '×.', { who: [c], place: p.id });
+    }
+  }
+  s.cargo = null;
+  c.broke = 0;
+  publish(p);
+}
+function arriveTrade(s) {
+  const c = S.C[s.cap];
+  if (!c || !c.alive) { s.alive = false; return; }
+  if (s.kind === 'escort' && (s.cover != null || (s.task && s.task.type === 'cover'))) {
+    s.at = nearest(s).id;
+    const client = s.cover != null ? S.ships.find(function (o) { return o.id === s.cover; }) : null;
+    if (!client || !client.alive || !client.moving) s.cover = null;
+    s.task = null;
+    s.timer = rnd(0.4, 1.1);
+    return;
+  }
+  if (s.task && s.task.type === 'rescue') {
+    const o = S.ships.find(function (x) { return x.id === s.task.id && x.alive && x.distress; });
+    if (o && dist(s, o) < 0.06) {
+      const pay = 28 + irand(55);
+      const v = S.C[o.cap];
+      o.distress = 0;
+      o.timer = rnd(0.3, 0.8);
+      o.rescuer = null;
+      c.wealth += pay;
+      c.fame += 0.75;
+      c.saves = (c.saves || 0) + 1;
+      let extra = '';
+      if (c.saves >= 2 && (c.role === 'capitán' || c.role === 'armador' || c.role === 'carroñero')) {
+        c.role = 'rescatista';
+        c.notable = true;
+        extra = ' A partir de aquí le llaman cuando hay una baliza.';
+      }
+      log('rescate', cn(c) + ', con ' + esc(s.name) + ', responde a ' + esc(o.name) + '. ' + (v && v.alive ? cn(v) : 'La tripulación') + ' paga ' + pay + ' cr.' + extra, {
+        who: [c, v], place: nearest(s).id
+      });
+    }
+    s.task = null;
+    s.at = nearest(s).id;
+    s.timer = rnd(0.3, 0.9);
+    return;
+  }
+  if (s.task && s.task.type === 'hunt') {
+    doHunt(s);
+    s.task = null;
+    s.at = nearest(s).id;
+    s.timer = rnd(0.4, 1.1);
+    return;
+  }
+  if (s.task && s.task.type === 'scav') {
+    const w = S.wrecks.find(function (x) { return x.id === s.task.wid; });
+    if (w && w.parts > 0) {
+      const q = Math.min(6, w.parts);
+      w.parts -= q;
+      s.cargo = { g: 3, q: q, cost: 0 };
+      if (c.role === 'capitán') c.role = 'carroñero';
+      c.fame += 0.2;
+      if (!c.flags.scav) {
+        c.flags.scav = 1;
+        log('carroña', cn(c) + ' empieza a desarmar pecios (' + esc(w.origin) + ').', { who: [c], place: nearest(s).id });
+      }
+    }
+    let bp = nearest(s), bv = -1e9;
+    const here = nearest(s);
+    for (const p of S.P) {
+      const known = here.quote[p.id + ':3'];
+      const v = (known == null ? GOODS[3].base : known) - dist(s, p) * 18;
+      if (v > bv) { bv = v; bp = p; }
+    }
+    s.task = { type: 'trade', dest: bp.id };
+    s.smuggle = false;
+    goTo(s, bp.x, bp.y);
+    return;
+  }
+  const dest = s.task && s.task.dest != null ? S.P[s.task.dest] : nearest(s);
+  if (s.cargo && dest) {
+    if (s.smuggle && dest.fac != null && S.ships.some(function (x) { return x.alive && x.kind === 'patrol' && x.fac === dest.fac && dist(x, dest) < 0.07; }) && rand() < 0.42) {
+      s.cargo = null;
+      c.wealth = Math.max(0, c.wealth - 18);
+      c.flags.smuggle = (c.flags.smuggle || 0) + 1;
+      if (c.flags.smuggle >= 2 && c.role === 'capitán') c.role = 'contrabandista';
+      log('comercio', 'En ' + pn(dest) + ' paran a ' + cn(c) + ': la carga no lleva papeles.', { who: [c], place: dest.id });
+    } else sellCargo(s, dest);
+  }
+  if (s.fromPort != null && dest) exchangeInfo(S.P[s.fromPort], dest);
+  s.at = dest ? dest.id : nearest(s).id;
+  s.fromPort = s.at;
+  s.task = null;
+  s.route = null;
+  s.smuggle = false;
+  tank(s, dest || S.P[s.at], c);
+  s.timer = rnd(0.25, 1.05);
+}
+function doHunt(s) {
+  const f = S.F[s.task.fid];
+  const c = S.C[s.cap];
+  const l = f && leader(f);
+  const here = nearest(s);
+  const cap = f ? S.P[f.capital] : null;
+  if (!c || !f || !f.alive || !l || !cap || dist(here, cap) > 0.08) return;
+  const chance = 0.16 + c.skill * 0.42 - style(f).repress * 0.22;
+  if (rand() < chance) {
+    const pay = f.bounty ? f.bounty.pay : 160;
+    c.wealth += pay;
+    c.fame += 2.6;
+    c.role = 'cazarrecompensas';
+    c.notable = true;
+    f.bounty = null;
+    log('politica', cn(c) + ' cobra la cabeza de ' + cn(l) + ' en ' + pn(cap) + '.', { who: [c, l], place: cap.id });
+    killChar(l, c);
+  } else if (rand() < 0.38) {
+    log('politica', cn(c) + ' intenta llegar a ' + cn(l) + ' y no sale de ' + pn(cap) + '.', { who: [c, l], place: cap.id });
+    s.doomed = true;
+    killChar(c, l);
+  } else {
+    c.grudges.push(l.id);
+    log('politica', cn(c) + ' falla contra ' + cn(l) + ' y se va de ' + pn(cap) + '.', { who: [c, l], place: cap.id });
+  }
+}
+function findBeacon(s) {
+  let best = null, bd = 0.3;
+  for (const o of S.ships) {
+    if (!o.alive || !o.distress || o.id === s.id) continue;
+    if (o.rescuer != null) {
+      const r = S.ships.find(function (x) { return x.id === o.rescuer && x.alive; });
+      if (!r) o.rescuer = null;
+      else if (o.rescuer !== s.id) continue;
+    }
+    const d = dist(s, o);
+    if (d < bd) { bd = d; best = o; }
+  }
+  return best;
+}
+function wantsRescue(c) {
+  if (!c || c.cru > 0.72) return false;
+  if ((c.fear || 0) > 0.75 && (c.life || 0.5) > 0.6) return false;
+  if (c.aim === 'refugio' || c.aim === 'honor' || c.aim === 'fama') return true;
+  if (c.aim === 'vida' || c.aim === 'dinero' && (c.fear || 0) > 0.5) return false;
+  if (c.role === 'rescatista') return true;
+  return c.caut < 0.78 && (c.charm > 0.46 || c.greed < 0.45);
+}
+function findHunt(c, here) {
+  if (!c) return null;
+  if (c.aim === 'vida' || c.aim === 'paz' || c.aim === 'honor') return null;
+  if ((c.life || 0.5) > 0.75 && (c.fear || 0) > 0.45) return null;
+  const hungry = c.aim === 'dinero' || c.aim === 'fama' || c.aim === 'sangre' || c.aim === 'venganza';
+  if (!hungry && (c.greed < 0.6 || c.caut > 0.46)) return null;
+  if (c.role === 'líder' || c.role === 'caudillo' || c.role === 'jefe') return null;
+  for (const f of S.F) {
+    if (!f.alive || !f.bounty) continue;
+    if (!knows(here, function (n) { return n.bounty === f.id; })) continue;
+    return f;
+  }
+  return null;
+}
+function joinPirates(c, s) {
+  let b = S.bases.find(function (x) { return x.alive; });
+  let founded = false;
+  if (!b) {
+    const slot = foundSlot();
+    if (!slot) return false;
+    b = { id: S.bases.length, name: slot.name, x: slot.x, y: slot.y, chief: c.id, alive: true, slot: slot.id };
+    S.bases.push(b);
+    c.role = 'jefe';
+    c.notable = true;
+    c.fame += 1;
+    founded = true;
+  }
+  s.kind = 'pirate';
+  s.base = b.id;
+  s.fac = null;
+  s.guild = null;
+  s.owner = b.chief;
+  s.state = 'home';
+  s.cargo = null;
+  s.task = null;
+  s.distress = 0;
+  if (!founded) c.role = 'pirata';
+  c.faction = null;
+  const chief = S.C[b.chief];
+  log('pirata', founded
+    ? cn(c) + ' deja el comercio y abre ' + esc(b.name) + '.'
+    : cn(c) + ' ya no cubre el flete y se va con ' + (chief ? cn(chief) : esc(b.name)) + '.',
+  { who: [c, chief], place: c.home });
+  goTo(s, b.x, b.y);
+  return true;
+}
+function exportFloor(p, g) {
+  const makes = p.plants.some(function (pl) { return pl.hp >= 1 && PLANTS[pl.type].out === g; });
+  return p.pop * NEED[g] * (makes ? 6 : 20);
+}
+function fuelQty(L) { return 0.45 + L * 3.4; }
+function fuelPlan(s, here, qty) {
+  if (s.bunker == null) s.bunker = 3.4;
+  if (s.bunkerPx == null) s.bunkerPx = GOODS[2].base;
+  const px = price(here, 2);
+  const reserve = exportFloor(here, 2);
+  let left = qty;
+  let bill = 0;
+  let fromPort = 0;
+  if (px <= GOODS[2].base * 3.2) {
+    const take = Math.min(left, Math.max(0, here.stock[2] - reserve));
+    fromPort += take;
+    bill += take * px;
+    left -= take;
+  }
+  const bunk = Math.min(s.bunker, left);
+  bill += bunk * s.bunkerPx;
+  left -= bunk;
+  if (left > 0.05) {
+    const take = Math.min(left, Math.max(0, here.stock[2] - fromPort));
+    fromPort += take;
+    bill += take * px;
+    left -= take;
+  }
+  if (left > 0.25) return null;
+  return { bill: bill, fromPort: fromPort, fromBunker: bunk };
+}
+function payFuel(s, here, plan) {
+  if (!plan) return false;
+  here.stock[2] = Math.max(0, here.stock[2] - plan.fromPort);
+  s.bunker = Math.max(0, s.bunker - plan.fromBunker);
+  return true;
+}
+function repairPlan(s, here, L) {
+  const hull = s.hull == null ? 1 : s.hull;
+  const yard = here.plants.some(function (pl) { return pl.type === 'astillero' && pl.hp >= 1; });
+  const rate = yard ? 240 : 520;
+  const missing = Math.max(0, 1 - hull);
+  const keep = 0.03 + L * 0.11;
+  return { bill: (missing + keep) * rate, missing: missing };
+}
+function tank(s, p, c) {
+  if (!p || !c || !c.alive) return;
+  if (s.bunker == null) s.bunker = 0;
+  if (s.bunkerPx == null) s.bunkerPx = GOODS[2].base;
+  const room = 5.2 - s.bunker;
+  if (room < 0.35) return;
+  const px = price(p, 2);
+  if (px > GOODS[2].base * 2.6) return;
+  const q = Math.min(room, p.stock[2] - exportFloor(p, 2));
+  const bill = q * px;
+  if (q < 0.3 || c.wealth < bill + 6) return;
+  p.stock[2] -= q;
+  c.wealth -= bill;
+  s.bunkerPx = (s.bunker * s.bunkerPx + q * px) / (s.bunker + q);
+  s.bunker += q;
+}
+function hireEscort(client, here, dest, fee) {
+  const k = key(here.id, dest.id);
+  let e = null;
+  for (const o of S.ships) {
+    if (!o.alive || o.kind !== 'escort' || o.moving || o.cover != null) continue;
+    if (dist(o, here) < 0.09) { e = o; break; }
+  }
+  const hired = S.ships.filter(function (o) { return o.alive && o.kind === 'escort' && o.cover != null; }).length;
+  if (!e && hired < 5) {
+    const cap = newChar(here.id, { role: 'escolta', wealth: 6, caut: rnd(0.35, 0.75) });
+    e = newShip('escort', here.x, here.y, { cap: cap.id, at: here.id, hull: rnd(0.72, 0.96) });
+  }
+  if (e) {
+    const cap = S.C[e.cap];
+    if (cap && cap.alive) cap.wealth += fee * 0.65;
+    e.cover = client.id;
+    e.route = k;
+    e.task = { type: 'cover', dest: dest.id };
+    goTo(e, dest.x, dest.y);
+    if (rand() < 0.4) {
+      log('comercio', cn(S.C[client.cap]) + ' contrata escolta hasta ' + pn(dest) + ' por ' + Math.round(fee) + ' cr.', { who: [S.C[client.cap], cap], place: here.id });
+    }
+    return;
+  }
+  S.watch[k] = (S.watch[k] || 0) + 2.5;
+}
+function seekSupply(s, here, c, floorScore) {
+  let best = null, bv = 0;
+  const deal = haggle(c);
+  for (const src of S.P) {
+    if (src.id === here.id) continue;
+    const L = dist(here, src);
+    if (L > 1.05 || L < 0.02) continue;
+    const known = L < 1.05 || (c.seen && c.seen[src.id]);
+    for (let g = 0; g < 4; g++) {
+      let srcPx = here.quote[src.id + ':' + g];
+      if (known) srcPx = price(src, g);
+      if (srcPx == null) continue;
+      const floor = Math.max(needStock(src, g) * 0.55, exportFloor(src, g));
+      const avail = src.stock[g] - floor;
+      if (avail < 4) continue;
+      const back = price(here, g);
+      const q = Math.min(10, avail);
+      const fuel = fuelPlan(s, here, fuelQty(L));
+      if (!fuel) continue;
+      const fix = repairPlan(s, here, L * 2);
+      const margin = (back * 0.9 * deal - srcPx) * q - fuel.bill * 2 - fix.bill - (s.lien || 0);
+      if (!(margin > 0)) continue;
+      let score = back / GOODS[g].base;
+      score += ((s.id * 5 + g * 3) % 9) * 0.25;
+      if (score > bv) { bv = score; best = { src: src, fuel: fuel, fix: fix, L: L }; }
+    }
+  }
+  if (!best || bv <= floorScore) return false;
+  if (!payFuel(s, here, best.fuel)) return false;
+  let due = best.fuel.bill + best.fix.bill * 0.5;
+  const payNow = Math.min(Math.max(0, c.wealth), due);
+  c.wealth -= payNow;
+  due -= payNow;
+  if (due > 0.5) {
+    s.lien = (s.lien || 0) + due;
+    s.lienPort = here.id;
+  }
+  s.hull = Math.min(1, (s.hull == null ? 1 : s.hull) + best.fix.missing);
+  s.lastBill = { fuel: best.fuel.bill, repair: best.fix.bill * 0.5, escort: 0, day: Math.floor(S.day) };
+  s.task = { type: 'seek', dest: best.src.id };
+  s.fromPort = here.id;
+  s.route = key(here.id, best.src.id);
+  goTo(s, best.src.x, best.src.y);
+  return true;
+}
+function planTrader(s) {
+  const c = S.C[s.cap];
+  if (!c || !c.alive) { s.alive = false; return; }
+  if (s.at == null) s.at = nearest(s).id;
+  const here = S.P[s.at];
+  if (!here) { s.timer = 1; return; }
+  tank(s, here, c);
+  if (!s.cargo) {
+    const beacon = findBeacon(s);
+    if (beacon && wantsRescue(c) && rand() < (c.role === 'rescatista' ? 0.9 : 0.62)) {
+      beacon.rescuer = s.id;
+      s.task = { type: 'rescue', id: beacon.id };
+      goTo(s, beacon.x, beacon.y);
+      return;
+    }
+    const hunt = findHunt(c, here);
+    if (hunt && rand() < 0.45) {
+      s.task = { type: 'hunt', fid: hunt.id };
+      const cap = S.P[hunt.capital];
+      if (cap) { goTo(s, cap.x, cap.y); return; }
+    }
+    if (c.greed > 0.5 && c.caut < 0.58 && S.wrecks.length && rand() < 0.45) {
+      let best = null, bd = 0.5;
+      for (const w of S.wrecks) {
+        if (w.parts < 2) continue;
+        const d = dist(here, w);
+        if (d < bd) { bd = d; best = w; }
+      }
+      if (best) {
+        s.task = { type: 'scav', wid: best.id };
+        goTo(s, best.x, best.y);
+        return;
+      }
+    }
+  }
+  let best = null, bv = 0;
+  const threats = threatsFor(s);
+  const deal = haggle(c);
+  for (let g = 0; g < 4; g++) {
+    const buy = price(here, g);
+    const floor = Math.max(needStock(here, g) * 0.55, exportFloor(here, g));
+    const avail = here.stock[g] - floor;
+    if (avail < 2.4) continue;
+    for (const d of S.P) {
+      if (d.id === here.id) continue;
+      const L = dist(here, d);
+      if (L > 1.05 || L < 0.02) continue;
+      let sell = here.quote[d.id + ':' + g];
+      if (L < 1.05 || (c.seen && c.seen[d.id])) sell = price(d, g);
+      if (sell == null) continue;
+      const blocked = hostile(here.fac, d.fac);
+      if (blocked && c.caut > 0.52) continue;
+      const fuel = fuelPlan(s, here, fuelQty(L));
+      if (!fuel) continue;
+      const fix = repairPlan(s, here, L);
+      const routeK = key(here.id, d.id);
+      const risk = riskAt(here, routeK, c);
+      const hot = risk > 0.1 || lineHits(here.x, here.y, d.x, d.y, threats) || (c.caut > 0.62 && L > 0.22);
+      const escortFee = hot ? 18 + L * 46 + risk * 32 : 0;
+      const q = Math.min(10, avail, Math.max(c.wealth, 36) / Math.max(0.2, buy));
+      if (q < 2.4) continue;
+      const margin = (sell * 0.9 * deal - buy) * q - (s.lien || 0);
+      let riskPen = risk * (q * buy + 28) * (0.22 + c.caut * 1.2);
+      if (hot) riskPen += 10 + c.caut * 28;
+      const bare = margin - fuel.bill - fix.bill - riskPen;
+      const covered = margin - fuel.bill - fix.bill - escortFee - riskPen * 0.28;
+      let money = bare;
+      let hire = false;
+      if (hot && escortFee > 0 && covered > bare) { money = covered; hire = true; }
+      if (!(money > 0)) continue;
+      let value = money;
+      if (c.aim === 'dinero' || c.aim === 'mesa' || c.aim === 'flota') value *= 1.12;
+      if (c.aim === 'mapa' && !(c.seen && c.seen[d.id])) value += 14;
+      if (c.aim === 'vida' || (c.fear || 0) > 0.6) value -= ((c.life || 0.5) + (c.fear || 0)) * 24;
+      if (blocked) value *= 0.85;
+      if (allied(here.fac, d.fac)) value += 8;
+      if (!(value > 0)) continue;
+      let score = sell / GOODS[g].base;
+      if (c.aim === 'dinero' || c.aim === 'mesa' || c.aim === 'flota') score += Math.min(2, money / 4000);
+      score += ((s.id * 5 + g * 3) % 9) * 0.25;
+      if (score > bv) {
+        bv = score;
+        best = { d: d, g: g, q: q, buy: buy, blocked: blocked, fuel: fuel, fix: fix, hire: hire, escortFee: hire ? escortFee : 0 };
+      }
+    }
+  }
+  if (!s.cargo && seekSupply(s, here, c, best ? bv : 0)) return;
+  if (!best) {
+    c.broke = (c.broke || 0) + 1;
+    if (c.broke > 14 && !s.cargo && c.cru > 0.48 && c.role !== 'jefe' && c.role !== 'líder') {
+      if (joinPirates(c, s)) return;
+    }
+    s.timer = rnd(0.7, 1.8);
+    return;
+  }
+  const cost = best.q * best.buy;
+  if (!payFuel(s, here, best.fuel)) { s.timer = rnd(0.6, 1.4); return; }
+  const short = Math.max(0, cost - c.wealth);
+  c.wealth = Math.max(0, c.wealth - cost);
+  let due = best.fuel.bill + best.fix.bill + (best.escortFee || 0) + short;
+  const payNow = Math.min(Math.max(0, c.wealth), due);
+  c.wealth -= payNow;
+  due -= payNow;
+  if (due > 0.5) {
+    s.lien = (s.lien || 0) + due;
+    s.lienPort = here.id;
+  }
+  s.hull = 1;
+  if (best.hire && best.escortFee > 0) hireEscort(s, here, best.d, best.escortFee);
+  s.lastBill = { fuel: best.fuel.bill, repair: best.fix.bill, escort: best.escortFee || 0, day: Math.floor(S.day) };
+  c.broke = 0;
+  here.stock[best.g] = Math.max(0, here.stock[best.g] - best.q);
+  s.cargo = { g: best.g, q: best.q, cost: cost };
+  s.smuggle = !!best.blocked;
+  s.fromPort = here.id;
+  const k = key(here.id, best.d.id);
+  s.route = k;
+  S.traffic[k] = (S.traffic[k] || 0) + cost;
+  s.task = { type: 'trade', dest: best.d.id };
+  goTo(s, best.d.x, best.d.y);
+}
+function planPatrol(s) {
+  const f = S.F[s.fac];
+  const capP = S.C[s.cap];
+  if (capP && capP.alive && capP.aim !== 'lealtad' && capP.aim !== 'sangre' && (capP.fear || 0) > 0.72 && (capP.life || 0) > 0.55) {
+    s.kind = 'trade';
+    s.fac = null;
+    capP.faction = null;
+    capP.role = 'capitán';
+    capP.fear = Math.max(0, capP.fear - 0.08);
+    log('politica', cn(capP) + ' deja la patrulla. El miedo le puede al sueldo.', { who: [capP], place: capP.home });
+    s.timer = 0.5;
+    return;
+  }
+  if (!f || !f.alive) { s.kind = 'trade'; s.fac = null; s.timer = 0.4; return; }
+  const own = S.P.filter(function (p) { return p.fac === f.id; });
+  if (!own.length) { s.alive = false; return; }
+  let pir = null, pd = 0.34;
+  for (const o of S.ships) {
+    if (!o.alive || o.kind !== 'pirate') continue;
+    const d = dist(s, o);
+    const nearOwn = own.some(function (p) { return dist(p, o) < 0.24; });
+    if (nearOwn || d < 0.2) {
+      if (d < pd) { pd = d; pir = o; }
+    }
+  }
+  if (pir && rand() < 0.72) {
+    s.route = null;
+    goTo(s, pir.x, pir.y);
+    return;
+  }
+  const here = nearest(s);
+  const band = S.B.find(function (b) { return b.alive && own.some(function (p) { return p.id === b.home; }); });
+  if (band && rand() < 0.7) {
+    const p = S.P[band.home];
+    s.route = key(here.id, p.id);
+    S.watch[s.route] = (S.watch[s.route] || 0) + 1;
+    goTo(s, p.x, p.y);
+    return;
+  }
+  let best = pick(own), bv = -1;
+  for (const p of own) {
+    if (p.id === here.id) continue;
+    const k = key(here.id, p.id);
+    const v = (here.risk[k] || 0) * 2 + (S.traffic[k] || 0) / 700 + rand() * 0.25;
+    if (v > bv) { bv = v; best = p; }
+  }
+  s.route = key(here.id, best.id);
+  S.watch[s.route] = (S.watch[s.route] || 0) + 1;
+  goTo(s, best.x + rnd(-0.012, 0.012), best.y + rnd(-0.01, 0.01));
+}
+function planPirate(s) {
+  const b = S.bases[s.base];
+  if (!b || !b.alive) { s.alive = false; return; }
+  let best = null, bv = 0;
+  for (const o of S.ships) {
+    if (!o.alive || o.id === s.id) continue;
+    if (o.kind !== 'trade' && o.kind !== 'refugee') continue;
+    if (!o.cargo && o.kind !== 'refugee') continue;
+    const d = dist(b, o);
+    if (d > 0.68) continue;
+    const guarded = S.ships.some(function (p) {
+      return p.alive && (p.kind === 'patrol' || p.kind === 'escort') && dist(p, o) < 0.08;
+    });
+    const rich = o.cargo ? Math.max(8, o.cargo.q * 6) : 14;
+    const v = rich / (0.06 + d) * (guarded ? 0.38 : 1) * rnd(0.75, 1.25);
+    if (v > bv) { bv = v; best = o; }
+  }
+  if (!best || bv < 16) {
+    s.prey = null;
+    s.route = null;
+    if (dist(s, b) > 0.05) { s.state = 'home'; goTo(s, b.x, b.y); return; }
+    s.state = 'home';
+    s.timer = rnd(0.7, 2);
+    return;
+  }
+  s.state = 'lurk';
+  s.prey = best.id;
+  s.route = best.route || null;
+  const dx = best.tx - best.x, dy = best.ty - best.y;
+  const len = Math.hypot(dx, dy) || 1;
+  const lead = Math.min(0.14, dist(s, best) * 0.4);
+  goTo(s, best.x + dx / len * lead, best.y + dy / len * lead);
+}
+function planEscort(s) {
+  if (s.cover != null) {
+    const client = S.ships.find(function (o) { return o.id === s.cover; });
+    if (!client || !client.alive || !client.moving) { s.cover = null; s.timer = 0.45; return; }
+    s.route = client.route;
+    const gx = client.goal ? client.goal.x : client.x;
+    const gy = client.goal ? client.goal.y : client.y;
+    goTo(s, gx, gy);
+    return;
+  }
+  const g = S.G[s.guild];
+  if (!g || !g.alive) { s.kind = 'trade'; s.guild = null; s.timer = 0.3; return; }
+  const mate = S.ships.find(function (o) {
+    return o.alive && o.moving && o.kind === 'trade' && S.C[o.cap] && S.C[o.cap].guild === g.id;
+  });
+  if (mate) {
+    s.route = mate.route;
+    const gx = mate.goal ? mate.goal.x : mate.x;
+    const gy = mate.goal ? mate.goal.y : mate.y;
+    goTo(s, gx, gy);
+    return;
+  }
+  const port = S.P[g.port];
+  goTo(s, port.x + rnd(-0.02, 0.02), port.y + rnd(-0.016, 0.016));
+}
+function planSkiff(s) {
+  const band = S.B[s.band];
+  if (!band || !band.alive) { s.alive = false; return; }
+  const home = S.P[band.home];
+  goTo(s, home.x + rnd(-0.03, 0.03), home.y + rnd(-0.024, 0.024));
+}
+function mend(s) {
+  if (s.hull == null) s.hull = 1;
+  if (s.hull > 0.92) return;
+  const p = s.at != null ? S.P[s.at] : nearest(s);
+  const c = S.C[s.cap];
+  const yard = p && p.plants.some(function (pl) { return pl.type === 'astillero' && pl.hp >= 1; });
+  const rate = yard ? 240 : 520;
+  const missing = Math.max(0, 1 - s.hull);
+  const bill = missing * rate;
+  if (c && c.alive && c.wealth >= bill) { c.wealth -= bill; s.hull = 1; return; }
+  const f = s.fac != null ? S.F[s.fac] : null;
+  if (f && f.alive && f.treasury >= bill) { f.treasury -= bill; s.hull = 1; return; }
+  const purse = c && c.alive ? c.wealth : 0;
+  if (purse > 12) {
+    const fix = Math.min(missing, (purse - 8) / rate);
+    if (fix > 0) { c.wealth -= fix * rate; s.hull += fix; }
+  }
+}
+function pursueAim(s) {
+  const c = S.C[s.cap];
+  if (!c || !c.alive || s.cargo) return false;
+  if (c.aim === 'venganza') {
+    if (c.flags.vendetta == null) return false;
+    const t = S.C[c.flags.vendetta];
+    if (!t || !t.alive) { c.flags.avenged = 1; return false; }
+    if (rand() < 0.4) {
+      const home = S.P[t.home];
+      const ship = S.ships.find(function (o) { return o.alive && o.cap === t.id; });
+      const x = ship ? ship.x : home ? home.x : s.x;
+      const y = ship ? ship.y : home ? home.y : s.y;
+      goTo(s, x, y);
+      return true;
+    }
+  }
+  if (c.aim === 'mapa' && rand() < 0.45) {
+    let best = null;
+    for (const p of S.P) if (!c.seen || !c.seen[p.id]) { best = p; break; }
+    if (best) { goTo(s, best.x, best.y); return true; }
+  }
+  if ((c.aim === 'libertad' || c.aim === 'miedo') && c.faction != null && c.role === 'capitán' && rand() < 0.04) {
+    c.faction = null;
+    s.fac = null;
+  }
+  return false;
+}
+function plan(s) {
+  if (!s.alive || s.distress) return;
+  if (s.hull == null) s.hull = 1;
+  const c0 = S.C[s.cap];
+  const need = c0 && c0.aim === 'vida' ? 0.78 : 0.45;
+  if (s.kind !== 'trade' && s.kind !== 'refugee' && s.hull < need && s.at != null) { mend(s); s.timer = 0.7; return; }
+  if (pursueAim(s)) return;
+  if (s.kind === 'trade' || s.kind === 'refugee') planTrader(s);
+  else if (s.kind === 'patrol') planPatrol(s);
+  else if (s.kind === 'pirate') planPirate(s);
+  else if (s.kind === 'escort') planEscort(s);
+  else if (s.kind === 'skiff') planSkiff(s);
+  if (!s.moving && s.timer <= 0) s.timer = rnd(0.6, 1.4);
+}
+function rob(pir, victim) {
+  const base = S.bases[pir.base];
+  const chief = base ? S.C[base.chief] : null;
+  const cap = S.C[victim.cap];
+  if (!victim.cargo && victim.kind !== 'refugee') return;
+  const route = victim.route;
+  const watch = route ? (S.watch[route] || 0) : 0;
+  const escort = S.ships.some(function (s) {
+    return s.alive && s.kind === 'escort' && s.route === route && dist(s, victim) < 0.07;
+  });
+  let pr = 0.52 - Math.min(0.3, watch * 0.08) - ((cap && cap.caut) || 0) * 0.12;
+  if (escort) pr -= 0.25;
+  if (victim.kind === 'refugee') pr += 0.08;
+  const port = nearest(victim);
+  const parts = route ? route.split('-').map(Number) : null;
+  const where = parts && S.P[parts[0]] && S.P[parts[1]] ? pn(S.P[parts[0]]) + '–' + pn(S.P[parts[1]]) : 'cerca de ' + pn(port);
+  if (rand() > pr) return;
+  const loot = victim.cargo ? victim.cargo.cost * 0.75 + 15 : 20;
+  if (chief && chief.alive) { chief.wealth += loot; chief.fame += 0.28; }
+  S.scares.push({ x: victim.x, y: victim.y, until: S.day + 22 });
+  if (S.scares.length > 28) S.scares.shift();
+  const bite = (0.18 + rand() * 0.28) * (1 + craftOf(chief, 'combate'));
+  const sunk = hurt(victim, bite, chief);
+  if (victim.alive) victim.cargo = null;
+  const left = victim.alive ? Math.round(victim.hull * 100) : 0;
+  log('pirata', (base ? 'Desde ' + esc(base.name) + ', ' : '') + (sunk ? 'dejan inservible ' : 'abren el casco de ') + esc(victim.name) + (cap ? ' (' + cn(cap) + ')' : '') + ' en ' + where + '. Queda al ' + left + '%.', {
+    who: [cap, chief], place: port.id, route: route, risk: route ? (sunk ? 0.4 : 0.3) : 0
+  });
+  if (chief && chief.alive && sunk) chief.kills = (chief.kills || 0) + 1;
+  if (chief && chief.fame > 2.2) chief.notable = true;
+}
+function clash(a, b) {
+  if (!a.alive || !b.alive) return;
+  const ca = S.C[a.cap], cb = S.C[b.cap];
+  const port = nearest(a);
+  function wantsOut(me, myC) {
+    if (!myC || !me.alive) return 0;
+    let w = (myC.life || 0.5) * 0.5 + (myC.fear || 0) * 0.45;
+    if (myC.aim === 'vida') w += 0.2;
+    if (myC.aim === 'honor' || myC.aim === 'sangre' || myC.aim === 'lealtad') w -= 0.28;
+    if ((me.hull == null ? 1 : me.hull) < 0.4) w += 0.2;
+    return w;
+  }
+  function slip(me, them, myC, theirC) {
+    if (!me.alive || wantsOut(me, myC) < 0.48) return false;
+    const chance = clamp(0.12 + wantsOut(me, myC) * 0.45 + craftOf(myC, 'piloto') * 0.28 - craftOf(theirC, 'combate') * 0.5, 0.06, 0.84);
+    const kind = me.kind === 'pirate' || them.kind === 'pirate' ? 'pirata' : 'guerra';
+    if (rand() > chance) {
+      hurt(me, 0.1 + craftOf(theirC, 'combate') * 0.16, theirC);
+      log(kind, esc(me.name) + ' intenta zafarse y no puede. Casco al ' + Math.round((me.alive ? me.hull : 0) * 100) + '%.', { who: [myC, theirC], place: port.id });
+      return true;
+    }
+    hurt(me, 0.06 + craftOf(theirC, 'combate') * 0.08, theirC);
+    if (myC && myC.aim === 'honor') { myC.fame = Math.max(0, myC.fame - 0.25); myC.flags.fled = (myC.flags.fled || 0) + 1; }
+    if (me.alive) goTo(me, me.x + (me.x - them.x) * 3, me.y + (me.y - them.y) * 3);
+    log(kind, esc(me.name) + ' se zafa. Le queda el casco al ' + Math.round((me.alive ? me.hull : 0) * 100) + '%.', { who: [myC, theirC], place: port.id });
+    return true;
+  }
+  if (slip(a, b, ca, cb) || slip(b, a, cb, ca)) return;
+  const da = 0.12 + craftOf(cb, 'combate') * 0.34;
+  const db = 0.12 + craftOf(ca, 'combate') * 0.34;
+  const goneA = hurt(a, da, cb);
+  const goneB = hurt(b, db, ca);
+  if (ca && ca.alive && goneB) ca.kills = (ca.kills || 0) + 1;
+  if (cb && cb.alive && goneA) cb.kills = (cb.kills || 0) + 1;
+  const kind = a.kind === 'pirate' || b.kind === 'pirate' ? 'pirata' : 'guerra';
+  log(kind, esc(a.name) + ' y ' + esc(b.name) + ' se cruzan cerca de ' + pn(port) + '. Cascos al ' + Math.round((a.alive ? a.hull : 0) * 100) + '% y ' + Math.round((b.alive ? b.hull : 0) * 100) + '%.', {
+    who: [ca, cb], place: port.id
+  });
+}
+function encounters() {
+  const ships = S.ships.filter(function (s) { return s.alive; });
+  for (const a of ships) {
+    if (!a.alive) continue;
+    if (a.kind === 'pirate' && a.state === 'lurk') {
+      for (const b of ships) {
+        if (!b.alive || b === a || dist(a, b) > 0.04) continue;
+        if (S.day < (a.hitUntil || 0) || S.day < (b.hitUntil || 0)) continue;
+        if (b.kind === 'trade' || b.kind === 'refugee') {
+          if (!b.cargo && b.kind !== 'refugee') continue;
+          a.hitUntil = S.day + 1.6;
+          b.hitUntil = S.day + 1.6;
+          rob(a, b);
+        } else if (b.kind === 'patrol' || b.kind === 'escort') {
+          a.hitUntil = S.day + 2;
+          b.hitUntil = S.day + 2;
+          clash(a, b);
+        }
+      }
+    }
+    if (a.kind === 'skiff' && a.alive) {
+      const band = S.B[a.band];
+      if (!band || !band.alive) continue;
+      const home = S.P[band.home];
+      for (const b of ships) {
+        if (!b.alive || b.kind !== 'patrol' || dist(a, b) > 0.03) continue;
+        if (!home || b.fac !== home.fac) continue;
+        if (S.day < (a.hitUntil || 0) || S.day < (b.hitUntil || 0)) continue;
+        if (rand() > 0.35) continue;
+        a.hitUntil = S.day + 2.5;
+        b.hitUntil = S.day + 2.5;
+        clash(a, b);
+        break;
+      }
+    }
+  }
+}
+
+function daily() {
+  economy();
+  spread();
+  S.scares = S.scares.filter(function (d) { return d.until > S.day; });
+  for (const w of S.wrecks) w.age++;
+  S.wrecks = S.wrecks.filter(function (w) { return w.age < 110 && w.parts > 0; });
+  peopleActs();
+  guilds();
+  papers();
+  bandsTick();
+  factions();
+  wars();
+  diplomacy();
+  pirateTick();
+  distressTick();
+  migrate();
+  refillTraders();
+  S.ships = S.ships.filter(function (s) { return s.alive; });
+  S.feedDirty = true;
+}
+function step(dt) {
+  S.day += dt;
+  for (const s of S.ships) {
+    if (!s.alive || s.distress) continue;
+    if (s.moving) moveShip(s, dt);
+    else {
+      s.timer -= dt;
+      if (s.timer <= 0) plan(s);
+    }
+  }
+  if (S.day - S.lastEnc > 0.4) { S.lastEnc = S.day; encounters(); }
+  let guard = 0;
+  while (S.day - S.lastDay >= 1 && guard++ < 6) {
+    S.lastDay += 1;
+    daily();
+  }
+  if (S.day - S.lastDay > 3) S.lastDay = S.day;
+  for (const f of S.flash) f.t += dt;
+  if (S.flash.length) S.flash = S.flash.filter(function (f) { return f.t < 7; });
+}
+function warm(days) {
+  const n = Math.round(days / 0.2);
+  for (let i = 0; i < n; i++) step(0.2);
+}
+function report() {
+  const kinds = {};
+  for (const e of S.feed) kinds[e.kind] = (kinds[e.kind] || 0) + 1;
+  let nan = 0;
+  for (const s of S.ships) if (!Number.isFinite(s.x) || !Number.isFinite(s.y)) nan++;
+  for (const p of S.P) for (const st of p.stock) if (!Number.isFinite(st)) nan++;
+  return {
+    seed: S.seed,
+    day: Math.floor(S.day),
+    name: S.name,
+    places: S.P.map(function (p) { return p.name + '/' + p.kind; }),
+    factions: S.F.map(function (f) { return (f.alive ? '' : '†') + f.name; }),
+    guilds: S.G.filter(function (g) { return g.alive; }).map(function (g) { return g.name; }),
+    bands: S.B.filter(function (b) { return b.alive; }).map(function (b) { return b.name; }),
+    battles: S.battles.length,
+    kinds: kinds,
+    nan: nan,
+    ships: S.ships.length,
+    last: S.feed.slice(0, 8).map(function (e) { return e.day + ' ' + e.plain; })
+  };
+}
+
+let W = 0, H = 0, DPR = 1, MX = 0, MY = 0, MS = 1, REDUCE = false;
+let camZ = 1, camX = 0.5, camY = 0.5, skipClick = false;
+function layoutCam() {
+  const pad = 28;
+  const fit = Math.max(40, Math.min(W - pad * 2, (H - pad * 2) * 1.2));
+  MS = fit * camZ;
+  MX = W / 2 - camX * MS;
+  MY = H / 2 - camY * (MS / 1.2);
+}
+function zoomAt(mx, my, nz) {
+  const wx = (mx - MX) / MS;
+  const wy = (my - MY) / (MS / 1.2);
+  camZ = clamp(nz, 0.85, 6);
+  layoutCam();
+  MX = mx - wx * MS;
+  MY = my - wy * (MS / 1.2);
+  camX = (W / 2 - MX) / MS;
+  camY = (H / 2 - MY) / (MS / 1.2);
+}
+function radius(p) {
+  if (p.kind === 'estacion') return 8;
+  if (p.kind === 'puesto') return 3.5;
+  if (p.kind === 'luna') return 3.5 + p.pop * 0.2;
+  return 4 + p.pop * 0.4;
+}
+function resize() {
+  const cv = document.getElementById('cv');
+  if (!cv) return;
+  const r = cv.getBoundingClientRect();
+  DPR = Math.min(2, window.devicePixelRatio || 1);
+  W = Math.max(1, r.width);
+  H = Math.max(1, r.height);
+  cv.width = Math.floor(W * DPR);
+  cv.height = Math.floor(H * DPR);
+  layoutCam();
+}
+function X(x) { return MX + x * MS; }
+function Y(y) { return MY + y * (MS / 1.2); }
+function highlightedPlace(p) {
+  const sel = S.sel;
+  if (!sel) return false;
+  if (sel.t === 'p' && sel.id === p.id) return true;
+  if (sel.t === 'f' && p.fac === sel.id) return true;
+  if (sel.t === 'b' && S.B[sel.id] && S.B[sel.id].home === p.id) return true;
+  if (sel.t === 'g' && S.G[sel.id] && S.G[sel.id].port === p.id) return true;
+  if (sel.t === 'c' && S.C[sel.id] && S.C[sel.id].home === p.id) return true;
+  return false;
+}
+function highlightedShip(s) {
+  if (s.alive && S.follow != null && s.cap === S.follow) return true;
+  const sel = S.sel;
+  if (!sel || !s.alive) return false;
+  if (sel.t === 'c') return s.cap === sel.id || s.owner === sel.id;
+  if (sel.t === 'f') return s.fac === sel.id;
+  if (sel.t === 'g') {
+    if (s.guild === sel.id) return true;
+    const c = S.C[s.cap];
+    return !!(c && c.guild === sel.id);
+  }
+  if (sel.t === 'b') return s.band === sel.id;
+  return false;
+}
+function shipColor(s) {
+  if (s.distress) return '#e2b15c';
+  if (s.kind === 'pirate') return '#d85a3a';
+  if (s.kind === 'skiff') return '#b9a6e0';
+  if (s.kind === 'patrol') return (S.F[s.fac] && S.F[s.fac].color) || '#8eabcf';
+  if (s.kind === 'escort') return '#9cba7a';
+  if (s.kind === 'refugee') return '#8aa0b2';
+  const cap = S.C[s.cap];
+  if ((s.task && s.task.type === 'scav') || (cap && cap.role === 'carroñero')) return '#d7a35a';
+  return '#e7e1d4';
+}
+function draw() {
+  const cv = document.getElementById('cv');
+  if (!cv || !W) return;
+  const ctx = cv.getContext('2d');
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  ctx.clearRect(0, 0, W, H);
+  ctx.fillStyle = '#12160f';
+  ctx.fillRect(0, 0, W, H);
+  for (const st of S.stars) {
+    ctx.fillStyle = 'rgba(228,222,206,' + (st[2] * 0.28) + ')';
+    ctx.fillRect(st[0] * W, st[1] * H, 1, 1);
+  }
+  ctx.lineWidth = 1;
+  if (S.view && S.view.t === 'f' && S.F[S.view.id]) {
+    const home = capital(S.F[S.view.id]);
+    if (home) {
+      const rel = facRelations(S.F[S.view.id]);
+      for (const r of rel) {
+        const oc = capital(r.o);
+        if (!oc) continue;
+        ctx.beginPath();
+        ctx.moveTo(X(home.x), Y(home.y));
+        ctx.lineTo(X(oc.x), Y(oc.y));
+        ctx.setLineDash([4, 5]);
+        ctx.strokeStyle = r.kind === 'guerra' ? 'rgba(216,90,58,0.55)' : r.kind === 'alianza' ? 'rgba(111,143,191,0.6)' : r.kind === 'trato' ? 'rgba(143,181,106,0.45)' : r.kind === 'rencor' ? 'rgba(226,177,92,0.4)' : 'rgba(143,136,120,0.35)';
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+    }
+  }
+  for (const s of S.ships) {
+    if (!s.alive) continue;
+    const followed = S.follow != null && s.cap === S.follow;
+    const hot = highlightedShip(s) || followed;
+    const bent = s.path && s.path.length > 1;
+    const trail = s.trail || [];
+    const shown = followed ? trail : trail.slice(-7);
+    if (shown.length > 1) {
+      ctx.beginPath();
+      ctx.moveTo(X(shown[0].x), Y(shown[0].y));
+      for (let i = 1; i < shown.length; i++) ctx.lineTo(X(shown[i].x), Y(shown[i].y));
+      ctx.lineTo(X(s.x), Y(s.y));
+      ctx.strokeStyle = followed ? 'rgba(226,177,92,0.85)' : 'rgba(214,206,186,' + (hot ? 0.4 : 0.22) + ')';
+      ctx.lineWidth = followed ? 1.6 : 1;
+      ctx.stroke();
+    }
+    if (!s.moving || s.tx == null || (!followed && !bent)) continue;
+    ctx.beginPath();
+    ctx.moveTo(X(s.x), Y(s.y));
+    ctx.lineTo(X(s.tx), Y(s.ty));
+    if (s.path) for (let i = 1; i < s.path.length; i++) ctx.lineTo(X(s.path[i].x), Y(s.path[i].y));
+    const rum = s.route ? rumor(s.route) : 0;
+    ctx.setLineDash(followed ? [] : [2, 5]);
+    ctx.strokeStyle = followed ? 'rgba(226,177,92,0.95)' : (rum > 0.08 ? 'rgba(216,90,58,' + (0.35 + rum * 0.4) + ')' : 'rgba(214,206,186,0.45)');
+    ctx.lineWidth = followed ? 1.4 : 1;
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+  ctx.strokeStyle = '#8a8474';
+  for (const w of S.wrecks) {
+    const x = X(w.x), y = Y(w.y);
+    ctx.globalAlpha = Math.max(0.25, 1 - w.age / 110);
+    ctx.beginPath();
+    ctx.moveTo(x - 3, y - 3); ctx.lineTo(x + 3, y + 3);
+    ctx.moveTo(x + 3, y - 3); ctx.lineTo(x - 3, y + 3);
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+  for (const b of S.bases) {
+    if (!b.alive) continue;
+    const x = X(b.x), y = Y(b.y);
+    ctx.strokeStyle = '#d85a3a';
+    ctx.beginPath();
+    ctx.moveTo(x, y - 6); ctx.lineTo(x + 5, y + 4); ctx.lineTo(x - 5, y + 4); ctx.closePath();
+    ctx.stroke();
+  }
+  const pulse = REDUCE ? 0 : Math.sin(S.day * 2) * 0.5 + 0.5;
+  ctx.font = '500 11px "IBM Plex Mono", ui-monospace, Consolas, monospace';
+  ctx.textBaseline = 'middle';
+  for (const p of S.P) {
+    const x = X(p.x), y = Y(p.y), rad = radius(p);
+    const f = facAlive(p.fac);
+    const col = f ? f.color : '#c4bfb2';
+    if (p.unrest > 0.38) {
+      ctx.strokeStyle = 'rgba(216,90,58,' + (0.25 + (p.unrest - 0.38) + pulse * 0.15) + ')';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(x, y, rad + 5, 0, 7);
+      ctx.stroke();
+    }
+    for (const b of S.B) if (b.alive && b.home === p.id) {
+      ctx.strokeStyle = 'rgba(185,166,224,.85)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(x, y, rad + 8, 0, 7);
+      ctx.stroke();
+    }
+    ctx.fillStyle = col;
+    ctx.strokeStyle = col;
+    ctx.lineWidth = 1.4;
+    if (p.kind === 'estacion') {
+      ctx.beginPath(); ctx.arc(x, y, rad, 0, 7); ctx.stroke();
+      ctx.beginPath(); ctx.arc(x, y, 2.2, 0, 7); ctx.fill();
+    } else {
+      ctx.beginPath(); ctx.arc(x, y, rad, 0, 7); ctx.fill();
+    }
+    if (f && f.capital === p.id) {
+      ctx.beginPath(); ctx.arc(x, y, rad + 3, 0, 7); ctx.stroke();
+    }
+    if (highlightedPlace(p)) {
+      ctx.strokeStyle = '#e2b15c';
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.arc(x, y, rad + 6, 0, 7); ctx.stroke();
+    }
+    p.plants.forEach(function (pl, i) {
+      const t = PLANTS[pl.type];
+      const ang = -Math.PI / 2 + (i - (p.plants.length - 1) / 2) * 0.55;
+      const px = x + Math.cos(ang) * (rad + 11);
+      const py = y + Math.sin(ang) * (rad + 11);
+      const colors = ['#8fb56a', '#7ea8c4', '#e0a15a', '#c4bfb2'];
+      const c = t.service ? '#d7d0be' : colors[t.out] || '#ccc';
+      ctx.strokeStyle = c;
+      ctx.fillStyle = c;
+      if (pl.hp >= 1) ctx.fillRect(px - 2, py - 2, 4, 4);
+      else ctx.strokeRect(px - 2, py - 2, 4, 4);
+      if (camZ > 2.15) {
+        ctx.font = '9px "IBM Plex Mono", ui-monospace, Consolas, monospace';
+        ctx.textAlign = 'left';
+        ctx.fillText(t.label, px + 5, py);
+      }
+    });
+  }
+  const placed = [];
+  for (const p of S.P) {
+    const x = X(p.x), y = Y(p.y), rad = radius(p);
+    const w = ctx.measureText(p.name).width;
+    const h = 13;
+    const spots = p.kind === 'luna'
+      ? [[x + rad + 5, y + rad + 11, 'left'], [x - rad - 5, y + rad + 11, 'right'], [x, y + rad + 14, 'center'], [x + rad + 5, y, 'left']]
+      : [[x + rad + 5, y, 'left'], [x - rad - 5, y, 'right'], [x, y - rad - 10, 'center'], [x, y + rad + 12, 'center']];
+    let box = null;
+    for (const s of spots) {
+      const left = s[2] === 'right' ? s[0] - w : s[2] === 'center' ? s[0] - w / 2 : s[0];
+      const top = s[1] - h / 2;
+      const cand = { l: left, t: top, w: w, h: h, x: s[0], y: s[1], a: s[2] };
+      let bad = false;
+      for (const o of placed) {
+        if (cand.l < o.l + o.w + 8 && cand.l + cand.w + 8 > o.l && cand.t < o.t + o.h + 4 && cand.t + cand.h + 4 > o.t) { bad = true; break; }
+      }
+      if (!bad) {
+        for (const q of S.P) {
+          if (q === p) continue;
+          const qx = X(q.x), qy = Y(q.y);
+          const near = cand.l < qx + 8 && cand.l + cand.w > qx - 8 && cand.t < qy + 8 && cand.t + cand.h > qy - 8;
+          if (near) { bad = true; break; }
+        }
+      }
+      box = cand;
+      if (!bad) break;
+    }
+    placed.push(box);
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = 'rgba(18,22,15,0.85)';
+    ctx.fillStyle = highlightedPlace(p) ? '#f3efe2' : '#b7b1a4';
+    ctx.textAlign = box.a;
+    ctx.strokeText(p.name, box.x, box.y);
+    ctx.fillText(p.name, box.x, box.y);
+  }
+  ctx.textAlign = 'left';
+  for (const s of S.ships) {
+    if (!s.alive) continue;
+    const x = X(s.x), y = Y(s.y);
+    ctx.fillStyle = shipColor(s);
+    ctx.beginPath();
+    ctx.arc(x, y, s.kind === 'patrol' ? 2.4 : s.distress ? 3 : 1.8, 0, 7);
+    ctx.fill();
+    const hull = s.hull == null ? 1 : s.hull;
+    if (hull < 0.98) {
+      ctx.strokeStyle = hull < 0.4 ? '#d85a3a' : '#e2b15c';
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.arc(x, y, s.kind === 'patrol' ? 5 : 4.2, -Math.PI / 2, -Math.PI / 2 + hull * Math.PI * 2);
+      ctx.stroke();
+    }
+    if (highlightedShip(s)) {
+      ctx.strokeStyle = '#e2b15c';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(x, y, 6, 0, 7);
+      ctx.stroke();
+    }
+    if (camZ > 1.4 && s.cap != null && S.C[s.cap]) {
+      ctx.font = '10px "IBM Plex Mono", ui-monospace, Consolas, monospace';
+      ctx.textAlign = 'left';
+      ctx.fillStyle = 'rgba(228,222,206,0.82)';
+      const nm = S.C[s.cap].name.split(' ').slice(-1)[0];
+      ctx.fillText(nm, x + 5, y - 1);
+    }
+  }
+  for (const f of S.flash) {
+    ctx.strokeStyle = 'rgba(226,177,92,' + (1 - f.t / 7) + ')';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(X(f.x), Y(f.y), 3 + f.t * 5, 0, 7);
+    ctx.stroke();
+  }
+}
+
+function $(id) { return document.getElementById(id); }
+function money(n) { return Math.round(n) + ' cr'; }
+function popTxt(p) { return p.pop.toFixed(1).replace('.', ',') + ' mil'; }
+function temper(c) {
+  const bits = [];
+  if (c.amb > 0.66) bits.push('ambicioso'); else if (c.amb < 0.33) bits.push('conforme');
+  if (c.cru > 0.66) bits.push('cruel'); else if (c.cru < 0.33) bits.push('piadoso');
+  if (c.greed > 0.66) bits.push('codicioso');
+  if (c.caut > 0.66) bits.push('prudente'); else if (c.caut < 0.33) bits.push('temerario');
+  if (c.loy > 0.66) bits.push('leal'); else if (c.loy < 0.3) bits.push('tornadizo');
+  return bits.join(', ') || 'del montón';
+}
+function cohWord(v) {
+  if (v > 0.72) return 'unida';
+  if (v > 0.48) return 'tensa';
+  if (v > 0.32) return 'agrietada';
+  return 'a punto de romperse';
+}
+function unrestWord(v) {
+  if (v > 0.72) return 'a punto de estallar';
+  if (v > 0.48) return 'inquieto';
+  if (v > 0.3) return 'murmura';
+  return 'quieto';
+}
+function kindTxt(p) {
+  if (p.kind === 'estacion') return 'estación';
+  if (p.kind === 'puesto') return 'puesto';
+  if (p.kind === 'luna') {
+    const par = p.parent != null ? S.P[p.parent] : null;
+    return par ? 'luna de ' + par.name : 'luna';
+  }
+  return 'mundo';
+}
+function tagTxt(p) {
+  const t = [];
+  if (p.tags.soil) t.push('suelo');
+  if (p.tags.ice) t.push('hielo');
+  if (p.tags.ore) t.push('mena');
+  return t.join(', ') || 'sin yacimiento';
+}
+function roster(f) {
+  const ids = new Set();
+  const list = [];
+  function add(c) { if (c && c.alive && !ids.has(c.id)) { ids.add(c.id); list.push(c); } }
+  add(S.C[f.leader]);
+  for (const c of S.C) if (c.alive && c.faction === f.id && (c.role === 'gobernador' || c.role === 'caudillo')) add(c);
+  for (const s of S.ships) if (s.alive && s.fac === f.id && (s.kind === 'patrol' || s.kind === 'escort')) add(S.C[s.cap]);
+  return list;
+}
+function priceRow(p, g) {
+  const pr = price(p, g);
+  const r = pr / GOODS[g].base;
+  const col = r > 2 ? 'var(--bad)' : r < 0.8 ? 'var(--good)' : 'var(--ink)';
+  return '<div class="row"><span>' + GOODS[g].id + '</span><span style="color:' + col + '">' + pr.toFixed(0) + ' cr · ' + r.toFixed(1) + '×</span></div>';
+}
+function plantLine(pl, p) {
+  const t = PLANTS[pl.type];
+  let own = 'del puerto';
+  if (pl.owner >= 0) own = S.C[pl.owner] ? cn(S.C[pl.owner]) : 'sin dueño';
+  else {
+    const f = facAlive(p.fac);
+    own = f ? 'de ' + fn(f) : 'del puerto';
+  }
+  const st = pl.hp < 1 ? (pl.rebuild > 0 ? ' (en obra)' : ' (rota)') : '';
+  return t.label + st + ': ' + own;
+}
+function cardPlace(p) {
+  const f = facAlive(p.fac);
+  const locals = S.C.filter(function (c) { return c.alive && c.home === p.id; })
+    .sort(function (a, b) { return (b.fame + b.wealth / 200) - (a.fame + a.wealth / 200); })
+    .slice(0, 8);
+  const papers = (p.board || []).filter(function (c) { return !c.done; });
+  return '<p class="who">' + esc(p.name) + '</p>' +
+    '<p class="sub">' + kindTxt(p) + ' · ' + (f ? fn(f) : 'sin bandera') + ' · ' + popTxt(p) + ' · ' + tagTxt(p) + '</p>' +
+    '<p class="sub">El puerto ' + unrestWord(p.unrest) + (p.stress > 6 ? '. Lleva días de escasez.' : '.') + '</p>' +
+    GOODS.map(function (_, g) { return priceRow(p, g); }).join('') +
+    '<p class="sub">' + p.plants.map(function (pl) { return plantLine(pl, p); }).join('<br>') + '</p>' +
+    (papers.length ? papers.map(function (paper) { return '<p class="rumor">Papel clavado: traer comida, ' + paper.pay + ' cr.</p>'; }).join('') : '') +
+    (locals.length ? '<p class="sub">Con nombre: ' + locals.map(function (c) { return cn(c); }).join(', ') + '</p>' : '') +
+    (p.heard.length ? '<h2>Se dice</h2>' + p.heard.slice(0, 3).map(function (h) { return '<p class="rumor"><span class="d">' + h.day + '</span>' + h.html + '</p>'; }).join('') : '');
+}
+function bondWord(kind) {
+  if (kind === 'amigo') return 'amigo';
+  if (kind === 'rival') return 'rival';
+  if (kind === 'patron') return 'responde ante';
+  if (kind === 'deuda') return 'debe a';
+  return kind;
+}
+function personBtn(c, role) {
+  if (!c) return '';
+  return '<button type="button" data-k="c" data-id="' + c.id + '"><span class="role">' + esc(role || c.role || '') + (c.alive ? '' : ' †') + '</span><span class="nm">' + esc(c.name) + '</span></button>';
+}
+function facRelations(f) {
+  const rows = [];
+  for (const o of S.F) {
+    if (!o || o.id === f.id) continue;
+    const w = f.wars.get(o.id);
+    if (w && o.alive) {
+      rows.push({ o: o, kind: 'guerra', text: w.cause || 'en guerra', since: w.since });
+      continue;
+    }
+    if (f.embargo.has(o.id) && o.alive) {
+      rows.push({ o: o, kind: 'embargo', text: (f.why && f.why[o.id]) || 'puertos cerrados', since: null });
+      continue;
+    }
+    if (f.allies && f.allies.has(o.id) && o.alive) {
+      const pact = f.pact && f.pact[o.id];
+      rows.push({ o: o, kind: 'alianza', text: (pact && pact.cause) || 'pacto', since: pact ? pact.since : null });
+      continue;
+    }
+    const g = f.grudge && f.grudge[o.id];
+    if (g && o.alive) {
+      rows.push({ o: o, kind: 'rencor', text: g + (g === 1 ? ' muerto entre los suyos' : ' muertos entre los suyos'), since: null });
+      continue;
+    }
+    if (!o.alive) continue;
+    let trade = 0;
+    for (const a of S.P) if (a.fac === f.id) {
+      for (const b of S.P) if (b.fac === o.id) trade += (S.traffic[key(a.id, b.id)] || 0);
+    }
+    if (trade > 90) rows.push({ o: o, kind: 'trato', text: 'el flete mueve ' + Math.round(trade) + ' cr', since: null });
+  }
+  return rows;
+}
+function chronoOf(pred, n) {
+  const rows = [];
+  for (const e of S.feed) {
+    if (!pred(e)) continue;
+    rows.push(e);
+    if (rows.length >= n) break;
+  }
+  if (!rows.length) return '<p class="hint">Todavía no hay nada que contar.</p>';
+  return rows.map(function (e) {
+    return '<p class="feedp" style="--k:' + (KIND[e.kind] || '#2c3326') + '"><span class="d">' + e.day + '</span>' + e.html + '</p>';
+  }).join('');
+}
+function cardChar(c) {
+  const home = S.P[c.home];
+  const f = c.faction != null ? S.F[c.faction] : null;
+  const ships = S.ships.filter(function (s) { return s.alive && (s.cap === c.id || s.owner === c.id); });
+  const bonds = (c.bonds || []).map(function (b) {
+    const o = S.C[b.id];
+    return o ? { b: b, o: o } : null;
+  }).filter(Boolean);
+  const follow = c.alive
+    ? (S.follow === c.id
+      ? '<button type="button" class="act" data-act="unfollow">dejar de seguir</button>'
+      : '<button type="button" class="act" data-act="follow" data-id="' + c.id + '">seguir</button>')
+    : '';
+  const marks = c.marks || [];
+  return '<p class="who">' + esc(c.name) + (c.alive ? '' : ' †') + '</p>' +
+    follow +
+    '<p class="sub">' + esc(c.role || 'sin cargo') + (c.dissident ? ' · disidente' : '') + (home ? ' · ' + pn(home) : '') + (f ? ' · ' + fn(f) : '') + '</p>' +
+    '<div class="row"><span>' + money(c.wealth) + '</span><span>fama ' + c.fame.toFixed(1) + '</span></div>' +
+    '<h2>Quiere</h2><p class="sub">' + esc(aimLabel(c.aim)) + (c.aim === 'venganza' && c.flags.vendetta != null && S.C[c.flags.vendetta] ? ': ' + cn(S.C[c.flags.vendetta]) : '') + '</p>' +
+    bar('ese propósito', aimProgress(c), 'good') +
+    bar('miedo', c.fear || 0, 'bad') +
+    bar('aprecio por la vida', c.life || 0, '') +
+    bar('regateo', craftOf(c, 'trato'), '') +
+    bar('combate', craftOf(c, 'combate'), '') +
+    bar('pilotaje', craftOf(c, 'piloto'), '') +
+    bar('mando', craftOf(c, 'mando'), 'dim') +
+    (ships.length ? ships.map(function (s) { return bar(s.name + ' · casco', s.hull == null ? 1 : s.hull, (s.hull != null && s.hull < 0.4) ? 'bad' : ''); }).join('') : '') +
+    (ships.some(function (s) { return s.lastBill; }) ? '<p class="sub">' + ships.filter(function (s) { return s.lastBill; }).map(function (s) {
+      const b = s.lastBill;
+      return esc(s.name) + ' · día ' + b.day + ': propelente ' + Math.round(b.fuel) + ' cr, casco ' + Math.round(b.repair) + ' cr' + (b.escort ? ', escolta ' + Math.round(b.escort) + ' cr' : '');
+    }).join('<br>') + '</p>' : '') +
+    '<p class="sub">' + esc(temper(c)) + '</p>' +
+    '<p class="sub">' + esc(c.tic || '') + '</p>' +
+    (ships.length ? '<h2>Naves</h2><p class="sub">' + ships.map(function (s) {
+      return esc(s.name) + ' · ' + (SHIPWORD[s.kind] || s.kind) + (s.mod ? ' · ' + esc(s.mod) : '');
+    }).join('<br>') + '</p>' : '') +
+    '<h2>Con gente</h2>' +
+    (bonds.length ? bonds.map(function (x) {
+      return personBtn(x.o, bondWord(x.b.kind) + ' · día ' + x.b.since);
+    }).join('') : '<p class="hint">Todavía no se le conoce trato con nadie.</p>') +
+    (marks.length ? '<h2>Lo que le marcó</h2>' + marks.map(function (m) {
+      return '<p class="rumor"><span class="d">' + m.day + '</span>' + esc(m.text) + '</p>';
+    }).join('') : '') +
+    '<h2>Crónica</h2>' +
+    chronoOf(function (e) { return e.who && e.who.indexOf(c.id) >= 0; }, 12);
+}
+function cardFac(f) {
+  const l = S.C[f.leader];
+  const people = roster(f);
+  const worlds = S.P.filter(function (p) { return p.fac === f.id; });
+  const rel = facRelations(f);
+  const bs = S.battles.filter(function (b) { return b.attId === f.id || b.defId === f.id; }).slice().reverse();
+  const tone = (function () {
+    const s = style(f);
+    if (!f.alive) return 'Ya no manda.';
+    const a = s.war > 0.66 ? 'Busca pelea si hay algo que tomar' : s.trade > 0.6 ? 'Prefiere el flete a la bandera' : 'Administra y desconfía';
+    const b = s.repress > 0.66 ? 'cobra caro' : 'deja el precio en paz';
+    return a + ', y ' + b + '.';
+  })();
+  return '<p class="who" style="color:' + f.color + '">' + esc(f.name) + (f.alive ? '' : ' †') + '</p>' +
+    '<p class="sub">' + (f.alive ? cohWord(f.coh) : 'disuelta') + ' · desde el día ' + f.born + ' · ' + money(f.treasury) + '</p>' +
+    '<p class="sub">' + esc(f.motto || '') + '</p>' +
+    '<p class="sub">' + esc(tone) + '</p>' +
+    '<h2>Por qué existe</h2><p>' + esc(f.origin || '') + '</p>' +
+    '<h2>Al mando</h2>' + (l ? personBtn(l, l.role || 'líder') : '<p class="hint">Nadie.</p>') +
+    '<h2>Con otras banderas</h2>' +
+    (rel.length ? rel.map(function (r) {
+      return '<button type="button" data-k="f" data-id="' + r.o.id + '"><span class="role">' + r.kind + (r.since != null ? ' · día ' + r.since : '') + '</span><span class="nm">' + esc(r.o.name) + '</span></button><p class="sub">' + esc(r.text) + '</p>';
+    }).join('') : '<p class="hint">Ningún trato ni agravio con otra bandera.</p>') +
+    '<h2>Puertos</h2>' +
+    (worlds.length ? worlds.map(function (p) {
+      return '<button type="button" data-k="p" data-id="' + p.id + '"><span class="role">' + unrestWord(p.unrest) + ' · ' + popTxt(p) + '</span><span class="nm">' + esc(p.name) + '</span></button>';
+    }).join('') : '<p class="hint">Sin puertos.</p>') +
+    '<h2>Gente</h2>' +
+    (people.length ? people.map(function (c) { return personBtn(c, c.role); }).join('') : '<p class="hint">Nadie con cargo.</p>') +
+    (bs.length ? '<h2>Choques</h2>' + bs.slice(0, 8).map(function (b) {
+      return '<button type="button" data-k="battle" data-id="' + b.id + '"><span class="role">' + b.day + '</span><span class="nm">' + esc(b.name) + '</span></button>';
+    }).join('') : '') +
+    '<h2>Crónica</h2>' +
+    chronoOf(function (e) {
+      if (e.fac && e.fac.indexOf(f.id) >= 0) return true;
+      if (l && e.who && e.who.indexOf(l.id) >= 0) return true;
+      return false;
+    }, 14);
+}
+function cardGuild(g) {
+  const m = S.C[g.master];
+  const port = S.P[g.port];
+  const members = Array.from(g.members).map(function (id) { return S.C[id]; }).filter(function (c) { return c && c.alive; });
+  const state = g.state != null ? S.F[g.state] : null;
+  return '<p class="who">' + esc(g.name) + '</p>' +
+    '<p class="sub">' + (g.alive ? 'gremio' : 'ya no es gremio') + (port ? ' · ' + pn(port) : '') + ' · ' + money(g.treasury) + ' · desde el día ' + g.day + '</p>' +
+    (state ? '<p class="sub">Pasó a ser ' + fn(state) + '.</p>' : '') +
+    '<p class="sub">Maestre: ' + (m ? cn(m) : 'nadie') + '</p>' +
+    members.map(function (c) { return '<div class="row"><span class="role">' + esc(c.role || '') + '</span><span>' + cn(c) + '</span></div>'; }).join('');
+}
+function cardBand(b) {
+  const p = S.P[b.home];
+  const speaker = S.C[b.speaker];
+  const members = b.members.map(function (id) { return S.C[id]; }).filter(Boolean);
+  const ships = S.ships.filter(function (s) { return s.alive && s.band === b.id; });
+  return '<p class="who">' + esc(b.name) + '</p>' +
+    '<p class="sub">' + (b.alive ? 'cascos modificados' : 'disuelta') + (p ? ' · ' + pn(p) : '') + ' · desde el día ' + b.day + '</p>' +
+    '<p class="sub">El motivo: ' + esc(b.grievance || '') + '</p>' +
+    '<p class="sub">Habla ' + (speaker ? cn(speaker) : 'nadie') + '.</p>' +
+    (ships.length ? '<p class="sub">' + ships.map(function (s) { return esc(s.name) + (s.mod ? ': ' + esc(s.mod) : ''); }).join('<br>') + '</p>' : '') +
+    members.map(function (c) { return '<div class="row"><span class="role">' + esc(c.role || '') + (c.alive ? '' : ' †') + '</span><span>' + cn(c) + '</span></div>'; }).join('');
+}
+function cardBattle(b) {
+  const place = S.P[b.placeId];
+  const A = b.attId != null ? S.F[b.attId] : null;
+  const D = b.defId != null ? S.F[b.defId] : null;
+  const war = b.warId != null && S.wars ? S.wars.find(function (w) { return w.id === b.warId; }) : null;
+  const left = S.wrecks.filter(function (w) { return w.battle === b.id && w.parts > 0; }).length;
+  return '<p class="who">' + esc(b.name) + '</p>' +
+    '<p class="sub">día ' + b.day + (place ? ' · ' + pn(place) : '') + '</p>' +
+    '<h2>Quién se pelea</h2><p>' + (A ? fn(A) : 'sin bandera') + ' contra ' + (D ? fn(D) : 'el puerto') + '.</p>' +
+    '<h2>Motivo</h2><p>' + esc(b.cause || 'No quedó un motivo escrito.') + '</p>' +
+    '<h2>Guerra</h2>' + (war
+      ? '<button type="button" data-k="war" data-id="' + war.id + '"><span class="role">' + (war.open ? 'abierta' : 'en paz') + ' · día ' + war.since + '</span><span class="nm">' + esc((S.F[war.a] ? S.F[war.a].name : '?') + ' · ' + (S.F[war.b] ? S.F[war.b].name : '?')) + '</span></button><p class="sub">' + esc(war.cause) + '</p>'
+      : '<p class="hint">Este choque no cuelga de una guerra declarada.</p>') +
+    '<p>' + b.html + '</p>' +
+    '<p class="sub">Pecios que aún se ven: ' + left + '.</p>';
+}
+function cardWar(w) {
+  const A = S.F[w.a], B = S.F[w.b];
+  const battles = S.battles.filter(function (b) { return b.warId === w.id; });
+  return '<p class="who">' + (A ? esc(A.name) : '?') + ' · ' + (B ? esc(B.name) : '?') + '</p>' +
+    '<p class="sub">' + (w.open ? 'guerra abierta' : 'ya hay paz') + ' · desde el día ' + w.since + '</p>' +
+    '<h2>Motivo</h2><p>' + esc(w.cause) + '</p>' +
+    '<h2>Banderas</h2>' + (A ? '<button type="button" data-k="f" data-id="' + A.id + '"><span class="role">un bando</span><span class="nm">' + esc(A.name) + '</span></button>' : '') +
+    (B ? '<button type="button" data-k="f" data-id="' + B.id + '"><span class="role">el otro</span><span class="nm">' + esc(B.name) + '</span></button>' : '') +
+    '<h2>Batallas</h2>' + (battles.length ? battles.slice().reverse().map(function (b) {
+      return '<button type="button" data-k="battle" data-id="' + b.id + '"><span class="role">' + b.day + '</span><span class="nm">' + esc(b.name) + '</span></button>';
+    }).join('') : '<p class="hint">Todavía no se han encontrado en un mundo.</p>');
+}
+function listWars() {
+  const seen = new Set();
+  const allies = [];
+  for (const f of S.F) {
+    if (!f.alive || !f.allies) continue;
+    for (const id of f.allies) {
+      if (id < f.id) continue;
+      const o = S.F[id];
+      if (!o || !o.alive || seen.has(f.id + ':' + id)) continue;
+      seen.add(f.id + ':' + id);
+      const pact = f.pact && f.pact[id];
+      allies.push('<p class="sub"><b style="color:' + f.color + '">' + esc(f.name) + '</b> y <b style="color:' + o.color + '">' + esc(o.name) + '</b>' + (pact ? ' · día ' + pact.since + ' · ' + esc(pact.cause) : '') + '</p>');
+    }
+  }
+  const rows = (S.wars || []).slice().reverse();
+  const head = allies.length ? '<h2>Alianzas</h2>' + allies.join('') : '';
+  if (!rows.length) return head + '<p class="hint">Nadie ha declarado una guerra.</p>';
+  return head + '<h2>Guerras</h2>' + rows.map(function (w) {
+    const A = S.F[w.a], B = S.F[w.b];
+    const n = S.battles.filter(function (b) { return b.warId === w.id; }).length;
+    return '<button type="button" data-k="war" data-id="' + w.id + '"><span class="role">' + (w.open ? 'abierta' : 'paz') + ' · día ' + w.since + ' · ' + n + (n === 1 ? ' choque' : ' choques') + '</span><span class="nm">' + esc((A ? A.name : '?') + ' · ' + (B ? B.name : '?')) + '</span></button><p class="sub">' + esc(w.cause) + '</p>';
+  }).join('');
+}
+function listGuilds() {
+  if (!S.G.length) return '<p class="hint">Todavía no hay gremios.</p>';
+  return S.G.slice().reverse().map(function (g) {
+    const m = S.C[g.master];
+    const port = S.P[g.port];
+    return '<button type="button" data-k="g" data-id="' + g.id + '"><span class="role">' + (g.alive ? 'activo' : 'disuelto') + ' · ' + money(g.treasury) + '</span><span class="nm">' + esc(g.name) + '</span></button><p class="sub">' + (m ? esc(m.name) : 'sin maestre') + (port ? ' · ' + esc(port.name) : '') + (g.why ? '. ' + esc(g.why) : '') + '</p>';
+  }).join('');
+}
+function listBattles() {
+  const rows = S.battles.slice().reverse();
+  if (!rows.length) return '<p class="hint">Aún no hay choques.</p>';
+  return rows.map(function (b) {
+    const A = b.attId != null ? S.F[b.attId] : null;
+    const D = b.defId != null ? S.F[b.defId] : null;
+    const who = (A ? A.name : 'sin bandera') + ' · ' + (D ? D.name : 'el puerto');
+    return '<button type="button" data-k="battle" data-id="' + b.id + '"><span class="role">' + b.day + ' · ' + esc(who) + '</span><span class="nm">' + esc(b.name) + '</span></button>' + (b.cause ? '<p class="sub">' + esc(b.cause) + '</p>' : '');
+  }).join('');
+}
+function cardWreck(w) {
+  const battle = w.battle != null ? S.battles[w.battle] : null;
+  return '<p class="who">Pecio</p><p class="sub">' + esc(w.origin) + ' · piezas ' + w.parts.toFixed(0) + ' · ' + w.age + ' días a la deriva</p>' +
+    (battle ? '<p><b data-k="battle" data-id="' + battle.id + '">' + esc(battle.name) + '</b></p>' : '');
+}
+function samePaint(el, html) {
+  if (el._html === html) return true;
+  const top = el.scrollTop;
+  el._html = html;
+  el.innerHTML = html;
+  el.scrollTop = top;
+  return false;
+}
+function dossier(v) {
+  if (v.t === 'p' && S.P[v.id]) return cardPlace(S.P[v.id]);
+  if (v.t === 'c' && S.C[v.id]) return cardChar(S.C[v.id]);
+  if (v.t === 'f' && S.F[v.id]) return cardFac(S.F[v.id]);
+  if (v.t === 'g' && S.G[v.id]) return cardGuild(S.G[v.id]);
+  if (v.t === 'b' && S.B[v.id]) return cardBand(S.B[v.id]);
+  if (v.t === 'battle' && S.battles[v.id]) return cardBattle(S.battles[v.id]);
+  if (v.t === 'war') {
+    const w = (S.wars || []).find(function (x) { return x.id === v.id; });
+    return w ? cardWar(w) : '<p class="hint">Esa guerra ya no está en el libro.</p>';
+  }
+  if (v.t === 'w') {
+    const w = S.wrecks.find(function (x) { return x.id === v.id; });
+    return w ? cardWreck(w) : '<p class="hint">Ese pecio ya no está.</p>';
+  }
+  return '<p class="hint">Ya no está.</p>';
+}
+function goList(name) {
+  S.stack = [];
+  S.list = name;
+  S.view = { t: 'list', list: name };
+  S.sel = null;
+  const el = $('pane');
+  if (el) el._html = null;
+  renderPane();
+}
+function goEntity(t, id) {
+  if (!S.view) S.view = { t: 'list', list: 'escena' };
+  if (S.view.t === t && S.view.id === id) {
+    renderPane();
+    return;
+  }
+  S.stack.push(S.view);
+  if (S.stack.length > 16) S.stack.shift();
+  S.view = { t: t, id: id };
+  S.sel = { t: t, id: id };
+  const el = $('pane');
+  if (el) { el._html = null; el.scrollTop = 0; }
+  renderPane();
+}
+function goBack() {
+  const prev = S.stack.pop();
+  S.view = prev || { t: 'list', list: S.list || 'escena' };
+  S.sel = S.view.t === 'list' ? null : { t: S.view.t, id: S.view.id };
+  const el = $('pane');
+  if (el) { el._html = null; el.scrollTop = 0; }
+  renderPane();
+}
+function renderPane() {
+  const el = $('pane');
+  if (!el || !S || !S.view) return;
+  const v = S.view;
+  document.querySelectorAll('#lists [data-list]').forEach(function (b) {
+    const on = v.t === 'list' && b.dataset.list === v.list;
+    b.setAttribute('aria-pressed', on ? 'true' : 'false');
+  });
+  const back = $('back');
+  if (back) back.hidden = !(S.stack && S.stack.length);
+  let html = '';
+  if (v.t === 'list') {
+    if (v.list === 'imperios') html = '<h2>Imperios</h2>' + listEmpires();
+    else if (v.list === 'ricos') html = '<h2>Los más ricos</h2>' + listPeople('wealth');
+    else if (v.list === 'fama') html = '<h2>Influyentes</h2>' + listPeople('fame');
+    else if (v.list === 'cronica') html = '<h2>Crónica</h2>' + chronoOf(function () { return true; }, 80);
+    else if (v.list === 'batallas') html = '<h2>Batallas</h2>' + listBattles();
+    else if (v.list === 'guerras') html = '<h2>Guerras</h2>' + listWars();
+    else if (v.list === 'gremios') html = '<h2>Gremios</h2>' + listGuilds();
+    else html = '<h2>En escena</h2>' + sceneList();
+  } else html = dossier(v);
+  samePaint(el, html);
+}
+function renderCard() { renderPane(); }
+function listEmpires() {
+  let html = '';
+  const alive = S.F.filter(function (f) { return f.alive; });
+  const dead = S.F.filter(function (f) { return !f.alive; });
+  for (const f of alive) {
+    const l = S.C[f.leader];
+    const n = S.P.filter(function (p) { return p.fac === f.id; }).length;
+    html += '<div class="grp"><button type="button" class="gh" data-k="f" data-id="' + f.id + '"><i style="background:' + f.color + '"></i>' + esc(f.name) + '</button>';
+    html += '<button type="button" data-k="f" data-id="' + f.id + '"><span class="role">' + n + (n === 1 ? ' puerto' : ' puertos') + ' · ' + money(f.treasury) + '</span><span class="nm">' + (l ? esc(l.name) : 'sin líder') + '</span></button>';
+    html += '<p class="sub">' + esc(f.origin || '') + '</p></div>';
+  }
+  if (dead.length) {
+    html += '<p class="plain">Disueltos</p>';
+    for (let i = dead.length - 1; i >= 0; i--) {
+      const f = dead[i];
+      html += '<button type="button" class="dead" data-k="f" data-id="' + f.id + '"><span class="role">día ' + f.born + '</span><span class="nm">† ' + esc(f.name) + '</span></button>';
+    }
+  }
+  return html || '<p class="hint">Todavía no hay banderas.</p>';
+}
+function listPeople(mode) {
+  const rows = S.C.filter(function (c) { return c.alive; }).sort(function (a, b) {
+    return mode === 'fame' ? (b.fame - a.fame) || (b.wealth - a.wealth) : (b.wealth - a.wealth) || (b.fame - a.fame);
+  }).slice(0, 18);
+  if (!rows.length) return '<p class="hint">Nadie con nombre todavía.</p>';
+  return rows.map(function (c) {
+    const home = S.P[c.home];
+    const mark = S.follow === c.id ? ' · sigues' : '';
+    const right = mode === 'fame' ? ('fama ' + c.fame.toFixed(1)) : (Math.round(c.wealth) + ' cr');
+    return '<button type="button" data-k="c" data-id="' + c.id + '"><span class="role">' + esc(c.role || 'sin cargo') + (home ? ' · ' + esc(home.name) : '') + mark + '</span><span class="nm">' + esc(c.name) + ' · ' + right + '</span></button>';
+  }).join('');
+}
+function sceneList() {
+  const shown = new Set();
+  let html = '';
+  for (const f of S.F) {
+    if (!f.alive) continue;
+    const people = roster(f);
+    html += '<div class="grp"><button type="button" class="gh" data-k="f" data-id="' + f.id + '"><i style="background:' + f.color + '"></i>' + esc(f.name) + '</button>';
+    for (const c of people.slice(0, 6)) {
+      shown.add(c.id);
+      html += '<button type="button" data-k="c" data-id="' + c.id + '"><span class="role">' + esc(c.role || '') + '</span><span class="nm">' + esc(c.name) + '</span></button>';
+    }
+    if (people.length > 6) html += '<p class="more">' + (people.length - 6) + ' más en la ficha</p>';
+    html += '</div>';
+  }
+  for (const g of S.G) {
+    if (!g.alive) continue;
+    const m = S.C[g.master];
+    html += '<div class="grp"><button type="button" class="gh" data-k="g" data-id="' + g.id + '"><i style="background:#e2b15c"></i>' + esc(g.name) + '</button>';
+    if (m) { shown.add(m.id); html += '<button type="button" data-k="c" data-id="' + m.id + '"><span class="role">maestre</span><span class="nm">' + esc(m.name) + '</span></button>'; }
+    html += '<p class="more">' + g.members.size + ' en el colegio</p></div>';
+  }
+  for (const b of S.B) {
+    if (!b.alive) continue;
+    const sp = S.C[b.speaker];
+    const n = S.ships.filter(function (s) { return s.alive && s.band === b.id; }).length;
+    html += '<div class="grp"><button type="button" class="gh" data-k="b" data-id="' + b.id + '"><i style="background:#b9a6e0"></i>' + esc(b.name) + '</button>';
+    if (sp) { shown.add(sp.id); html += '<button type="button" data-k="c" data-id="' + sp.id + '"><span class="role">cabecilla</span><span class="nm">' + esc(sp.name) + '</span></button>'; }
+    html += '<p class="more">' + n + ' cascos modificados</p></div>';
+  }
+  const chiefs = S.bases.filter(function (b) { return b.alive; });
+  if (chiefs.length) {
+    html += '<div class="grp"><p class="plain">Piratas</p>';
+    for (const b of chiefs) {
+      const c = S.C[b.chief];
+      if (!c) continue;
+      shown.add(c.id);
+      html += '<button type="button" data-k="c" data-id="' + c.id + '"><span class="role">' + esc(b.name) + '</span><span class="nm">' + esc(c.name) + '</span></button>';
+    }
+    html += '</div>';
+  }
+  const merchants = S.C.filter(function (c) {
+    return c.alive && !shown.has(c.id) && S.ships.some(function (s) { return s.alive && s.cap === c.id && (s.kind === 'trade' || s.kind === 'refugee'); });
+  }).sort(function (a, b) { return b.wealth - a.wealth; }).slice(0, 5);
+  if (merchants.length) {
+    html += '<div class="grp"><p class="plain">Mercaderes</p>';
+    for (const c of merchants) {
+      html += '<button type="button" data-k="c" data-id="' + c.id + '"><span class="role">' + Math.round(c.wealth) + ' cr</span><span class="nm">' + esc(c.name) + '</span></button>';
+    }
+    html += '</div>';
+  }
+  return html || '<p class="hint">Nadie con nombre todavía.</p>';
+}
+function renderFeed() {
+  if (!S.feedDirty) return;
+  S.feedDirty = false;
+  if (S.view && S.view.t === 'list' && S.view.list === 'cronica') {
+    const pane = $('pane');
+    if (pane) pane._html = null;
+    renderPane();
+  }
+  const live = $('live');
+  if (live && S.feed[0]) live.textContent = 'Día ' + S.feed[0].day + '. ' + S.feed[0].plain;
+  const now = $('now');
+  if (now && S.feed[0]) now.textContent = S.feed[0].plain;
+}
+function statusLine() {
+  const fac = S.F.filter(function (f) { return f.alive; }).length;
+  const g = S.G.filter(function (x) { return x.alive; }).length;
+  const b = S.B.filter(function (x) { return x.alive; }).length;
+  const seen = new Set();
+  let wars = 0;
+  for (const f of S.F) if (f.alive) for (const id of f.wars.keys()) {
+    const k = key(f.id, id);
+    if (!seen.has(k)) { seen.add(k); wars++; }
+  }
+  const bits = [S.P.length + ' puertos', fac + (fac === 1 ? ' bandera' : ' banderas')];
+  if (g) bits.push(g + (g === 1 ? ' gremio' : ' gremios'));
+  if (b) bits.push(b + (b === 1 ? ' revuelta' : ' revueltas'));
+  if (wars) bits.push(wars + (wars === 1 ? ' guerra' : ' guerras'));
+  return bits.join(' · ');
+}
+function renderHud() {
+  const title = $('title');
+  if (!title) return;
+  title.textContent = S.name;
+  $('day').textContent = 'día ' + Math.floor(S.day);
+  $('status').textContent = statusLine();
+  $('seedline').textContent = 'semilla ' + S.seed;
+  document.title = S.name;
+  const fl = $('followline');
+  if (fl) {
+    const c = S.follow != null ? S.C[S.follow] : null;
+    let html = '';
+    if (c && c.alive) html = 'Sigues a ' + esc(c.name) + ' <button type="button" data-act="unfollow">dejar</button>';
+    else if (S.follow != null) S.follow = null;
+    if (fl._html !== html) { fl._html = html; fl.innerHTML = html; }
+  }
+}
+function focusStart() {
+  S.stack = [];
+  S.list = 'escena';
+  S.view = { t: 'list', list: 'escena' };
+  S.sel = null;
+}
+
+let speed = 1, running = true, last = 0, uiT = 0;
+function readSeed() {
+  try {
+    const q = new URLSearchParams(location.search).get('semilla');
+    if (q && /^\d+$/.test(q)) return Number(q) >>> 0;
+  } catch (e) { /* sin URL */ }
+  return (Math.random() * 0x7fffffff) >>> 0;
+}
+function writeSeed(seed) {
+  try {
+    const u = new URL(location.href);
+    u.searchParams.set('semilla', String(seed));
+    history.replaceState(null, '', u.pathname + u.search);
+  } catch (e) { /* file:// a veces no deja */ }
+}
+function bootWorld(seed) {
+  init(seed || 1);
+  focusStart();
+  if (typeof document !== 'undefined') {
+    writeSeed(S.seed);
+    ['pane', 'followline'].forEach(function (id) {
+      const el = $(id);
+      if (el) el._html = null;
+    });
+    camZ = 1; camX = 0.5; camY = 0.5;
+    resize();
+    renderHud();
+    renderPane();
+    S.feedDirty = true;
+    renderFeed();
+  }
+}
+function frame(now) {
+  if (!last) last = now;
+  const dt = Math.min(0.05, (now - last) / 1000);
+  last = now;
+  if (running && S) {
+    let left = dt * 0.55 * speed;
+    let guard = 0;
+    while (left > 0.0001 && guard++ < 40) {
+      const h = Math.min(0.2, left);
+      step(h);
+      left -= h;
+    }
+  }
+  if (S) {
+    renderHud();
+    draw();
+    uiT += dt;
+    if (uiT > 0.4) {
+      uiT = 0;
+      renderFeed();
+      renderPane();
+    }
+  }
+  requestAnimationFrame(frame);
+}
+function boot() {
+  try { REDUCE = matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) { REDUCE = false; }
+  const cv = $('cv');
+  try { bootWorld(readSeed()); }
+  catch (err) {
+    const el = $('pane');
+    if (el) el.textContent = 'La simulación se detuvo: ' + (err && err.message ? err.message : err);
+    throw err;
+  }
+  $('play').addEventListener('click', function () {
+    running = !running;
+    $('play').setAttribute('aria-pressed', running ? 'true' : 'false');
+    $('play').textContent = running ? 'en marcha' : 'pausa';
+  });
+  document.querySelectorAll('[data-sp]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      speed = +b.dataset.sp;
+      document.querySelectorAll('[data-sp]').forEach(function (x) {
+        x.setAttribute('aria-pressed', x === b ? 'true' : 'false');
+      });
+    });
+  });
+  $('reset').addEventListener('click', function () {
+    try { bootWorld((Math.random() * 0x7fffffff) >>> 0); }
+    catch (err) {
+      $('pane').textContent = 'La simulación se detuvo: ' + err.message;
+    }
+  });
+  $('side').addEventListener('click', function (e) {
+    const act = e.target.closest('[data-act]');
+    if (act) {
+      if (act.dataset.act === 'follow') {
+        S.follow = +act.dataset.id;
+        goEntity('c', S.follow);
+      } else if (act.dataset.act === 'unfollow') S.follow = null;
+      else if (act.dataset.act === 'back') goBack();
+      else if (act.dataset.act === 'list') goList(act.dataset.list);
+      renderHud();
+      renderPane();
+      return;
+    }
+    const t = e.target.closest('[data-k]');
+    if (!t) return;
+    goEntity(t.dataset.k, +t.dataset.id);
+  });
+  cv.addEventListener('wheel', function (e) {
+    e.preventDefault();
+    const r = cv.getBoundingClientRect();
+    zoomAt(e.clientX - r.left, e.clientY - r.top, camZ * (e.deltaY < 0 ? 1.12 : 1 / 1.12));
+  }, { passive: false });
+  let drag = null;
+  cv.addEventListener('pointerdown', function (e) {
+    drag = { x: e.clientX, y: e.clientY, mx: MX, my: MY, moved: false };
+  });
+  cv.addEventListener('pointermove', function (e) {
+    if (!drag) return;
+    const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+    if (Math.hypot(dx, dy) > 5) drag.moved = true;
+    if (!drag.moved) return;
+    MX = drag.mx + dx;
+    MY = drag.my + dy;
+    camX = (W / 2 - MX) / MS;
+    camY = (H / 2 - MY) / (MS / 1.2);
+  });
+  cv.addEventListener('pointerup', function () {
+    if (drag && drag.moved) skipClick = true;
+    drag = null;
+  });
+  $('zin').addEventListener('click', function () { zoomAt(W / 2, H / 2, camZ * 1.25); });
+  $('zout').addEventListener('click', function () { zoomAt(W / 2, H / 2, camZ / 1.25); });
+  $('zfit').addEventListener('click', function () {
+    camZ = 1; camX = 0.5; camY = 0.5;
+    layoutCam();
+  });
+  cv.addEventListener('click', function (e) {
+    if (skipClick) { skipClick = false; return; }
+    const r = cv.getBoundingClientRect();
+    const mx = e.clientX - r.left, my = e.clientY - r.top;
+    let best = null, bd = 18;
+    for (const s of S.ships) {
+      if (!s.alive || s.cap == null) continue;
+      const d = Math.hypot(X(s.x) - mx, Y(s.y) - my);
+      if (d < 8 && d < bd) { bd = d; best = { t: 'c', id: s.cap }; }
+    }
+    for (const b of S.bases) {
+      if (!b.alive) continue;
+      const d = Math.hypot(X(b.x) - mx, Y(b.y) - my);
+      if (d < 10 && d < bd) { bd = d; best = { t: 'c', id: b.chief }; }
+    }
+    for (const w of S.wrecks) {
+      const d = Math.hypot(X(w.x) - mx, Y(w.y) - my);
+      if (d < 8 && d < bd) {
+        bd = d;
+        best = w.battle != null ? { t: 'battle', id: w.battle } : { t: 'w', id: w.id };
+      }
+    }
+    for (const p of S.P) {
+      const d = Math.hypot(X(p.x) - mx, Y(p.y) - my);
+      if (d < radius(p) + 10 && d < bd + 6) { bd = d; best = { t: 'p', id: p.id }; }
+    }
+    if (best) goEntity(best.t, best.id);
+  });
+  addEventListener('keydown', function (e) {
+    if (e.code === 'Space' && e.target === document.body) {
+      e.preventDefault();
+      $('play').click();
+    }
+  });
+  addEventListener('resize', resize);
+  addEventListener('error', function (e) {
+    const el = $('pane');
+    if (el && e.message) el.textContent = 'La simulación se detuvo: ' + e.message;
+  });
+  requestAnimationFrame(frame);
+}
+
+globalThis.SectorSim = { init: init, step: step, warm: warm, report: report, bootWorld: bootWorld, get S() { return S; } };
+if (typeof document !== 'undefined') boot();
+</script>
+</body>
+</html>

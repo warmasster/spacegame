@@ -2,54 +2,164 @@ import * as THREE from 'three';
 import type { CSM } from 'three/addons/csm/CSM.js';
 import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import { mulberry32 } from '../../shared/noise';
-import { ROCK_VARIANTS } from '../../shared/terrain';
-import type { LunarTerrain } from '../../shared/terrain';
-import { editsNear } from './terrain';
+import { surfaceOf, type CelestialBody } from '../../shared/space/body';
+import { cellOf, cubeDir, faceOf, facePoint } from '../../shared/space/cubeSphere';
+import { ROCK_VARIANTS, rockTileArc, rockTileLevel } from '../../shared/space/rocks';
+import type { BodySurface } from '../../shared/space/surface';
+import { tangentAxes } from '../../shared/space/tangent';
+import { modReach, type TerrainMod } from '../../shared/space/terrainMods';
 import type { TerrainWorkerPool } from './workerPool';
 
-const TILE = 64;
 /** [ring radius in tiles, minimum rock size] — small stones only near the viewer. */
-const RINGS: Array<[number, number, number]> = [
-  [1, 0, 1e9],
-  [3, 0.28, 1e9],
-  [7, 0.75, 1e9],
+const RINGS: Array<[number, number]> = [
+  [1, 0],
+  [3, 0.28],
+  [6, 0.75],
 ];
-const CAPACITY = 6000;
+/**
+ * Mesh detail per LOD (icosahedron subdivision: 720, 320, 80 and 20 triangles) and the distance
+ * (m) up to which each one is used.
+ */
+const LODS: Array<[number, number]> = [
+  [5, 14],
+  [3, 45],
+  [1, 140],
+  [0, Infinity],
+];
+/** A rock smaller than this over its distance is not drawn at all (a pixel or less). */
+const MIN_ANGLE = 0.0025;
+/** Sun shadows: rocks from this size in the inner ring, from the second in the middle one; none further out. */
+const CAST_INNER = 0.4;
+const CAST_MID = 1.5;
+/** Most rocks each batch holds (the rings hold ~1.5 K). */
+const MAX_ROCKS = 12000;
+/** The viewer moves this far (m) before the LODs are chosen again. */
+const LOD_STEP = 2;
+/** The instances are relative to an anchor near the viewer (float32 stays exact); a new one past this (m). */
+const REANCHOR = 2000;
+/** Numbers per rock in a job's result (terrain.worker.ts `buildRocks`). */
+const STRIDE = 9;
 
 interface RockTile {
-  key: string;
+  key: number;
+  face: number;
+  ti: number;
+  tj: number;
+  ring: number;
+  /** Middle direction of the tile (unit). */
+  dir: [number, number, number];
   data: Float32Array | null;
+  center: [number, number, number];
+  /** Instances it put in the batches: batch, id, batch, id… */
+  ids: number[];
   cancel?: () => void;
 }
 
+/** One BatchedMesh and what the field knows of each instance in it. */
+interface Batch {
+  mesh: THREE.BatchedMesh;
+  /** Geometry id per [variant][lod]. */
+  geo: number[][];
+  /** Position relative to the anchor (m). */
+  x: Float32Array;
+  y: Float32Array;
+  z: Float32Array;
+  size: Float32Array;
+  variant: Uint8Array;
+  /** LOD drawn now, -1 hidden (too small to see), -2 no instance. */
+  lod: Int8Array;
+  /** Highest instance id in use + 1. */
+  hi: number;
+  count: number;
+}
+
+const _m = new THREE.Matrix4();
+const _q = new THREE.Quaternion();
+const _qu = new THREE.Quaternion();
+const _e = new THREE.Euler();
+const _p = new THREE.Vector3();
+const _s = new THREE.Vector3();
+const _up = new THREE.Vector3();
+const _Y = new THREE.Vector3(0, 1, 0);
+const _fp = facePoint();
+const _te = [0, 0, 0];
+const _ts = [0, 0, 0];
+const _tu = [0, 0, 0];
+const _mods: TerrainMod[] = [];
+
 /**
- * Procedural boulders: a few fractured-rock meshes generated at startup, instanced over the
- * deterministic scatter computed in the terrain workers.
+ * Procedural boulders anywhere on a body: a few fractured-rock meshes generated at startup (each in
+ * four levels of detail), scattered deterministically over the cube-sphere cells of its surface
+ * (shared/space/rocks.ts) by the terrain workers, and drawn as two batches (the ones that cast sun
+ * shadows and the rest). Every instance is culled against the view (and each shadow cascade) on its
+ * own, takes the level of detail its distance asks for, and disappears when it would be under a
+ * pixel. Tiles come and go as the viewer walks; nothing is rebuilt. The instances are relative to an
+ * anchor near the viewer that hangs from the render origin's root, so float32 holds them anywhere.
  */
 export class RockField {
   readonly group = new THREE.Group();
-  private meshes: THREE.InstancedMesh[] = [];
-  private tiles = new Map<string, RockTile>();
-  private centerKey = '';
-  private dirty = false;
+  private batches: Batch[];
+  private tiles = new Map<number, RockTile>();
+  private arrived: RockTile[] = [];
+  /** Tile the viewer was in (face·2^40 + i·2^20 + j), -1: none yet. */
+  private at = -1;
+  /** The anchor (world) and the viewer relative to it when the LODs were last chosen. */
+  private anchor = new THREE.Vector3(Infinity, 0, 0);
+  private lodAt = new THREE.Vector3(Infinity, 0, Infinity);
+  private surface: BodySurface;
+  private tileLevel: number;
+  private tileArc: number;
 
   constructor(
     private pool: TerrainWorkerPool,
-    private terrain: LunarTerrain,
+    private body: CelestialBody,
+    private seed: number,
     material: THREE.MeshStandardMaterial,
   ) {
-    this.group.name = 'Rocks';
+    this.group.name = `Rocks:${body.def.id}`;
+    this.group.matrixAutoUpdate = false;
+    this.surface = surfaceOf(body, seed)!;
+    this.tileLevel = rockTileLevel(this.surface);
+    this.tileArc = rockTileArc(this.surface);
+    // every variant at every level of detail (same shape: the same seed drives each)
+    const geos: THREE.BufferGeometry[][] = [];
+    let vertices = 0;
+    let indices = 0;
     for (let v = 0; v < ROCK_VARIANTS; v++) {
-      const geo = makeRockGeometry(terrain.seed * 13 + v * 101);
-      const mesh = new THREE.InstancedMesh(geo, material, CAPACITY);
-      mesh.count = 0;
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
-      mesh.frustumCulled = false;
-      mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-      this.meshes.push(mesh);
-      this.group.add(mesh);
+      geos.push(
+        LODS.map(([detail]) => {
+          const g = makeRockGeometry(seed * 13 + v * 101, detail);
+          vertices += g.getAttribute('position').count;
+          indices += g.getIndex()!.count;
+          return g;
+        }),
+      );
     }
+    this.batches = [true, false].map((cast) => {
+      const mesh = new THREE.BatchedMesh(MAX_ROCKS, vertices, indices, material);
+      mesh.name = cast ? 'rocks-cast' : 'rocks';
+      mesh.castShadow = cast;
+      mesh.receiveShadow = true;
+      // culled per instance (view and each shadow cascade); the object as a whole is not
+      mesh.perObjectFrustumCulled = true;
+      mesh.frustumCulled = false;
+      mesh.sortObjects = false;
+      mesh.matrixAutoUpdate = false;
+      this.group.add(mesh);
+      return {
+        mesh,
+        geo: geos.map((lods) => lods.map((g) => mesh.addGeometry(g))),
+        x: new Float32Array(MAX_ROCKS),
+        y: new Float32Array(MAX_ROCKS),
+        z: new Float32Array(MAX_ROCKS),
+        size: new Float32Array(MAX_ROCKS),
+        variant: new Uint8Array(MAX_ROCKS),
+        lod: new Int8Array(MAX_ROCKS).fill(-2),
+        hi: 0,
+        count: 0,
+      };
+    });
+    for (const lods of geos) for (const g of lods) g.dispose();
   }
 
   static material(loader: THREE.TextureLoader, csm: CSM | null) {
@@ -67,7 +177,16 @@ export class RockField {
         .replace('#include <common>', '#include <common>\nvarying vec3 vRockPos;\nvarying vec3 vRockNrm;\nvarying mat3 vRockRot;')
         .replace(
           '#include <begin_vertex>',
-          '#include <begin_vertex>\nvRockPos = position * 2.3;\nvRockNrm = normal;\nvRockRot = normalMatrix * mat3(instanceMatrix);',
+          `#include <begin_vertex>
+          vRockPos = position * 2.3;
+          vRockNrm = normal;
+          #if defined( USE_BATCHING )
+            vRockRot = normalMatrix * mat3(batchingMatrix);
+          #elif defined( USE_INSTANCING )
+            vRockRot = normalMatrix * mat3(instanceMatrix);
+          #else
+            vRockRot = normalMatrix;
+          #endif`,
         );
       shader.fragmentShader = shader.fragmentShader
         .replace('#include <common>', '#include <common>\nuniform sampler2D tRockN;\nvarying vec3 vRockPos;\nvarying vec3 vRockNrm;\nvarying mat3 vRockRot;')
@@ -86,103 +205,234 @@ export class RockField {
           }`,
         );
     };
-    mat.customProgramCacheKey = () => 'lunar-rock-v1';
+    mat.customProgramCacheKey = () => 'lunar-rock-v2';
     return mat;
   }
 
+  /** Stream the tiles round the viewer (world) and choose the levels of detail. */
   update(viewer: THREE.Vector3) {
-    const cx = Math.floor(viewer.x / TILE);
-    const cz = Math.floor(viewer.z / TILE);
-    const key = `${cx}:${cz}`;
-    if (key !== this.centerKey) {
-      this.centerKey = key;
-      const wanted = new Set<string>();
-      for (const [ring, minSize, maxSize] of RINGS) {
-        for (let dz = -ring; dz <= ring; dz++) {
-          for (let dx = -ring; dx <= ring; dx++) {
-            // each tile is owned by the innermost ring that contains it
-            const inner = RINGS.find(([r]) => Math.max(Math.abs(dx), Math.abs(dz)) <= r)!;
-            if (inner[0] !== ring) continue;
-            const tkey = `${cx + dx}:${cz + dz}:${minSize}`;
-            wanted.add(tkey);
-            if (!this.tiles.has(tkey)) this.request(cx + dx, cz + dz, tkey, minSize, maxSize, Math.hypot(dx, dz));
-          }
-        }
-      }
-      for (const [k, t] of this.tiles) {
-        if (wanted.has(k)) continue;
-        t.cancel?.();
-        this.tiles.delete(k);
-      }
-      this.dirty = true;
+    if (this.tileLevel < 0) return;
+    if (this.anchor.distanceToSquared(viewer) > REANCHOR * REANCHOR) this.reanchor(viewer);
+    const c = this.body.center;
+    const f = faceOf(viewer.x - c[0], viewer.y - c[1], viewer.z - c[2], _fp);
+    const here = f.face * 2 ** 40 + cellOf(f.a, this.tileLevel) * 2 ** 20 + cellOf(f.b, this.tileLevel);
+    if (here !== this.at) {
+      this.at = here;
+      this.stream(viewer);
     }
-    if (this.dirty) this.rebuild();
+    let added = false;
+    if (this.arrived.length) {
+      for (const t of this.arrived) {
+        if (this.tiles.get(t.key) !== t || !t.data) continue;
+        this.place(t, viewer);
+        added = true;
+      }
+      this.arrived.length = 0;
+    }
+    if (added || this.lodAt.distanceToSquared(viewer) > LOD_STEP * LOD_STEP) {
+      this.lodAt.copy(viewer);
+      const vx = viewer.x - this.anchor.x;
+      const vy = viewer.y - this.anchor.y;
+      const vz = viewer.z - this.anchor.z;
+      for (const b of this.batches) this.lods(b, vx, vy, vz);
+    }
   }
 
-  /** Re-scatter tiles near an edit so rocks follow the new ground. */
-  invalidate(x: number, z: number, radius: number) {
-    const m = radius * 2.7;
+  /**
+   * The tiles wanted round the viewer: a grid laid on its horizon at half-tile steps, each point's
+   * tile owned by the innermost ring that reaches it (the cube's faces and their seams need no care).
+   */
+  private stream(viewer: THREE.Vector3) {
+    const c = this.body.center;
+    const R = this.body.radius;
+    const l = Math.hypot(viewer.x - c[0], viewer.y - c[1], viewer.z - c[2]) || 1;
+    _tu[0] = (viewer.x - c[0]) / l;
+    _tu[1] = (viewer.y - c[1]) / l;
+    _tu[2] = (viewer.z - c[2]) / l;
+    tangentAxes(this.body.pole, _tu, _te, _ts);
+    const T = this.tileLevel;
+    const outer = RINGS[RINGS.length - 1][0];
+    const wanted = new Map<number, { face: number; ti: number; tj: number; ring: number }>();
+    for (let hz = -outer * 2; hz <= outer * 2; hz++) {
+      for (let hx = -outer * 2; hx <= outer * 2; hx++) {
+        const ring = Math.ceil(Math.max(Math.abs(hx), Math.abs(hz)) / 2);
+        const x = hx * 0.5 * this.tileArc;
+        const z = hz * 0.5 * this.tileArc;
+        const f = faceOf(_tu[0] * R + _te[0] * x + _ts[0] * z, _tu[1] * R + _te[1] * x + _ts[1] * z, _tu[2] * R + _te[2] * x + _ts[2] * z, _fp);
+        const ti = cellOf(f.a, T);
+        const tj = cellOf(f.b, T);
+        const id = f.face * 2 ** 40 + ti * 2 ** 20 + tj;
+        const w = wanted.get(id);
+        if (!w) wanted.set(id, { face: f.face, ti, tj, ring });
+        else if (ring < w.ring) w.ring = ring;
+      }
+    }
+    // a tile's key carries the smallest rock size it holds: moving to another ring asks again
+    const keep = new Set<number>();
+    for (const [id, w] of wanted) {
+      const r = RINGS.findIndex(([rr]) => w.ring <= rr);
+      const key = id * 4 + r;
+      keep.add(key);
+      if (!this.tiles.has(key)) this.request(key, w.face, w.ti, w.tj, r, w.ring);
+    }
     for (const [k, t] of this.tiles) {
-      const [tx, tz] = k.split(':').map(Number);
-      if (x + m < tx * TILE || x - m > (tx + 1) * TILE || z + m < tz * TILE || z - m > (tz + 1) * TILE) continue;
-      t.cancel?.();
+      if (keep.has(k)) continue;
+      this.drop(t);
       this.tiles.delete(k);
     }
-    this.centerKey = '';
   }
 
-  private request(tx: number, tz: number, key: string, minSize: number, maxSize: number, dist: number) {
-    const tile: RockTile = { key, data: null };
+  /** Re-scatter the tiles a modifier reaches (their rocks follow the new ground). */
+  invalidate(mod: TerrainMod) {
+    if (mod.body !== this.body.def.id) return;
+    const R = this.body.radius;
+    const reach = modReach(mod) + this.tileArc;
+    const c = mod.center;
+    for (const [k, t] of this.tiles) {
+      const dot = c[0] * t.dir[0] + c[1] * t.dir[1] + c[2] * t.dir[2];
+      if (Math.acos(Math.max(-1, Math.min(1, dot))) * R > reach) continue;
+      this.drop(t);
+      this.tiles.delete(k);
+    }
+    this.at = -1;
+  }
+
+  private request(key: number, face: number, ti: number, tj: number, ring: number, dist: number) {
+    const n = 2 ** this.tileLevel;
+    const dir = cubeDir(face, ((ti + 0.5) / n) * 2 - 1, ((tj + 0.5) / n) * 2 - 1, [0, 0, 0]) as [number, number, number];
+    const tile: RockTile = { key, face, ti, tj, ring, dir, data: null, center: [0, 0, 0], ids: [] };
     this.tiles.set(key, tile);
-    const job = this.pool.run(
-      { kind: 'rocks', seed: this.terrain.seed, edits: editsNear(this.terrain.edits, tx * TILE, tz * TILE, TILE), x0: tx * TILE, z0: tz * TILE, size: TILE, minSize, maxSize },
-      2 + dist * 0.5,
-    );
+    _mods.length = 0;
+    this.surface.mods.near(dir, this.tileArc * 0.75, 0, _mods);
+    const job = this.pool.run({ kind: 'rocks', body: this.body.def.id, seed: this.seed, mods: _mods.slice(), face, ti, tj, minSize: RINGS[ring][1], maxSize: 1e9 }, 2 + dist * 0.5);
     tile.cancel = job.cancel;
     job.promise.then((r) => {
       if (r.kind !== 'rocks' || this.tiles.get(key) !== tile) return;
       tile.data = r.rocks;
-      this.dirty = true;
+      tile.center = r.center;
+      this.arrived.push(tile);
     });
   }
 
-  private rebuild() {
-    this.dirty = false;
-    const counts = new Array(ROCK_VARIANTS).fill(0);
-    const m = new THREE.Matrix4();
-    const q = new THREE.Quaternion();
-    const e = new THREE.Euler();
-    const p = new THREE.Vector3();
-    const s = new THREE.Vector3();
-    for (const t of this.tiles.values()) {
-      const d = t.data;
-      if (!d) continue;
-      for (let i = 0; i < d.length; i += 7) {
-        const v = d[i + 5] | 0;
-        if (counts[v] >= CAPACITY) continue;
-        const size = d[i + 3];
-        const j = d[i + 6];
-        e.set((j - 0.5) * 0.5, d[i + 4], (fract(j * 7.31) - 0.5) * 0.5);
-        q.setFromEuler(e);
-        p.set(d[i], d[i + 1] - size * 0.3, d[i + 2]);
-        s.set(size * (0.85 + 0.3 * fract(j * 3.7)), size * (0.6 + 0.35 * fract(j * 5.3)), size * (0.85 + 0.3 * fract(j * 9.1)));
-        m.compose(p, q, s);
-        this.meshes[v].setMatrixAt(counts[v]++, m);
+  /** A tile's rocks into the batches (relative to the anchor). */
+  private place(t: RockTile, viewer: THREE.Vector3) {
+    const d = t.data!;
+    const castFrom = t.ring === 0 ? CAST_INNER : t.ring === 1 ? CAST_MID : Infinity;
+    const ox = t.center[0] - this.anchor.x;
+    const oy = t.center[1] - this.anchor.y;
+    const oz = t.center[2] - this.anchor.z;
+    const vx = viewer.x - this.anchor.x;
+    const vy = viewer.y - this.anchor.y;
+    const vz = viewer.z - this.anchor.z;
+    for (let i = 0; i < d.length; i += STRIDE) {
+      const size = d[i + 6];
+      const bi = size >= castFrom ? 0 : 1;
+      const b = this.batches[bi];
+      if (b.count >= MAX_ROCKS) continue;
+      const v = Math.floor(d[i + 8]);
+      const j = (d[i + 8] - v) * 2;
+      _up.set(d[i + 3], d[i + 4], d[i + 5]);
+      // sunk a third of its height into the regolith, along the local vertical
+      const x = ox + d[i] - _up.x * size * 0.3;
+      const y = oy + d[i + 1] - _up.y * size * 0.3;
+      const z = oz + d[i + 2] - _up.z * size * 0.3;
+      const lod = this.lodFor(size, x - vx, y - vy, z - vz);
+      const id = b.mesh.addInstance(b.geo[v][Math.max(0, lod)]);
+      _e.set((j - 0.5) * 0.5, d[i + 7], (fract(j * 7.31) - 0.5) * 0.5);
+      _q.setFromUnitVectors(_Y, _up).multiply(_qu.setFromEuler(_e));
+      _p.set(x, y, z);
+      _s.set(size * (0.85 + 0.3 * fract(j * 3.7)), size * (0.6 + 0.35 * fract(j * 5.3)), size * (0.85 + 0.3 * fract(j * 9.1)));
+      b.mesh.setMatrixAt(id, _m.compose(_p, _q, _s));
+      if (lod < 0) b.mesh.setVisibleAt(id, false);
+      b.x[id] = x;
+      b.y[id] = y;
+      b.z[id] = z;
+      b.size[id] = size;
+      b.variant[id] = v;
+      b.lod[id] = lod;
+      b.hi = Math.max(b.hi, id + 1);
+      b.count++;
+      t.ids.push(bi, id);
+    }
+  }
+
+  /** A new anchor at the viewer (whole metres): every instance moves by the difference, in place. */
+  private reanchor(viewer: THREE.Vector3) {
+    const nx = Math.round(viewer.x);
+    const ny = Math.round(viewer.y);
+    const nz = Math.round(viewer.z);
+    const fresh = !Number.isFinite(this.anchor.x);
+    const dx = fresh ? 0 : this.anchor.x - nx;
+    const dy = fresh ? 0 : this.anchor.y - ny;
+    const dz = fresh ? 0 : this.anchor.z - nz;
+    this.anchor.set(nx, ny, nz);
+    this.group.position.copy(this.anchor);
+    this.group.updateMatrix();
+    this.group.updateMatrixWorld(true);
+    if (fresh) return;
+    for (const b of this.batches) {
+      for (let id = 0; id < b.hi; id++) {
+        if (b.lod[id] === -2) continue;
+        b.x[id] += dx;
+        b.y[id] += dy;
+        b.z[id] += dz;
+        b.mesh.getMatrixAt(id, _m);
+        _m.elements[12] += dx;
+        _m.elements[13] += dy;
+        _m.elements[14] += dz;
+        b.mesh.setMatrixAt(id, _m);
       }
     }
-    this.meshes.forEach((mesh, v) => {
-      mesh.count = counts[v];
-      mesh.instanceMatrix.needsUpdate = true;
-    });
+  }
+
+  /** A tile's rocks out of the batches (and its pending job cancelled). */
+  private drop(t: RockTile) {
+    t.cancel?.();
+    for (let k = 0; k < t.ids.length; k += 2) {
+      const b = this.batches[t.ids[k]];
+      const id = t.ids[k + 1];
+      b.mesh.deleteInstance(id);
+      b.lod[id] = -2;
+      b.count--;
+    }
+    t.ids.length = 0;
+  }
+
+  /** Level of detail for a rock of `size` at (dx, dy, dz) from the viewer; -1 = too small to draw. */
+  private lodFor(size: number, dx: number, dy: number, dz: number) {
+    const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    if (size < dist * MIN_ANGLE) return -1;
+    // bigger rocks keep their detail further out
+    const r = dist / Math.max(0.5, Math.min(3, size * 1.5));
+    for (let k = 0; k < LODS.length; k++) if (r <= LODS[k][1]) return k;
+    return LODS.length - 1;
+  }
+
+  /** Choose every instance's level of detail again (the viewer moved; its position relative to the anchor). */
+  private lods(b: Batch, vx: number, vy: number, vz: number) {
+    const mesh = b.mesh;
+    for (let id = 0; id < b.hi; id++) {
+      const was = b.lod[id];
+      if (was === -2) continue;
+      const lod = this.lodFor(b.size[id], b.x[id] - vx, b.y[id] - vy, b.z[id] - vz);
+      if (lod === was) continue;
+      b.lod[id] = lod;
+      if (lod < 0) {
+        mesh.setVisibleAt(id, false);
+        continue;
+      }
+      if (was < 0) mesh.setVisibleAt(id, true);
+      mesh.setGeometryIdAt(id, b.geo[b.variant[id]][lod]);
+    }
   }
 }
 
 const fract = (x: number) => x - Math.floor(x);
 
-/** Fractured boulder: squashed sphere + random planar breaks + multi-scale bumps. */
-function makeRockGeometry(seed: number): THREE.BufferGeometry {
+/** Fractured boulder: squashed sphere + random planar breaks + multi-scale bumps (`detail`: its subdivision). */
+function makeRockGeometry(seed: number, detail = 5): THREE.BufferGeometry {
   const rnd = mulberry32(seed);
-  let geo: THREE.BufferGeometry = new THREE.IcosahedronGeometry(1, 5);
+  let geo: THREE.BufferGeometry = new THREE.IcosahedronGeometry(1, detail);
   geo.deleteAttribute('uv');
   geo.deleteAttribute('normal');
   geo = mergeVertices(geo);

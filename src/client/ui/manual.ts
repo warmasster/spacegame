@@ -1,11 +1,12 @@
-import { pageLabel, SCREEN_PAGES, type ControlDef, type ControlKind, type ManualBlock, type ManualFig, type ManualLive, type ShipDef } from '../../shared/ship/def';
+import { deckOf, moduleBase, pageLabel, SCREEN_PAGES, type ControlDef, type ControlKind, type ManualBlock, type ManualFig, type ManualLive, type ShipDef } from '../../shared/ship/def';
 import { zoneAt } from '../../shared/ship/crew';
 import type { V3 } from '../../shared/ship/geom';
 import { RX, type Reactor } from '../../shared/ship/modules/reactor';
 import { LOCK, LOCK_NAME } from '../../shared/ship/modules/airlock';
 import type { ShipSim } from '../../shared/ship/sim';
 import { componentSheet, maker } from '../../shared/ship/catalog/index';
-import { performance } from '../../shared/ship/flight';
+import { flightReadout, performance } from '../../shared/ship/flight';
+import type { Surfaces } from '../../shared/space/body';
 import { MOON } from '../../shared/constants';
 
 /**
@@ -19,6 +20,8 @@ export interface ManualHooks {
   point(index: number | null): void;
   /** Where the reader stands, in ship space (for the plan), or null outside. */
   where(): V3 | null;
+  /** The ground of each body (height above it, for the live flight strip). */
+  surfaces?: Surfaces;
 }
 
 const KIND: Record<ControlKind, string> = {
@@ -121,9 +124,9 @@ export class ShipManual {
     return this.figure(b.fig);
   }
 
-  /** `[[console/key]]` → a link to that control's card. */
+  /** `[[console/key]]` → a link to that control's card; `**text**` → bold. */
   private link(text: string) {
-    return esc(text).replace(/\[\[([^\]]+)\]\]/g, (_, id: string) => {
+    return esc(text).replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>').replace(/\[\[([^\]]+)\]\]/g, (_, id: string) => {
       const c = this.def.controls.find((x) => x.id === id);
       return `<button type="button" class="mn-ref" data-jump="${esc(id)}">${esc(c?.name ?? id)}</button>`;
     });
@@ -192,32 +195,66 @@ export class ShipManual {
     }
   }
 
-  /** Top view of the ship: hull sections, machines, seats, and every console as a button. */
+  /**
+   * Which deck a ship-space point is on: the deck of the room it stands in (a machine near the
+   * ceiling of the lower deck is still on the lower deck), else by height.
+   */
+  private deckIndex(p: V3) {
+    const zone = zoneAt(this.def, [p[0], p[1] - 0.8, p[2]]) ?? zoneAt(this.def, p);
+    return deckOf(this.def.decks, zone ? zone.min[1] : p[1]);
+  }
+
+  /**
+   * Top view of the ship, one map per deck (bottom deck last, as seen from above): hull sections,
+   * rooms, machines, seats, deck hatches, and every console as a button.
+   */
   private plan() {
     const def = this.def;
     const b = def.bounds;
     const W = 720;
     const pad = 16;
     const k = (W - pad * 2) / (b.max[2] - b.min[2]);
-    const H = Math.round((b.max[0] - b.min[0]) * k + pad * 2 + 28);
+    const multi = def.decks.length > 1;
+    const head = multi ? 18 : 0;
+    const bandH = Math.round((b.max[0] - b.min[0]) * k + pad + head);
+    const order = def.decks.map((_, i) => i).reverse();
+    const H = bandH * def.decks.length + pad + 28;
     const X = (z: number) => pad + (z - b.min[2]) * k;
-    const Y = (x: number) => pad + (x - b.min[0]) * k;
-    const box = (c: V3, half: V3, yaw: number, cls: string, title: string) => {
+    const Y = (x: number, deck: number) => pad + head + order.indexOf(deck) * bandH + (x - b.min[0]) * k;
+    const box = (c: V3, half: V3, yaw: number, deck: number, cls: string, title: string) => {
       const w = half[2] * 2 * k;
       const h = half[0] * 2 * k;
-      return `<rect class="${cls}" x="${(X(c[2]) - w / 2).toFixed(1)}" y="${(Y(c[0]) - h / 2).toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}" rx="2" transform="rotate(${((-yaw * 180) / Math.PI).toFixed(1)} ${X(c[2]).toFixed(1)} ${Y(c[0]).toFixed(1)})"><title>${esc(title)}</title></rect>`;
+      return `<rect class="${cls}" x="${(X(c[2]) - w / 2).toFixed(1)}" y="${(Y(c[0], deck) - h / 2).toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}" rx="2" transform="rotate(${((-yaw * 180) / Math.PI).toFixed(1)} ${X(c[2]).toFixed(1)} ${Y(c[0], deck).toFixed(1)})"><title>${esc(title)}</title></rect>`;
     };
     let svg = '';
-    for (const m of def.modules) {
-      const hw = Math.max(...m.profile.map((p) => Math.abs(p[0])));
-      svg += `<rect class="pl-hull" x="${X(m.z0)}" y="${Y(-hw)}" width="${(m.z1 - m.z0) * k}" height="${2 * hw * k}" rx="4"/>`;
-      const zone = def.zones.find((z) => z.id === m.zone);
-      if (zone) svg += `<text class="pl-zone" x="${X((m.z0 + m.z1) / 2)}" y="${Y(hw) - 8}" text-anchor="middle">${esc(zone.label)}</text>`;
+    def.decks.forEach((d, di) => {
+      if (multi) svg += `<text class="pl-deck" x="${pad}" y="${(Y(b.min[0], di) - 6).toFixed(1)}">${esc(d.label)}</text>`;
+      const labelled = new Set<string>();
+      for (const m of def.modules) {
+        if (deckOf(def.decks, moduleBase(m) + 0.1) !== di) continue;
+        const hw = Math.max(...m.profile.map((p) => Math.abs(p[0])));
+        svg += `<rect class="pl-hull" x="${X(m.z0)}" y="${Y(-hw, di)}" width="${(m.z1 - m.z0) * k}" height="${2 * hw * k}" rx="4"/>`;
+        const zone = def.zones.find((z) => z.id === m.zone);
+        if (zone && !labelled.has(zone.id)) {
+          labelled.add(zone.id);
+          svg += `<text class="pl-zone" x="${X((zone.min[2] + zone.max[2]) / 2)}" y="${Y(hw, di) - 8}" text-anchor="middle">${esc(zone.label)}</text>`;
+        }
+      }
+      // rooms with no hull section of their own (nested in a bigger one: an airlock in an engine room)
+      for (const z of def.zones) {
+        if (def.modules.some((m) => m.zone === z.id) || deckOf(def.decks, z.min[1]) !== di) continue;
+        svg += `<rect class="pl-room" x="${X(z.min[2])}" y="${Y(z.min[0], di)}" width="${(z.max[2] - z.min[2]) * k}" height="${(z.max[0] - z.min[0]) * k}" rx="2"/>`;
+        svg += `<text class="pl-zone" x="${X((z.min[2] + z.max[2]) / 2)}" y="${Y((z.min[0] + z.max[0]) / 2, di) + 4}" text-anchor="middle">${esc(z.label)}</text>`;
+      }
+    });
+    for (const h of def.hatches) {
+      // the hole shows on both decks it joins
+      for (const di of new Set([deckOf(def.decks, h.c[1] - 0.5), deckOf(def.decks, h.c[1])])) svg += box(h.c, [h.w / 2, 0, h.l / 2], 0, di, 'pl-hatch', 'Escotilla de cubierta');
     }
-    for (const p of def.parts) svg += box(p.c, p.half, p.yaw, p.zone ? 'pl-part in' : 'pl-part', p.name);
-    for (const s of def.seats) svg += `<rect class="pl-seat" x="${X(s.root[2]) - 7}" y="${Y(s.root[0]) - 7}" width="14" height="14" rx="3"><title>${esc(s.name)}</title></rect>`;
+    for (const p of def.parts) svg += box(p.c, p.half, p.yaw, this.deckIndex(p.c), p.zone ? 'pl-part in' : 'pl-part', p.name);
+    for (const s of def.seats) svg += `<rect class="pl-seat" x="${X(s.root[2]) - 7}" y="${Y(s.root[0], this.deckIndex([s.root[0], s.root[1] + 1, s.root[2]])) - 7}" width="14" height="14" rx="3"><title>${esc(s.name)}</title></rect>`;
     for (const con of def.consoles) {
-      svg += `<g class="pl-con" data-goto="${esc(con.id)}"><circle cx="${X(con.c[2]).toFixed(1)}" cy="${Y(con.c[0]).toFixed(1)}" r="7"/><title>${esc(con.title)}</title></g>`;
+      svg += `<g class="pl-con" data-goto="${esc(con.id)}"><circle cx="${X(con.c[2]).toFixed(1)}" cy="${Y(con.c[0], this.deckIndex(con.c)).toFixed(1)}" r="7"/><title>${esc(con.title)}</title></g>`;
     }
     svg += `<g class="pl-me" data-me><circle r="6"/><circle r="11" class="ring"/></g>`;
     svg += `<text class="pl-axis" x="${pad}" y="${H - 8}">◀ PROA</text><text class="pl-axis" x="${W - pad}" y="${H - 8}" text-anchor="end">POPA ▶</text>`;
@@ -226,7 +263,7 @@ export class ShipManual {
       <figcaption><span class="dot con"></span>consola <span class="dot part"></span>máquina <span class="dot seat"></span>asiento <span class="dot me"></span>tú</figcaption></figure>`;
   }
 
-  private planMap: { X: (z: number) => number; Y: (x: number) => number } | null = null;
+  private planMap: { X: (z: number) => number; Y: (x: number, deck: number) => number } | null = null;
 
   /** Every machine aboard: its catalog component, size, maker and data sheet. */
   private equipment() {
@@ -255,18 +292,22 @@ export class ShipManual {
     let svg = '';
     for (const m of def.modules) {
       const h = Math.max(...m.profile.map((p) => p[1]));
-      svg += `<rect class="hull" x="${X(m.z0).toFixed(1)}" y="${Y(h).toFixed(1)}" width="${((m.z1 - m.z0) * k).toFixed(1)}" height="${(h * k).toFixed(1)}" rx="3"/>`;
+      const base = moduleBase(m);
+      svg += `<rect class="hull" x="${X(m.z0).toFixed(1)}" y="${Y(h).toFixed(1)}" width="${((m.z1 - m.z0) * k).toFixed(1)}" height="${((h - base) * k).toFixed(1)}" rx="3"/>`;
     }
     for (const c of def.compartments) {
       const zs = def.modules.filter((m) => m.zone === c.id);
       if (!zs.length) continue;
       const zc = (Math.min(...zs.map((m) => m.z0)) + Math.max(...zs.map((m) => m.z1))) / 2;
-      svg += `<text class="lbl" x="${X(zc).toFixed(1)}" y="${floor - 12}" text-anchor="middle">${esc(c.label)}</text>`;
+      const base = Math.min(...zs.map(moduleBase));
+      svg += `<text class="lbl" x="${X(zc).toFixed(1)}" y="${(Y(base) - 12).toFixed(1)}" text-anchor="middle">${esc(c.label)}</text>`;
     }
     for (const d of def.doors) {
-      if (Math.abs(d.n[2]) > 0.5) svg += `<g class="door"><rect x="${(X(d.c[2]) - 4).toFixed(1)}" y="${Y(d.h).toFixed(1)}" width="8" height="${(d.h * k).toFixed(1)}" rx="1"/></g>`;
-      else svg += `<g class="door"><rect x="${(X(d.c[2] - d.w / 2)).toFixed(1)}" y="${(Y(d.h) - 2).toFixed(1)}" width="${(d.w * k).toFixed(1)}" height="${(d.h * k).toFixed(1)}" rx="2" opacity="0.6"/></g>`;
+      if (Math.abs(d.n[2]) > 0.5) svg += `<g class="door"><rect x="${(X(d.c[2]) - 4).toFixed(1)}" y="${Y(d.c[1] + d.h).toFixed(1)}" width="8" height="${(d.h * k).toFixed(1)}" rx="1"/></g>`;
+      else svg += `<g class="door"><rect x="${(X(d.c[2] - d.w / 2)).toFixed(1)}" y="${(Y(d.c[1] + d.h) - 2).toFixed(1)}" width="${(d.w * k).toFixed(1)}" height="${(d.h * k).toFixed(1)}" rx="2" opacity="0.6"/></g>`;
     }
+    // deck hatches: a slot in the deck between the two decks
+    for (const h of def.hatches) svg += `<g class="door"><rect x="${X(h.c[2] - h.l / 2).toFixed(1)}" y="${(Y(h.c[1]) - 2).toFixed(1)}" width="${(h.l * k).toFixed(1)}" height="4" rx="1"/></g>`;
     const last = def.compartments.find((c) => def.openings.some((o) => o.a === c.id && o.b === null && (o.kind === 'ramp' || o.kind === 'door'))) ?? def.compartments[def.compartments.length - 1];
     const lz = def.modules.filter((m) => m.zone === last?.id);
     if (last && lz.length) svg += `<text class="kpa" x="${X((lz[0].z0 + lz[lz.length - 1].z1) / 2).toFixed(1)}" y="${(Y(top) + 30).toFixed(1)}" text-anchor="middle">0 kPa</text>`;
@@ -505,7 +546,7 @@ export class ShipManual {
     const at = this.hooks.where();
     if (me && this.planMap) {
       me.style.display = at ? '' : 'none';
-      if (at) me.setAttribute('transform', `translate(${this.planMap.X(at[2]).toFixed(1)} ${this.planMap.Y(at[0]).toFixed(1)})`);
+      if (at) me.setAttribute('transform', `translate(${this.planMap.X(at[2]).toFixed(1)} ${this.planMap.Y(at[0], this.deckIndex(at)).toFixed(1)})`);
     }
   }
 
@@ -543,6 +584,13 @@ export class ShipManual {
     if (kind === 'flight') {
       const m = sim.massNow();
       const perf = performance(this.def, m, MOON.gravity);
+      const g = this.hooks.surfaces;
+      if (g) {
+        const r = flightReadout(sim, g);
+        const deg = (x: number) => (((Math.round((x * 180) / Math.PI) % 360) + 360) % 360);
+        const air = !r.landed;
+        return `${tag}${chip('Estado', r.landed ? 'EN TIERRA' : 'EN VUELO', air ? 'warn' : 'ok')}${chip('Altura', `${r.agl.toFixed(1)} m`)}${chip('V/S', `${r.vs.toFixed(1)} m/s`, r.vs < -3 ? 'bad' : '')}${chip('Suelo', `${r.gs.toFixed(1)} m/s`)}${chip('Rumbo', `${String(deg(r.heading)).padStart(3, '0')}°`)}${chip('Mando', r.direct ? 'DIRECTO' : 'ASISTIDO', r.direct ? 'bad' : 'ok')}${chip('P. aut.', r.apOn ? (r.modes.join(' · ') || 'ON') : 'OFF', r.apOn ? 'ok' : '')}${bar('Empuje', r.weight > 0 ? r.thrust / r.weight / 2 : 0, `${r.weight > 0 ? Math.round((r.thrust / r.weight) * 100) : 0} % del peso`)}${chip('Masa', `${(m.mass / 1000).toFixed(2)} t`)}${chip('Empuje/peso', perf.twr.toFixed(2), perf.twr > 1 ? 'ok' : 'warn')}${chip('Δv', `${perf.dv.toFixed(0)} m/s`)}`;
+      }
       return `${tag}${chip('Masa', `${(m.mass / 1000).toFixed(2)} t`)}${chip('Empuje/peso', perf.twr.toFixed(2), perf.twr > 1 ? 'ok' : 'warn')}${chip('Δv', `${perf.dv.toFixed(0)} m/s`)}`;
     }
     const fuel = sim.sys.fuel;

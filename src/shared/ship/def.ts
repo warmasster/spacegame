@@ -24,6 +24,7 @@ import {
   type V2,
   type V3,
 } from './geom.js';
+import { AP_MODES } from './flight/autopilot.js';
 
 /** hull = outer skin (wall/roof), glass = window, floor = deck plate, bulkhead = interior wall. */
 export type PanelKind = 'hull' | 'glass' | 'floor' | 'bulkhead';
@@ -45,6 +46,11 @@ export interface PanelDef extends Frame {
   other?: string;
   /** Paint scheme on its outer face (0 light, 1 dark, 2 hazard, 3 stripe), see `paintPanels`. */
   paint?: number;
+  /**
+   * Pressure difference it holds intact (kPa); damaged it holds rating × (hp / maxHp)² and tears
+   * beyond that (modules/decomp.ts). Default: the rating of its kind (`AIR.rating`, airflow.ts).
+   */
+  rating?: number;
 }
 
 /** Power circuit id (breaker + conduit + priority), see modules/power.ts. Each ship names its own. */
@@ -111,6 +117,19 @@ export interface ControlDef extends Frame {
   hostPart: number;
   /** Hit box half extents along u, v, n. */
   half: V3;
+  /** On a face of a rotating drum (its console's): only usable while that face is turned out. */
+  drum?: DrumFace;
+}
+
+/**
+ * A console that is one face of a rotating drum: `faces` consoles share the same face frame and a
+ * switch `key` (0..faces−1) says which one is turned out. The drum turns about the face's u axis;
+ * the others are hidden inside the panel, and their controls can't be reached.
+ */
+export interface DrumFace {
+  key: string;
+  face: number;
+  faces: number;
 }
 
 // -----------------------------------------------------------------------------------------------
@@ -147,10 +166,23 @@ export interface PartDef extends ShipBox {
   zone: string | null;
   maxHp: number;
   circuit?: SubsystemId;
-  /** Moving mount (nacelle) the part rides on. */
+  /** Mount the part rides on (a tilting nacelle, a fixed pod): `nacellePylons` joins each mount to the hull. */
   mount?: string;
+  /**
+   * Tilting nacelle (main engines): the push turns by `rad` × the travel of the mover (or switch)
+   * `key` about the engine's right axis; +π/2 points it straight down. `at` = where the exhaust
+   * leaves at full tilt (a VTOL nozzle ducted near the centre of mass, ship space); without it
+   * the nozzle swings about the engine's centre. See shared/ship/flight/thrusters.ts.
+   */
+  gimbal?: { key: string; rad: number; at?: V3 };
   /** Damage taken from blasts is multiplied by this (armour < 1). */
   soft: number;
+  /**
+   * Share of its integrity a violent decompression of its compartment tears off (liquids boil,
+   * seals and cells burst, debris flies into it): 0 sealed and rugged … 1 wrecked. More near the
+   * breach (modules/decomp.ts).
+   */
+  decomp: number;
   /** Propellant consumers: network node they draw from. */
   feed?: string;
   /** Model builder (client/ship/models.ts); defaults to the type. */
@@ -180,6 +212,11 @@ export interface PartDef extends ShipBox {
   mass: number;
   /** Model generator parameters (variant, detail, count…), see client/ship/models. */
   look: Record<string, number>;
+  /**
+   * Its own voice per sound role (e.g. `{ run: 'mach.pump' }`): replaces the default sound its
+   * module declares for that role (SoundCue, client/audio). Usually from its catalog component.
+   */
+  sounds?: Record<string, string>;
 }
 
 /** Switch key a part's module reads for `role`: the part's own `sw[role]`, or the convention. */
@@ -259,6 +296,13 @@ export interface OpeningDef {
   key: string;
   /** Fully open area (m²). */
   area: number;
+  /**
+   * Centre of the opening (ship space) and its normal from `a` toward `b` (or out): where the air
+   * goes through (airflow.ts). `finishShip` takes them from the door or the ramp with that key;
+   * vents and ducts without them still carry gas, they just have no place for the jet.
+   */
+  at?: V3;
+  n?: V3;
 }
 
 /** A moving part driven by a switch: travels toward it while its circuit is powered. */
@@ -271,6 +315,8 @@ export interface MoverDef {
   load: number;
   /** Obstruction sensor (ship-space box): a body inside keeps it from closing (toward 0). */
   sensor?: { min: V3; max: V3 };
+  /** Its own voice (bank ids): the drive while it travels, the stop at the end (default: by what it moves, `MOVER_SOUNDS`). */
+  sounds?: { run?: string; stop?: string };
 }
 
 /** Life support settings (per ship): switch keys and the compressor. The machines are parts. */
@@ -301,6 +347,8 @@ export interface ConsoleDef extends Frame {
   hostProp: number;
   /** Box depth behind the face (m). */
   depth: number;
+  /** A face of a rotating drum (see DrumFace). */
+  drum?: DrumFace;
 }
 
 /** MFD page id: a key of SCREEN_PAGES (the client draws each one, see client/ship/screens.ts). */
@@ -360,6 +408,55 @@ export interface RampDef {
    * [x, distance along it from the hinge, depth].
    */
   pistons?: Array<{ hull: V3; ramp: V3 }>;
+}
+
+/**
+ * A deck: a walking level of the ship (y of its floor plates' top). A single-deck ship has one at
+ * 0 (the default). Multi-deck ships list them bottom-up; the manual draws one plan per deck and
+ * things are sorted into decks by height (`deckOf`).
+ */
+export interface DeckDef {
+  id: string;
+  label: string;
+  y: number;
+}
+
+/**
+ * Deck hatch: a sliding plate flush with a deck that covers a rectangular hole in it (a stairwell
+ * between two decks). `c` = centre of the hole on the deck's top face, `w` × `l` its size along x and
+ * z, `slide` the horizontal direction the plate retracts under the deck (by its own length along
+ * that axis). Driven by the mover `key` like a door; its gas path is an opening of kind 'door'
+ * with the same key (pressure interlock included).
+ */
+export interface HatchDef {
+  key: string;
+  c: V3;
+  w: number;
+  l: number;
+  t: number;
+  slide: V3;
+}
+
+/** Travel of a hatch plate when fully open (m): its own extent along the slide axis. */
+export function hatchTravel(h: Pick<HatchDef, 'w' | 'l' | 'slide'>): number {
+  return Math.abs(h.slide[0]) > Math.abs(h.slide[2]) ? h.w : h.l;
+}
+
+/**
+ * Box of a hatch plate at travel `open` (0 shut … 1 open), ship space. Shut it lies flush in the
+ * hole; opening, it first drops under the deck plating, then slides along `slide` beneath it.
+ * Shared by the view and the colliders so they can never disagree.
+ */
+export function hatchPlate(h: HatchDef, open: number): { c: V3; half: V3 } {
+  const o = Math.max(0, Math.min(1, open));
+  const drop = Math.min(1, o * 5) * (h.t + 0.02);
+  const s = hatchTravel(h) * Math.max(0, (o - 0.2) / 0.8);
+  return { c: [h.c[0] + h.slide[0] * s, h.c[1] - h.t / 2 - drop, h.c[2] + h.slide[2] * s], half: [h.w / 2 - 0.01, h.t / 2, h.l / 2 - 0.01] };
+}
+
+/** Obstruction sensor of a deck hatch: the hole and the headroom above and below it. */
+export function hatchSensor(h: HatchDef): { min: V3; max: V3 } {
+  return { min: [h.c[0] - h.w / 2 - 0.1, h.c[1] - 2.2, h.c[2] - h.l / 2 - 0.1], max: [h.c[0] + h.w / 2 + 0.1, h.c[1] + 0.6, h.c[2] + h.l / 2 + 0.1] };
 }
 
 /** Roller shutter over a window: deployed it covers w × h around `c`, retracted it rolls up to the top edge (+v). */
@@ -422,8 +519,9 @@ export function seatFrame(seat: SeatDef, b: SeatBox): Frame & { half: V3 } {
   return { c, u, v: [0, 1, 0], n, half: b.half };
 }
 
-/** Loose cargo: a dynamic box (centre, half extents, yaw, mass). */
+/** Loose cargo: a dynamic box (centre, half extents, yaw, mass); `kind` in the object catalog (default a crate). */
 export interface CargoDef {
+  kind?: string;
   pos: V3;
   half: V3;
   yaw: number;
@@ -486,6 +584,10 @@ export interface ShipDef {
   indicators: IndicatorDef[];
   doors: DoorDef[];
   ramp?: RampDef;
+  /** Walking levels, bottom-up (default: one deck at 0). */
+  decks: DeckDef[];
+  /** Sliding hatches in the decks (stairwells between decks). */
+  hatches: HatchDef[];
   shield?: { key: string; plates: ShieldPlate[] };
   gear?: { key: string; legs: V3[] };
   zones: ZoneDef[];
@@ -527,8 +629,12 @@ export interface ShipDef {
   livery: LiveryDef;
   /** Airlock cycle automation (modules/airlock.ts). */
   airlock?: AirlockDef;
-  /** Pilot's throttle → engine thrust commands (modules/helm.ts). */
+  /** Pilot's throttle and seat (modules/helm.ts, flight). */
   helm?: HelmDef;
+  /** Flight computer / autopilot panel. */
+  autopilot?: AutopilotDef;
+  /** Handling of this ship. */
+  flight?: FlightTuningSpec;
 }
 
 /** Which circuits and switches drive the lights (the view reads these, never fixed names). */
@@ -575,19 +681,82 @@ export interface AirlockDef {
   circuit: SubsystemId;
 }
 
-/** Throttle: a multi-position switch whose fraction commands every main engine (or `engines`). */
+/**
+ * Helm: the throttle lever (a multi-position switch: in coupled flight it caps how much of the main
+ * engines the flight computer may use, decoupled it is their thrust) and the seat that flies.
+ */
 export interface HelmDef {
   throttle: string;
   engines?: string[];
+  /** Seat that flies the ship. Default: the seat whose id ends in "pilot", else the first. */
+  seat?: string;
 }
 
-/** A hull section extruded along z with a constant cross-section. */
+/**
+ * Flight computer and autopilot (shared/ship/flight/autopilot.ts, modules/autopilot.ts): the
+ * circuit they run on (dead → direct control, no autopilot), the modes the panel offers and the
+ * knob positions. Switch keys are standard: `ap.on`, `ap.<mode>`, `ap.alt.sel`, `ap.hdg.sel`,
+ * `ap.spd.sel`, `ap.wp` (the kit's `autopilotConsole` builds the panel).
+ */
+export interface AutopilotDef {
+  circuit: SubsystemId;
+  modes: string[];
+  /** Selectable heights above the ground (m) and speeds (m/s). */
+  alts: number[];
+  speeds: number[];
+  /** Selectable orbit heights (km above the sphere) for SUBIR. */
+  orbits?: number[];
+  /** Selectable cruise speeds (m/s) of the ÓRBITA and ESPACIO faces. */
+  cruise?: number[];
+}
+
+/** Handling (shared/ship/flight/fcs.ts `FlightTuning`); anything left out takes the default. */
+export interface FlightTuningSpec {
+  vmax?: number;
+  vside?: number;
+  vz?: number;
+  rate?: V3;
+  accel?: number;
+}
+
+/**
+ * A hull section extruded along z with a constant cross-section. The profile's lowest point is the
+ * section's base: 0 for a section standing on the keel, the deck height for the upper deck of a
+ * two-deck ship (its walls start on the deck below's ceiling; see `moduleBase`).
+ */
 export interface ModuleDef {
   zone: string;
   z0: number;
   z1: number;
   profile: V2[];
   cols: number;
+}
+
+/** Lowest height of a section's profile. */
+export function moduleBase(m: Pick<ModuleDef, 'profile'>): number {
+  return Math.min(...m.profile.map((p) => p[1]));
+}
+
+/** Sections that sit on the keel (the belly tubs, keel colliders and hull probes go under these). */
+export function keelModules(modules: ModuleDef[]): ModuleDef[] {
+  return modules.filter((m) => moduleBase(m) < 0.05);
+}
+
+/** Deck a ship-space height belongs to: the highest deck whose floor is at most 0.3 m above it. */
+export function deckOf(decks: DeckDef[], y: number): number {
+  let best = 0;
+  decks.forEach((d, i) => {
+    if (y >= d.y - 0.3) best = i;
+  });
+  return best;
+}
+
+/** A horizontal rectangle (x, z) in ship space: holes in decks, regions of a deck. */
+export interface Rect {
+  x0: number;
+  x1: number;
+  z0: number;
+  z1: number;
 }
 
 // -----------------------------------------------------------------------------------------------
@@ -648,14 +817,15 @@ export class ShipBuilder {
   /**
    * Walls/roof of a module: every profile segment split into rows, the length into `cols`.
    * `labels[i]` names profile segment i; `rows[i]` its row count. Optional clip plane keeps
-   * dot(p - origin, n) <= 0 (nose cut).
+   * dot(p - origin, n) <= 0 (nose cut). `kindAt` returning null leaves that plate out (the flat
+   * top of a lower deck section: the deck above is its ceiling, see `deck`).
    */
   strip(
     m: ModuleDef,
     prefix: string,
     labels: string[],
     rows: number[],
-    kindAt: (seg: string, row: number, col: number) => PanelKind,
+    kindAt: (seg: string, row: number, col: number) => PanelKind | null,
     t: number,
     clip?: { origin: V3; n: V3 },
   ) {
@@ -681,6 +851,7 @@ export class ShipBuilder {
           ];
           if (clip) pts = clipPoly(pts, clip.origin, clip.n);
           const kind = kindAt(labels[s], r, c);
+          if (!kind) continue;
           this.addPoly(pts, outward, { id: `${prefix}-${labels[s]}${nr > 1 ? r + 1 : ''}-${c + 1}`, kind, zone: m.zone, t: kind === 'glass' ? 0.05 : t, face: 'inner' });
         }
       }
@@ -689,24 +860,102 @@ export class ShipBuilder {
 
   /** Deck plates: nx × nz grid over [x0,x1] × [z0,z1] at y = 0 (top face). */
   floor(zone: string, prefix: string, x0: number, x1: number, z0: number, z1: number, nx: number, nz: number, t: number) {
-    for (let j = 0; j < nz; j++) {
-      for (let i = 0; i < nx; i++) {
-        const xa = x0 + ((x1 - x0) * i) / nx;
-        const xb = x0 + ((x1 - x0) * (i + 1)) / nx;
-        const za = z0 + ((z1 - z0) * j) / nz;
-        const zb = z0 + ((z1 - z0) * (j + 1)) / nz;
+    const cuts = (a: number, b: number, n: number) => Array.from({ length: n + 1 }, (_, i) => a + ((b - a) * i) / n);
+    this.deck(zone, prefix, { y: 0, xs: cuts(x0, x1, nx), zs: cuts(z0, z1, nz), t });
+  }
+
+  /**
+   * Deck plates at height `y` (top face) on the grid given by the cut lines `xs` × `zs` (ascending).
+   * Cells whose centre falls in a `hole` are left out (put the hole's edges on the cut lines).
+   * `other(x, z)`: the compartment under the plate at that point, for a deck between two decks
+   * (a hole blown in it joins them instead of venting to vacuum); undefined = vacuum below.
+   * Plate ids: `${prefix}-F<row><column letter>`, as `floor`.
+   */
+  deck(zone: string, prefix: string, o: { y: number; xs: number[]; zs: number[]; t: number; holes?: Rect[]; other?: (x: number, z: number) => string | undefined; hp?: number }) {
+    const inHole = (x: number, z: number) => (o.holes ?? []).some((h) => x > h.x0 && x < h.x1 && z > h.z0 && z < h.z1);
+    for (let j = 0; j < o.zs.length - 1; j++) {
+      for (let i = 0; i < o.xs.length - 1; i++) {
+        const [xa, xb, za, zb] = [o.xs[i], o.xs[i + 1], o.zs[j], o.zs[j + 1]];
+        const xm = (xa + xb) / 2;
+        const zm = (za + zb) / 2;
+        if (inHole(xm, zm)) continue;
         this.addPoly(
           [
-            [xa, 0, za],
-            [xb, 0, za],
-            [xb, 0, zb],
-            [xa, 0, zb],
+            [xa, o.y, za],
+            [xb, o.y, za],
+            [xb, o.y, zb],
+            [xa, o.y, zb],
           ],
           [0, 1, 0],
-          { id: `${prefix}-F${j + 1}${String.fromCharCode(65 + i)}`, kind: 'floor', zone, t, face: 'top' },
+          { id: `${prefix}-F${j + 1}${String.fromCharCode(65 + i)}`, kind: 'floor', zone, other: o.other?.(xm, zm), t: o.t, hp: o.hp, face: 'top' },
         );
       }
     }
+  }
+
+  /**
+   * Interior partition: a vertical wall of bulkhead plates between two compartments along the
+   * horizontal segment a → b (x, z), from height y0 to y1, split into `cols` × `rows`. The plates
+   * belong to `zone` and have `other` across them (a hole joins the two). Their normal is
+   * up × (b − a). Cut a door into it with `cutOpening(zone, …)`.
+   */
+  partition(zone: string, other: string, prefix: string, a: V2, b: V2, o: { y0: number; y1: number; t: number; cols: number; rows: number }) {
+    const d: V3 = [b[0] - a[0], 0, b[1] - a[1]];
+    const outward = norm([d[2], 0, -d[0]]);
+    let n = 0;
+    for (let c = 0; c < o.cols; c++) {
+      for (let r = 0; r < o.rows; r++) {
+        const s0 = c / o.cols;
+        const s1 = (c + 1) / o.cols;
+        const y0 = o.y0 + ((o.y1 - o.y0) * r) / o.rows;
+        const y1 = o.y0 + ((o.y1 - o.y0) * (r + 1)) / o.rows;
+        const p = (s: number, y: number): V3 => [a[0] + d[0] * s, y, a[1] + d[2] * s];
+        this.addPoly([p(s0, y0), p(s1, y0), p(s1, y1), p(s0, y1)], outward, { id: `${prefix}-${++n}`, kind: 'bulkhead', zone, other, t: o.t, face: 'mid' });
+      }
+    }
+  }
+
+  /**
+   * Re-assign the panels whose centre lies inside a box (ship space) to another compartment and/or
+   * the compartment across them: the hull wall of a room nested in a bigger section, the deck plates
+   * above it. `kinds` limits which panels (default: all).
+   */
+  assign(box: { min: V3; max: V3 }, set: { zone?: string; other?: string }, kinds?: PanelKind[]) {
+    let n = 0;
+    for (const p of this.panels) {
+      if (kinds && !kinds.includes(p.kind)) continue;
+      const c = p.c;
+      if (c[0] < box.min[0] || c[0] > box.max[0] || c[1] < box.min[1] || c[1] > box.max[1] || c[2] < box.min[2] || c[2] > box.max[2]) continue;
+      if (set.zone !== undefined) p.zone = set.zone;
+      if (set.other !== undefined) p.other = set.other;
+      n++;
+    }
+    return n;
+  }
+
+  /**
+   * Cut every panel the plane (through `origin`, normal `n`) runs through into its two sides
+   * (ids get 'a' / 'b'), so a nested room's boundary never lies inside a plate. `filter` limits which.
+   */
+  splitAt(origin: V3, n: V3, filter: (p: PanelDef) => boolean = () => true) {
+    const next: PanelDef[] = [];
+    let cut = 0;
+    for (const p of this.panels) {
+      const pts = insetPoly(p.poly, -PANEL_GAP / 2).map((q) => fromFrame(p, q[0], q[1]));
+      const s = pts.map((q) => dot(sub(q, origin), n));
+      if (!filter(p) || Math.min(...s) > -1e-3 || Math.max(...s) < 1e-3) {
+        next.push(p);
+        continue;
+      }
+      cut++;
+      const tmp = new ShipBuilder();
+      tmp.addPoly(clipPoly(pts, origin, n), p.n, { id: `${p.id}a`, kind: p.kind, zone: p.zone, other: p.other, t: p.t, hp: p.maxHp, face: 'mid' });
+      tmp.addPoly(clipPoly(pts, origin, scale(n, -1)), p.n, { id: `${p.id}b`, kind: p.kind, zone: p.zone, other: p.other, t: p.t, hp: p.maxHp, face: 'mid' });
+      for (const piece of tmp.panels) next.push({ ...piece, paint: p.paint });
+    }
+    this.panels.length = 0;
+    next.forEach((p, index) => this.panels.push({ ...p, index }));
+    return cut;
   }
 
   /**
@@ -732,7 +981,9 @@ export class ShipBuilder {
       for (let i = 0; i < inner.length - 1; i++) if (inner[i + 1][0] > inner[i][0] && xm >= inner[i][0] && xm <= inner[i + 1][0]) return `i${i}`;
       return 'z';
     };
-    const lower = (x: number, key: string) => (key === 'z' ? 0 : profileTop(inner!, x));
+    // the section's base: 0 on the keel, the deck height for an upper-deck section
+    const base = Math.min(...outer.map((p) => p[1]));
+    const lower = (x: number, key: string) => (key === 'z' ? base : profileTop(inner!, x));
     const groups: Array<{ key: string; xs: number[] }> = [];
     for (let i = 0; i < xs.length - 1; i++) {
       const xa = xs[i];
@@ -758,7 +1009,7 @@ export class ShipBuilder {
           .map((x): V3 => [x, profileTop(outer, x), z]),
       ];
       if (Math.abs(poly[0][1] - poly[poly.length - 1][1]) < 1e-4 && Math.abs(poly[1][1] - poly[2][1]) < 1e-4) continue;
-      for (let y0 = 0; y0 < H - 1e-4; y0 += o.rowH) {
+      for (let y0 = base; y0 < H - 1e-4; y0 += o.rowH) {
         let pts = clipPoly(poly, [0, y0, 0], [0, -1, 0]);
         pts = clipPoly(pts, [0, y0 + o.rowH, 0], [0, 1, 0]);
         if (o.clip) pts = clipPoly(pts, o.clip.origin, o.clip.n);
@@ -906,9 +1157,9 @@ export function roofAt(m: ModuleDef, x: number, z: number, up: V3 = [0, 0, -1]):
   throw new Error(`roofAt: x=${x} outside module ${m.zone}`);
 }
 
-/** Top of the deck at (x, z), facing up ("up" of the board toward the nose). */
-export function deckAt(x: number, z: number, up: V3 = [0, 0, -1]): Frame {
-  return boardFrame([x, 0, z], [0, 1, 0], up);
+/** Top of the deck at (x, z), facing up ("up" of the board toward the nose); `y` = the deck's height. */
+export function deckAt(x: number, z: number, up: V3 = [0, 0, -1], y = 0): Frame {
+  return boardFrame([x, y, z], [0, 1, 0], up);
 }
 
 /** Face of a bulkhead (plane z, thickness t) toward `facing` (+1 = toward the tail). */
@@ -952,7 +1203,10 @@ export function outsidePoint(inner: Frame, skin: number, rise: number): V3 {
 
 /** Half-width of the hull cross-section at station z and height y, on one side (+1 = starboard). */
 export function hullReach(modules: ModuleDef[], z: number, y: number, side: 1 | -1): number {
-  const m = modules.find((mod) => z >= mod.z0 - 1e-4 && z <= mod.z1 + 1e-4) ?? modules.reduce((a, mod) => (Math.abs((mod.z0 + mod.z1) / 2 - z) < Math.abs((a.z0 + a.z1) / 2 - z) ? mod : a));
+  // stacked decks: of the sections at this station, the one whose height range holds y
+  const spans = (mod: ModuleDef) => y >= moduleBase(mod) - 1e-4 && y <= Math.max(...mod.profile.map((p) => p[1])) + 1e-4;
+  const at = modules.filter((mod) => z >= mod.z0 - 1e-4 && z <= mod.z1 + 1e-4);
+  const m = at.find(spans) ?? at[0] ?? modules.reduce((a, mod) => (Math.abs((mod.z0 + mod.z1) / 2 - z) < Math.abs((a.z0 + a.z1) / 2 - z) ? mod : a));
   let best = 0;
   const P = m.profile;
   for (let i = 0; i < P.length - 1; i++) {
@@ -1072,6 +1326,8 @@ export interface ConsoleSpec {
   prop?: string;
   /** Free-standing: not mounted on a hull panel (survives when the panel behind it is blown out). */
   free?: boolean;
+  /** One face of a rotating drum (see DrumFace): every face gives the same frame and size. */
+  drum?: DrumFace;
   controls: ControlSpec[];
   screens?: Array<{ id: string; pages: ScreenPage[]; at: V2; w: number; h: number; circuit?: SubsystemId }>;
   indicators?: Array<{ kind: IndicatorKind; at: V2; ref?: string }>;
@@ -1104,8 +1360,9 @@ export const SCREEN_PAGES: Record<string, { label: string; help: string }> = {
   engines: { label: 'MOTOR', help: 'motores, APU y RCS' },
   reactor: { label: 'REACT', help: 'núcleo, refrigerante y radiadores' },
   alerts: { label: 'ALARM', help: 'lista de alarmas activas' },
-  flight: { label: 'VUELO', help: 'estado de vuelo' },
-  nav: { label: 'NAV', help: 'mapa de la zona' },
+  flight: { label: 'VUELO', help: 'actitud, altura, velocidades, empuje y asistencias' },
+  nav: { label: 'NAV', help: 'mapa de la zona con los puntos de navegación y el rumbo' },
+  ap: { label: 'P.AUT', help: 'modos del piloto automático, lo que tiene seleccionado y lo que hace' },
   radar: { label: 'RADAR', help: 'contactos del radar' },
   weapons: { label: 'ARMAS', help: 'torreta' },
   stores: { label: 'VÍVER', help: 'agua, víveres, reciclador y paneles solares' },
@@ -1151,7 +1408,7 @@ export function buildConsoles(specs: ConsoleSpec[], panels: PanelDef[], parts: A
     const hostProp = indexOf(props, spec.prop, 'prop', spec.id);
     const back: V3 = madd(f.c, f.n, -(spec.depth + 0.04));
     const host = spec.free || hostPart >= 0 || hostProp >= 0 ? -1 : hostPanel(panels, back, 0.25);
-    consoles.push({ ...f, id: spec.id, w: spec.w, h: spec.h, title: spec.title, host, hostPart, hostProp, depth: spec.depth });
+    consoles.push({ ...f, id: spec.id, w: spec.w, h: spec.h, title: spec.title, host, hostPart, hostProp, depth: spec.depth, drum: spec.drum });
     const add = (c: ControlSpec) => {
       const id = `${spec.id}/${c.key}${c.action === 'set' ? `=${c.value}` : ''}`;
       if (controls.some((x) => x.id === id)) throw new Error(`control ${id} defined twice`);
@@ -1174,6 +1431,7 @@ export function buildConsoles(specs: ConsoleSpec[], panels: PanelDef[], parts: A
         host,
         hostPart,
         half: CONTROL_HALF[c.kind],
+        drum: spec.drum,
       });
     };
     for (const s of spec.screens ?? []) {
@@ -1201,14 +1459,17 @@ export function buildConsoles(specs: ConsoleSpec[], panels: PanelDef[], parts: A
  * component catalog instead (`part('reactor.fission.XS', { id, c, zone, circuit })`, see
  * catalog/index.ts), which fills type, size, box, integrity, mass, parameters and model.
  */
-export type PartSpec = Omit<PartDef, 'index' | 'yaw' | 'soft' | 'p' | 'model' | 'shape' | 'mass' | 'look'> & Partial<Pick<PartDef, 'yaw' | 'soft' | 'p' | 'model' | 'shape' | 'mass' | 'look'>>;
+export type PartSpec = Omit<PartDef, 'index' | 'yaw' | 'soft' | 'decomp' | 'p' | 'model' | 'shape' | 'mass' | 'look'> & Partial<Pick<PartDef, 'yaw' | 'soft' | 'decomp' | 'p' | 'model' | 'shape' | 'mass' | 'look'>>;
+
+/** Decompression sensitivity of a machine whose component doesn't give one. */
+export const DECOMP_DEFAULT = 0.1;
 export type PropSpec = Omit<PropDef, 'index' | 'yaw' | 'p' | 'collide' | 'zone' | 'mass' | 'look'> & Partial<Pick<PropDef, 'yaw' | 'p' | 'collide' | 'zone' | 'mass' | 'look'>>;
 
 /** Mass of a box of stuff at a given bulk density (kg/m³). */
 export const boxMass = (half: V3, density: number) => 8 * half[0] * half[1] * half[2] * density;
 
 export function buildParts(specs: PartSpec[]): PartDef[] {
-  return specs.map((p, index) => ({ ...p, index, yaw: p.yaw ?? 0, soft: p.soft ?? 1, p: p.p ?? {}, model: p.model ?? p.type, shape: p.shape ?? 'box', mass: p.mass ?? boxMass(p.half, 600), look: p.look ?? {} }));
+  return specs.map((p, index) => ({ ...p, index, yaw: p.yaw ?? 0, soft: p.soft ?? 1, decomp: p.decomp ?? DECOMP_DEFAULT, p: p.p ?? {}, model: p.model ?? p.type, shape: p.shape ?? 'box', mass: p.mass ?? boxMass(p.half, 600), look: p.look ?? {} }));
 }
 
 export function buildProps(specs: PropSpec[]): PropDef[] {
@@ -1227,14 +1488,14 @@ export function paintPanels(panels: PanelDef[], rules: Array<{ scheme: number; w
   return panels;
 }
 
-/** Block from the deck up to just under a console face, so the board sits on something instead of floating. */
-export function supportBlock(id: string, con: { c: V3; n: V3; w: number; h: number; depth: number }, zone: string): PropSpec {
-  const top = Math.max(0.08, con.c[1] - con.h * 0.42);
+/** Block from the deck (height `base`) up to just under a console face, so the board sits on something instead of floating. */
+export function supportBlock(id: string, con: { c: V3; n: V3; w: number; h: number; depth: number }, zone: string, base = 0): PropSpec {
+  const top = Math.max(0.08, con.c[1] - base - con.h * 0.42);
   const hh = top / 2;
   return {
     id,
     model: 'block',
-    c: [con.c[0] - con.n[0] * con.depth, hh, con.c[2] - con.n[2] * con.depth],
+    c: [con.c[0] - con.n[0] * con.depth, base + hh, con.c[2] - con.n[2] * con.depth],
     half: [Math.max(0.12, con.w * 0.48), hh, Math.max(0.14, con.depth + 0.22)],
     zone,
     collide: 'box',
@@ -1263,8 +1524,8 @@ export function grid<T extends Omit<ControlSpec, 'at'>>(items: T[], o: { cols: n
 export function doorSensor(d: DoorDef): { min: V3; max: V3 } {
   const across = Math.abs(d.n[0]) > Math.abs(d.n[2]) ? 2 : 0; // the leaves slide along this axis
   const along = across === 0 ? 2 : 0;
-  const min: V3 = [0, -0.5, 0];
-  const max: V3 = [0, d.h, 0];
+  const min: V3 = [0, d.c[1] - 0.5, 0];
+  const max: V3 = [0, d.c[1] + d.h, 0];
   min[across] = d.c[across] - d.w / 2 - 0.3;
   max[across] = d.c[across] + d.w / 2 + 0.3;
   min[along] = d.c[along] - 0.55;
@@ -1311,6 +1572,8 @@ export function finishShip(spec: ShipSpec): ShipDef {
     screens: [],
     indicators: [],
     doors: [],
+    decks: [{ id: 'main', label: 'CUBIERTA', y: 0 }],
+    hatches: [],
     zones: [],
     seats: [],
     cargo: [],
@@ -1332,6 +1595,7 @@ export function finishShip(spec: ShipSpec): ShipDef {
     defaults: { ...(spec.defaults ?? {}) },
   };
   routeConduits(def.panels, def.subsystems);
+  def.openings = def.openings.map((o) => placeOpening(def, o));
   for (const c of def.subsystems) {
     def.defaults[c.breaker] ??= 1;
     def.defaults[c.priority] ??= 1;
@@ -1340,6 +1604,55 @@ export function finishShip(spec: ShipSpec): ShipDef {
   const problems = checkShip(def);
   if (problems.length) throw new Error(`ship ${def.id}:\n  ${problems.join('\n  ')}`);
   return def;
+}
+
+/** Centre of a zone's box (ship space), or null for an unknown zone. */
+export function zoneCentre(zones: ZoneDef[], id: string | null): V3 | null {
+  const z = id === null ? undefined : zones.find((x) => x.id === id);
+  return z ? scale([z.min[0] + z.max[0], z.min[1] + z.max[1], z.min[2] + z.max[2]], 0.5) : null;
+}
+
+const zoneVolume = (z: ZoneDef) => (z.max[0] - z.min[0]) * (z.max[1] - z.min[1]) * (z.max[2] - z.min[2]);
+
+/**
+ * `n` turned to point from zone `a` into zone `b` (null: out of the ship) through a wall at `at`.
+ * The wall lies on the boundary of the smaller of the two boxes (zones may nest: a lock inside an
+ * engine room), so the sign is taken against that one's centre.
+ */
+export function facing(zones: ZoneDef[], a: string, b: string | null, at: V3, n: V3): V3 {
+  const za = zones.find((z) => z.id === a);
+  const zb = b === null ? undefined : zones.find((z) => z.id === b);
+  if (!za) return n;
+  const inner = zb && zoneVolume(zb) < zoneVolume(za) ? zb : za;
+  const away = dot(n, sub(at, zoneCentre(zones, inner.id)!));
+  // away from a's centre = toward b; away from b's centre = toward a
+  return (inner === za ? away : -away) < 0 ? scale(n, -1) : n;
+}
+
+/**
+ * Where an opening is and which way it faces (a → b, or out), from the door or the ramp it shares
+ * its key with. Ship data may give its own `at` / `n` (a vent on a wall); left out and with no door
+ * or ramp to go by, the opening has no place (its gas still flows).
+ */
+function placeOpening(def: ShipDef, o: OpeningDef): OpeningDef {
+  if (o.at && o.n) return o;
+  const za = zoneCentre(def.zones, o.a);
+  if (!za) return o;
+  const door = def.doors.find((d) => d.key === o.key);
+  const ramp = def.ramp?.key === o.key ? def.ramp : undefined;
+  let at = o.at;
+  let n = o.n;
+  if (door) {
+    at ??= [door.c[0], door.c[1] + door.h / 2, door.c[2]];
+    n ??= door.n;
+  } else if (ramp) {
+    // a closed ramp stands in the doorway it seals: the opening is that doorway
+    at ??= [ramp.hinge[0], ramp.hinge[1] + ramp.length / 2, ramp.hinge[2]];
+  }
+  if (!at) return o;
+  const toward = sub(at, za);
+  n ??= norm([toward[0], 0, toward[2]]);
+  return { ...o, at, n: facing(def.zones, o.a, o.b, at, n) };
 }
 
 /** Broken references in a definition (empty = consistent). */
@@ -1411,12 +1724,37 @@ export function checkShip(def: ShipDef): string[] {
   if (def.helm) {
     if (!def.controls.some((c) => c.key === def.helm!.throttle)) out.push(`acelerador: ningún mando mueve "${def.helm.throttle}"`);
     for (const e of def.helm.engines ?? []) if (!def.parts.some((p) => p.id === e && p.type === 'engine')) out.push(`acelerador: "${e}" no es un motor`);
+    if (def.helm.seat && !def.seats.some((s) => s.id === def.helm!.seat)) out.push(`piloto: el asiento "${def.helm.seat}" no existe`);
+  }
+  if (def.autopilot) {
+    const a = def.autopilot;
+    circuit(a.circuit, 'piloto automático');
+    for (const m of a.modes) if (!AP_MODES.some((x) => x.id === m)) out.push(`piloto automático: modo "${m}" no existe (flight/autopilot.ts)`);
+    for (const m of a.modes) if (!def.controls.some((c) => c.key === `ap.${m}`)) out.push(`piloto automático: ningún mando engancha el modo "${m}" (ap.${m})`);
+    if (!def.controls.some((c) => c.key === 'ap.on')) out.push('piloto automático: falta el interruptor general ap.on');
+    if (!a.alts.length || !a.speeds.length) out.push('piloto automático: listas de alturas / velocidades vacías');
+  }
+  for (const p of def.parts) {
+    if (!p.gimbal) continue;
+    if (!def.movers.some((m) => m.key === p.gimbal!.key) && !def.controls.some((c) => c.key === p.gimbal!.key)) out.push(`máquina ${p.id}: la góndola la mueve "${p.gimbal.key}", que ni es mecanismo ni mando`);
   }
   for (const s of def.seats) if (!zoneAtPoint(def.zones, [s.root[0], s.root[1] + 1, s.root[2]])) out.push(`asiento ${s.id}: fuera de cualquier zona`);
+  for (let i = 1; i < def.decks.length; i++) if (def.decks[i].y <= def.decks[i - 1].y) out.push(`cubierta ${def.decks[i].id}: las cubiertas van de abajo arriba`);
+  for (const h of def.hatches) {
+    if (!movers.has(h.key)) out.push(`escotilla ${h.key}: no hay mecanismo con esa tecla`);
+    if (!def.openings.some((o) => o.key === h.key && o.kind === 'door')) out.push(`escotilla ${h.key}: falta su abertura (kind 'door') entre las dos cubiertas`);
+    if (Math.abs(h.slide[1]) > 1e-6 || Math.abs(Math.hypot(h.slide[0], h.slide[2]) - 1) > 1e-3) out.push(`escotilla ${h.key}: 'slide' tiene que ser horizontal y unitario`);
+  }
+  // a plate with a compartment across it (bulkhead, deck between decks) must name a real one
+  if (comps.size) for (const p of def.panels) if (p.other !== undefined && !comps.has(p.other)) out.push(`panel ${p.id}: al otro lado "${p.other}", que no es un compartimento`);
   return out;
 }
 
-/** Zone containing a ship-space point (same rule as the crew uses, see crew.ts). */
+/**
+ * Zone containing a ship-space point (same rule as the crew uses, see crew.ts). Zones are boxes and
+ * may nest (an airlock inside an engine room, the upper deck's rooms inside a two-deck hold): the
+ * first zone in the list that contains the point wins, so list the smaller rooms first.
+ */
 export function zoneAtPoint(zones: ZoneDef[], l: V3): ZoneDef | null {
   return zones.find((z) => l[0] >= z.min[0] && l[0] <= z.max[0] && l[1] >= z.min[1] - 0.2 && l[1] <= z.max[1] && l[2] >= z.min[2] && l[2] <= z.max[2]) ?? null;
 }

@@ -32,7 +32,8 @@ export class Lighting {
       parent: scene,
       // Real-time cascades only cover the near field (characters, rocks, fresh craters);
       // terrain self-shadowing beyond is baked per vertex (soft, no texel blocks).
-      cascades: 3,
+      // low quality: two cascades are plenty (every caster is drawn once per cascade)
+      cascades: quality === 'high' ? 3 : 2,
       maxFar: quality === 'high' ? 220 : 140,
       mode: 'practical',
       shadowMapSize: quality === 'high' ? 2048 : 1024,
@@ -62,6 +63,19 @@ export class Lighting {
   update() {
     this.csm.update();
   }
+
+  /**
+   * Sunlight 0..1 where the camera is (0 in the Moon's shadow: the night side of an orbit). The
+   * number of lights never changes (no shader recompiles): only their intensity.
+   */
+  setDaylight(k: number) {
+    if (k === this.daylight) return;
+    this.daylight = k;
+    for (const l of this.csm.lights) l.intensity = this.sunIntensity * k;
+  }
+
+  private daylight = 1;
+  private sunIntensity = SUN_INTENSITY;
 
   dispose() {
     this.csm.dispose();

@@ -1,16 +1,30 @@
-// Main engines and RCS thrusters. An engine is armed (guarded switch), started with a pulse,
-// spools up on its circuit's power and propellant, and follows its throttle command (`.cmd`,
-// for the flight model) capped by its health and its feed. A badly damaged engine with power and
-// propellant reaching it can explode: the crew isolates it by closing its feed valve and
-// disarming it. RCS thrusters burn propellant in proportion to their use (`.use`).
+// Main engines, VTOL lift pads and RCS thrusters: the machinery side of propulsion. An engine is
+// armed (guarded switch), started with a pulse and spools up on its circuit's power and
+// propellant; running, it publishes how much of its thrust it can give (`.cap`: health and feed).
+// How much it actually gives (`.thr`) is decided by whoever flies the ship (shared/ship/flight):
+// this module burns propellant and heats the engine from it. Pads (`.use`) and RCS blocks
+// (`.use`, the sum of their six nozzles) work the same way without a start sequence. A badly
+// damaged engine with power and propellant reaching it can explode: the crew isolates it by
+// closing its feed valve and disarming it.
 
 import { partKey, partTag, type ControlDef, type PartDef } from '../def.js';
 import type { ShipSystems } from '../systems.js';
-import { partsOf, type AlertDef, type ShipModule, type SystemFactory, type Tick } from './api.js';
+import { partsOf, type AlertDef, type ShipModule, type SoundCue, type SystemFactory, type Tick } from './api.js';
 import { ENG } from './apu.js';
 
 export { ENG };
-export const ENGINE = { thrustN: 60000, flowKg: 2.0, spoolS: 3, idle: 0.05, kw: 3 };
+export const ENGINE = { thrustN: 60000, flowKg: 1.0, spoolS: 3, idle: 0.05, kw: 3 };
+
+/**
+ * Overdrive (SOBREPOT.): mass injection. The engine's jet power is fixed (its reactor/heater), and
+ * at fixed power thrust × exhaust speed is constant (P = F·vₑ/2). Pushing `flow`× the propellant
+ * through it drops the exhaust speed by √flow and raises the thrust by √flow: twice the flow is
+ * +41 % thrust at 71 % of the specific impulse — a quicker climb that costs a lot more propellant.
+ * The cooler exhaust still heats the chamber harder; past `cutC` the controller drops it by itself
+ * and it can be re-engaged below `rearmC`. One ship-wide switch (`key`) for every main engine.
+ */
+export const BOOST = { key: 'eng.boost', flow: 2, cutC: 1250, rearmC: 1000, heatTau: 110 };
+export const BOOST_THRUST = Math.sqrt(BOOST.flow);
 
 export class Engine implements ShipModule {
   readonly id: string;
@@ -31,9 +45,10 @@ export class Engine implements ShipModule {
       ['state', 1, 0],
       ['n', 0.01, 0],
       ['thr', 0.01, 0],
-      ['cmd', 0.01, 0],
+      ['cap', 0.01, 0],
       ['temp', 1, -20],
       ['risk', 0.01, 0],
+      ['boost', 1, 0],
     ] as const)
       this.v[name] = sys.vars.define(`${tag}.${name}`, q, init);
   }
@@ -105,7 +120,11 @@ export class Engine implements ShipModule {
     const s = st[this.v.state];
     if (s !== ENG.spool && s !== ENG.run) return;
     t.load(this.part.circuit, this.k.kw);
-    if (this.part.feed) t.burn(this.part.id, this.k.flowKg * Math.max(this.k.idle * 0.5, st[this.v.thr]));
+    // `thr` is a fraction of the rated thrust (above 1 in overdrive); overdrive burns √flow more per
+    // newton. Lit and idle it only keeps its pilot flame (half a percent): a coast in orbit with the
+    // engines lit costs next to nothing.
+    const perN = st[this.v.boost] === 1 ? BOOST_THRUST : 1;
+    if (this.part.feed) t.burn(this.part.id, this.k.flowKg * Math.max(0.005, st[this.v.thr]) * perN);
   }
 
   step(t: Tick) {
@@ -126,13 +145,23 @@ export class Engine implements ShipModule {
       st[V.n] = Math.min(1, st[V.n] + dt / k.spoolS);
       if (st[V.n] >= 1) st[V.state] = ENG.run;
     } else if (st[V.state] !== ENG.run) st[V.n] = Math.max(0, st[V.n] - dt / 2);
-    // thrust follows the command with a spool lag, capped by health and by the feed
+    // what it can give: running, health and the feed decide; the flight sets how much it gives
     const running = st[V.state] === ENG.run;
-    const maxThr = running ? Math.min(1, 0.25 + 0.75 * H) * Math.min(1, fed / 0.9) : 0;
-    const want = running ? Math.max(k.idle, Math.min(maxThr, st[V.cmd])) : 0;
-    st[V.thr] += (want - st[V.thr]) * Math.min(1, dt * 2.5);
+    // overdrive: asked for, running, and the chamber not past its limit (it cuts itself there)
+    if (st[V.boost] === 1 && st[V.temp] >= BOOST.cutC) {
+      if (sw[BOOST.key] === 1) {
+        t.setSw(BOOST.key, 0);
+        t.say(`SOBREPOTENCIA cortada: ${this.part.name.toLowerCase()} a ${Math.round(st[V.temp])} °C. Se puede volver a conectar por debajo de ${BOOST.rearmC} °C`);
+      }
+    }
+    st[V.boost] = running && sw[BOOST.key] === 1 && st[V.temp] < BOOST.cutC ? 1 : 0;
+    const boost = st[V.boost] === 1;
+    st[V.cap] = running ? Math.min(1, 0.25 + 0.75 * H) * Math.min(1, fed / 0.9) * (boost ? BOOST_THRUST : 1) : 0;
+    st[V.thr] = Math.max(0, Math.min(st[V.cap], st[V.thr]));
     const hot = running || st[V.state] === ENG.spool ? -20 + 950 * Math.max(k.idle, st[V.thr]) : -20;
-    st[V.temp] += (hot - st[V.temp]) * Math.min(1, dt / (hot > st[V.temp] ? 6 : 40));
+    // overdrive heats more slowly toward a hotter chamber: about a minute from hot to the cut
+    const tau = hot > st[V.temp] ? (boost ? BOOST.heatTau : 6) : 40;
+    st[V.temp] += (hot - st[V.temp]) * Math.min(1, dt / tau);
     // the hazard the crew must isolate
     const risk = this.risk(st, sw);
     st[V.risk] = risk;
@@ -147,7 +176,25 @@ export class Engine implements ShipModule {
 
   interlock(c: ControlDef, next: number, st: Float64Array, sw: Record<string, number>) {
     if (c.key === this.keys.start && next === 1) return this.startBlock(st, sw);
+    if (c.key === BOOST.key && next === 1 && st[this.v.temp] > BOOST.rearmC) return `${this.part.name} demasiado caliente (${Math.round(st[this.v.temp])} °C): espera a que baje de ${BOOST.rearmC} °C`;
     return null;
+  }
+
+  sounds(): SoundCue[] {
+    const V = this.v;
+    const part = this.part;
+    const lit = (st: Float64Array) => st[V.state] === ENG.run || st[V.state] === ENG.spool;
+    return [
+      // the burn: from the pilot flame to full thrust (and past it in overdrive)
+      { sound: 'eng.roar', role: 'run', part, level: (st) => (lit(st) ? Math.max(0.12 * st[V.n], Math.min(1, st[V.thr])) : 0), pitch: (st) => 0.8 + 0.3 * Math.min(1.4, st[V.thr]) },
+      // the turbopumps winding up, then idling under the roar
+      { sound: 'eng.spool', role: 'spool', part, level: (st) => (st[V.state] === ENG.spool ? 0.8 : lit(st) ? 0.2 : 0), pitch: (st) => 0.45 + 0.6 * st[V.n] },
+      { sound: 'eng.crackle', role: 'boost', part, level: (st) => (st[V.boost] === 1 ? 0.35 + 0.65 * Math.min(1, st[V.thr]) : 0) },
+      // wrecked with power and propellant reaching it: spraying and arcing (isolate it!)
+      { sound: 'mach.sputter', role: 'hazard', part, level: (st) => (st[V.risk] > 0 ? 0.7 : 0) },
+      { sound: 'eng.ignite', role: 'ignite', part, on: (st) => st[V.state] === ENG.spool },
+      { sound: 'eng.cutoff', role: 'cutoff', part, on: (st) => !lit(st) },
+    ];
   }
 
   alerts(): AlertDef[] {
@@ -157,6 +204,38 @@ export class Engine implements ShipModule {
       { id: `dmg.${p.id}`, label: `${p.name.toUpperCase()} DAÑADO — AISLAR`, level: 2, lamp, help: 'El motor está por debajo del 35 %: con energía y propelente llegando puede explotar. Cierra su alimentación, desármalo y suéldalo.', on: (st) => this.H(st) < 0.35 },
       { id: `fail.${p.id}`, label: `${p.name.toUpperCase()}: FALLO`, level: 1, lamp, help: 'El motor se apagó solo: sin energía, sin propelente o destruido. Arregla la causa y vuelve a pulsar ARRANQUE.', on: (st) => st[this.v.state] === ENG.fail },
     ];
+  }
+}
+
+/**
+ * VTOL lift pad: a downward nozzle under the belly. No start sequence: it answers while its master
+ * switch is on, its circuit has power and propellant reaches it. The flight computer drives it.
+ */
+export class Lift implements ShipModule {
+  readonly id: string;
+  private iUse: number;
+
+  constructor(
+    private sys: ShipSystems,
+    readonly part: PartDef,
+  ) {
+    this.id = `lift:${part.id}`;
+    this.iUse = sys.vars.define(`${partTag(part)}.use`, 0.02);
+  }
+
+  loads(t: Tick) {
+    const use = t.st[this.iUse];
+    if (use > 0 && this.part.feed) t.burn(this.part.id, use * (this.part.p.flowKg ?? 0.3));
+  }
+
+  sounds(): SoundCue[] {
+    const i = this.iUse;
+    return [{ sound: 'eng.lift', role: 'run', part: this.part, level: (st) => Math.min(1, st[i] * 1.2), pitch: (st) => 0.85 + 0.3 * Math.min(1, st[i]) }];
+  }
+
+  alerts(): AlertDef[] {
+    const p = this.part;
+    return [{ id: `dmg.${p.id}`, label: `${p.name.toUpperCase()} DAÑADO`, level: 1, lamp: p.lamp ?? 'VTOL', help: 'Un propulsor de sustentación está por debajo del 35 %: empuja menos y la nave tiene menos margen para quedarse en el aire. Suéldalo.', on: (st) => this.sys.health(st, p) < 0.35 }];
   }
 }
 
@@ -176,10 +255,20 @@ export class Rcs implements ShipModule {
     const use = t.st[this.iUse];
     if (use > 0 && this.part.feed) t.burn(this.part.id, use * (this.part.p.flowKg ?? 0.3));
   }
+
+  sounds(): SoundCue[] {
+    const i = this.iUse;
+    const part = this.part;
+    return [
+      // cold gas out of the nozzles, and the solenoid valves banging open on every pulse
+      { sound: 'rcs.hiss', role: 'run', part, level: (st) => Math.min(1, st[i] * 1.5), pitch: (st) => 0.9 + 0.2 * Math.min(1, st[i]) },
+      { sound: 'rcs.pop', role: 'pop', part, on: (st) => st[i] > 0.06 },
+    ];
+  }
 }
 
 export const enginesSystem: SystemFactory = {
   id: 'engines',
-  parts: ['engine', 'rcs'],
-  make: (sys) => [...partsOf(sys, 'engine').map((p) => new Engine(sys, p)), ...partsOf(sys, 'rcs').map((p) => new Rcs(sys, p))],
+  parts: ['engine', 'lift', 'rcs'],
+  make: (sys) => [...partsOf(sys, 'engine').map((p) => new Engine(sys, p)), ...partsOf(sys, 'lift').map((p) => new Lift(sys, p)), ...partsOf(sys, 'rcs').map((p) => new Rcs(sys, p))],
 };

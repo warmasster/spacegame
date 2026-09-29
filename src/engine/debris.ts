@@ -9,10 +9,19 @@ interface Chunk {
 }
 
 const MAX = 160;
+/** Fragments this far (m) from the world's origin are gone (the physics bubble moved on). */
+const FAR = 6000;
+
+/** Where the Rapier world sits in the world (its frame's pose as drawn; null: the identity). */
+export interface DebrisFrame {
+  p: readonly number[];
+  q: readonly number[];
+}
 
 /**
- * Rigid-body debris: explosion fragments are real Rapier bodies (convex, lunar gravity,
- * bounce and roll on the terrain heightfield), drawn with one instanced mesh.
+ * Rigid-body debris: explosion fragments are real Rapier bodies (convex, the world's own gravity,
+ * bounce and roll on the terrain heightfield), drawn with one instanced mesh. Positions are in the
+ * Rapier world's frame (the physics bubble); the instances are written relative to the render origin.
  */
 export class Debris {
   readonly mesh: THREE.InstancedMesh;
@@ -21,11 +30,11 @@ export class Debris {
   private q = new THREE.Quaternion();
   private p = new THREE.Vector3();
   private s = new THREE.Vector3();
+  private fq = new THREE.Quaternion();
 
   constructor(
     private R: typeof RAPIER,
     private world: RAPIER.World,
-    private gravity: number,
     material: THREE.Material,
     /** Fragment shape (unit size); default: lumpy rock. */
     geometry?: THREE.BufferGeometry,
@@ -50,8 +59,11 @@ export class Debris {
     return this.chunks.length;
   }
 
-  /** Throw `n` fragments from `at`: a ground blast by default, or a cone along `dir` (hull breach). */
-  burst(at: THREE.Vector3, n = 10, opts: { dir?: THREE.Vector3; speed?: number; size?: number; spread?: number } = {}) {
+  /**
+   * Throw `n` fragments from `at` (the Rapier world's coordinates): a ground blast by default ("up"
+   * is +y there), or a cone along `dir` (hull breach); `base`: the velocity of what they came off.
+   */
+  burst(at: THREE.Vector3, n = 10, opts: { dir?: THREE.Vector3; speed?: number; size?: number; spread?: number; base?: THREE.Vector3 } = {}) {
     const R = this.R;
     for (let i = 0; i < n; i++) {
       if (this.chunks.length >= MAX) this.remove(0);
@@ -67,9 +79,8 @@ export class Debris {
       }
       const desc = R.RigidBodyDesc.dynamic()
         .setTranslation(at.x + o.x, at.y + o.y, at.z + o.z)
-        .setLinvel(v.x * sp, v.y * sp, v.z * sp)
+        .setLinvel(v.x * sp + (opts.base?.x ?? 0), v.y * sp + (opts.base?.y ?? 0), v.z * sp + (opts.base?.z ?? 0))
         .setAngvel({ x: (Math.random() - 0.5) * 12, y: (Math.random() - 0.5) * 12, z: (Math.random() - 0.5) * 12 })
-        .setGravityScale(this.gravity / 9.81)
         .setCcdEnabled(true);
       const body = this.world.createRigidBody(desc);
       this.world.createCollider(R.ColliderDesc.ball(size * 0.85).setRestitution(0.25).setFriction(0.9).setDensity(2600), body);
@@ -83,21 +94,54 @@ export class Debris {
       const c = this.chunks[i];
       c.age += dt;
       const t = c.body.translation();
-      if (c.age > c.life || t.y < -2000) this.remove(i);
+      if (c.age > c.life || t.x * t.x + t.y * t.y + t.z * t.z > FAR * FAR) this.remove(i);
     }
   }
 
-  /** Once per frame: write instance transforms. */
-  sync() {
-    this.chunks.forEach((c, i) => {
+  /**
+   * Once per frame: write instance transforms, from the world's frame (`frame`, as drawn; null =
+   * the identity) into render space (`origin`: the world position of render-space zero).
+   */
+  sync(frame: DebrisFrame | null, origin: { x: number; y: number; z: number }) {
+    const fq = frame ? this.fq.set(frame.q[0], frame.q[1], frame.q[2], frame.q[3]) : null;
+    for (let i = 0; i < this.chunks.length; i++) {
+      const c = this.chunks[i];
       const t = c.body.translation();
       const r = c.body.rotation();
       const fade = Math.min(1, (c.life - c.age) / 2);
-      this.m.compose(this.p.set(t.x, t.y, t.z), this.q.set(r.x, r.y, r.z, r.w), this.s.setScalar(c.scale * fade));
+      this.p.set(t.x, t.y, t.z);
+      this.q.set(r.x, r.y, r.z, r.w);
+      if (frame && fq) {
+        this.p.applyQuaternion(fq);
+        this.p.x += frame.p[0];
+        this.p.y += frame.p[1];
+        this.p.z += frame.p[2];
+        this.q.premultiply(fq);
+      }
+      this.p.x -= origin.x;
+      this.p.y -= origin.y;
+      this.p.z -= origin.z;
+      this.m.compose(this.p, this.q, this.s.setScalar(c.scale * fade));
       this.mesh.setMatrixAt(i, this.m);
-    });
+    }
     this.mesh.count = this.chunks.length;
     this.mesh.instanceMatrix.needsUpdate = true;
+  }
+
+  /** The world was re-laid: every fragment carried into the new frame (`carry` maps p, v, q). */
+  rebase(carry: (p: [number, number, number], v: [number, number, number], q: [number, number, number, number]) => { p: number[]; v: number[]; q: number[] }, turn: (w: [number, number, number]) => number[]) {
+    for (const c of this.chunks) {
+      const t = c.body.translation();
+      const r = c.body.rotation();
+      const lv = c.body.linvel();
+      const av = c.body.angvel();
+      const n = carry([t.x, t.y, t.z], [lv.x, lv.y, lv.z], [r.x, r.y, r.z, r.w]);
+      const w = turn([av.x, av.y, av.z]);
+      c.body.setTranslation({ x: n.p[0], y: n.p[1], z: n.p[2] }, true);
+      c.body.setRotation({ x: n.q[0], y: n.q[1], z: n.q[2], w: n.q[3] }, true);
+      c.body.setLinvel({ x: n.v[0], y: n.v[1], z: n.v[2] }, true);
+      c.body.setAngvel({ x: w[0], y: w[1], z: w[2] }, true);
+    }
   }
 
   private remove(i: number) {

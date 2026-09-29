@@ -1,6 +1,7 @@
 // "Peregrina" long-haul passenger shuttle: single-pilot cockpit → passenger cabin (two seats, two
 // bunks, galley, lavatory, life support and water recycling) → side airlock, with a micro-reactor,
-// the main engine and fixed radiators outside at the tail. Built from catalog components only.
+// the main engine and fixed radiators outside at the tail, four VTOL lift pads under the belly and
+// an inertial compensator under the deck. Built from catalog components only.
 // Ship space: metres, +X starboard, +Y up, nose toward −Z, origin = deck level on the centreline.
 
 import { part, prop, profilePoint, PROFILES } from '../catalog/index.js';
@@ -33,7 +34,7 @@ import {
   type ShipDef,
 } from '../def.js';
 import { clipPoly, norm, type V2, type V3 } from '../geom.js';
-import { breakerControls, circuits, doorButtons, HELP as KIT, loadOf, priorityControls, type CircuitSpec } from './kit.js';
+import { AP_SPACE_MANUAL, SPACE_MANUAL, autopilotConsole, breakerControls, circuits, decompressionManual, doorButtons, HELP as KIT, loadOf, priorityControls, type CircuitSpec } from './kit.js';
 
 const T = 0.1; // hull skin
 const FLOOR_T = 0.08;
@@ -150,7 +151,7 @@ const CIRCUIT_LIST: CircuitSpec[] = [
     id: 'prop',
     label: 'PROPULSIÓN',
     short: 'PROPULS.',
-    desc: 'Motor principal, RCS, bomba de refuerzo del depósito.',
+    desc: 'Motor principal, sustentación VTOL, RCS, bomba de refuerzo del depósito.',
     color: 0xff7a3a,
     rating: 6,
     base: 0.1,
@@ -189,6 +190,7 @@ const CIRCUIT_LIST: CircuitSpec[] = [
       [[-1.2, 2.2, 0.6], [1.2, 2.2, 0.97], [1.17, 1.7, 0.97]],
     ],
   },
+  { id: 'grav', label: 'COMPENSADOR INERCIAL', short: 'GRAVEDAD', desc: 'Compensador inercial bajo la cubierta del habitáculo.', color: 0xc07fff, rating: 4, base: 0.05, pri: 1, routes: [[[-1.4, 1.0, -1.6], [-1.3, -0.16, -1.6], [0, -0.16, -1.6], [0, -0.2, -1.8]]] },
   { id: 'hyd', label: 'MECANISMOS', short: 'MECAN.', desc: 'Tren de aterrizaje y despliegue de las alas solares.', color: 0xff9a5c, rating: 5, base: 0.1, pri: 1, routes: [[[-1.4, 1.0, -2.0], [-1.3, -0.16, -2.0], [0.4, -0.16, -2.0], [0.4, -0.16, 3.2]], [[0.4, -0.16, -2.0], [0.4, -0.16, -3.6]], [[-1.2, 2.2, -2.0], [0, 2.32, 0.9]]] },
 ];
 const { subsystems: SUBSYSTEMS, defaults: CIRCUIT_DEFAULTS, short: SHORT } = circuits(CIRCUIT_LIST);
@@ -212,6 +214,14 @@ const PARTS: PartSpec[] = [
   part('antenna.S', { id: 'antenna', c: onRoof('cockpit', 0.35, -3.2, 0.3), zone: null, circuit: 'avionics' }),
   // belly: the conformal propellant tank; four RCS blocks on the flanks
   part('tank.conformal.S', { id: 'tank', name: 'Depósito de propelente', c: [0, -0.62, 0.2], zone: null, p: { fill: 480 } }),
+  // VTOL lift pads under the belly, round the centre of mass (front pair under the cabin's forward
+  // end, rear pair under the airlock): they hold the shuttle in the air, the engine only runs it
+  part('lift.S', { id: 'lift.FL', name: 'Sustentación delantera izq.', c: [-1.15, -0.62, -1.4], zone: null, circuit: 'prop', feed: 'lift.FL' }),
+  part('lift.S', { id: 'lift.FR', name: 'Sustentación delantera der.', c: [1.15, -0.62, -1.4], zone: null, circuit: 'prop', feed: 'lift.FR' }),
+  part('lift.S', { id: 'lift.RL', name: 'Sustentación trasera izq.', c: [-1.15, -0.62, 4.54], zone: null, circuit: 'prop', feed: 'lift.RL' }),
+  part('lift.S', { id: 'lift.RR', name: 'Sustentación trasera der.', c: [1.15, -0.62, 4.54], zone: null, circuit: 'prop', feed: 'lift.RR' }),
+  // under the cabin deck, forward: the inertial compensator
+  part('grav.S', { id: 'grav', c: [0, -0.3, -1.8], zone: null, circuit: 'grav' }),
   part('rcs.S', { id: 'rcs.FL', name: 'RCS delantero izq.', c: [-1.35, 1.3, -4.0], zone: null, circuit: 'prop', feed: 'rcs.FL' }),
   part('rcs.S', { id: 'rcs.FR', name: 'RCS delantero der.', c: [1.35, 1.3, -4.0], zone: null, circuit: 'prop', feed: 'rcs.FR' }),
   part('rcs.S', { id: 'rcs.RL', name: 'RCS trasero izq.', c: [-1.65, 1.45, 3.2], zone: null, circuit: 'prop', feed: 'rcs.RL' }),
@@ -241,6 +251,10 @@ const FLUID: FluidNetDef = {
     { a: 'mRCS', b: 'rcs.FR' },
     { a: 'mRCS', b: 'rcs.RL' },
     { a: 'mRCS', b: 'rcs.RR' },
+    { a: 'm', b: 'lift.FL', valve: 'v.lift' },
+    { a: 'm', b: 'lift.FR', valve: 'v.lift' },
+    { a: 'm', b: 'lift.RL', valve: 'v.lift' },
+    { a: 'm', b: 'lift.RR', valve: 'v.lift' },
   ],
   circuit: 'prop',
   refuel: { key: 'refuel' },
@@ -283,6 +297,8 @@ const LOADS: LoadDef[] = [
   { key: 'light.beacon', circuit: 'ext', kw: 0.08 },
   { key: 'light.landing', circuit: 'ext', kw: 1.2 },
   { key: 'rcs', circuit: 'prop', kw: 0.25 },
+  { key: 'lift', circuit: 'prop', kw: 0.5 },
+  loadOf(PARTS, 'grav'),
   loadOf(PARTS, 'coolpump'),
   loadOf(PARTS, 'o2gen'),
   loadOf(PARTS, 'scrubber', 'scrub'),
@@ -310,17 +326,20 @@ const HELP: Record<string, string> = {
   'door.ext': 'Escotilla exterior de la esclusa, en el costado de estribor. Solo abre con la esclusa vacía (menos de 5 kPa): usa el ciclo SALIR, que la vacía primero.',
   gear: 'Sube o baja el tren de aterrizaje. Con peso sobre las patas no se deja subir. Las tres luces verdes del tablero indican abajo y blocado.',
   caution: 'Se enciende con cualquier alarma nueva. Púlsala para reconocerla: se apaga, pero la alarma sigue en el anunciador y en la página ALARM hasta que desaparezca la causa.',
-  'helm.throttle': 'Acelerador: empuje pedido al motor principal, de 0 a 100 %. El motor lo sigue si está en marcha (armado y arrancado). Gasta propelente en proporción; el vuelo aún no mueve la nave.',
+  'helm.throttle': 'Tope del motor principal. En vuelo ACOPLADO y con el piloto automático es lo más que el ordenador de vuelo puede usar del motor para alcanzar la velocidad pedida (W/S, o VEL / NAV del piloto automático; 0 % = solo sustentación y RCS). DESACOPLADO es su empuje directo (control manual). En tierra y ACOPLADO no empuja: despega primero. El casco muestra MOTOR: lo que empuja y por qué. El motor tiene que estar armado y en marcha. Gasta propelente en proporción.',
   'eng.arm': KIT.engineArm('motor principal'),
   'eng.start': KIT.engineStart('motor principal', 'PROPULSIÓN'),
   'v.tank': 'Válvula de salida del depósito de propelente bajo la cubierta. Cerrada, nada recibe propelente (ni se puede repostar). Ciérrala si el depósito pierde.',
-  'pump.tank': 'Bomba de refuerzo del depósito: sube el caudal que puede dar de 1,2 a 6 kg/s. El motor a plena potencia pide 1 kg/s, así que es útil pero no imprescindible. 0,8 kW de PROPULSIÓN.',
+  'pump.tank': 'Bomba de refuerzo del depósito: sube el caudal que puede dar de 1,2 a 6 kg/s. El motor a plena potencia pide 1 kg/s y la sustentación en vuelo estacionario casi 0,5: sin la bomba no llegan los dos a la vez. 0,8 kW de PROPULSIÓN.',
   'v.eng': 'Válvula de alimentación del motor principal. Cerrarla le corta el propelente (se apaga) y es la forma de aislar un motor dañado que puede explotar.',
   'v.rcs': 'Válvula de alimentación de los cuatro bloques RCS desde el colector.',
-  rcs: 'Activa los propulsores de maniobra (cuatro bloques, 0,25 kW). Beben propelente del colector a través de su válvula AL.RCS.',
-  'fa.sas': 'Asistencia de vuelo: amortigua los giros para que la nave no siga rotando al soltar los mandos. Aún sin efecto hasta que exista el vuelo.',
-  'fa.hold': 'ACOPLADO mantiene la velocidad que pides; DESACOPLADO deja la nave en inercia pura (newtoniana). Aún sin efecto hasta que exista el vuelo.',
-  'fa.land': 'Asistente de aterrizaje: limita la velocidad de descenso cerca del suelo. Aún sin efecto hasta que exista el vuelo.',
+  rcs: 'Activa los propulsores de maniobra (cuatro bloques de toberas en los seis ejes, 0,25 kW): giros finos y desplazamientos. Beben propelente del colector a través de su válvula AL.RCS.',
+  lift: 'Activa los cuatro propulsores de sustentación VTOL bajo la panza (6 kN cada uno, 0,5 kW): son los que mantienen la lanzadera en el aire. Beben del colector por la válvula AL.VTOL.',
+  'v.lift': 'Válvula de alimentación de los cuatro propulsores de sustentación desde el colector. Cerrada, la nave no puede quedarse en el aire.',
+  'fa.sas': 'Estabilizador: con los mandos de giro sueltos, frena los giros y mantiene la actitud (y el rumbo). Sin él, las teclas de giro dan par directo y la nave sigue girando por inercia.',
+  'fa.hold': 'ACOPLADO: los mandos de traslación piden una velocidad (adelante, lateral, subir) y al soltarlos la nave se para y mantiene la altura. DESACOPLADO: piden aceleración y la nave sigue en inercia; el ordenador solo compensa la gravedad.',
+  'fa.land': 'Asistente de aterrizaje: cerca del suelo limita la velocidad de bajada según la altura y, con el tren abajo, nivela la nave para posarla.',
+  grav: 'Compensador inercial (2,5 kW, bajo la cubierta): a bordo el suelo sigue siendo «abajo» aunque la nave se incline, frene o acelere, así que el equipaje y los pasajeros no resbalan. Apagado o sin energía se nota todo; en caída libre, se flota.',
   'light.landing': 'Focos bajo el morro que iluminan el suelo delante de la nave (1,2 kW del circuito LUCES EXTERIORES).',
   reactor: KIT.reactorLever(P('reactor')),
   'rx.set': KIT.reactorSet(P('reactor')),
@@ -370,7 +389,11 @@ const cycle = (value: 0 | 1, at: V2, label = value ? 'SALIR' : 'ENTRAR'): Contro
   requires: 'doors',
 });
 
+// autopilot board on the glareshield, between the dash and the windshield
+const AP = autopilotConsole({ frame: boardFrame([0, 1.17, -5.0], norm([0, 0.35, 1])), circuit: 'avionics', w: 1.0, h: 0.22 });
+
 const CONSOLES: ConsoleSpec[] = [
+  ...AP.consoles,
   {
     id: 'ck.main',
     title: 'CONTROL DE VUELO',
@@ -380,7 +403,7 @@ const CONSOLES: ConsoleSpec[] = [
     depth: 0.12,
     free: true,
     screens: [
-      { id: 'mfd.pilot', pages: ['flight', 'mass', 'engines', 'fuel', 'alerts'], at: [-0.45, 0.04], w: 0.5, h: 0.3 },
+      { id: 'mfd.pilot', pages: ['flight', 'ap', 'nav', 'mass', 'engines', 'fuel', 'alerts'], at: [-0.45, 0.04], w: 0.5, h: 0.3 },
       { id: 'mfd.aux', pages: ['status', 'power', 'atmos', 'stores', 'lock', 'hull'], at: [0.45, 0.04], w: 0.5, h: 0.3 },
     ],
     indicators: [{ kind: 'gear-greens', at: [0.85, 0.22], ref: 'gear' }],
@@ -412,6 +435,8 @@ const CONSOLES: ConsoleSpec[] = [
       { key: 'fa.hold', kind: 'toggle', label: 'ACOPLADO', name: 'Vuelo acoplado (mantiene velocidad)', states: ['DESACOPLADO', 'ACOPLADO'], at: [0, -0.2] },
       { key: 'fa.land', kind: 'toggle', label: 'ATERRIZ.', name: 'Asistente de aterrizaje', states: ON_OFF, at: [0.12, -0.2] },
       { key: 'light.landing', kind: 'toggle', label: 'FOCOS', name: 'Focos de aterrizaje', states: ON_OFF, at: [-0.1, -0.38] },
+      { key: 'lift', kind: 'toggle', label: 'VTOL', name: 'Propulsores de sustentación (VTOL)', states: ON_OFF, at: [0.02, -0.38] },
+      { key: 'v.lift', kind: 'toggle', label: 'AL.VTOL', name: 'Alimentación de la sustentación VTOL', states: VALVE, at: [0.14, -0.38] },
     ],
   },
   {
@@ -430,6 +455,7 @@ const CONSOLES: ConsoleSpec[] = [
       { key: 'rx.reset', kind: 'button', label: 'REARME', name: 'Reactor · rearme tras SCRAM (núcleo < 300 °C)', states: ['', 'REARMANDO'], at: [0.1, -0.05], action: 'pulse' },
       { key: 'bat', kind: 'toggle', label: 'BATERÍA', name: 'Batería', states: ['DESCONECTADA', 'CONECTADA'], at: [-0.1, -0.24] },
       { key: 'solar', kind: 'toggle', label: 'SOLAR', name: 'Alas solares', states: ['PLEGADAS', 'DESPLEGADAS'], at: [0.1, -0.24], requires: 'hyd' },
+      { key: 'grav', kind: 'toggle', label: 'GRAVEDAD', name: 'Compensador inercial', states: ON_OFF, at: [0, -0.4], requires: 'grav' },
     ],
   },
   {
@@ -575,10 +601,10 @@ const CONSOLES: ConsoleSpec[] = [
 
 const ANNUNCIATOR = {
   console: 'ck.main',
-  at: [0, 0.12] as V2,
+  at: [0, 0.2] as V2,
   cols: 5,
   cell: [0.075, 0.034] as V2,
-  lamps: ['CASCO', 'DESCOMP', 'O2', 'CO2', 'FUGA AIRE', 'GAS', 'SOP VITAL', 'REACTOR', 'SCRAM', 'REFRIG', 'BATERÍA', 'DESLASTRE', 'DISYUNTOR', 'COMBUST', 'FUGA COMB', 'MOTOR', 'AGUA', 'VÍVERES', 'ESCLUSA'],
+  lamps: ['CASCO', 'DESCOMP', 'O2', 'CO2', 'FUGA AIRE', 'GAS', 'SOP VITAL', 'REACTOR', 'SCRAM', 'REFRIG', 'BATERÍA', 'DESLASTRE', 'DISYUNTOR', 'COMBUST', 'FUGA COMB', 'MOTOR', 'VTOL', 'GRAVEDAD', 'AGUA', 'VÍVERES', 'ESCLUSA'],
 };
 
 // the chin under the nose carries the floodlights on its raked face
@@ -629,15 +655,19 @@ function buildDef(): ShipDef {
     'lock.cycle': 1,
     gear: 1,
     'v.tank': 1,
-    'pump.tank': 0,
+    'pump.tank': 1,
     'v.eng': 1,
     'v.rcs': 1,
     rcs: 1,
+    lift: 1,
+    'v.lift': 1,
     'eng.arm': 0,
     'helm.throttle': 0,
     'fa.sas': 1,
     'fa.hold': 1,
     'fa.land': 1,
+    ...AP.defaults,
+    grav: 1,
     refuel: 0,
     'ls.mode': 0,
     o2gen: 1,
@@ -689,6 +719,11 @@ function buildDef(): ShipDef {
       { id: 'cb.p1', name: 'Asiento de pasajero izquierdo', root: [-0.75, 0, -1.45], yaw: 0, exit: [-0.15, 0, -1.4] },
       { id: 'cb.p2', name: 'Asiento de pasajero derecho', root: [0.75, 0, -1.45], yaw: 0, exit: [0.15, 0, -1.4] },
     ],
+    // passengers' luggage between the water recycler and the lavatory
+    cargo: [
+      { pos: [0.95, 0.2, 1.75], half: [0.25, 0.2, 0.22], yaw: 0, mass: 22, paint: 'grey' },
+      { pos: [0.95, 0.57, 1.72], half: [0.2, 0.16, 0.18], yaw: 0.15, mass: 14, paint: 'orange' },
+    ],
     extLights: [
       { kind: 'nav-red', pos: [-1.55, 1.2, -0.5], n: [-1, 0, 0] },
       { kind: 'nav-green', pos: [1.55, 1.2, -0.5], n: [1, 0, 0] },
@@ -708,9 +743,12 @@ function buildDef(): ShipDef {
     movers: MOVERS,
     life: LIFE,
     airlock: { zone: 'lock', inner: 'door.lock', outer: 'door.ext', key: 'lock.cycle', circuit: 'doors', duct: 'duct.lock' },
-    helm: { throttle: 'helm.throttle' },
+    helm: { throttle: 'helm.throttle', seat: 'ck.pilot' },
     caution: 'caution',
-    readouts: { flight: ['fa.sas', 'fa.hold', 'fa.land', 'helm.throttle'], engines: ['rcs', 'helm.throttle'] },
+    readouts: { flight: ['fa.sas', 'fa.hold', 'fa.land', 'helm.throttle'], engines: ['rcs', 'lift', 'helm.throttle'] },
+    autopilot: AP.autopilot,
+    // a light shuttle: quicker and more nimble than the freighter
+    flight: { vmax: 28, vside: 9, vz: 5.5, rate: [0.45, 0.55, 0.65], accel: 3.2 },
     annunciator: ANNUNCIATOR,
     defaults,
     modules: MODULES,
@@ -749,7 +787,7 @@ const MANUAL: ManualSection[] = [
     lead: 'Compartimentos, equipo y dónde está cada consola',
     body: [
       'La Peregrina es una lanzadera de pasaje para viajes largos: un piloto y dos pasajeros. Tres compartimentos presurizados: la cabina de pilotaje, el habitáculo (dos asientos, dos literas, cocina, aseo, soporte vital y reciclado de agua) y la esclusa, con la escotilla en el costado de estribor.',
-      'Por fuera, en la cola: el micro-reactor RX-20 con su bomba de refrigerante y el motor principal. En el techo: los radiadores fijos y las alas solares plegables. Bajo la cubierta, el depósito de propelente.',
+      'Por fuera, en la cola: el micro-reactor RX-20 con su bomba de refrigerante y el motor principal. En el techo: los radiadores fijos y las alas solares plegables. Bajo la cubierta, el depósito de propelente y el compensador inercial; bajo la panza, los cuatro propulsores de sustentación VTOL.',
       { fig: 'plan' },
       { note: 'Pulsa una consola del plano para ir a sus mandos.' },
     ],
@@ -846,14 +884,37 @@ const MANUAL: ManualSection[] = [
         steps: [
           'Abre la tapa y arma el motor ([[ck.l/eng.arm]]). Válvulas del depósito y del motor abiertas ([[ck.l/v.tank]], [[ck.l/v.eng]]).',
           'Pulsa ARRANQUE ([[ck.l/eng.start]]). Unos 3 s hasta régimen.',
-          'El acelerador ([[ck.main/helm.throttle]]) pide el empuje. La página MASA dice cuánto empuja, cuánto pesa la nave y el Δv que queda.',
+          'El acelerador ([[ck.main/helm.throttle]]) es el tope del motor que puede usar el ordenador de vuelo (ACOPLADO y piloto automático) o cuánto empuja (DESACOPLADO). La página MASA dice cuánto empuja, cuánto pesa la nave y el Δv que queda.',
         ],
       },
       { live: 'fuel' },
-      { live: 'flight' },
-      'El vuelo aún no mueve la nave: el motor sí arranca, empuja y gasta propelente, y la nave calcula su masa y su centro de masas para cuando exista.',
+      'El motor no sostiene la nave: eso lo hacen los propulsores de sustentación. Para volar mira el capítulo «Vuelo».',
     ],
   },
+  {
+    id: 'flight',
+    title: 'Vuelo',
+    lead: 'Despegar, volar, aterrizar y el piloto automático',
+    body: [
+      'La Peregrina se sostiene con cuatro propulsores de sustentación bajo la panza (VTOL), corre con el motor principal y afina los giros con los RCS. El ordenador de vuelo lo reparte todo: desde el asiento del piloto tú pides velocidades y giros, no empujes.',
+      {
+        steps: [
+          'Siéntate en el asiento del piloto. La sustentación y su alimentación vienen encendidas ([[ck.l/lift]], [[ck.l/v.lift]]).',
+          'R sube, F baja. W/S adelante y atrás, A/D gira el morro, Z/C desplaza de lado; las flechas cabecean y alabean. Suéltalo todo y la nave frena y se queda a esa altura (vuelo ACOPLADO, [[ck.l/fa.hold]]).',
+          'Para correr: arma y arranca el motor ([[ck.l/eng.arm]], [[ck.l/eng.start]]), despega y sube el acelerador ([[ck.main/helm.throttle]]). ACOPLADO, W pide velocidad y el motor ayuda hasta el tope del acelerador; para una velocidad fija usa VEL del piloto automático; DESACOPLADO, el acelerador es el empuje directo.',
+          'Tren arriba en vuelo ([[ck.main/gear]]) y abajo antes de posarte. Cerca del suelo el asistente ([[ck.l/fa.land]]) frena la bajada y nivela la nave.',
+        ],
+      },
+      { live: 'flight' },
+      'Piloto automático, en el tablero sobre el salpicadero: [[ck.ap/ap.on]] lo conecta (tecla P desde el asiento). Cada modo tiene su botón; cualquier mando tuyo manda en su eje mientras lo pulsas.',
+      { controls: ['ap.on', 'ap.lvl', 'ap.alt', 'ap.hdg', 'ap.spd', 'ap.nav', 'ap.to', 'ap.land', 'ap.alt.sel', 'ap.hdg.sel', 'ap.spd.sel', 'ap.wp'] },
+      ...AP_SPACE_MANUAL,
+      { note: 'Ir a un sitio: elige el punto ([[ck.ap/ap.wp]]) y la altura ([[ck.ap/ap.alt.sel]]), pulsa DESPEG. y luego NAV. Al llegar se queda en vuelo estacionario encima; ATERRIZ. la posa y se desconecta.' },
+      { warn: 'Sin energía en AVIÓNICA se apaga el ordenador de vuelo: mando DIRECTO, sin estabilizador, sin piloto automático y sin compensar la gravedad. Baja despacio.' },
+      'El compensador inercial ([[ck.r/grav]]) mantiene el suelo como «abajo» a bordo: con él, los pasajeros caminan y el equipaje se queda donde está aunque la nave se incline o frene. Apagado, se nota todo.',
+    ],
+  },
+  SPACE_MANUAL,
   {
     id: 'damage',
     title: 'Daños y reparación',
@@ -861,6 +922,7 @@ const MANUAL: ManualSection[] = [
     body: [
       'Las explosiones dañan los paneles del casco y las máquinas cercanas. Los ojos de buey del habitáculo son de vidrio: si revientan, el habitáculo se vacía en segundos. Cierra las puertas para salvar la cabina y la esclusa.',
       'La soldadora (tecla 2) repara paneles y máquinas. Con ella en la mano las máquinas se tiñen según su daño.',
+      ...decompressionManual(),
       { warn: 'El depósito de propelente bajo la cubierta y el motor dañado pueden explotar. Aíslalos antes de soldar.' },
     ],
   },

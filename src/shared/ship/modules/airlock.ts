@@ -8,7 +8,7 @@
 import { DOOR_DP } from './life.js';
 import type { AirlockDef, ControlDef } from '../def.js';
 import type { ShipSystems } from '../systems.js';
-import type { AlertDef, ShipModule, SystemFactory, Tick } from './api.js';
+import type { AlertDef, ShipModule, SoundCue, SystemFactory, Tick } from './api.js';
 
 /** Sequencer phases (replicated as `lock.phase`). */
 export const LOCK = { in: 0, closeIn: 1, pump: 2, openOut: 3, out: 4, closeOut: 5, fill: 6, openIn: 7 } as const;
@@ -49,20 +49,22 @@ export class Airlock implements ShipModule {
     return phase >= LOCK.closeIn && phase <= LOCK.closeOut;
   }
 
+  /** Enter a phase (returns it, for the caller's local copy). */
+  private go(st: Float64Array, next: number) {
+    st[this.iPhase] = next;
+    st[this.iWait] = 0;
+    return next;
+  }
+
   input(t: Tick) {
     const { st, sw, dt } = t;
     const a = this.a;
     const sys = this.sys;
     let ph = st[this.iPhase];
     const want = sw[a.key] === 1 ? 1 : 0;
-    const go = (next: number) => {
-      ph = next;
-      st[this.iPhase] = next;
-      st[this.iWait] = 0;
-    };
     // a new order turns the sequence around wherever it is
-    if (want === 1 && (ph === LOCK.in || ph >= LOCK.closeOut)) go(LOCK.closeIn);
-    if (want === 0 && ph >= LOCK.closeIn && ph <= LOCK.out) go(LOCK.closeOut);
+    if (want === 1 && (ph === LOCK.in || ph >= LOCK.closeOut)) ph = this.go(st, LOCK.closeIn);
+    if (want === 0 && ph >= LOCK.closeIn && ph <= LOCK.out) ph = this.go(st, LOCK.closeOut);
     if (ph === LOCK.in || ph === LOCK.out) {
       if (ph === LOCK.out) t.hold(a.zone);
       return;
@@ -83,14 +85,14 @@ export class Airlock implements ShipModule {
         t.setSw(a.inner, 0);
         t.setSw(a.outer, 0);
         if (a.duct) t.setSw(a.duct, 0);
-        if (sys.mover(st, a.inner) < 0.02 && sys.mover(st, a.outer) < 0.02) go(LOCK.pump);
+        if (sys.mover(st, a.inner) < 0.02 && sys.mover(st, a.outer) < 0.02) ph = this.go(st, LOCK.pump);
         break;
       case LOCK.pump:
         t.setSw(a.inner, 0);
         t.setSw(this.recover, 1);
         if (p < EMPTY) {
           t.setSw(this.recover, 0);
-          go(LOCK.openOut);
+          ph = this.go(st, LOCK.openOut);
         } else if (st[this.iWait] > 60 && this.said !== ph) {
           this.said = ph;
           t.say('Esclusa: el compresor no consigue vaciarla (¿puerta interior abierta, compresor sin energía?)');
@@ -98,12 +100,12 @@ export class Airlock implements ShipModule {
         break;
       case LOCK.openOut:
         t.setSw(a.outer, 1);
-        if (sys.mover(st, a.outer) > 0.98) go(LOCK.out);
+        if (sys.mover(st, a.outer) > 0.98) ph = this.go(st, LOCK.out);
         break;
       case LOCK.closeOut:
         t.setSw(this.recover, 0);
         t.setSw(a.outer, 0);
-        if (sys.mover(st, a.outer) < 0.02) go(LOCK.fill);
+        if (sys.mover(st, a.outer) < 0.02) ph = this.go(st, LOCK.fill);
         break;
       case LOCK.fill: {
         // AUTO refills a sealed compartment by itself; otherwise open the manual valve meanwhile
@@ -111,7 +113,7 @@ export class Airlock implements ShipModule {
         if (!auto) t.setSw(this.repress, 1);
         if (Math.abs(p - cabin) < DOOR_DP - 1) {
           if (!auto) t.setSw(this.repress, 0);
-          go(LOCK.openIn);
+          ph = this.go(st, LOCK.openIn);
         } else if (st[this.iWait] > 60 && this.said !== ph) {
           this.said = ph;
           t.say('Esclusa: no llega a la presión de la cabina (¿botellas vacías o cerradas?)');
@@ -121,7 +123,7 @@ export class Airlock implements ShipModule {
       case LOCK.openIn:
         t.setSw(a.inner, 1);
         if (a.duct) t.setSw(a.duct, 1);
-        if (sys.mover(st, a.inner) > 0.98) go(LOCK.in);
+        if (sys.mover(st, a.inner) > 0.98) ph = this.go(st, LOCK.in);
         break;
     }
     if (ph !== this.said) this.said = -1;
@@ -135,6 +137,17 @@ export class Airlock implements ShipModule {
   interlock(c: ControlDef, _next: number, st: Float64Array) {
     if (c.key === this.a.key && !this.powered(st)) return `Esclusa sin energía · circuito ${this.sys.def.subsystems.find((x) => x.id === this.a.circuit)?.label ?? ''}`;
     return null;
+  }
+
+  /** A beep when a cycle starts, a chime when the lock is ready at either end. */
+  sounds(): SoundCue[] {
+    const i = this.iPhase;
+    const zone = this.a.zone;
+    const still = (st: Float64Array) => st[i] === LOCK.in || st[i] === LOCK.out;
+    return [
+      { sound: 'chime.cycle', zone, on: (st) => !still(st) },
+      { sound: 'chime.ok', zone, on: still },
+    ];
   }
 
   alerts(): AlertDef[] {

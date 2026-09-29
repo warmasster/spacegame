@@ -12,38 +12,94 @@ export const MAX_SHIP_LIGHTS = 8;
 const uniforms = {
   uShipLightPos: { value: Array.from({ length: MAX_SHIP_LIGHTS }, () => new THREE.Vector3()) },
   uShipLightCol: { value: Array.from({ length: MAX_SHIP_LIGHTS }, () => new THREE.Vector3()) },
-  uShipLightBox: { value: Array.from({ length: MAX_SHIP_LIGHTS }, () => new THREE.Vector4()) },
+  /** Compartment box centre in VIEW space (relative to the camera: exact however far from the origin). */
+  uShipLightBox: { value: Array.from({ length: MAX_SHIP_LIGHTS }, () => new THREE.Vector3()) },
+  /** View → compartment-box rotation (the camera's orientation, then the inverse of the ship's), as a quaternion. */
+  uShipLightRot: { value: Array.from({ length: MAX_SHIP_LIGHTS }, () => new THREE.Vector4(0, 0, 0, 1)) },
   uShipLightHalf: { value: Array.from({ length: MAX_SHIP_LIGHTS }, () => new THREE.Vector3()) },
 };
 
-interface Slot {
+/** A cabin light asked for this frame (any ship). */
+interface Light {
   world: THREE.Vector3;
+  col: THREE.Vector3;
+  box: THREE.Vector3;
+  /** World → box rotation (inverse of the ship's orientation). */
+  rot: THREE.Quaternion;
+  half: THREE.Vector3;
+  /** How much it matters to the camera now (smaller first). */
+  score: number;
 }
 
-const slots: Slot[] = [];
+// a pool reused every frame (lights come and go with the ships and their switches)
+const pool: Light[] = [];
+let asked = 0;
+const _rel = new THREE.Vector3();
+const _cam = new THREE.Vector3();
+const _q = new THREE.Quaternion();
+const _camQ = new THREE.Quaternion();
 
-/** Reserve a light slot. Returns its index or -1 when all slots are taken. */
-export function allocInteriorLight() {
-  if (slots.length >= MAX_SHIP_LIGHTS) return -1;
-  slots.push({ world: new THREE.Vector3() });
-  return slots.length - 1;
+/**
+ * Ask for a cabin light this frame: world position, linear colour × intensity (candela) and the
+ * compartment box (world centre, the ship's orientation, half extents in ship space) outside of
+ * which it lights nothing. The box turns with the ship however it flies. Every ship asks for all
+ * of its lights; `updateInteriorLights` keeps the MAX_SHIP_LIGHTS that matter most to the camera,
+ * so a big ship (or three ships) never runs out of slots and leaves a room dark.
+ */
+export function setInteriorLight(pos: THREE.Vector3, color: THREE.Color, intensity: number, boxCenter: THREE.Vector3, shipQ: THREE.Quaternion, half: THREE.Vector3) {
+  if (intensity <= 0) return;
+  const l = (pool[asked] ??= { world: new THREE.Vector3(), col: new THREE.Vector3(), box: new THREE.Vector3(), rot: new THREE.Quaternion(), half: new THREE.Vector3(), score: 0 });
+  asked++;
+  l.world.copy(pos);
+  l.col.set(color.r * intensity, color.g * intensity, color.b * intensity);
+  l.box.copy(boxCenter);
+  l.rot.set(-shipQ.x, -shipQ.y, -shipQ.z, shipQ.w);
+  l.half.copy(half);
 }
 
 /**
- * Update a light: world position, linear colour × intensity (candela) and the compartment box
- * (world centre, ship yaw, half extents in ship space) outside of which it lights nothing.
+ * Once per frame after the camera moved and every ship asked for its lights: the lights whose room
+ * is nearest the camera (the one it is in first, then by distance to the light) take the slots, in
+ * view space; the rest wait for next frame.
  */
-export function setInteriorLight(i: number, pos: THREE.Vector3, color: THREE.Color, intensity: number, boxCenter: THREE.Vector3, yaw: number, half: THREE.Vector3) {
-  if (i < 0) return;
-  slots[i].world.copy(pos);
-  uniforms.uShipLightCol.value[i].set(color.r * intensity, color.g * intensity, color.b * intensity);
-  uniforms.uShipLightBox.value[i].set(boxCenter.x, boxCenter.y, boxCenter.z, yaw);
-  uniforms.uShipLightHalf.value[i].copy(half);
-}
-
-/** Once per frame after the camera moved: light positions → view space. */
 export function updateInteriorLights(camera: THREE.Camera) {
-  for (let i = 0; i < slots.length; i++) uniforms.uShipLightPos.value[i].copy(slots[i].world).applyMatrix4(camera.matrixWorldInverse);
+  const cam = camera.getWorldPosition(_cam);
+  for (let i = 0; i < asked; i++) {
+    const l = pool[i];
+    // camera in the box's own axes: how far outside the room it is
+    _rel.copy(cam).sub(l.box).applyQuaternion(l.rot);
+    const ox = Math.max(0, Math.abs(_rel.x) - l.half.x);
+    const oy = Math.max(0, Math.abs(_rel.y) - l.half.y);
+    const oz = Math.max(0, Math.abs(_rel.z) - l.half.z);
+    l.score = Math.sqrt(ox * ox + oy * oy + oz * oz) * 4 + l.world.distanceTo(cam);
+  }
+  // the best MAX_SHIP_LIGHTS to the front of the pool (partial selection: no sort, no copy)
+  const n = Math.min(asked, MAX_SHIP_LIGHTS);
+  for (let i = 0; i < n; i++) {
+    let best = i;
+    for (let j = i + 1; j < asked; j++) if (pool[j].score < pool[best].score) best = j;
+    if (best !== i) {
+      const t = pool[i];
+      pool[i] = pool[best];
+      pool[best] = t;
+    }
+  }
+  for (let i = 0; i < MAX_SHIP_LIGHTS; i++) {
+    const l = i < n ? pool[i] : undefined;
+    if (!l) {
+      uniforms.uShipLightCol.value[i].set(0, 0, 0);
+      continue;
+    }
+    uniforms.uShipLightPos.value[i].copy(l.world).applyMatrix4(camera.matrixWorldInverse);
+    uniforms.uShipLightCol.value[i].copy(l.col);
+    // everything relative to the camera, worked out here in double precision: a ship in orbit is
+    // millions of metres from the origin, where float32 world positions in a shader are off by ~10 cm
+    uniforms.uShipLightBox.value[i].copy(l.box).applyMatrix4(camera.matrixWorldInverse);
+    _q.copy(l.rot).multiply(camera.getWorldQuaternion(_camQ));
+    uniforms.uShipLightRot.value[i].set(_q.x, _q.y, _q.z, _q.w);
+    uniforms.uShipLightHalf.value[i].copy(l.half);
+  }
+  asked = 0;
 }
 
 /** Add the cabin lights to a standard/physical material (chains existing onBeforeCompile hooks). */
@@ -54,27 +110,14 @@ export function patchInteriorLights<T extends THREE.MeshStandardMaterial>(mat: T
   mat.onBeforeCompile = (shader, renderer) => {
     prev?.call(mat, shader, renderer);
     Object.assign(shader.uniforms, uniforms);
-    shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', '#include <common>\nvarying vec3 vIntW;')
-      .replace(
-        '#include <project_vertex>',
-        `#include <project_vertex>
-        {
-          vec4 iw = vec4(transformed, 1.0);
-          #ifdef USE_INSTANCING
-            iw = instanceMatrix * iw;
-          #endif
-          vIntW = (modelMatrix * iw).xyz;
-        }`,
-      );
     shader.fragmentShader = shader.fragmentShader
       .replace(
         '#include <common>',
         `#include <common>
-        varying vec3 vIntW;
         uniform vec3 uShipLightPos[${MAX_SHIP_LIGHTS}];
         uniform vec3 uShipLightCol[${MAX_SHIP_LIGHTS}];
-        uniform vec4 uShipLightBox[${MAX_SHIP_LIGHTS}];
+        uniform vec3 uShipLightBox[${MAX_SHIP_LIGHTS}];
+        uniform vec4 uShipLightRot[${MAX_SHIP_LIGHTS}];
         uniform vec3 uShipLightHalf[${MAX_SHIP_LIGHTS}];`,
       )
       .replace(
@@ -83,11 +126,9 @@ export function patchInteriorLights<T extends THREE.MeshStandardMaterial>(mat: T
         for (int i = 0; i < ${MAX_SHIP_LIGHTS}; i++) {
           vec3 col = uShipLightCol[i];
           if (col.r + col.g + col.b <= 0.0) continue;
-          vec4 bx = uShipLightBox[i];
-          vec3 rel = vIntW - bx.xyz;
-          float c = cos(bx.w);
-          float s = sin(bx.w);
-          vec3 loc = vec3(rel.x * c - rel.z * s, rel.y, rel.x * s + rel.z * c);
+          vec3 rel = geometryPosition - uShipLightBox[i];
+          vec4 r = uShipLightRot[i];
+          vec3 loc = rel + 2.0 * cross(r.xyz, cross(r.xyz, rel) + r.w * rel);
           vec3 q = abs(loc) - uShipLightHalf[i];
           if (max(q.x, max(q.y, q.z)) > 0.0) continue;
           vec3 Lv = uShipLightPos[i] - geometryPosition;
@@ -101,6 +142,6 @@ export function patchInteriorLights<T extends THREE.MeshStandardMaterial>(mat: T
       );
   };
   const key = mat.customProgramCacheKey.bind(mat);
-  mat.customProgramCacheKey = () => `${key()}+cabin`;
+  mat.customProgramCacheKey = () => `${key()}+cabin2`;
   return mat;
 }

@@ -9,4 +9,6 @@ export default defineConfig({
     chunkSizeWarningLimit: 4000,
   },
   worker: { format: 'es' },
+  // `npm run share` (Cloudflare quick tunnel): a new random subdomain every time
+  server: { allowedHosts: ['.trycloudflare.com'] },
 });

@@ -210,10 +210,13 @@ export const MACHINES: Record<string, ModelBuilder> = {
     k.box('accent', hx * 1.42, hy * 0.2, hz * 1.42, 0, hy * 0.3, 0);
     const r = Math.min(hx, hy, hz) * 0.24;
     const L = Math.min(hx, hy, hz) * 0.45;
-    k.cyl('dark', 'y', r * 0.6, L, 0, hy * 0.55 + L / 2, 0, 10, r);
-    for (const s of [-1, 1]) k.cyl('dark', 'x', r, L, s * (hx * 0.7 + L / 2), 0, 0, 10, r * 0.6);
-    k.cyl('dark', 'z', r * 0.6, L, 0, 0, hz * 0.7 + L / 2, 10, r);
-    k.cyl('dark', 'z', r, L, 0, 0, -(hz * 0.7 + L / 2), 10, r * 0.6);
+    // one nozzle along each of the six axes (the flight fires all of them), bell mouth outward
+    const reach = { x: hx * 0.7, y: hy * 0.55, z: hz * 0.7 };
+    for (const ax of ['x', 'y', 'z'] as const)
+      for (const s of [-1, 1]) {
+        const at = s * (reach[ax] + L / 2);
+        k.cyl('dark', ax, s > 0 ? r * 0.6 : r, L, ax === 'x' ? at : 0, ax === 'y' ? at : 0, ax === 'z' ? at : 0, 10, s > 0 ? r : r * 0.6);
+      }
   },
 
   gas(k, h, info) {

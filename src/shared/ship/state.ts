@@ -42,6 +42,11 @@ export function quantize(v: number, q: number) {
   return q > 0 ? Math.round(v / q) * q : v;
 }
 
+/** Drop the float noise a quantum leaves (0.30000000000000004 → 0.3) without a string round trip. */
+export function tidy(v: number) {
+  return Math.round(v * 1e6) / 1e6;
+}
+
 /**
  * Server-side change tracker: returns the flat [i, v, i, v…] list of variables that moved at least
  * one quantum since they were last sent (and remembers what it sent).
@@ -66,7 +71,7 @@ export class VarSync {
       if (Math.abs(v - this.sent[i]) < q[i] * 0.999) continue;
       const r = quantize(v, q[i]);
       this.sent[i] = r;
-      out.push(i, +r.toFixed(6));
+      out.push(i, tidy(r));
     }
     return out;
   }
@@ -74,6 +79,6 @@ export class VarSync {
   /** Full state for a joining client. */
   full(st: Float64Array): number[] {
     const q = this.table.quanta;
-    return Array.from(st, (v, i) => +quantize(v, q[i]).toFixed(6));
+    return Array.from(st, (v, i) => tidy(quantize(v, q[i])));
   }
 }

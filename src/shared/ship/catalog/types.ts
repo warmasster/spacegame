@@ -28,6 +28,11 @@ export interface ComponentDef {
   maxHp: number;
   /** Blast damage multiplier (armour < 1). Default 1. */
   soft?: number;
+  /**
+   * Share of its integrity a violent decompression tears off (boiling liquids, burst seals and
+   * cells, loose things flung into it): 0 sealed and rugged … 1 wrecked. Default `DECOMP_DEFAULT`.
+   */
+  decomp?: number;
   /** Dry mass (kg). */
   mass: number;
   /** Parameters its system module reads (kw, kwh, cap, thrustN…). */
@@ -39,6 +44,8 @@ export interface ComponentDef {
   shape?: 'box' | 'cylZ' | 'none';
   /** Annunciator lamp for its alerts. */
   lamp?: string;
+  /** Its own voice per sound role (`{ run: 'mach.pump' }`, see PartDef.sounds). */
+  sounds?: Record<string, string>;
 }
 
 /** Furniture / structure (props): a model, a default box and a mass. */
@@ -116,6 +123,7 @@ export function part(id: string | ComponentDef, at: Placement): PartSpec {
     half,
     maxHp: at.maxHp ?? c.maxHp,
     soft: at.soft ?? c.soft,
+    decomp: at.decomp ?? c.decomp,
     p: { ...c.p, ...(at.p ?? {}) },
     model: at.model ?? c.model,
     look: { ...(c.look ?? {}), ...(at.look ?? {}) },
@@ -125,6 +133,7 @@ export function part(id: string | ComponentDef, at: Placement): PartSpec {
     component: c.id,
     size: c.size,
     maker: at.maker ?? c.maker,
+    sounds: c.sounds || at.sounds ? { ...(c.sounds ?? {}), ...(at.sounds ?? {}) } : undefined,
   };
 }
 

@@ -5,7 +5,10 @@
 import { airlockSystem } from './airlock.js';
 import type { SystemFactory } from './api.js';
 import { apuSystem } from './apu.js';
+import { autopilotSystem } from './autopilot.js';
+import { decompSystem } from './decomp.js';
 import { enginesSystem } from './engines.js';
+import { gravSystem } from './grav.js';
 import { helmSystem } from './helm.js';
 import { lifeSystem } from './life.js';
 import { moversSystem } from './movers.js';
@@ -22,7 +25,7 @@ import { storesSystem } from './stores.js';
  */
 const equipmentSystem: SystemFactory = {
   id: 'equipment',
-  parts: ['radar', 'antenna', 'turret', 'grav', 'loader'],
+  parts: ['radar', 'antenna', 'turret', 'loader'],
   make: () => [],
 };
 
@@ -36,11 +39,14 @@ export const SYSTEM_FACTORIES: SystemFactory[] = [
   airlockSystem,
   propellantSystem,
   lifeSystem,
+  decompSystem,
   reactorSystem,
   solarSystem,
   apuSystem,
   enginesSystem,
   helmSystem,
+  autopilotSystem,
+  gravSystem,
   storesSystem,
   equipmentSystem,
 ];

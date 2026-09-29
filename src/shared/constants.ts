@@ -22,6 +22,8 @@ export interface BodyDef {
   gravity: number;
   /** Surface atmospheric density (kg/m^3). 0 = vacuum. */
   atmosphereDensity: number;
+  /** What its ground is made of: how it sounds underfoot and carries a blast (client/audio/surfaces.ts). Default 'regolith'. */
+  ground?: string;
 }
 
 export const MOON: BodyDef = {
@@ -30,6 +32,7 @@ export const MOON: BodyDef = {
   radius: 1_737_400,
   gravity: 1.62,
   atmosphereDensity: 0,
+  ground: 'regolith',
 };
 
 /** Suit stripe colours by variant (linear-ish sRGB hex). */
@@ -39,12 +42,14 @@ export const SUIT_VARIANT_NAMES = ['Comandante', 'Especialista', 'Piloto', 'Inge
 /** Sun over the landing site: azimuth and elevation (degrees). Lighting, sky and solar arrays. */
 export const SUN = { az: 98, el: 16 };
 
-/** Ships parked in the world at start: ship-space origin (deck centre) position and heading. */
-export const SHIP_SPAWNS = [
-  { id: 1, def: 'hauler', x: 3.6, z: -23.7, yaw: -0.5 },
-  // the passenger shuttle, hatch side (starboard) toward the landing site
-  { id: 2, def: 'peregrina', x: -17, z: -12, yaw: -0.62 },
+/**
+ * Ships parked in the world at start: the site they stand on (space/sites.ts) and where, in that
+ * site's frame (x east, z south, m: the deck centre), their heading and the radius of their pad.
+ */
+export const SHIP_SPAWNS: Array<{ id: number; def: string; site: string; x: number; z: number; yaw: number; r?: number }> = [
+  { id: 1, def: 'hauler', site: 'base', x: 3.6, z: -23.7, yaw: -0.5 },
+  // passenger shuttle, in sight of the spawn, hatch side toward the landing site
+  { id: 2, def: 'peregrina', site: 'base', x: -10, z: -8, yaw: 0.5 },
+  // heavy two-deck transport, past the hauler; `r`: its pad is bigger (the default is 14 m)
+  { id: 3, def: 'albatros', site: 'base', x: 30, z: -8, yaw: -1.1, r: 22 },
 ];
-
-/** Circles kept free of boulders (landing pads). */
-export const CLEARINGS = SHIP_SPAWNS.map((s) => ({ x: s.x, z: s.z, r: 14 }));
