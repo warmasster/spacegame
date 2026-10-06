@@ -349,7 +349,7 @@ impl Gear {
     /// The tool at work this frame. `steps`: the steps of whoever holds it; `short`: how far its
     /// hands fell short of it last frame (world).
     #[allow(clippy::too_many_arguments)]
-    pub fn update(&mut self, dt: f64, view: &View, ships: &mut Ships, builds: &mut Builds, blasts: &mut Blasts, bodies: &BodyRegistry, r: &mut Renderer, steps: Steps, short: Vec3) {
+    pub fn update(&mut self, dt: f64, view: &View, motion: lunar_core::structure::motion::Motion, ships: &mut Ships, builds: &mut Builds, blasts: &mut Blasts, bodies: &BodyRegistry, r: &mut Renderer, steps: Steps, short: Vec3) {
         self.loading = (self.loading - dt).max(0.0);
         self.shown.clear();
         self.scan = None;
@@ -443,7 +443,7 @@ impl Gear {
                         Some(p) => view.eye + (look * self.pose.at.point(Vec3::from(p.en))).as_dvec3(),
                         None => view.eye + view.forward * 0.9 + view.forward.cross(view.up).normalize_or(DVec3::X) * 0.22 - view.up * 0.1,
                     };
-                    if blasts.fire_from(tiro, muzzle, view.forward, bodies, builds) {
+                    if blasts.fire_from(tiro, muzzle, view.forward, motion.velocity_at(muzzle), bodies, builds) {
                         (self.loading, self.loaded, self.fired) = (recarga, false, true);
                         self.holding.fired(hold);
                         self.holding.play(hold, "disparo");

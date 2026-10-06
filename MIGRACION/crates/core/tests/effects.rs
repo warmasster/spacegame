@@ -95,3 +95,69 @@ fn the_heaviest_menu_charge_stays_in_bounds() {
     assert!(fx.particles.len() < 1500, "{} particles", fx.particles.len());
     assert!(fx.shake(at) <= 0.09 + 1e-6);
 }
+
+#[test]
+fn an_explosion_inherits_motion_without_stretching_or_braking_against_the_world() {
+    use lunar_core::structure::motion::Motion;
+    let moon: BodyDef = defs::parse("luna", include_str!("../../../assets/defs/bodies/luna.jsonc")).unwrap();
+    let moonlet: BodyDef = defs::parse("luna_menor", include_str!("../../../assets/defs/bodies/luna_menor.jsonc")).unwrap();
+    let other: BodyDef = defs::parse("prueba", r#"{ "name": "Prueba", "center": [4e6, 2.5e6, -3e6], "radius": 300000, "gravity": 3.7, "reach": { "to": 90000, "band": 35000 }, "north": [0.3, 1, 0.2], "horizon_depth": 100 }"#).unwrap();
+    let bodies = BodyRegistry::new(vec![Body::from_def("luna", &moon).unwrap(), Body::from_def("luna_menor", &moonlet).unwrap(), Body::from_def("prueba", &other).unwrap()]);
+    let definitions = effect_defs();
+    let mut worst = 0.0_f64;
+    for (body, celestial) in bodies.iter() {
+        for height in [celestial.whole_to() * 0.4, celestial.whole_to() + celestial.band * 0.5, celestial.reach * 1.6] {
+            let at = celestial.center + DVec3::Y * (celestial.radius + height);
+            for fps in [10.0, 30.0, 60.0, 144.0, 240.0] {
+                for speed in [0.0, 30.0, 300.0, 1600.0, 7800.0] {
+                    let velocity = DVec3::new(speed, speed * 0.3, -speed * 0.4);
+                    let mut still = Effects::new(&definitions, 2000);
+                    let mut moving = Effects::new(&definitions, 2000);
+                    still.explode("disparo:cohete", &bodies, body, at).unwrap();
+                    moving.explode_moving("disparo:cohete", &bodies, body, Motion { at, vel: velocity, spin: DVec3::ZERO }, 1.0, 0.0).unwrap();
+                    let dt = (1.0 / fps) as f32;
+                    let displacement = velocity * f64::from(dt);
+                    still.update(dt, &bodies);
+                    moving.update(dt, &bodies);
+                    assert_eq!(still.particles.len(), moving.particles.len());
+                    for (base, carried) in still.particles.list.iter().zip(&moving.particles.list) {
+                        let error = (carried.pos - base.pos - displacement).length();
+                        worst = worst.max(error);
+                        assert!(error < 0.001, "{body}, {height} m, {fps} fps, {speed} m/s: la nube queda {error} m atras");
+                        assert_eq!(carried.vel, base.vel, "la velocidad heredada deforma o frena el efecto");
+                    }
+                    for (base, carried) in still.flashes().iter().zip(moving.flashes()) {
+                        assert!((carried.pos - base.pos - displacement).length() < 0.001);
+                    }
+                    assert!((still.shake(at) - moving.shake(at + displacement)).abs() < 1e-5);
+                }
+            }
+        }
+    }
+    eprintln!("225 explosiones: error maximo de herencia {worst:.9} m");
+}
+
+#[test]
+fn inherited_particle_motion_is_bounded_in_cost_and_storage() {
+    use lunar_core::structure::motion::Motion;
+    let bodies = moon();
+    let mut effects = Effects::new(&effect_defs(), 20_000);
+    let at = DVec3::new(4e6, 3e6, 2e6);
+    effects.explode_moving("disparo:cohete", &bodies, 0, Motion { at, vel: DVec3::X * 7800.0, spin: DVec3::ZERO }, 1.0, 0.0).unwrap();
+    let mut particle = effects.particles.list[0];
+    particle.life = 1000.0;
+    effects.particles.clear();
+    for _ in 0..20_000 {
+        effects.particles.spawn(particle);
+    }
+    effects.update(1.0 / 240.0, &bodies);
+    let storage = (effects.particles.list.as_ptr(), effects.particles.list.capacity());
+    let started = std::time::Instant::now();
+    for _ in 0..100 {
+        effects.update(1.0 / 240.0, &bodies);
+    }
+    let ms = started.elapsed().as_secs_f64() * 10.0;
+    assert_eq!(effects.particles.len(), 20_000);
+    assert_eq!((effects.particles.list.as_ptr(), effects.particles.list.capacity()), storage);
+    eprintln!("20.000 particulas con herencia: {ms:.3} ms/paso; {} bytes/particula", std::mem::size_of::<lunar_core::particles::Particle>());
+}

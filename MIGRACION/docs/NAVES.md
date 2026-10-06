@@ -27,6 +27,13 @@ sola en el catálogo G.
 
 ## En el mundo (cualquier cuerpo, órbita o espacio)
 
+**Disparar a bordo o después de salir (V39):** las armas de mano y los cañones emiten desde su
+boca con la velocidad de ese punto, incluida la parte tangencial del giro. El proyectil no es
+una foto de un fotograma adelantado: el mundo lo mueve en sus lonchas, y su contacto se barre
+contra las dos poses de la nave. El daño conserva estructura y punto local. Las cajas en las
+manos frenan respecto a la mano también fuera de la nave; soltarlas no cambia su velocidad.
+Detalles, pruebas y límites: [`MOVIMIENTO.md`](MOVIMIENTO.md) §12.
+
 Cada fotograma `Ships::update` le da a cada nave el `World` de donde está **ahora**
 (`lunar_ship::World::at`, que pregunta a `BodyRegistry::field`): el tirón del sitio en el marco
 de la nave (cero fuera de la influencia de todo cuerpo), altura de la quilla sobre el suelo de

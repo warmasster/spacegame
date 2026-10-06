@@ -414,6 +414,10 @@ impl Loop {
     /// A frame: the ship whose rooms we are in (`rooms`, as `play` asks it), what the keys ask,
     /// and the world on with us among its structures. The eye shown at the end of it.
     pub fn frame(&mut self, input: Input, rooms: &dyn Fn(&Pilot, &Structures) -> Option<u64>) -> DVec3 {
+        self.frame_with(input, rooms, &mut [])
+    }
+
+    pub fn frame_with(&mut self, input: Input, rooms: &dyn Fn(&Pilot, &Structures) -> Option<u64>, others: &mut [&mut dyn Among]) -> DVec3 {
         let dt = self.frames[self.k % self.frames.len()];
         (self.k, self.dt, self.now) = (self.k + 1, dt, self.now + dt);
         self.p.cabin = rooms(&self.p, &self.set);
@@ -421,12 +425,19 @@ impl Loop {
         let bodies = self.p.bodies.clone();
         if self.world {
             let eye = self.p.position;
-            self.set.simulate_with(self.now, dt, &bodies, &lunar_core::structure::schedule::DistancePolicy::default(), &[eye], &mut [&mut self.p]);
+            let mut among: Vec<&mut dyn Among> = vec![&mut self.p];
+            for other in others.iter_mut() {
+                among.push(&mut **other);
+            }
+            self.set.simulate_with(self.now, dt, &bodies, &lunar_core::structure::schedule::DistancePolicy::default(), &[eye], &mut among);
         } else {
             // the world's slices as it takes them: the structures on, then what lives among them
             let n = lunar_core::structure::physics::slices(dt as f32);
             for _ in 0..n {
                 let dt = dt / n as f64;
+                for other in others.iter_mut() {
+                    other.before(&self.set);
+                }
                 for s in &mut self.set.list {
                     let weight = if self.fall { bodies.field(s.pos).pull } else { DVec3::ZERO };
                     // (how its speed changes is the structure's to say, as the world's physics
@@ -440,6 +451,9 @@ impl Loop {
                     s.pos = com - (s.rot * s.com).as_dvec3();
                 }
                 Among::slice(&mut self.p, &self.set, &bodies, dt);
+                for other in others.iter_mut() {
+                    other.slice(&self.set, &bodies, dt);
+                }
             }
         }
         self.p.view_aboard(&self.set).map_or_else(|| self.p.eye(), |v| v.eye)

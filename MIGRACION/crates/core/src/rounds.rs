@@ -9,6 +9,11 @@
 use crate::{
     body::{BodyId, BodyRegistry},
     particles::Particle,
+    structure::{
+        motion::{Crossing, SurfaceHit, Sweep},
+        schedule::{Among, LINGER},
+        set::Structures,
+    },
 };
 use glam::DVec3;
 
@@ -19,6 +24,7 @@ const GROUND_CEILING: f64 = 25_000.0;
 pub struct Round {
     pub pos: DVec3,
     pub vel: DVec3,
+    pub nose: DVec3,
     /// What was fired (the caller's index: a shot definition).
     pub kind: u16,
     pub body: BodyId,
@@ -40,6 +46,45 @@ pub struct Impact {
     pub speed: f64,
     /// The structure test hit, not the ground.
     pub structure: bool,
+    pub surface: Option<SurfaceHit>,
+}
+
+pub struct Flight<'a> {
+    pub rounds: &'a mut Rounds,
+    pub impacts: &'a mut Vec<Impact>,
+    pub sweep: &'a mut Sweep,
+}
+
+impl Among for Flight<'_> {
+    fn wake(&mut self, set: &mut Structures, dt: f64) {
+        if self.rounds.is_empty() {
+            return;
+        }
+        self.sweep.forecast(set, dt);
+        for round in &self.rounds.list {
+            self.sweep.candidates(round.pos, round.pos + round.vel * dt, |index| {
+                set.list[index].awake_until = set.list[index].awake_until.max(set.now + LINGER);
+            });
+        }
+    }
+
+    fn before(&mut self, set: &Structures) {
+        if !self.rounds.is_empty() {
+            self.sweep.begin(set);
+        }
+    }
+
+    fn slice(&mut self, set: &Structures, bodies: &BodyRegistry, dt: f64) {
+        if self.rounds.is_empty() {
+            return;
+        }
+        self.sweep.end(set);
+        self.rounds.fly(dt, bodies, |from, to| self.sweep.hit(set, from, to), self.impacts);
+    }
+
+    fn at(&self) -> DVec3 {
+        self.rounds.list.first().map_or(DVec3::splat(f64::INFINITY), |round| round.pos)
+    }
 }
 
 pub struct Rounds {
@@ -72,7 +117,19 @@ impl Rounds {
     /// `dt` on. `structures(from, dir, len)` is the first structure hit on a segment, if any.
     /// Impacts are appended to `out`; spent and landed rounds leave the pool.
     pub fn step(&mut self, dt: f32, bodies: &BodyRegistry, mut structures: impl FnMut(DVec3, DVec3, f64) -> Option<DVec3>, out: &mut Vec<Impact>) {
-        let dt64 = f64::from(dt);
+        self.fly(
+            f64::from(dt),
+            bodies,
+            |from, to| {
+                let length = from.distance(to);
+                let dir = (to - from).normalize_or(DVec3::Y);
+                structures(from, dir, length).map(|at| Crossing { surface: SurfaceHit { id: 0, point: at.as_vec3(), dir: dir.as_vec3() }, fraction: if length > 0.0 { from.distance(at) / length } else { 0.0 }, at })
+            },
+            out,
+        );
+    }
+
+    fn fly(&mut self, dt64: f64, bodies: &BodyRegistry, mut structures: impl FnMut(DVec3, DVec3) -> Option<Crossing>, out: &mut Vec<Impact>) {
         let mut k = 0;
         while k < self.list.len() {
             let r = &mut self.list[k];
@@ -82,21 +139,25 @@ impl Rounds {
             let to = from + r.vel * dt64;
             let len = to.distance(from);
             let dir = if len > 0.0 { (to - from) / len } else { DVec3::Y };
-            r.left -= dt;
-            let mut hit = structures(from, dir, len).map(|p| (p, true));
-            if hit.is_none()
-                && let Some(b) = here.ground.map(|g| bodies.get(g)).filter(|b| b.datum_altitude(to) < GROUND_CEILING)
-            {
+            r.left -= dt64 as f32;
+            let mut surface = structures(from, to);
+            let mut hit = surface.map(|h| (h.at, true));
+            if let Some(b) = here.ground.map(|g| bodies.get(g)).filter(|b| b.datum_altitude(to) < GROUND_CEILING) {
                 let up = b.up(to);
                 // a coarse sample first (as fine as the step is long), the exact point only on a hit
                 let ground = b.radius + b.height_at(up, len.max(0.5));
                 if (to - b.center).length() < ground + 0.5 {
-                    hit = bodies.raycast(from, dir, len + 1.0).map(|(_, p)| (p, false));
+                    if let Some((_, point)) = bodies.raycast(from, dir, len)
+                        && hit.is_none_or(|(at, _)| from.distance(point) < from.distance(at))
+                    {
+                        hit = Some((point, false));
+                        surface = None;
+                    }
                 }
             }
             let speed = r.vel.length();
             if let Some((at, structure)) = hit {
-                out.push(Impact { kind: r.kind, at, dir, speed, structure });
+                out.push(Impact { kind: r.kind, at, dir, speed, structure, surface: surface.map(|h| h.surface) });
                 self.list.swap_remove(k);
                 continue;
             }
@@ -114,14 +175,14 @@ impl Rounds {
     /// One particle per round (`out` cleared and refilled): how they are drawn.
     pub fn looks(&self, out: &mut Vec<Particle>) {
         out.clear();
-        out.extend(self.list.iter().map(|r| Particle { pos: r.pos, vel: r.vel.as_vec3(), age: 0.0, life: 1.0, size: r.size, seed: r.seed, ground: 0.0, height: 1e6, body: r.body, style: r.style }));
+        out.extend(self.list.iter().map(|r| Particle { pos: r.pos, drift: DVec3::ZERO, vel: r.nose.as_vec3(), age: 0.0, life: 1.0, size: r.size, seed: r.seed, ground: 0.0, height: 1e6, body: r.body, style: r.style }));
     }
 }
 
 /// A round of `kind` leaving `from` along unit `dir` at `speed` m/s, for `range` m.
 #[allow(clippy::too_many_arguments)]
 pub fn round(kind: u16, from: DVec3, dir: DVec3, speed: f32, range: f32, body: BodyId, style: u8, size: f32, seed: f32) -> Round {
-    Round { pos: from, vel: dir * f64::from(speed), kind, body, left: range / speed.max(1.0), style, size, seed }
+    Round { pos: from, vel: dir * f64::from(speed), nose: dir * f64::from(speed), kind, body, left: range / speed.max(1.0), style, size, seed }
 }
 
 #[cfg(test)]

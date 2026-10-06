@@ -9,6 +9,7 @@ use crate::{
     deform::Crater,
     detonation::{Burst, DetonationRules},
     particles::{Particle, Particles},
+    structure::motion::Motion,
 };
 use glam::{DVec3, Vec3};
 
@@ -21,6 +22,7 @@ const MAX_PENDING: usize = 16;
 #[derive(Clone, Copy, Debug)]
 pub struct Flash {
     pub pos: DVec3,
+    vel: DVec3,
     pub color: Vec3,
     pub intensity: f32,
     pub range: f32,
@@ -39,6 +41,7 @@ impl Flash {
 #[derive(Clone, Copy, Debug)]
 struct Shake {
     pos: DVec3,
+    vel: DVec3,
     def: ShakeDef,
     age: f32,
 }
@@ -113,7 +116,7 @@ impl Effects {
         let d = b.up(pos);
         let ground = b.radius + b.height_at(d, f64::from(size).max(1.0));
         let seed = self.rnd();
-        self.particles.spawn(Particle { pos, vel, age: 0.0, life, size, seed, ground, height: ((pos - b.center).length() - ground) as f32, body, style });
+        self.particles.spawn(Particle { pos, drift: DVec3::ZERO, vel, age: 0.0, life, size, seed, ground, height: ((pos - b.center).length() - ground) as f32, body, style });
     }
 
     pub fn ids(&self) -> impl Iterator<Item = &str> {
@@ -147,11 +150,16 @@ impl Effects {
     /// `explode_scaled` with `extra` J more (an impact's speed): a charge grows by its TNT
     /// equivalent, anything else only hits structures harder.
     pub fn explode_with(&mut self, id: &str, bodies: &BodyRegistry, body: BodyId, at: DVec3, scale: f32, extra: f32) -> Result<Option<BlastDef>, String> {
+        self.explode_moving(id, bodies, body, Motion { at, ..Motion::default() }, scale, extra)
+    }
+
+    pub fn explode_moving(&mut self, id: &str, bodies: &BodyRegistry, body: BodyId, motion: Motion, scale: f32, extra: f32) -> Result<Option<BlastDef>, String> {
+        let at = motion.at;
         let k = self.explosions.iter().position(|(e, _, _)| e == id).ok_or_else(|| format!("unknown explosion '{id}'"))?;
         let b = bodies.get(body);
         let up = b.up(at);
-        let ground = (at - b.center).length();
         let altitude = b.altitude(at);
+        let ground = (at - b.center).length() - altitude;
         let def = &self.explosions[k].1;
         let (mut crater, mut flash, mut shake, mut damage) = (def.crater, def.flash, def.shake, def.damage);
         let mut bursts = std::mem::take(&mut self.scratch);
@@ -181,13 +189,13 @@ impl Effects {
                 self.flashes.remove(0);
             }
             let pos = at + up * f64::from(f.lift);
-            self.flashes.push(Flash { pos, color: Vec3::from_array(f.color), intensity: f.intensity, range: f.range, age: 0.0, duration: f.duration });
+            self.flashes.push(Flash { pos, vel: motion.velocity_at(pos), color: Vec3::from_array(f.color), intensity: f.intensity, range: f.range, age: 0.0, duration: f.duration });
         }
         if let Some(s) = shake {
             if self.shakes.len() == MAX_FLASHES {
                 self.shakes.remove(0);
             }
-            self.shakes.push(Shake { pos: at, def: s, age: 0.0 });
+            self.shakes.push(Shake { pos: at, vel: motion.vel, def: s, age: 0.0 });
         }
         // a frame round the vertical for the launch cones
         let east = up.cross(if up.y.abs() < 0.9 { DVec3::Y } else { DVec3::X }).normalize();
@@ -195,7 +203,7 @@ impl Effects {
         let n_written = self.explosions[k].2.len();
         for (i, burst) in bursts.iter().enumerate() {
             let s = if i < n_written { scale } else { 1.0 };
-            if !self.throw(burst, s, at, ground, (up, east, north), body, b) {
+            if !self.throw(burst, s, motion, ground, (up, east, north), body, b) {
                 break;
             }
         }
@@ -205,7 +213,8 @@ impl Effects {
 
     /// The particles of one burst; false once the list is full.
     #[allow(clippy::too_many_arguments)]
-    fn throw(&mut self, em: &Burst, scale: f32, at: DVec3, ground: f64, (up, east, north): (DVec3, DVec3, DVec3), body: BodyId, b: &crate::body::Body) -> bool {
+    fn throw(&mut self, em: &Burst, scale: f32, motion: Motion, ground: f64, (up, east, north): (DVec3, DVec3, DVec3), body: BodyId, b: &crate::body::Body) -> bool {
+        let at = motion.at;
         let spread = em.spread * scale;
         let count = (em.count as f32 * scale.clamp(1.0, 3.0)).round() as u32;
         let cos_max = em.cone.to_radians().cos();
@@ -223,7 +232,7 @@ impl Effects {
             let off = self.rnd().sqrt() * spread;
             let oa = self.rnd() * std::f32::consts::TAU;
             let pos = at + up * f64::from(em.lift) + (east * f64::from(oa.cos()) + north * f64::from(oa.sin())) * f64::from(off) + dir * f64::from(off * 0.3);
-            let p = Particle { pos, vel: (dir * f64::from(speed)).as_vec3(), age: 0.0, life: self.range(em.life), size: self.range(em.size), seed: self.rnd(), ground, height: ((pos - b.center).length() - ground) as f32, body, style: em.style };
+            let p = Particle { pos, drift: motion.velocity_at(pos), vel: (dir * f64::from(speed)).as_vec3(), age: 0.0, life: self.range(em.life), size: self.range(em.size), seed: self.rnd(), ground, height: ((pos - b.center).length() - ground) as f32, body, style: em.style };
             if !self.particles.spawn(p) {
                 return false;
             }
@@ -235,10 +244,12 @@ impl Effects {
         self.particles.update(dt, bodies);
         for f in &mut self.flashes {
             f.age += dt;
+            f.pos += f.vel * f64::from(dt);
         }
         self.flashes.retain(|f| f.age < f.duration);
         for s in &mut self.shakes {
             s.age += dt;
+            s.pos += s.vel * f64::from(dt);
         }
         self.shakes.retain(|s| s.age < s.def.duration);
         for c in &mut self.pending {

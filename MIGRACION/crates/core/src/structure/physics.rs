@@ -283,6 +283,9 @@ impl Structures {
         let n = slices(dt);
         let mut ph = std::mem::take(&mut self.physics);
         for _ in 0..n {
+            for item in among.iter_mut() {
+                item.before(self);
+            }
             ph.slice(&mut self.list, idx, dt / n as f32, bodies);
             if dt > 0.0 {
                 self.follow();

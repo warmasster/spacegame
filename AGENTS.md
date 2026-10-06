@@ -123,6 +123,19 @@ Toda regla nueva de este tipo se prueba barriendo cuerpos (los dos que hay y uno
 dentro, en la franja y fuera, velocidades de 0 a 7 800 m/s, fotogramas de 10 a 240 fps y la
 nave derecha, volcada y girando (`app/src/pilot/frames.rs` tiene los sitios y las posturas).
 
+**Soltar y disparar en Rust:** se entrega posición y velocidad de mundo del punto de salida
+(`structure::motion::Motion`, `Pilot::motion_in`), incluido el giro del portador, nunca la
+velocidad relativa del jugador. No se desplaza otra vez una boca ya calculada. Lo balístico
+avanza como `Among` (`rounds::Flight`); el barrido usa los dos extremos en las poses inicial y
+final del sólido (`structure::motion::Sweep`), no un rayo contra la nave inmóvil. El impacto
+guarda id, punto y dirección locales hasta aplicar el daño; el dibujo se toma después del
+mundo y de las nuevas emisiones. La orientación del proyectil no es su velocidad de mundo.
+El agarre frena respecto al movimiento de la mano, también fuera de cualquier nave.
+Los efectos nacidos en movimiento reciben también `Motion` (`Effects::explode_moving`):
+partículas, destello y origen de la sacudida heredan su velocidad. `Particle::drift` conserva
+esa base en doble precisión; `vel` es expansión respecto a ella, para frenado y aspecto.
+No estirar ni frenar una nube por la velocidad orbital que comparte con quien la ve.
+
 ## Optimización pendiente (obligatorio)
 
 Los problemas de rendimiento conocidos están en una lista viva:

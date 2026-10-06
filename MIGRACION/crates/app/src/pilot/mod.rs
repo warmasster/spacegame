@@ -44,6 +44,8 @@ use std::sync::Arc;
 
 #[cfg(test)]
 mod frames;
+#[cfg(test)]
+mod shots;
 mod pack;
 #[cfg(test)]
 mod tests;
@@ -495,6 +497,14 @@ impl Pilot {
     /// starts with it.
     pub fn velocity_in(&self, set: &Structures) -> DVec3 {
         self.vel + self.ride.and_then(|r| set.get(r.id)).map_or(DVec3::ZERO, |s| s.velocity_at(self.position))
+    }
+
+    pub fn motion_in(&self, set: &Structures) -> lunar_core::structure::motion::Motion {
+        lunar_core::structure::motion::Motion {
+            at: self.position,
+            vel: self.velocity_in(set),
+            spin: self.ride.and_then(|ride| set.get(ride.id)).map_or(DVec3::ZERO, |structure| structure.spin.as_dvec3()),
+        }
     }
 
     /// Speed up (m/s) on foot or in the air.

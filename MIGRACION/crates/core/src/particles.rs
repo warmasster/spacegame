@@ -1,6 +1,7 @@
 //! Particles: looks as data (`particles.jsonc`, one style per name) and a CPU simulation with no
-//! allocation after creation. Ballistic flight under the gravity of the body each particle was born
-//! over, optional drag (gas puffs; none in vacuum). On the ground a particle bounces and slides,
+//! allocation after creation. Ballistic flight under the gravity where each particle is, with
+//! inherited drift kept in double precision apart from its expansion (drag and appearance).
+//! On the ground a particle bounces and slides,
 //! skims along it slowing down (dust sheets), or vanishes. The renderer only reads
 //! `list` and the styles.
 use crate::body::{BodyId, BodyRegistry};
@@ -94,6 +95,7 @@ fn unit2() -> [f32; 2] {
 #[derive(Clone, Copy, Debug)]
 pub struct Particle {
     pub pos: DVec3,
+    pub drift: DVec3,
     pub vel: Vec3,
     pub age: f32,
     pub life: f32,
@@ -194,7 +196,7 @@ impl Particles {
                 p.vel += (bodies.field(p.pos).pull * f64::from(s.gravity * dt)).as_vec3();
             }
             p.vel *= (-s.drag * dt).exp();
-            p.pos += p.vel.as_dvec3() * f64::from(dt);
+            p.pos += (p.drift + p.vel.as_dvec3()) * f64::from(dt);
             p.age += dt;
             // ground: rest on it, bounce off it, slide along it
             let r = p.radius(s) * 0.35;
@@ -202,6 +204,8 @@ impl Particles {
             let h = (p.pos - b.center).length();
             if h < floor {
                 p.pos += up * (floor - h);
+                p.vel = (p.drift + p.vel.as_dvec3()).as_vec3();
+                p.drift = DVec3::ZERO;
                 let vn = p.vel.dot(up32);
                 if vn < 0.0 {
                     let vt = p.vel - up32 * vn;
@@ -253,7 +257,7 @@ mod tests {
     }
 
     fn launch(v: f32) -> Particle {
-        Particle { pos: DVec3::Y * 1000.5, vel: Vec3::Y * v, age: 0.0, life: 60.0, size: 0.2, seed: 0.0, ground: 1000.0, height: 0.5, body: 0, style: 0 }
+        Particle { pos: DVec3::Y * 1000.5, drift: DVec3::ZERO, vel: Vec3::Y * v, age: 0.0, life: 60.0, size: 0.2, seed: 0.0, ground: 1000.0, height: 0.5, body: 0, style: 0 }
     }
 
     #[test]

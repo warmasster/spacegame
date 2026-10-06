@@ -8,8 +8,7 @@
 //! a damper would, with no more than their strength (`HandsDef`). The pull is worked out for
 //! where the thing will be at the end of the step, not where it is ("stable PD", Tan, Liu & Turk
 //! 2011): it does not overshoot or ring whatever the frame rate, and needs nothing of the solver.
-//! Speeds are taken relative to the ship the player stands on, so carrying works aboard a ship
-//! under way.
+//! Speeds are taken relative to the hands, aboard or in free flight (`motion::Motion`).
 use crate::{builds::Builds, ships::Ships};
 use glam::{DVec3, Mat3, Vec3};
 use lunar_core::{scenario::HandsDef, structure::set::Structures};
@@ -107,9 +106,8 @@ impl Hands {
         true
     }
 
-    /// Pull what is held toward where the look puts it. `aboard`: the structure the player
-    /// stands on or rides (speeds are relative to it).
-    pub fn update(&mut self, dt: f64, builds: &mut Builds, view: &View, aboard: Option<u64>) {
+    /// Pull what is held toward where the look puts it, relative to the hands at that point.
+    pub fn update(&mut self, dt: f64, builds: &mut Builds, view: &View, motion: lunar_core::structure::motion::Motion) {
         let (Some(g), Some(def)) = (self.held, self.def) else { return };
         let set = &mut builds.set;
         let Some(k) = set.index_of(g.id).filter(|&k| set.list[k].held.is_none() && set.list[k].alive()) else {
@@ -121,9 +119,8 @@ impl Hands {
             self.release(builds);
             return;
         }
-        // speeds relative to what the player is on
-        let frame = aboard.filter(|id| *id != g.id).and_then(|id| set.get(id)).map(|h| (h.velocity_at(at), h.spin));
-        let (v_ref, w_ref) = frame.unwrap_or((DVec3::ZERO, Vec3::ZERO));
+        // speeds relative to the hands
+        let (v_ref, w_ref) = (motion.velocity_at(at), motion.spin.as_vec3());
         let s = &mut set.list[k];
         let force = pull(s.mass, (target - at).as_vec3(), (s.velocity_at(at) - v_ref).as_vec3(), def.frecuencia, def.fuerza, dt as f32);
         let arm = (at - s.to_world(s.com)).as_vec3();
@@ -150,6 +147,40 @@ pub fn pull(m: f32, off: Vec3, v: Vec3, hz: f32, max: f32, dt: f32) -> Vec3 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn carrying_and_releasing_a_box_uses_the_hands_motion_not_the_world() {
+        let defs = crate::content::Defs::load(&crate::root().join("assets/defs")).unwrap();
+        let bodies = &defs.system.bodies;
+        let site = lunar_core::scene::Site::from_def(&defs.scenario.site, bodies).unwrap();
+        let effects: Vec<&str> = defs.effects.explosions.iter().map(|(id, _)| id.as_str()).collect();
+        let mut builds = Builds::new(defs.structures.clone(), &defs.scenario, &site, bodies, &effects).unwrap();
+        builds.set.list.clear();
+        let kind = builds.set.lib.catalog.part("bloque").unwrap();
+        let part = lunar_core::structure::state::Part::new(&builds.set.lib.catalog, kind, glam::Affine3A::IDENTITY, None, false);
+        let at = DVec3::new(4e6, 3e6, 2e6);
+        let id = builds.set.next_id();
+        builds.set.list.push(lunar_core::structure::state::Structure::assemble(id, "caja".into(), at, glam::Quat::IDENTITY, false, vec![part], vec![]));
+        let view = View { eye: at - DVec3::Z, forward: DVec3::Z, up: DVec3::Y, fov_y: 1.0, near: 0.1 };
+        let mut hands = Hands::new(defs.scenario.player.manos);
+        assert!(hands.def.is_some());
+        for fps in [10.0, 30.0, 60.0, 144.0, 240.0] {
+            for speed in [0.0, 30.0, 300.0, 1600.0, 7800.0] {
+                let vel = DVec3::new(speed, 0.0, speed * 0.2);
+                let spin = DVec3::new(0.3, -0.4, 0.2);
+                let motion = lunar_core::structure::motion::Motion { at: view.eye, vel, spin };
+                let expected = motion.velocity_at(at);
+                builds.set.list[0].vel = expected;
+                builds.set.list[0].spin = spin.as_vec3();
+                hands.held = Some(Grab { id, at: Vec3::ZERO, dist: 1.0 });
+                hands.update(1.0 / fps, &mut builds, &view, motion);
+                assert!(builds.set.list[0].force.length() < 1e-5, "a {speed} m/s y {fps} fps frena la caja con {} N", builds.set.list[0].force.length());
+                hands.release(&mut builds);
+                assert_eq!(builds.set.list[0].vel, expected);
+                assert_eq!(builds.set.list[0].spin, spin.as_vec3());
+            }
+        }
+    }
 
     #[test]
     fn the_pull_brings_a_mass_to_the_hand_without_ringing_at_any_frame_rate() {

@@ -27,6 +27,11 @@ pub struct Bvh {
 }
 
 impl Bvh {
+    #[cfg(test)]
+    pub(crate) fn reserved(&self) -> [usize; 6] {
+        [self.nodes.as_ptr() as usize, self.nodes.capacity(), self.items.as_ptr() as usize, self.items.capacity(), self.work.as_ptr() as usize, self.work.capacity()]
+    }
+
     pub fn is_empty(&self) -> bool {
         self.items.is_empty()
     }

@@ -69,7 +69,7 @@ que toca la frena contra eso que toca.**
 | Pieza | Dónde | Qué hace |
 |---|---|---|
 | `Among` | `core/structure/schedule.rs` | Lo que vive entre estructuras: `slice(set, bodies, dt)`. El mundo lo llama tras cada loncha (`physics_among`), con lo sujeto ya puesto donde fue quien lo sujeta. `at()`: dónde está; lo que tiene alrededor se simula en fino |
-| `Structures::simulate_with` | ídem | El paso del mundo con sus `Among`. `Builds::update` se lo pasa; `play.rs` pasa al jugador |
+| `Structures::simulate_with` | ídem | El paso del mundo con sus `Among`. `Builds::update` se lo pasa; `play.rs` pasa al jugador y a `rounds::Flight` |
 | `Pilot` | `app/pilot/mod.rs` | Estado, asiento, vistas y `step`: lo que una loncha le hace. `begin` recoge las teclas del fotograma; `impl Among` |
 | el cuerpo | `app/pilot/walk.rs` | Tres esferas entre las piezas: `collide`, `step_on`, `under`, `room`, `headroom`, `passing` |
 | la mochila | `app/pilot/pack.rs` | Chorros, gasto, y a qué te estabiliza (`Hold`: quieto respecto a lo que te lleva o al suelo; junto a una estructura tal como va; una velocidad que tenía lo que perdiste de vista) |
@@ -81,8 +81,8 @@ que toca la frena contra eso que toca.**
 |---|---|
 | inicio | viento y sala (`pilot.cabin`) con el jugador y las naves del mismo instante; `pilot.begin(teclas, opciones)` |
 | naves | `ships.update(dt)`: sistemas, empujes, mecanismos; el asiento que se mueve lleva al sentado |
-| mundo | `builds.update(dt, …, [jugador])`: por cada loncha, estructuras → lo sujeto → jugador |
-| vista | desde donde está el jugador (`view_aboard`, `eye`) |
+| mundo | `builds.update(dt, …, [jugador, proyectiles])`: por cada loncha, poses iniciales → estructuras → lo sujeto → jugador y proyectiles |
+| vista | desde donde está el jugador (`view_aboard`, `eye`); nuevas emisiones y dibujo de proyectiles desde ese mismo instante |
 
 ## 4. Pruebas
 
@@ -124,7 +124,7 @@ pies en el marco de la nave, qué lo lleva y a qué velocidad va respecto a ella
 | Que algo ande, flote o vaya entre naves (un tripulante, un dron, otro jugador simulado aquí) | Implementar `Among` y pasarlo a `Builds::update`. Nunca un acumulador propio |
 | Saber dónde está el jugador en una nave | `pilot.ride` → `local` |
 | Su velocidad de mundo | `pilot.velocity_in(set)` (a bordo suma la de la nave); `velocity()` es en lo que lo lleva |
-| Que algo que sale de él (gas, un objeto) nazca bien | con `velocity_in(set)`, en el mundo |
+| Que algo que sale de él (gas, un objeto) nazca bien | `motion_in(set).velocity_at(punto_de_salida)`, en el mundo; incluye el giro de lo que lo lleva |
 | Poner al jugador en una nave en marcha (un guion, una aparición) | `put` y luego `still_to(set, id)` |
 | Cambiar cómo se mueve el cuerpo o la mochila | `scenario.jsonc`, `player.cuerpo` / `player.mochila` |
 | Probar algo junto a una nave rápida | `Loop` en `app/pilot/tests.rs`, barriendo velocidades y duraciones de fotograma |
@@ -339,3 +339,91 @@ velocidad.
 | Saber qué pesa algo que anda o flota | `weight::felt(tirón, punto, lo que lo lleva, si va con ello, si está en sus salas)` |
 | Una referencia nueva en la brújula | Una entrada en `nav::Dir` y sus marcas en `navegacion.jsonc` |
 | Probar algo «en cualquier sitio» | `places()` de `app/src/pilot/frames.rs`: los tres cuerpos, dentro, en la franja y fuera |
+
+## 12. Disparar y soltar algo en movimiento (V39, 2026-10-06)
+
+El informe anterior era demasiado amplio: **los proyectiles no iban en las lonchas del mundo**.
+`Blasts::update` los adelantaba un fotograma contra las estructuras todavía sin mover. Además,
+el lanzador de mano no entregaba la velocidad del jugador y `fire_from` añadía otro metro a
+una boca ya situada. Una nave rápida dejaba el cohete atrás; sumar únicamente su velocidad
+tampoco arreglaba el rayo de colisión contra un casco de otro instante.
+
+Referencia contrastada: la versión web del propio proyecto, `shared/frames/ballistic.ts`
+(`launch`, `stepBallistic`, `handOver`) y `client/fx/projectiles.ts` (`sweepShips`). Allí la
+velocidad de salida incluye la del lanzador y cada extremo del barrido se transforma con la
+pose que le corresponde. No se ha copiado su reloj fijo: Rust conserva el del mundo.
+
+### Contratos compartidos
+
+- `core/structure/motion.rs`, `Motion`: punto, velocidad y giro de un emisor o agarre.
+  `velocity_at(punto)` incluye la velocidad tangencial. El jugador lo ofrece con
+  `Pilot::motion_in`; equipo y manos consumen el mismo contrato. No conoce naves concretas.
+- `Blasts::fire_from`: el origen recibido **ya es la boca**. Los disparos con velocidad usan
+  el mismo `fire_round` que las armas montadas. Se suman velocidad heredada y velocidad de
+  salida de `shots.jsonc`. La vida sale del alcance y velocidad propios, no de la velocidad
+  del mundo. El morro dibujado conserva la dirección de lanzamiento; no gira hacia el vector
+  de velocidad heredada. `Seen::Round` conserva ambos por separado al reproducir un disparo.
+- `Among::wake`: permite mantener en fino lo que un móvil va a atravesar, incluso lejos de
+  la cámara. `Among::before`: toma las poses antes de la loncha. Son ganchos genéricos, sin
+  ningún reloj adicional. `rounds::Flight` los usa y vuela en `slice` después de las estructuras.
+- `Sweep`: guarda las poses iniciales y construye un BVH de los volúmenes recorridos. Solo
+  examina los candidatos. El extremo inicial del proyectil va al marco inicial del sólido;
+  el final, al final. El rayo local entre ambos no contiene el desplazamiento común. Sirve
+  también para una pared que cruza un proyectil parado en el mundo. Coordenadas de mundo en
+  doble precisión, coordenadas locales para la geometría; tolerancias numéricas con nombre.
+- El impacto conserva **estructura, punto y dirección locales**. Al terminar el mundo,
+  `land_rounds` aplica el daño a esa estructura y coloca allí la explosión: no vuelve a
+  disparar un rayo de mundo contra una nave que entretanto ha avanzado. El terreno compite
+  con el casco por el primer contacto, no pierde siempre ante cualquier estructura.
+- Las imágenes de proyectiles se preparan **después** de mover el mundo y de emitir los
+  nuevos disparos: uno recién disparado se ve en la boca ese mismo fotograma.
+- La comprobación visual descubrió lo mismo en la **explosión**: su nube, luz y sacudida
+  nacían quietas en el mundo. `Effects::explode_moving` recibe el mismo `Motion`, cualquiera
+  que sea el emisor. `land_rounds` entrega la velocidad del punto alcanzado. Las partículas
+  guardan esa base en doble precisión (`drift`) separada de su expansión (`vel`); el frenado
+  y el estiramiento visual solo actúan sobre la expansión, no sobre el movimiento común.
+  Destello y origen de sacudida avanzan con la velocidad recibida. La sacudida se evalúa con
+  la cámara final, no con su posición anterior al paso del mundo. El suelo inicial cacheado
+  de una explosión elevada es el suelo real, no un plano ficticio a la altura donde nació.
+- `Hands::update` amortigua contra `Motion`, no contra cero cuando el jugador sale de una
+  nave. Soltar no recrea la caja ni cambia su velocidad o giro: conserva los que ya tenía.
+  La carga anclada sigue usando `hold::let_go`, que ya hereda la velocidad del punto de amarre.
+
+### Aceleración y datos
+
+Soltar algo transmite la **velocidad instantánea**, incluido el giro. La aceleración no es
+algo que se almacene y se herede para siempre: después de salir actúan sus propias fuerzas.
+La gravedad común continúa; los motores de la nave o del traje no siguen empujando el cohete
+separado. Los cohetes actuales son balísticos a la velocidad de salida escrita en `shots.jsonc`;
+no se ha inventado un motor ni cambiado su potencia. **No hay nuevos datos de comportamiento**
+ni umbrales por velocidad, cuerpo, nave o fps.
+
+### Pruebas y regresiones
+
+| Prueba | Qué observa | Antes / control negativo → ahora |
+|---|---|---|
+| `blasts::tests::a_handheld_round_starts_at_the_muzzle` | Boca real, velocidad, morro, duración y reproducción del disparo | El código original nace 1 m por delante; quitando la herencia falla desde 30 m/s → nace en la boca y conserva ambas velocidades |
+| `pilot::shots::rockets_and_the_eye_share_the_world_at_every_speed_frame_body_and_attitude` | `Loop`, 2.500 vuelos, tres cuerpos, influencia/franja/fuera, 0–7.800 m/s, 10–240 fps, cinco posturas, giro y aceleración; física real y movimiento controlado | Volviendo al rayo contra la pose final falla ya a 300 m/s (2,247 mm); con el barrido temporal el mayor cambio del impacto es 0,001 mm; ojo por fotograma <1 mm |
+| `pilot::shots::a_release_uses_the_velocity_of_its_point_aboard_and_after_leaving` | Velocidad tangencial en la boca y continuidad al dejar el marco | Comprueba que no se usa solo la velocidad del centro o la relativa del jugador |
+| `hands::tests::carrying_and_releasing_a_box_uses_the_hands_motion_not_the_world` | Caja quieta respecto a una mano que se traslada y gira; 25 combinaciones velocidad/fps; soltar conserva velocidad y giro | Restaurando el freno respecto al mundo aparecen 1.200 N espurios → menos de 0,00001 N |
+| `core/tests/sweep.rs` | Pared móvil, proyectil parado, cámara lejana; comparación explícita con el rayo anterior; 500 estructuras y 2.000 tramos | El rayo anterior no ve la pared; el barrido sí. De 500 estructuras a 5,708 candidatos/tramo; 1,182 ms por loncha en perfil de pruebas |
+| `swept_bounds_keep_their_storage_once_warm` | Direcciones y capacidades de los cuatro vectores durante 100 reconstrucciones | Se conservan después del calentamiento; no se usa un asignador inseguro para medirlo |
+| `core/tests/effects.rs`, `an_explosion_inherits_motion_without_stretching_or_braking_against_the_world` | 225 combinaciones: tres cuerpos, tres alturas, cinco velocidades y cinco fps; nube, luz y sacudida | Restaurando el nacimiento quieto, la nube queda 3,354 m atrás en un fotograma a 30 m/s; corregido, error <0,001 mm sin cambiar expansión ni aspecto |
+| `inherited_particle_motion_is_bounded_in_cost_and_storage` | 20.000 partículas durante 100 pasos, capacidad y dirección del almacén | 0,846 ms/paso; 96 bytes/partícula; almacén conservado |
+
+El guion `tools/camara/cohetes_nave.jsonc` usa el lanzador real a pie: interior quieto, interior
+a 7.800 m/s con nave volcada y exterior tras abandonarla. `donde` informa además de proyectiles
+en vuelo, velocidad relativa y contactos locales. Las comprobaciones y límites de la entrega
+se anotan en `PENDIENTES.md`; no sustituye a probar el tacto jugando a mano.
+
+Entrega verificada: 739 pruebas pasan, 3 omitidas; tres ediciones release recompiladas y sus
+arranques correctos. Guion ejecutado desde `SELENE_V39`, nueve fotos leídas y tres contactos
+confirmados. El fogonazo de salida permanece junto a la boca tanto quieto como a 7.800 m/s;
+la explosión interior acompaña a la nave rápida. Los conos de la receta visual aún se orientan
+por la vertical del cuerpo de dibujo, no por la superficie de impacto: queda anotado aparte.
+
+Límites: el barrido aproxima por un segmento la trayectoria local durante cada loncha; no es
+CCD exacto de cada pieza articulada. Los misiles estratégicos/guiados y otros emisores siguen
+sus rutas anteriores en `Blasts::update`: esta corrección abarca `shots.jsonc` y sus impactos (cohetes, balas,
+granadas y cañones). Sigue pendiente unificar la gravedad propia de las salas para toda la
+carga libre y todo lo balístico; aquí no se ha cambiado esa regla de juego.

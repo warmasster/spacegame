@@ -69,6 +69,10 @@ pub const LINGER: f64 = 8.0;
 /// wherever whoever watches the world is looking from (`at`). Else a structure beside it, seen
 /// from afar, would wait for its next coarse step while it went on: a frame apart again.
 pub trait Among {
+    fn wake(&mut self, _set: &mut Structures, _dt: f64) {}
+
+    fn before(&mut self, _set: &Structures) {}
+
     /// `dt` s on (more than none), among the structures as they are now.
     fn slice(&mut self, set: &Structures, bodies: &BodyRegistry, dt: f64);
 
@@ -116,6 +120,9 @@ impl Structures {
     /// structures take (`Among`).
     pub fn simulate_with(&mut self, now: f64, dt: f64, bodies: &BodyRegistry, policy: &dyn LodPolicy, watchers: &[DVec3], among: &mut [&mut dyn Among]) -> SimStats {
         self.now = now;
+        for item in among.iter_mut() {
+            item.wake(self, dt);
+        }
         let mut st = SimStats::default();
         let (mut together, mut alone) = std::mem::take(&mut self.due);
         together.clear();

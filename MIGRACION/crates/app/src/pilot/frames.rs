@@ -14,14 +14,14 @@ use lunar_core::{
 };
 
 /// The bodies of the game's data and one made up, far from the others.
-fn worlds() -> Arc<BodyRegistry> {
+pub(super) fn worlds() -> Arc<BodyRegistry> {
     let moon: BodyDef = defs::parse("luna", include_str!("../../../../assets/defs/bodies/luna.jsonc")).unwrap();
     let moonlet: BodyDef = defs::parse("luna_menor", include_str!("../../../../assets/defs/bodies/luna_menor.jsonc")).unwrap();
     let other: BodyDef = defs::parse("prueba", r#"{ "name": "Prueba", "center": [4.0e6, 2.5e6, -3.0e6], "radius": 300000, "gravity": 3.7, "reach": { "to": 90000, "band": 35000 }, "north": [0.3, 1.0, 0.2], "horizon_depth": 100 }"#).unwrap();
     Arc::new(BodyRegistry::new(vec![Body::from_def("luna", &moon).unwrap(), Body::from_def("luna_menor", &moonlet).unwrap(), Body::from_def("prueba", &other).unwrap()]))
 }
 
-fn pilot_in(bodies: &Arc<BodyRegistry>) -> Pilot {
+pub(super) fn pilot_in(bodies: &Arc<BodyRegistry>) -> Pilot {
     let sc: ScenarioDef = defs::parse("scenario", include_str!("../../../../assets/defs/scenario.jsonc")).unwrap();
     let site = Site::from_def(&sc.site, bodies).unwrap();
     Pilot::new(bodies.clone(), &site, sc.player)
@@ -37,7 +37,7 @@ fn clear(bodies: &BodyRegistry, k: BodyId) -> DVec3 {
 /// Places to be at: by each body where its pull is whole, in its band and past its reach, and
 /// where the Moon's reach and the moonlet's meet. (What it is, the point, the way out from the
 /// body it is by.)
-fn places(bodies: &BodyRegistry) -> Vec<(String, DVec3, DVec3)> {
+pub(super) fn places(bodies: &BodyRegistry) -> Vec<(String, DVec3, DVec3)> {
     let mut out = Vec::new();
     for (k, b) in bodies.iter() {
         let dir = clear(bodies, k);
@@ -90,7 +90,7 @@ fn library() -> Arc<lunar_core::structure::Library> {
 
 /// The ways a ship may lie: upright (its deck up as `up`), rolled on its side, upside down,
 /// pitched up; and how it tumbles (rad/s, world), if it does.
-fn attitudes(up: DVec3) -> Vec<(&'static str, Quat, Vec3)> {
+pub(super) fn attitudes(up: DVec3) -> Vec<(&'static str, Quat, Vec3)> {
     let level = lunar_core::scene::basis(up, up.any_orthonormal_vector());
     let fwd = level * Vec3::Z;
     vec![

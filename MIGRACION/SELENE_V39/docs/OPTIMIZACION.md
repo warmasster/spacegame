@@ -12,6 +12,28 @@ rendimiento del juego en TS están en [`../../docs/RENDIMIENTO.md`](../../docs/R
 Prioridad: **A** (se nota jugando), **B** (se nota con muchas cosas en pantalla), **C** (limpieza o
 código muerto).
 
+## V39 (2026-10-06): barrido de proyectiles en el reloj del mundo
+
+- `structure::motion::Sweep`: BVH de volúmenes recorridos, una construcción por loncha con
+  proyectiles; vacío, no guarda poses ni construye nada. Usa el BVH existente, sin dependencias.
+  Las poses y los tres almacenes del árbol se reutilizan; prueba de punteros/capacidades durante
+  100 reconstrucciones (`swept_bounds_keep_their_storage_once_warm`). La cola de impactos
+  reserva al crearla la capacidad del pool de proyectiles, no crece al tocar muchas paredes.
+- `core/tests/sweep.rs`: **500 estructuras y 2.000 tramos, 1,182 ms/loncha**, 5,708 candidatos
+  por tramo frente a las 500 estructuras anteriores (perfil de pruebas optimizado, sin ventana).
+  Incluye reconstrucción y dos consultas por tramo para contar candidatos y medir el contacto.
+  No es una medida GPU ni de una batalla completa. Falta medir 20.000 tiros en una batalla real.
+- La previsión por fotograma despierta solo estructuras candidatas de los tramos recorridos,
+  incluso si no están cerca del jugador ni de la cámara. No agrega 20.000 observadores al
+  planificador ni introduce un barrido proyectiles × estructuras.
+- Efectos móviles: base de velocidad heredada en doble precisión, aparte de la expansión.
+  Añade **24 bytes por partícula** (96 en total; 480 kB para 20.000), una suma por paso y nada
+  al formato GPU ni al número de draws. `core/tests/effects.rs`: **0,846 ms/paso para 20.000**,
+  100 pasos, sin crecimiento ni cambio de dirección del almacén. Luz y sacudida son listas
+  acotadas a ocho. Medido en perfil de pruebas, no es un presupuesto de GPU.
+- Pendiente: estas mejoras cubren `rounds` (mano y cañones). Guiados, misiles estratégicos y
+  partículas conservan sus pasos anteriores; su traslado al reloj común queda abierto.
+
 ## Nuevo en V39 (2026-10-06): lo que rige en cada sitio. Medido en pruebas, no en el juego
 
 Lo que corre por loncha o por fotograma y lo que cuesta ([`MOVIMIENTO.md`](MOVIMIENTO.md) §6-9):
@@ -69,8 +91,8 @@ rendimiento: había una partida abierta):
 - **B · Trazas en pantalla: una caja por línea.** Una página de radar son unas 80 a 150 cajas
   instanciadas (anillos, marcas, vectores). Solo se dibuja la página a la vista y solo de cerca,
   pero un anillo podría ser una sola pieza.
-- **C · Proyectiles de nave contra estructuras.** Cada proyectil hace su rayo contra todas las
-  estructuras (`set.raycast`), como los de mano. Dos cañones son 80 por segundo.
+- ~~**C · Proyectiles de nave contra estructuras.**~~ **Hecho 2026-10-06:** los cañones y las
+  armas de mano comparten `rounds::Flight` y el BVH de volúmenes barridos. Medida arriba.
 - **C · Presupuesto por nave:** el Azor pasa `tests/naves.rs` (piezas y vértices por metro, tic);
   el blindaje de la panza se bajó de 9 420 a 2 524 triángulos.
 
@@ -218,12 +240,11 @@ Qué se hizo:
   propio y sin dependencias). Medir los ms de GPU del pase de naves con `--bench`.
 
 ### B · Proyectiles contra estructuras: sin rejilla espacial
-- **Qué pasa:** cada proyectil en vuelo prueba su tramo de cada paso contra **todas** las
-  estructuras (`Structures::raycast`), aunque descarta rápido por la esfera de cada una.
-- **Coste:** con miles de proyectiles y cientos de estructuras (una batalla espacial) son
-  proyectiles × estructuras por paso.
-- **Cómo:** usar la rejilla que ya existe para la física (`structure/broadphase.rs`) con
-  `raycast_among`, o una rejilla por celdas que recorra el tramo.
+- ~~Cada proyectil de `shots.jsonc` prueba su tramo contra todas las estructuras.~~
+  **Hecho 2026-10-06:** BVH de los volúmenes recorridos (`motion::Sweep`); 500 estructuras,
+  5,708 candidatos por tramo y 1,182 ms/loncha para 2.000 tramos (prueba `core/tests/sweep.rs`).
+- **Parcial:** los otros sistemas de misiles mantienen sus pruebas anteriores; revisar al
+  migrarlos al reloj común. Esta entrada queda abierta para ellos.
 
 ### C · Impostores declarados pero nunca horneados
 - **Qué pasa:** el shader (`impostor_vs` e `impostor_fs` en `mesh.wgsl`), la familia

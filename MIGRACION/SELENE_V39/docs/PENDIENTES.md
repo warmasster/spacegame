@@ -38,9 +38,41 @@ Queda de esto:
   (dentro de una nave en órbita no se flota).~~ **Hecho el 2026-10-06** (abajo, «lo que rige en
   cada sitio»): lo que se pesa a bordo lo dice lo que te lleva; en una nave sin gravedad propia
   que cae, se flota.
-- El resto de lo que se mueve en el juego ya iba con el reloj del mundo (proyectiles, partículas,
-  carga). Los otros jugadores en red se dibujan por su cuenta (`multi`): no revisado aquí.
+- ~~El resto de lo que se mueve ya iba con el reloj del mundo.~~ **Corrección 2026-10-06:**
+  no era cierto para los proyectiles: los de `shots.jsonc` ahora usan `Among` y barridos entre
+  poses de una misma loncha. La carga ya es física de estructuras. Falta trasladar también
+  misiles estratégicos/guiados y revisar el resto de emisores; las explosiones de los cohetes
+  ya heredan también el movimiento. La réplica de jugadores no se revisó aquí.
 - `crates/app/src/multi/old.rs` es una copia vieja que no se compila: borrarla.
+
+## V39 (2026-10-06): cohetes y cajas a velocidad orbital
+
+- ~~El cohete del lanzador no sale contigo ni toca bien las paredes de una nave rápida.~~
+  Hereda la velocidad de la boca (también su giro), nace exactamente allí y vuela con el mundo
+  por `Among`. El contacto usa las poses inicial y final de la nave y guarda el punto local.
+- ~~Al llevar una caja fuera de una nave el agarre frena contra el mundo.~~ Ahora usa el
+  movimiento de la mano; soltar conserva la velocidad y el giro de la caja.
+- ~~La explosión de un cohete queda atrás en una nave rápida, aunque el contacto sea correcto.~~
+  Detectado en las fotos: nube, luz y sacudida nacían sin velocidad. Ahora heredan la del punto
+  alcanzado mediante el contrato genérico `Motion`, sin estirarse ni frenarse contra el mundo.
+- Pruebas: `MOVIMIENTO.md` §12. Controles negativos ejecutados: boca desplazada, velocidad
+  omitida, rayo sin pose inicial, amortiguación contra el mundo y explosión sin herencia
+  producen fallos reales. Batería completa: **739 pasadas, 3 omitidas, 0 fallos**.
+- Entrega comprobada: recompiladas las tres ediciones de `SELENE_V39`; los tres
+  `--prueba-arranque` y el guion `tools/camara/cohetes_nave.jsonc` desde esa carpeta terminan
+  con código 0, sin stderr. Leídas sus nueve fotos y el registro: sale por la boca en los
+  tres casos; contactos 1, 2 y 3 contra la pared/casco; la explosión interior rápida ya no
+  queda atrás. La etapa exterior cae hacia la Luna bajo su influencia; no es una prueba
+  visual de espacio sin gravedad (eso sí lo barre la prueba numérica).
+- Pendiente de tacto humano: disparos y cajas en una partida jugada a mano y entre dos clientes
+  de red. La reproducción `Seen::Round` se comprueba numéricamente, no en una sesión remota.
+- Se mantienen abiertos los misiles estratégicos/guiados, el paso de partículas por `Among`
+  y los demás emisores, CCD exacto de piezas articuladas y gravedad artificial para toda la
+  carga/proyectiles. La explosión móvil del cohete sí está corregida; su cohete pertenece a
+  `shots.jsonc` y comparte las lonchas del mundo.
+- La orientación de los conos visuales de la explosión sigue usando la vertical del cuerpo
+  de dibujo: en la nave volcada su nube sale hacia el otro lado de la cubierta. Pendiente
+  darle una orientación de emisión propia del impacto, sin cuerpo celeste en espacio libre.
 
 ## V39 (2026-10-06): lo que rige en cada sitio. Gravedad, suelo, arriba y brújula sin dependencias
 

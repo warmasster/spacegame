@@ -38,6 +38,7 @@ pub mod hold;
 pub mod labels;
 pub mod look;
 pub mod models;
+pub mod motion;
 pub mod networks;
 pub mod obstruct;
 pub mod physics;

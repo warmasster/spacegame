@@ -14,6 +14,7 @@ use lunar_core::{
     missiles::{Missiles, Strike, Target},
     particles::Particle,
     rounds::{self, Impact, Rounds},
+    structure::{damage, motion::{Motion, Sweep}},
 };
 use lunar_render::{Light, Renderer, View};
 use winit::keyboard::KeyCode;
@@ -52,11 +53,11 @@ enum Action {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Seen {
     /// A round of shot `shot` (its place in `shots.jsonc`) leaving `from` along `dir` at `speed` m/s.
-    Round { shot: u16, from: DVec3, dir: DVec3, speed: f32 },
+    Round { shot: u16, from: DVec3, dir: DVec3, speed: f32, vel: DVec3 },
     /// A missile of kind `kind` launched from `from` at `to`.
     Missile { kind: u16, from: DVec3, to: DVec3 },
     /// Explosion `id` going off at `at`, `scale` times as big, with `extra` J more.
-    Boom { id: String, at: DVec3, scale: f32, extra: f32 },
+    Boom { id: String, at: DVec3, vel: DVec3, scale: f32, extra: f32 },
 }
 
 /// The mark, in a round's kind, of one fired in another player's game: it flies and is seen
@@ -75,6 +76,9 @@ pub struct Blasts {
     pub rounds: Rounds,
     shot_looks: Vec<(u8, f32)>,
     impacts: Vec<Impact>,
+    sweep: Sweep,
+    pub impact_count: u64,
+    pub last_impact: Option<Impact>,
     looks: Vec<Particle>,
     strikes: Vec<Strike>,
     /// The camera rides behind the newest missile.
@@ -197,8 +201,11 @@ impl Blasts {
             warheads,
             missile_looks,
             rounds: Rounds::new(ROUNDS),
+            sweep: Sweep::default(),
+            impact_count: 0,
+            last_impact: None,
             shot_looks,
-            impacts: Vec::with_capacity(256),
+            impacts: Vec::with_capacity(ROUNDS),
             looks: Vec::with_capacity(ROUNDS),
             strikes: Vec::new(),
             follow: false,
@@ -258,7 +265,7 @@ impl Blasts {
         if !self.rounds.fire(r) {
             return false;
         }
-        self.told(Seen::Round { shot: i as u16, from, dir: r.vel.normalize_or(dir), speed: r.vel.length() as f32 });
+        self.told(Seen::Round { shot: i as u16, from, dir, speed, vel });
         true
     }
 
@@ -306,10 +313,13 @@ impl Blasts {
 
     /// Shot `id` fired now from `from` along `dir` (anyone's, not the camera's). False if there is
     /// no such shot.
-    pub fn fire_from(&mut self, id: &str, from: DVec3, dir: DVec3, bodies: &BodyRegistry, builds: &mut Builds) -> bool {
+    pub fn fire_from(&mut self, id: &str, from: DVec3, dir: DVec3, vel: DVec3, bodies: &BodyRegistry, builds: &mut Builds) -> bool {
         let Some(i) = self.shots.iter().position(|(s, _)| s == id) else { return false };
+        if self.shots[i].1.speed.is_some() {
+            return self.fire_round(id, from, dir, vel, bodies);
+        }
         let up = dir.any_orthonormal_vector();
-        self.fire(Action::Shoot(i), true, bodies, &View { eye: from, forward: dir, up, fov_y: 1.0, near: 0.1 }, builds);
+        self.fire(Action::Shoot(i), true, bodies, &View { eye: from, forward: dir, up, fov_y: 1.0, near: 0.1 }, Motion { at: from, vel, spin: DVec3::ZERO }, builds);
         true
     }
 
@@ -365,7 +375,7 @@ impl Blasts {
         builds.set.raycast(from, dir, reach).map(|(_, _, p)| p).or(ground)
     }
 
-    fn fire(&mut self, action: Action, aim: bool, bodies: &BodyRegistry, view: &View, builds: &mut Builds) {
+    fn fire(&mut self, action: Action, aim: bool, bodies: &BodyRegistry, view: &View, motion: Motion, builds: &mut Builds) {
         match action {
             Action::Explode(id) => {
                 let at = if aim {
@@ -389,7 +399,7 @@ impl Blasts {
                         return;
                     }
                 }
-                self.told(Seen::Boom { id, at, scale: 1.0, extra: 0.0 });
+                self.told(Seen::Boom { id, at, vel: DVec3::ZERO, scale: 1.0, extra: 0.0 });
             }
             Action::Launch(i) => {
                 let Some(to) = Blasts::aim(bodies, builds, view.eye, view.forward, MISSILE_RANGE) else { return };
@@ -406,10 +416,13 @@ impl Blasts {
                 let dir = self.scatter(view, s.spread);
                 if let Some(speed) = s.speed {
                     let from = view.eye + view.forward * 1.0;
+                    let vel = motion.velocity_at(from);
                     let (style, size) = self.shot_looks[i];
                     let seed = (self.shots_fired % 997) as f32 / 997.0;
-                    if self.rounds.fire(rounds::round(i as u16, from, dir, speed, s.range, bodies.dominant(from), style, size, seed)) {
-                        self.told(Seen::Round { shot: i as u16, from, dir, speed });
+                    let mut round = rounds::round(i as u16, from, dir, speed, s.range, bodies.dominant(from), style, size, seed);
+                    round.vel += vel;
+                    if self.rounds.fire(round) {
+                        self.told(Seen::Round { shot: i as u16, from, dir, speed, vel });
                     }
                     return;
                 }
@@ -420,7 +433,7 @@ impl Blasts {
                 if let (Some(at), Some(fx)) = (at, &s.impact) {
                     let at = at - view.forward * 0.1;
                     if self.fx.explode(fx, bodies, bodies.dominant(at), at).is_ok() {
-                        self.told(Seen::Boom { id: fx.clone(), at, scale: 1.0, extra: 0.0 });
+                        self.told(Seen::Boom { id: fx.clone(), at, vel: DVec3::ZERO, scale: 1.0, extra: 0.0 });
                     }
                 }
             }
@@ -439,21 +452,26 @@ impl Blasts {
     /// it does anything to the structures here.
     pub fn show(&mut self, what: &Seen, age: f32, bodies: &BodyRegistry) {
         match what {
-            Seen::Round { shot, from, dir, speed } => {
+            Seen::Round { shot, from, dir, speed, vel } => {
                 let Some((_, s)) = self.shots.get(usize::from(*shot)) else { return };
                 let (style, size) = self.shot_looks[usize::from(*shot)];
                 // (as far along as it has flown while the word of it came)
-                let flown = f64::from(*speed) * f64::from(age.clamp(0.0, 0.25));
-                let from = *from + *dir * flown;
-                self.rounds.fire(rounds::round(*shot | FOREIGN, from, *dir, *speed, (s.range - flown as f32).max(1.0), bodies.dominant(from), style, size, 0.5));
+                let elapsed = age.clamp(0.0, 0.25);
+                let velocity = *vel + *dir * f64::from(*speed);
+                let from = *from + velocity * f64::from(elapsed);
+                let mut round = rounds::round(*shot | FOREIGN, from, *dir, *speed, s.range, bodies.dominant(from), style, size, 0.5);
+                round.vel = velocity;
+                round.left -= elapsed;
+                self.rounds.fire(round);
             }
             Seen::Missile { kind, from, to } => {
                 if let Some((id, _)) = self.guests.defs.get(usize::from(*kind)).cloned() {
                     let _ = self.guests.launch(&id, *from, *to, bodies);
                 }
             }
-            Seen::Boom { id, at, scale, extra } => {
-                let _ = self.fx.explode_with(id, bodies, bodies.dominant(*at), *at, *scale, *extra);
+            Seen::Boom { id, at, vel, scale, extra } => {
+                let at = *at + *vel * f64::from(age.clamp(0.0, 0.25));
+                let _ = self.fx.explode_moving(id, bodies, bodies.dominant(at), Motion { at, vel: *vel, spin: DVec3::ZERO }, *scale, *extra);
             }
         }
     }
@@ -476,27 +494,37 @@ impl Blasts {
     }
 
     /// Rounds fly; where one lands it cuts into the structure it struck and sets off its impact.
-    fn fly_rounds(&mut self, dt: f64, bodies: &BodyRegistry, builds: &mut Builds) {
-        let set = &builds.set;
-        self.rounds.step(dt as f32, bodies, |from, dir, len| set.raycast(from, dir, len).map(|(_, _, p)| p), &mut self.impacts);
+    pub fn flight(&mut self) -> (&mut Effects, rounds::Flight<'_>) {
+        (&mut self.fx, rounds::Flight { rounds: &mut self.rounds, impacts: &mut self.impacts, sweep: &mut self.sweep })
+    }
+
+    pub fn land_rounds(&mut self, bodies: &BodyRegistry, builds: &mut Builds) {
         for k in 0..self.impacts.len() {
             let i = self.impacts[k];
             // (fired in another player's game: theirs says what it struck)
             if i.kind & FOREIGN != 0 {
                 continue;
             }
+            self.impact_count += 1;
+            self.last_impact = Some(i);
             let s = &self.shots[usize::from(i.kind)].1;
             self.shots_fired += 1;
-            if i.structure {
-                // the cut goes on through the structure from just in front of where it struck
-                let from = i.at - i.dir * 0.5;
-                let _ = builds.shoot(from, i.dir, s, 2.0, self.shots_fired);
-            }
+            let (at, dir, vel) = match i.surface {
+                Some(hit) => {
+                    let Some(structure) = builds.set.get(hit.id) else { continue };
+                    let at = structure.to_world(hit.point);
+                    let dir = (structure.rot * hit.dir).as_dvec3();
+                    let vel = structure.velocity_at(at);
+                    builds.hit(hit.id, &damage::Hit { point: hit.point - hit.dir * 0.05, dir: hit.dir, energy: s.energy, radius: 0.0, area: s.area });
+                    (at, dir, vel)
+                }
+                None => (i.at, i.dir, DVec3::ZERO),
+            };
             if let Some(fx) = &s.impact {
-                let at = i.at - i.dir * 0.1;
-                let blast = self.fx.explode(fx, bodies, bodies.dominant(at), at);
+                let at = at - dir * 0.1;
+                let blast = self.fx.explode_moving(fx, bodies, bodies.dominant(at), Motion { at, vel, spin: DVec3::ZERO }, 1.0, 0.0);
                 if self.tell && blast.is_ok() {
-                    self.seen.push(Seen::Boom { id: fx.clone(), at, scale: 1.0, extra: 0.0 });
+                    self.seen.push(Seen::Boom { id: fx.clone(), at, vel, scale: 1.0, extra: 0.0 });
                 }
                 if let Ok(Some(d)) = blast {
                     builds.blast(at, d);
@@ -515,7 +543,7 @@ impl Blasts {
             let extra = (s.energy * 0.5) as f32;
             let blast = self.fx.explode_with(&self.warheads[s.kind], bodies, bodies.dominant(at), at, 1.0, extra);
             if self.tell && blast.is_ok() {
-                self.seen.push(Seen::Boom { id: self.warheads[s.kind].clone(), at, scale: 1.0, extra });
+                self.seen.push(Seen::Boom { id: self.warheads[s.kind].clone(), at, vel: DVec3::ZERO, scale: 1.0, extra });
             }
             if let Ok(Some(d)) = blast {
                 builds.blast(at, d);
@@ -552,7 +580,7 @@ impl Blasts {
             // (what it was doing relative to what it struck is not known here: its charge alone)
             let blast = self.fx.explode(w, bodies, bodies.dominant(at), at);
             if self.tell && blast.is_ok() {
-                self.seen.push(Seen::Boom { id: w.clone(), at, scale: 1.0, extra: 0.0 });
+                self.seen.push(Seen::Boom { id: w.clone(), at, vel: DVec3::ZERO, scale: 1.0, extra: 0.0 });
             }
             if let Ok(Some(d)) = blast {
                 builds.blast(at, d);
@@ -606,10 +634,10 @@ impl Blasts {
     /// Fire what was asked and simulate; returns the view with the camera shake. The particles
     /// and the lights are handed to the renderer by `draw`, once it is known where the picture
     /// is taken from.
-    pub fn update(&mut self, dt: f64, bodies: &BodyRegistry, view: View, builds: &mut Builds) -> View {
+    pub fn update(&mut self, dt: f64, bodies: &BodyRegistry, view: View, motion: Motion, builds: &mut Builds) -> View {
         self.time += dt;
         if let Some((action, aim)) = self.queued.take() {
-            self.fire(action, aim, bodies, &view, builds);
+            self.fire(action, aim, bodies, &view, motion, builds);
         }
         // automatic fire: as many rounds as the rate owes this frame
         if let Some((key, i, owed)) = self.held {
@@ -619,31 +647,17 @@ impl Blasts {
             while owed >= 1.0 && n < 8 {
                 owed -= 1.0;
                 n += 1;
-                self.fire(Action::Shoot(i), true, bodies, &view, builds);
+                self.fire(Action::Shoot(i), true, bodies, &view, motion, builds);
             }
             self.held = Some((key, i, owed.min(1.0)));
         }
-        self.fly_rounds(dt, bodies, builds);
         self.fly(dt, bodies, builds);
         self.fly_guided(dt, bodies, builds);
         self.fx.update(dt as f32, bodies);
-        self.rounds.looks(&mut self.looks);
-        for m in self.missiles.list.iter().chain(&self.guests.list) {
-            if let Some((style, size)) = self.missile_looks[m.kind] {
-                self.looks.push(Particle { pos: m.pos, vel: m.vel.as_vec3(), age: 0.0, life: 1.0, size, seed: 0.5, ground: 0.0, height: 1e6, body: bodies.dominant(m.pos), style });
-            }
-        }
-        for m in &self.guided.list {
-            if let Some((style, size)) = self.guided_looks[usize::from(m.kind)] {
-                self.looks.push(Particle { pos: m.pos, vel: m.vel.as_vec3(), age: 0.0, life: 1.0, size, seed: 0.5, ground: 0.0, height: 1e6, body: bodies.dominant(m.pos), style });
-            }
-        }
-        let view = self.follow_view(bodies, view);
-        self.lights.clear();
-        self.lights.extend(self.fx.flashes().iter().map(|f| {
-            let i = f.now();
-            Light { pos: f.pos, color: [f.color.x * i, f.color.y * i, f.color.z * i], range: f.range, ..Light::default() }
-        }));
+        self.follow_view(bodies, view)
+    }
+
+    pub fn shaken(&self, view: View) -> View {
         let a = f64::from(self.fx.shake(view.eye));
         if a <= 0.0 {
             return view;
@@ -657,7 +671,23 @@ impl Blasts {
     /// This frame's particles and lights to the renderer, seen from `eye`: where the picture is
     /// taken from in the end (the player's eyes, or a camera outside: the particles are sent
     /// relative to it, so the eye of `update` will not do).
-    pub fn draw(&self, r: &mut Renderer, eye: DVec3) {
+    pub fn draw(&mut self, r: &mut Renderer, eye: DVec3, bodies: &BodyRegistry) {
+        self.lights.clear();
+        self.lights.extend(self.fx.flashes().iter().map(|f| {
+            let i = f.now();
+            Light { pos: f.pos, color: [f.color.x * i, f.color.y * i, f.color.z * i], range: f.range, ..Light::default() }
+        }));
+        self.rounds.looks(&mut self.looks);
+        for m in self.missiles.list.iter().chain(&self.guests.list) {
+            if let Some((style, size)) = self.missile_looks[m.kind] {
+                self.looks.push(Particle { pos: m.pos, drift: DVec3::ZERO, vel: m.vel.as_vec3(), age: 0.0, life: 1.0, size, seed: 0.5, ground: 0.0, height: 1e6, body: bodies.dominant(m.pos), style });
+            }
+        }
+        for m in &self.guided.list {
+            if let Some((style, size)) = self.guided_looks[usize::from(m.kind)] {
+                self.looks.push(Particle { pos: m.pos, drift: DVec3::ZERO, vel: m.vel.as_vec3(), age: 0.0, life: 1.0, size, seed: 0.5, ground: 0.0, height: 1e6, body: bodies.dominant(m.pos), style });
+            }
+        }
         r.set_effects(&self.fx.particles, &self.looks, &self.lights, eye);
     }
 }
@@ -665,6 +695,34 @@ impl Blasts {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_handheld_round_starts_at_the_muzzle() {
+        let defs = crate::content::Defs::load(&crate::root().join("assets/defs")).unwrap();
+        let bodies = &defs.system.bodies;
+        let site = lunar_core::scene::Site::from_def(&defs.scenario.site, bodies).unwrap();
+        let effects: Vec<&str> = defs.effects.explosions.iter().map(|(id, _)| id.as_str()).collect();
+        let mut builds = Builds::new(defs.structures.clone(), &defs.scenario, &site, bodies, &effects).unwrap();
+        let mut blasts = Blasts::new(&defs.effects, Missiles::new(defs.missiles.clone()), 1000).unwrap();
+        let from = DVec3::new(4e6, 3e6, 2e6);
+        blasts.tell = true;
+        for speed in [0.0, 30.0, 300.0, 1600.0, 7800.0] {
+            blasts.rounds.list.clear();
+            let inherited = DVec3::new(speed, -speed * 0.3, speed * 0.2);
+            assert!(blasts.fire_from("cohete", from, DVec3::Z, inherited, bodies, &mut builds));
+            let round = blasts.rounds.list[0];
+            assert!(round.pos.distance(from) < 0.001, "el cohete nace a {} m de la boca", round.pos.distance(from));
+            assert!(round.vel.distance(inherited + DVec3::Z * 150.0) < 1e-8);
+            let seen = blasts.seen.pop().unwrap();
+            blasts.show(&seen, 0.1, bodies);
+            let remote = blasts.rounds.list[1];
+            assert!((remote.left - (round.left - 0.1)).abs() < 1e-5);
+            assert_eq!(remote.nose, round.nose);
+            assert_eq!(remote.vel, round.vel);
+            blasts.rounds.looks(&mut blasts.looks);
+            assert_eq!(blasts.looks[0].vel, (DVec3::Z * 150.0).as_vec3());
+        }
+    }
 
     #[test]
     fn key_names() {

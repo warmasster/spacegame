@@ -1,4 +1,23 @@
-NOVEDADES V39 (carpeta SELENE_V39: SeleneLauncher.exe, SeleneV39_demo.exe / _multiplayer.exe / _debug.exe):
+NOVEDADES V39 (carpeta SELENE_V39: SeleneLauncher.exe,
+SeleneV39_debug.exe, SeleneV39_demo.exe y SeleneV39_multiplayer.exe):
+COHETES EN NAVES RAPIDAS: salen de la boca real con tu velocidad, incluido
+el giro de la nave, y chocan contra sus paredes aunque vaya a 7800 m/s.
+No era solo heredar velocidad: los proyectiles avanzaban fuera de las
+lonchas del mundo y se probaban contra un casco de otro instante. Ahora
+comparten reloj y barren el movimiento relativo. Se ven desde la boca
+en el mismo fotograma, sin el metro extra ni girarse por velocidad ajena.
+EXPLOSION: nube, luz y sacudida heredan tambien el movimiento del impacto.
+Antes quedaban atras aunque el cohete acertase. Su expansion y su aspecto
+no se estiran ni frenan por compartir una gran velocidad con la nave.
+CAJAS EN LAS MANOS: tambien fuera de una nave el agarre frena respecto a
+tu movimiento, no al mundo. Al soltar conservan su velocidad y su giro.
+No heredan para siempre el empuje de la nave: ya sueltas van por su cuenta.
+PRUEBAS: 2500 vuelos entre tres cuerpos, dentro, en la franja y fuera;
+0 a 7800 m/s, 10 a 240 fps, nave derecha, volcada y girando. Detalles y
+limites en docs/MOVIMIENTO.md, apartado 12. Guion oculto de comprobacion:
+tools/camara/cohetes_nave.jsonc. Workspace: 739 pruebas pasan, 3 omitidas.
+No se ha probado a mano ni entre clientes.
+
 LO QUE RIGE EN CADA SITIO (gravedad, suelo, arriba y brujula, sin depender de
 en que cuerpo estas, de donde nacio cada cosa, de la velocidad ni de lo que
 paso antes). Cuatro cambios de fondo; el porque, en docs/MOVIMIENTO.md 6-11.

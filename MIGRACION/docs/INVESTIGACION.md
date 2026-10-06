@@ -213,3 +213,19 @@ acelera lo que te lleva (así «no se pesa en caída libre» y «se pesa al empu
 sola regla, sin casos); el marco propio del jugador llevado por transporte paralelo; y que el
 régimen de órbita se decida por la velocidad frente a la de órbita circular, que vale para
 cualquier cuerpo sin escribir alturas.
+
+### V39, cohetes a bordo (2026-10-06): contraste con la versión web local
+
+Fuentes de código leídas, no una suposición sobre cómo funciona la web:
+
+- [`shared/frames/ballistic.ts`](../../src/shared/frames/ballistic.ts): `launch` suma la
+  velocidad del emisor, conserva el morro por separado y transporta posición/velocidad entre
+  marcos. `stepBallistic` comparte el paso de simulación, no un reloj del arma.
+- [`client/fx/projectiles.ts`](../../src/client/fx/projectiles.ts): `sweepShips` lleva el inicio
+  y final a las poses correspondientes del casco; descarta antes por volumen recorrido.
+- [`shared/frames/frame.ts`](../../src/shared/frames/frame.ts): cambio de marco sin alterar
+  la posición o velocidad de mundo.
+
+Aplicado en Rust mediante `Motion`, `Sweep` y `Among`, reutilizando su reloj de lonchas y su
+BVH, sin copiar el paso fijo ni añadir una segunda física. El detalle y las pruebas están
+en `MOVIMIENTO.md` §12.

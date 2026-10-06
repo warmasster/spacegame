@@ -965,6 +965,12 @@ impl State {
                             None => format!("jugador: {with}"),
                         };
                         sc.note(&line);
+                        sc.note(&format!("  proyectiles: {} en vuelo, {} impactos; ultimo {:?}", self.blasts.rounds.len(), self.blasts.impact_count, self.blasts.last_impact.map(|hit| (hit.at, hit.surface))));
+                        if let Some(ship) = id.and_then(|id| self.builds.set.get(id)) {
+                            for round in self.blasts.rounds.list.iter().take(4) {
+                                sc.note(&format!("  proyectil en {:?} de la nave; velocidad relativa {:?}", ship.to_local(round.pos), ship.dir_to_local(round.vel - ship.velocity_at(round.pos))));
+                            }
+                        }
                         // what holds where they are: what pulls, what they weigh, which way is
                         // up for them, and what the compass reads
                         let (p, bodies) = (&self.pilot, &self.world.bodies);
@@ -1174,13 +1180,13 @@ impl State {
                 let a = r(1) * std::f64::consts::TAU;
                 let from = at + (side * a.cos() + up.cross(side) * a.sin()) * 60.0 + up * (10.0 + 30.0 * r(2));
                 let shot = shot.clone();
-                self.blasts.fire_from(&shot, from, (at - from).normalize(), &self.world.bodies, &mut self.builds);
+                self.blasts.fire_from(&shot, from, (at - from).normalize(), glam::DVec3::ZERO, &self.world.bodies, &mut self.builds);
             }
             if *left <= 0.0 {
                 self.barrage = None;
             }
         }
-        let view = self.blasts.update(dt, &self.world.bodies, view, &mut self.builds);
+        let view = self.blasts.update(dt, &self.world.bodies, view, self.pilot.motion_in(&self.builds.set), &mut self.builds);
         self.perf.lap(perf::SHOTS);
         let sun = self.renderer.sun().direction();
         self.builds.set.sun = sun;
@@ -1212,11 +1218,13 @@ impl State {
         self.perf.lap(perf::SHIPS);
         // the world on, and the player with it: stepped among its structures slice by slice
         // (`lunar_core::structure::schedule::Among`), so they are always of the same instant
+        let (effects, mut flight) = self.blasts.flight();
         if self.bench.is_none() {
-            self.builds.update(dt, &self.world.bodies, &mut self.blasts.fx, view.eye, &mut [&mut self.pilot]);
+            self.builds.update(dt, &self.world.bodies, effects, view.eye, &mut [&mut self.pilot, &mut flight]);
         } else {
-            self.builds.update(dt, &self.world.bodies, &mut self.blasts.fx, view.eye, &mut []);
+            self.builds.update(dt, &self.world.bodies, effects, view.eye, &mut [&mut flight]);
         }
+        self.blasts.land_rounds(&self.world.bodies, &mut self.builds);
         self.perf.lap(perf::PHYSICS);
         let shake = self.air.frame(dt as f32, &self.ships, &self.builds.set, &self.world.bodies, &mut self.blasts.fx, view.eye);
         self.perf.lap(perf::AIR);
@@ -1253,9 +1261,7 @@ impl State {
         let want = if self.zooming && self.captured { 1.0 } else { 0.0 };
         self.zoom += (want - self.zoom) * (1.0 - (-dt * 14.0).exp());
         let view = lunar_render::View { fov_y: view.fov_y / (1.0 + self.zoom * (ZOOM - 1.0)) as f32, ..view };
-        // the particles and the flashes, from where the picture is taken (from outside that is
-        // not where the player's eyes are)
-        self.blasts.draw(&mut self.renderer, view.eye);
+        let view = self.blasts.shaken(view);
         // the body and what it holds are the pilot's, wherever the picture is taken from
         let own = match (aim, looked) {
             (Some(aim), _) => aim,
@@ -1299,7 +1305,8 @@ impl State {
             ),
             _ => (crate::holding::Steps::default(), glam::Vec3::ZERO),
         };
-        self.gear.update(dt, &own, &mut self.ships, &mut self.builds, &mut self.blasts, &self.world.bodies, &mut self.renderer, steps, short);
+        let motion = self.pilot.motion_in(&self.builds.set);
+        self.gear.update(dt, &own, motion, &mut self.ships, &mut self.builds, &mut self.blasts, &self.world.bodies, &mut self.renderer, steps, short);
         // the visor the picture is seen through, from one's own eyes only
         let worn = looked.is_none() && !outside && !self.pilot.flying && self.bench.is_none() && self.start.is_none();
         self.visor.frame(dt as f32, &crate::visor::Senses::of(&self.pilot, &input, self.gear.filtering(), &own, worn), &mut self.renderer);
@@ -1323,7 +1330,10 @@ impl State {
             self.handwork.drive(dt, body, st, &self.builds.set, &self.world.bodies, &self.ships, grips, &doing, &here);
             self.wrist_look = self.handwork.look(body, st, &own);
         }
-        self.hands.update(dt, &mut self.builds, &own, self.pilot.ride.map(|r| r.id));
+        self.hands.update(dt, &mut self.builds, &own, motion);
+        // the particles and the flashes, from where the picture is taken (from outside that is
+        // not where the player's eyes are)
+        self.blasts.draw(&mut self.renderer, view.eye, &self.world.bodies);
         // what all that sounds like, and the dust it raises
         if self.bench.is_none() {
             for id in std::mem::take(&mut self.aboard.heard) {
