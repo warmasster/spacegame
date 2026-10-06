@@ -325,16 +325,31 @@ fn its_drum_turns_its_seat_goes_down_and_its_doors_open_with_the_ship_cold() {
         run(&mut s, &mut ship, 3.0);
         assert!((get(&ship, "tambor.pos") - at).abs() < 0.02, "cara {face}: el tambor en {:.2}", get(&ship, "tambor.pos"));
     }
-    // the seat: down through the belly with whoever sits on it, and up again
+    // the seat: the belly doors open, and only then the platform goes down with whoever sits on
+    // it, to the ground; up again from the button on its own armrest, and the doors shut
     let up = ship.seat_eyes(0);
     assert!((up - Vec3::from_array(kind.seats[0].def.ojos)).length() < 1e-4);
+    assert!(get(&ship, "panza_izq.cerrada") > 0.5 && get(&ship, "panza_der.cerrada") > 0.5, "las compuertas de la panza no empiezan cerradas");
     press(&mut ship, &mut s, "exterior/plataforma");
-    run(&mut s, &mut ship, 6.0);
+    let mut moved_shut = false;
+    for _ in 0..60 {
+        run(&mut s, &mut ship, 0.25);
+        moved_shut |= get(&ship, "plataforma.pos") > 0.01 && (get(&ship, "panza_izq.abierta") < 0.97 || get(&ship, "panza_der.abierta") < 0.97);
+    }
+    assert!(!moved_shut, "la plataforma se mueve con las compuertas sin abrir del todo");
+    assert!(get(&ship, "panza_izq.abierta") > 0.97 && get(&ship, "panza_der.abierta") > 0.97, "compuertas a {:.2} y {:.2}", get(&ship, "panza_izq.abierta"), get(&ship, "panza_der.abierta"));
     assert!(get(&ship, "plataforma.pos") > 0.98, "la plataforma en {:.2}", get(&ship, "plataforma.pos"));
-    assert!((up.y - ship.seat_eyes(0).y - 1.06).abs() < 0.03, "los ojos bajan {:.2} m", up.y - ship.seat_eyes(0).y);
-    press(&mut ship, &mut s, "sistemas/plataforma");
-    run(&mut s, &mut ship, 6.0);
-    assert!(get(&ship, "plataforma.pos") < 0.02);
+    assert!((up.y - ship.seat_eyes(0).y - 2.35).abs() < 0.03, "los ojos bajan {:.2} m", up.y - ship.seat_eyes(0).y);
+    // (its own button went down with it: within a hand of the eyes)
+    let k = ctl(&ship, "brazo/plataforma");
+    let c = &ship.panels.controls[k];
+    let plan = &kind.panels[c.panel];
+    let at = lunar_ship::panels::Panels::frame(&kind, &s, plan).transform_point3(Vec3::new((c.rect.x + c.rect.w * 0.5) / 1000.0, (c.rect.y + c.rect.h * 0.5) / 1000.0, 0.0));
+    assert!(at.distance(ship.seat_eyes(0)) < 1.0, "el botón del reposabrazos a {:.2} m de los ojos con el asiento abajo", at.distance(ship.seat_eyes(0)));
+    press(&mut ship, &mut s, "brazo/plataforma");
+    run(&mut s, &mut ship, 15.0);
+    assert!(get(&ship, "plataforma.pos") < 0.02, "no sube: {:.2}", get(&ship, "plataforma.pos"));
+    assert!(get(&ship, "panza_izq.cerrada") > 0.5 && get(&ship, "panza_der.cerrada") > 0.5, "subida, las compuertas no se cierran ({:.2}, {:.2})", get(&ship, "panza_izq.abierta"), get(&ship, "panza_der.abierta"));
     // the two doors of the bay on one order; the ramp's two lengths out with it
     press(&mut ship, &mut s, "exterior/compuertas");
     run(&mut s, &mut ship, 10.0);

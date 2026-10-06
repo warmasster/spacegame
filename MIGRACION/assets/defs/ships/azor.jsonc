@@ -1,10 +1,14 @@
 // AZOR — a one-seat fighter (docs/COMBATE.md). Ship frame: +Y up, nose toward +Z, +X to port,
-// metres; the deck is y = 0. It stands level on three long legs, its belly 1.2 m off the ground.
+// metres; the deck is y = 0. It stands level on three long legs, its belly 2.1 m off the ground:
+// a person walks under it standing.
 //
 // What is its own:
 // - it is flown in a suit, its cockpit and its bay in vacuum (nothing to lose to a hole);
 // - the seat rides a platform that goes down through the belly to the ground and up again with
-//   the pilot on it ("plataforma"): that is the way in;
+//   the pilot on it ("plataforma"): that is the way in. Two belly doors open before it comes
+//   down and shut once it is up ("panza_izq", "panza_der"); it is worked from outside, from the
+//   right sill, from a button on the seat's own right armrest (it goes down with the seat) and
+//   with P seated;
 // - astern, two doors on their own hydraulic rams — a ramp that lengthens twice as it comes down
 //   and a visor over it —
 //   open on the utility bay, where everything that keeps it alive stands within reach: one
@@ -20,7 +24,7 @@
   "clase": "Caza monoplaza",
   "astillero": "Arsenal Kestrel",
   "modelo": "Kestrel AZ-1",
-  "descripcion": "Caza monoplaza de 11 m: góndolas vectoriales, radar, misiles, cañones y señuelos. El asiento baja por la panza en una plataforma; a popa, dos compuertas dan a la bahía de utilidades.",
+  "descripcion": "Caza monoplaza de 11 m: góndolas vectoriales, radar, misiles, cañones y señuelos. El asiento baja hasta el suelo en una plataforma, por dos compuertas de la panza; a popa, dos compuertas dan a la bahía de utilidades.",
   // a hull shaped and coated against radar: it reflects like something a fifth its size
   "firma": { "rcs": 2.5 },
 
@@ -84,9 +88,11 @@
     // the drum of panels on the port sill and the systems shelf on the starboard one ----
     { "id": "asiento", "tipo": "asiento", "en": [0, 0, 0.85], "articulacion": "plataforma" },
     { "id": "plataforma", "forma": { "kind": "box", "size": [0.88, 0.05, 1.34] }, "estilo": "plataforma_asiento", "en": [0, -0.025, 0.9], "material": "panel_suelo", "color": [70, 74, 78], "articulacion": "plataforma" },
-    { "id": "panza", "forma": { "kind": "box", "size": [1.36, 0.05, 1.38] }, "estilo": "panza", "en": [0, -0.343, 0.9], "material": "panel_casco", "color": [38, 40, 44], "articulacion": "plataforma" },
     // the two masts it rides on: seen when it is down, the hull at their tops
-    { "id": "mastil_izq", "forma": { "kind": "box", "size": [0.06, 1.62, 0.06] }, "estilo": "mastil", "en": [0.4, 0.49, 0.29], "material": "acero", "color": [150, 152, 158], "articulacion": "plataforma", "espejo": true },
+    { "id": "mastil_izq", "forma": { "kind": "box", "size": [0.06, 1.3, 0.06] }, "estilo": "mastil", "en": [0.4, 0.65, 0.29], "material": "acero", "color": [150, 152, 158], "articulacion": "plataforma", "espejo": true },
+    // (and the sleeves they slide in, that come half the way down with them: the masts reach
+    // up into the hull with the seat at the ground)
+    { "id": "manga_izq", "forma": { "kind": "box", "size": [0.08, 1.65, 0.08] }, "estilo": "mastil", "en": [0.4, 0.875, 0.29], "material": "acero", "color": [110, 112, 118], "articulacion": "plataforma_manga", "espejo": true },
     { "id": "consola", "tipo": "consola_caza", "en": [0, 0, 1.89], "cableado": false, "maquina": { "puertos": { "alimentacion": "elec:c_luces" }, "ordenes": { "encender": "luces.cabina" } } },
     { "id": "lateral_izq", "forma": { "kind": "box", "size": [0.3, 0.66, 0.7] }, "estilo": "consola_lateral", "en": [0.62, 0.33, 1.14], "material": "aluminio", "color": [40, 44, 50], "espejo": true },
     { "id": "tambor", "tipo": "tambor_paneles", "en": [0.72, 0.98, 1.25], "articulacion": "tambor" },
@@ -155,11 +161,11 @@
     // spring ("amort_*" below) ----
     { "id": "pata_izq_soporte", "forma": { "kind": "cylinder", "radius": 0.1, "height": 0.2, "sides": 10 }, "estilo": "tren_amort", "en": [1.22, 0.02, -2.6], "material": "acero", "color": [60, 62, 66], "espejo": true },
     { "id": "pata_izq_funda", "forma": { "kind": "cylinder", "radius": 0.09, "height": 0.36, "sides": 10 }, "estilo": "tren_amort", "en": [1.22, -0.2, -2.6], "material": "acero", "color": [60, 62, 66], "articulacion": "pata_izq", "espejo": true },
-    { "id": "pata_izq_tubo", "forma": { "kind": "cylinder", "radius": 0.07, "height": 1.3, "sides": 10 }, "estilo": "tren_pata", "en": [1.22, -1.02, -2.6], "material": "acero", "color": [190, 192, 196], "articulacion": "amort_izq", "espejo": true },
-    { "id": "pata_izq_pie", "forma": { "kind": "box", "size": [0.34, 0.07, 0.44] }, "estilo": "tren_pie", "en": [1.22, -1.705, -2.6], "material": "acero", "color": [40, 40, 44], "articulacion": "amort_izq", "espejo": true },
+    { "id": "pata_izq_tubo", "forma": { "kind": "cylinder", "radius": 0.07, "height": 2.2, "sides": 10 }, "estilo": "tren_pata", "en": [1.22, -1.47, -2.6], "material": "acero", "color": [190, 192, 196], "articulacion": "amort_izq", "espejo": true },
+    { "id": "pata_izq_pie", "forma": { "kind": "box", "size": [0.34, 0.07, 0.44] }, "estilo": "tren_pie", "en": [1.22, -2.605, -2.6], "material": "acero", "color": [40, 40, 44], "articulacion": "amort_izq", "espejo": true },
     { "id": "pata_morro_funda", "forma": { "kind": "cylinder", "radius": 0.09, "height": 0.3, "sides": 10 }, "estilo": "tren_amort", "en": [0, -0.3, 3.5], "material": "acero", "color": [60, 62, 66], "articulacion": "pata_morro" },
-    { "id": "pata_morro_tubo", "forma": { "kind": "cylinder", "radius": 0.07, "height": 1.2, "sides": 10 }, "estilo": "tren_pata", "en": [0, -1.07, 3.5], "material": "acero", "color": [190, 192, 196], "articulacion": "amort_morro" },
-    { "id": "pata_morro_pie", "forma": { "kind": "box", "size": [0.3, 0.07, 0.42] }, "estilo": "tren_pie", "en": [0, -1.705, 3.5], "material": "acero", "color": [40, 40, 44], "articulacion": "amort_morro" },
+    { "id": "pata_morro_tubo", "forma": { "kind": "cylinder", "radius": 0.07, "height": 2.1, "sides": 10 }, "estilo": "tren_pata", "en": [0, -1.52, 3.5], "material": "acero", "color": [190, 192, 196], "articulacion": "amort_morro" },
+    { "id": "pata_morro_pie", "forma": { "kind": "box", "size": [0.3, 0.07, 0.42] }, "estilo": "tren_pie", "en": [0, -2.605, 3.5], "material": "acero", "color": [40, 40, 44], "articulacion": "amort_morro" },
 
     // ---- outside lights ----
     { "id": "nav_izq", "tipo": "luz_nav", "en": [2.68, 0.6, -0.4], "cableado": false, "maquina": { "puertos": { "alimentacion": "elec:c_luces" }, "ordenes": { "encender": "luces.nav" } } },
@@ -194,7 +200,17 @@
     { "id": "visera", "nombre": "Visera de la bahía", "abertura": { "tipo": "casco", "extremo": "popa", "desde_y": 1.25, "fijo": false },
       "mueve": { "tipo": "bisagra", "borde": "arriba", "angulo": 82 },
       "hoja": { "espesor": 0.06, "material": "panel_casco", "color": [64, 72, 82], "interior": [52, 56, 62], "chapa": 0.6 },
-      "orden": "rampa.orden", "amortiguamiento": 300 }
+      "orden": "rampa.orden", "amortiguamiento": 300 },
+    // the belly doors over the seat's way down: two leaves, each hinged on its outer edge,
+    // swung down out of the platform's way before it moves ("panza.orden" below)
+    { "id": "panza_izq", "nombre": "Compuerta de la panza (babor)", "abertura": { "tipo": "rect", "centro": [0.34, -0.35, 0.9], "normal": [0, -1, 0], "arriba": [0, 0, 1], "tamano": [0.68, 1.38] },
+      "mueve": { "tipo": "bisagra", "borde": "der", "angulo": 100 },
+      "hoja": { "espesor": 0.05, "material": "panel_casco", "color": [38, 40, 44], "interior": [70, 74, 78], "chapa": 0.6, "franja": [243, 179, 46] },
+      "orden": "panza.orden", "amortiguamiento": 200 },
+    { "id": "panza_der", "nombre": "Compuerta de la panza (estribor)", "abertura": { "tipo": "rect", "centro": [-0.34, -0.35, 0.9], "normal": [0, -1, 0], "arriba": [0, 0, 1], "tamano": [0.68, 1.38] },
+      "mueve": { "tipo": "bisagra", "borde": "izq", "angulo": 100 },
+      "hoja": { "espesor": 0.05, "material": "panel_casco", "color": [38, 40, 44], "interior": [70, 74, 78], "chapa": 0.6, "franja": [243, 179, 46] },
+      "orden": "panza.orden", "amortiguamiento": 200 }
   ],
 
   // ------------------------------------------------------------------ labels
@@ -212,8 +228,10 @@
     "vector_der": { "tipo": "bisagra", "eje": [1, 0, 0], "pivote": [-3.14, 0.47, -0.585], "limites": [-180, 0], "inicial": -90, "nombre": "Góndola derecha", "amortiguamiento": 1500 },
     "rad_izq": { "tipo": "bisagra", "eje": [0, 0, 1], "pivote": [0.09, 2.045, -2.0], "limites": [0, 75], "nombre": "Radiador izquierdo" },
     "rad_der": { "tipo": "bisagra", "eje": [0, 0, -1], "pivote": [-0.09, 2.045, -2.0], "limites": [0, 75], "nombre": "Radiador derecho" },
-    // the seat's platform: down through the belly, as far as the ground lets it
-    "plataforma": { "tipo": "corredera", "eje": [0, -1, 0], "limites": [0, 1.06], "nombre": "Plataforma del asiento", "amortiguamiento": 300 },
+    // the seat's platform: down through the belly to the ground (as far as the ground lets it),
+    // and the masts' sleeves half as far
+    "plataforma": { "tipo": "corredera", "eje": [0, -1, 0], "limites": [0, 2.35], "nombre": "Plataforma del asiento", "amortiguamiento": 300 },
+    "plataforma_manga": { "tipo": "corredera", "eje": [0, -1, 0], "limites": [0, 1.175], "nombre": "Mangas de los mástiles", "sigue": { "de": "plataforma", "razon": 0.5 } },
     // the drum of panels: a third of a turn for each face
     "tambor": { "tipo": "bisagra", "eje": [0, 0, 1], "pivote": [0.72, 0.98, 1.25], "limites": [0, 240], "nombre": "Tambor de paneles", "amortiguamiento": 4 },
     // the ramp's second and third lengths slide out along it as it comes down (all out by three
@@ -259,6 +277,20 @@
       "accionamiento": { "tipo": "electrico", "velocidad_vacio": "3000 rpm", "par_bloqueo": "8 N*m" },
       "transmision": { "tipo": "husillo", "paso": "8 mm", "eficiencia": 0.4 },
       "control": { "orden": "plataforma.orden" }, "redes": { "motor": "elec:c_mec" }, "cableado": false
+    },
+    // the belly doors: a geared motor each, on the platform's circuit (they open with the ship
+    // cold, as it does)
+    "act_panza_izq": {
+      "articulacion": "panza_izq", "nombre": "Motor de la compuerta de babor", "fabricante": "Kestrel", "modelo": "Motorreductor MR-1",
+      "accionamiento": { "tipo": "electrico", "velocidad_vacio": "3000 rpm", "par_bloqueo": "1 N*m" },
+      "transmision": { "tipo": "reductor", "reduccion": 300, "autobloqueo": true },
+      "control": { "orden": "panza.orden" }, "redes": { "motor": "elec:c_mec" }, "cableado": false
+    },
+    "act_panza_der": {
+      "articulacion": "panza_der", "nombre": "Motor de la compuerta de estribor", "fabricante": "Kestrel", "modelo": "Motorreductor MR-1",
+      "accionamiento": { "tipo": "electrico", "velocidad_vacio": "3000 rpm", "par_bloqueo": "1 N*m" },
+      "transmision": { "tipo": "reductor", "reduccion": 300, "autobloqueo": true },
+      "control": { "orden": "panza.orden" }, "redes": { "motor": "elec:c_mec" }, "cableado": false
     },
     "act_tambor": {
       "articulacion": "tambor", "nombre": "Motor del tambor de paneles",
@@ -357,18 +389,21 @@
     { "id": "combate", "panel": "azor_combate", "pieza": "tambor", "en": [0.8004, 1.0092, 1.25], "normal": [0.94, 0.342, 0], "arriba": [0.342, -0.94, 0], "energia": "elec:c_avionica", "cableado": false },
     { "id": "sensores", "panel": "azor_sensores", "pieza": "tambor", "en": [0.7051, 0.8958, 1.25], "normal": [-0.174, -0.985, 0], "arriba": [-0.985, 0.174, 0], "energia": "elec:c_avionica", "cableado": false },
     { "id": "sistemas", "panel": "azor_sistemas", "pieza": "repisa.cara", "en": [-0.775, 1.035, 1.25], "normal": [0.766, 0.643, 0], "arriba": [-0.643, 0.766, 0], "energia": "elec:c_avionica", "cableado": false },
+    // on the seat's right armrest, going down and up with it: the one control one needs sat on it
+    // with the platform at the ground
+    { "id": "brazo", "panel": "azor_asiento", "pieza": "asiento.brazo_d", "en": [-0.31, 0.652, 0.97], "normal": [0, 1, 0], "arriba": [0, 0, 1], "energia": "elec:c_avionica", "cableado": false },
     { "id": "bahia", "panel": "azor_bahia", "en": [0.42, 1.3, -1.235], "normal": [0, 0, -1], "energia": "elec:c_avionica", "cableado": false },
     { "id": "exterior", "panel": "azor_exterior", "en": [1.186, 0.3, -3.45], "normal": [0.99, -0.141, 0], "energia": "elec:c_avionica", "cableado": false }
   ],
   // where one gets off the seat with its platform down: the ground on either side of the ship
   // (with it up, the seat's own exit: the cockpit's floor behind it)
   "bajadas": [
-    { "id": "suelo_izq", "en": [2.3, -1.5, 1.6], "zona": [0.6, 1.6], "rumbo": 90, "baja": 1.0 },
-    { "id": "suelo_der", "en": [-2.3, -1.5, 1.6], "zona": [0.6, 1.6], "rumbo": -90, "baja": 1.0 }
+    { "id": "suelo_izq", "en": [2.3, -2.4, 1.6], "zona": [0.6, 1.6], "rumbo": 90, "baja": 1.0 },
+    { "id": "suelo_der", "en": [-2.3, -2.4, 1.6], "zona": [0.6, 1.6], "rumbo": -90, "baja": 1.0 }
   ],
   "asientos": [
     { "id": "piloto", "nombre": "Asiento del Azor", "pieza": "asiento.cojin", "ojos": [0, 1.35, 0.96], "rumbo": 0, "salida": [0.0, 0.0, -0.5],
-      "paneles": ["principal", "mando", "gases", "nav", "sistemas"],
+      "paneles": ["principal", "mando", "gases", "nav", "sistemas", "brazo"],
       "mandos": [
         { "tecla": "W", "mando": "mando/palanca", "eje": 0, "valor": 1.0, "ayuda": "Palanca de mando: cabeceo (morro abajo y arriba)" },
         { "tecla": "S", "mando": "mando/palanca", "eje": 0, "valor": -1.0, "ayuda": "Palanca de mando: cabeceo (morro abajo y arriba)" },
@@ -389,7 +424,8 @@
         { "tecla": "M", "mando": "combate/cm_soltar", "accion": "pulsar", "ayuda": "Soltar señuelos (dipolos y bengala)" },
         { "tecla": "N", "mando": "principal/obj_sig", "accion": "pulsar", "ayuda": "Elegir la traza siguiente" },
         { "tecla": "U", "mando": "principal/obj_cerca", "accion": "pulsar", "ayuda": "Elegir la traza más cercana" },
-        { "tecla": "B", "mando": "principal/obj_fijar", "accion": "pulsar", "ayuda": "Fijar el radar en la traza elegida (o soltarla)" }
+        { "tecla": "B", "mando": "principal/obj_fijar", "accion": "pulsar", "ayuda": "Fijar el radar en la traza elegida (o soltarla)" },
+        { "tecla": "P", "mando": "brazo/plataforma", "accion": "pulsar", "ayuda": "Subir o bajar el asiento (la plataforma, por las compuertas de la panza; solo posada)" }
       ] }
   ],
 
@@ -399,7 +435,11 @@
   "derivadas": {
     // one order for the two doors of the bay, from the cockpit, the bay or outside
     "rampa.orden": "toggle(sistemas.compuertas || bahia.compuertas || exterior.compuertas)",
-    "plataforma.orden": "toggle(sistemas.plataforma || exterior.plataforma)",
+    // the seat's platform: asked for from any of its buttons; the belly doors open first, the
+    // platform moves only with both open, and they shut once it is up again
+    "plataforma.pide": "toggle(sistemas.plataforma || exterior.plataforma || brazo.plataforma)",
+    "panza.orden": "plataforma.pide || plataforma.pos > 0.005",
+    "plataforma.orden": "plataforma.pide && panza_izq.abierta > 0.97 && panza_der.abierta > 0.97",
     "tambor.orden": "tambor.cara / 2",
     // the nacelles: the flight computer's while it holds or the autopilot flies (it swings them
     // to where the push is wanted, back too: that is how it brakes with its hull level); else
@@ -419,7 +459,8 @@
   "enclavamientos": [
     { "mando": "principal/tren", "hacia": 0, "si": "nave.altura < 2 m", "motivo": "Peso sobre el tren" },
     { "mando": "sistemas/plataforma", "si": "nave.altura > 4 m", "motivo": "En vuelo: la plataforma solo se mueve posado" },
-    { "mando": "exterior/plataforma", "si": "nave.altura > 4 m", "motivo": "En vuelo: la plataforma solo se mueve posado" }
+    { "mando": "exterior/plataforma", "si": "nave.altura > 4 m", "motivo": "En vuelo: la plataforma solo se mueve posado" },
+    { "mando": "brazo/plataforma", "si": "nave.altura > 4 m", "motivo": "En vuelo: la plataforma solo se mueve posado" }
   ],
   "alarmas": {
     "Bus A sin tensión": "elec.bus_a < 20 V",

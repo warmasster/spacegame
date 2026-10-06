@@ -21,6 +21,11 @@ arriba y abajo); sin peso el raton gira todo el cuerpo sin tope y Q / E
 alabean; al apagar la mochila te quedas como estabas; con peso te enderezas;
 el estabilizador (Z) frena tambien en el espacio libre. La metralleta de
 pruebas pasa de Q a U.
+ENTRAR AL AZOR DE PIE: patas mas largas (la panza a 2,1 m: se pasa por debajo
+sin agacharse). ASIENTO abre dos compuertas en la panza y solo entonces baja
+el asiento hasta el suelo; te sientas (E) y lo subes con el boton ASIENTO del
+reposabrazos derecho (baja contigo) o con P. Al subir, las compuertas se
+cierran.
 SIN PROBAR JUGANDO. Detalles: docs/NAVES.md (Coherencia y ordenador de vuelo),
 docs/COMBATE.md, docs/MOVIMIENTO.md 8, docs/PENDIENTES.md V40.
 

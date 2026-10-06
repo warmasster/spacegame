@@ -1,0 +1,15 @@
+// On the right armrest of the Azor's seat: it goes down and up with the seat, so that whoever
+// sits on it with the platform at the ground finds the button to go up under the hand, and the
+// one sat in the cockpit the one to go down. Seated, P does the same.
+{
+  "name": "Reposabrazos del asiento",
+  "tamano": ["0.05 m", "0.1 m"],
+  "rejilla": [1, 1],
+  "margen": "4 mm",
+  "separacion": "2 mm",
+  "grupos": [ { "id": "asiento", "celda": [0, 0], "ocupa": [1, 1] } ],
+  "mandos": [
+    { "id": "plataforma", "kind": "pulsador", "grupo": "asiento", "rotulo": "ASIENTO", "modo": "momentaneo", "color": "amarillo", "luz": "plataforma.pos > 0.02", "tamano": [24, 24],
+      "nombre": "Plataforma del asiento", "ayuda": "Sube o baja el asiento contigo encima: abre las compuertas de la panza, baja hasta el suelo, y al subir las cierra. Solo posado. Sentado: P." }
+  ]
+}

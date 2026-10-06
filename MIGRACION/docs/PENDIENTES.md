@@ -42,6 +42,15 @@ vuelo (V40)», [`COMBATE.md`](COMBATE.md), [`MOVIMIENTO.md`](MOVIMIENTO.md) §8)
   peso te enderezas, y el estabilizador frena también en el espacio libre (respecto a la
   estructura más cercana o al marco de los cuerpos). La metralleta de pruebas pasa de Q a U.
 
+- **Entrar al Azor de pie**: patas 0,9 m más largas (la panza a 2,1 m), dos compuertas en la
+  panza (`panza_izq`, `panza_der`, motorreductores en el circuito de mecanismos) que se abren
+  antes de que se mueva la plataforma y se cierran cuando ha subido (`plataforma.pide`,
+  `panza.orden`, `plataforma.orden`), plataforma hasta el suelo (2,35 m) con mangas
+  telescópicas en los mástiles, botón ASIENTO en el reposabrazos derecho (panel `azor_asiento`,
+  baja con el asiento) y tecla P sentado. Modelos de los mástiles y las patas regenerados con
+  Blender (`tools/modelos/hacer.py`). `coherencia.rs` comprueba en toda nave que un asiento que
+  se mueve tiene a mano lo que lo mueve en cada extremo, y una tecla.
+
 Queda de esto:
 
 - **Nadie lo ha jugado.** Todo está comprobado con pruebas; los .exe de `SELENE_V39` no se han

@@ -1,0 +1,36 @@
+// The Azor's way in (V40): the belly doors open, the seat comes down to the ground, seen from
+// where a person standing beside it has their eyes (1.75 m over the ground, the ground at about
+// y −2.45 in the ship's frame), from the seat with the button on its armrest, and up again.
+// Run: luna --guion tools/camara/azor_entrada.jsonc → out/camara/azor_entrada_*.png
+{
+  "registro": "out/camara/azor_entrada.log",
+  "naves": ["azor"],
+  "pasos": [
+    { "nave": "azor" },
+    { "esperar": 5.0 },
+    { "camara": { "en": [6.5, -0.7, 6.5], "mira": [0, -0.6, 0.9], "fov": 60 } },
+    { "foto": "out/camara/azor_entrada_cerrada.png" },
+    { "camara": { "en": [0.0, -2.2, 3.4], "mira": [0, -0.35, 0.9], "fov": 70 } },
+    { "foto": "out/camara/azor_entrada_panza.png" },
+    { "pulsar": "exterior/plataforma" },
+    { "esperar": 1.5 },
+    { "foto": "out/camara/azor_entrada_compuertas.png" },
+    { "esperar": 9.0 },
+    { "foto": "out/camara/azor_entrada_abajo_panza.png" },
+    { "camara": { "en": [6.5, -0.7, 6.5], "mira": [0, -1.4, 0.9], "fov": 60 } },
+    { "foto": "out/camara/azor_entrada_abajo.png" },
+    // as a person standing in front of the seat sees it
+    { "camara": { "en": [0.0, -0.7, 2.6], "mira": [0, -1.6, 0.9], "fov": 75 } },
+    { "foto": "out/camara/azor_entrada_de_pie.png" },
+    { "camara": { "en": [-3.2, -0.7, 2.2], "mira": [0, -1.4, 0.9], "fov": 70 } },
+    { "foto": "out/camara/azor_entrada_estribor.png" },
+    // sat on it at the ground: the button under the right hand
+    { "camara": { "en": [0, -1.0, 0.96], "mira": [-0.31, -1.7, 1.0], "fov": 80 } },
+    { "foto": "out/camara/azor_entrada_reposabrazos.png" },
+    { "pulsar": "brazo/plataforma" },
+    { "esperar": 12.0 },
+    { "camara": { "en": [6.5, -0.7, 6.5], "mira": [0, -0.6, 0.9], "fov": 60 } },
+    { "foto": "out/camara/azor_entrada_subida.png" },
+    { "volcar": ["plataforma.*", "panza_*", "pata_*.pos", "amort_*.carga", "nave.altura"] }
+  ]
+}

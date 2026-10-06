@@ -595,7 +595,6 @@ pub fn seat_fit(kind: &ShipKind, s: &Structure) -> Vec<String> {
 /// plate is not edge-on, nothing is in the way, the hand finds it) and within reach; and it is at
 /// arm's length from one at least of the seats that share its panel.
 pub fn seat_reach(ship: &Ship, s: &Structure) -> Vec<String> {
-    use crate::panels::{REACH, READ};
     let kind = &ship.kind;
     let mut out = Vec::new();
     // per (panel, is control, index): the nearest seat's distance
@@ -612,64 +611,21 @@ pub fn seat_reach(ship: &Ship, s: &Structure) -> Vec<String> {
                 continue;
             };
             let plan = &kind.panels[pi];
-            let f = Panels::frame(kind, s, plan);
-            let n = f.transform_vector3(Vec3::Z).normalize();
-            let mut check = |control: bool, k: usize, name: &str, rect: &lunar_controls::layout::Rect| {
-                let at = f.transform_point3(Vec3::new((rect.x + rect.w * 0.5) / 1000.0, (rect.y + rect.h * 0.5) / 1000.0, 0.0));
-                let to = at - eye;
-                let dist = to.length();
-                let dir = to / dist;
+            let mut check = |control: bool, k: usize, name: &str| {
+                let rect = if control { &ship.panels.controls[k].rect } else { &ship.panels.indicators[k].rect };
+                let at = Panels::frame(kind, s, plan).transform_point3(Vec3::new((rect.x + rect.w * 0.5) / 1000.0, (rect.y + rect.h * 0.5) / 1000.0, 0.0));
                 let e = nearest.entry((pi, control, k)).or_insert(f32::MAX);
-                *e = e.min(dist);
-                let turn = dir.dot(side).atan2(dir.dot(ahead)).to_degrees().abs();
-                let pitch = dir.y.asin().to_degrees();
-                let over = (-dir).dot(n).asin().to_degrees();
-                let what = format!("asiento {}: {} {name}", d.id, if control { "el mando" } else { "el instrumento" });
-                if dist > if control { REACH } else { READ } {
-                    out.push(format!("{what} está a {dist:.2} m"));
-                } else if turn > HEAD_TURN || pitch > HEAD_UP || pitch < -HEAD_DOWN {
-                    out.push(format!("{what} pide girar la cabeza {turn:.0}° y {pitch:+.0}°"));
-                } else if over < FLATTEST {
-                    out.push(format!("{what} se ve de canto ({over:.0}° sobre su placa)"));
-                } else {
-                    // aimed at its middle, on the plate or at the height its body stands off it
-                    let mut found = None;
-                    let mut other = String::new();
-                    for lift in [0.0, 0.03, 0.015] {
-                        let dir = (at + n * lift - eye).normalize();
-                        let wall = s.raycast(eye, dir, REACH);
-                        let hit = if control {
-                            let p = ship.panels.pick(kind, s, eye, dir, REACH);
-                            if let Some((j, _, _)) = p.filter(|(j, _, _)| *j != k) {
-                                other = ship.panels.controls[j].id.clone();
-                            }
-                            p.filter(|(j, _, _)| *j == k || ship.panels.controls[k].cover == Some(*j)).map(|x| x.2)
-                        } else {
-                            ship.panels.pick_indicator(kind, s, eye, dir, READ).filter(|(j, _)| *j == k).map(|x| x.1)
-                        };
-                        match hit {
-                            Some(t) if wall.is_none_or(|h| t <= h.t + 0.08) => {
-                                found = Some(Ok(()));
-                                break;
-                            }
-                            Some(_) => found = found.or(Some(Err(kind.parts[wall.map_or(0, |h| h.part) as usize].clone()))),
-                            None => {}
-                        }
-                    }
-                    match found {
-                        Some(Ok(())) => {}
-                        Some(Err(part)) => out.push(format!("{what} queda detrás de {part}")),
-                        None if other.is_empty() => out.push(format!("{what}: la mano no lo encuentra")),
-                        None => out.push(format!("{what}: la mano encuentra {other} en su lugar")),
-                    }
+                *e = e.min(at.distance(eye));
+                if let Some(why) = in_sight(ship, s, eye, ahead, side, control, k) {
+                    out.push(format!("asiento {}: {} {name} {why}", d.id, if control { "el mando" } else { "el instrumento" }));
                 }
             };
             for (k, c) in ship.panels.controls.iter().enumerate().filter(|(_, c)| c.panel == pi) {
-                check(true, k, &c.id, &c.rect);
+                check(true, k, &c.id);
             }
             for (k, i) in ship.panels.indicators.iter().enumerate().filter(|(_, i)| i.panel == pi) {
                 let name = format!("{}/{}", plan.id, plan.def.mandos[i.index].id);
-                check(false, k, &name, &i.rect);
+                check(false, k, &name);
             }
         }
     }
@@ -680,6 +636,64 @@ pub fn seat_reach(ship: &Ship, s: &Structure) -> Vec<String> {
         let _ = pi;
     }
     out
+}
+
+/// Whether control `k` (`control`; else instrument `k`) is worked or read from eyes at `eye`
+/// (ship frame, as the structure is posed now) facing `ahead` (level, unit; `side` to port):
+/// within reach, the head turns that far, the plate is not edge-on, nothing is in the way and
+/// the hand finds it. None if so; else why not, in a few words.
+pub fn in_sight(ship: &Ship, s: &Structure, eye: Vec3, ahead: Vec3, side: Vec3, control: bool, k: usize) -> Option<String> {
+    use crate::panels::{REACH, READ};
+    let kind = &ship.kind;
+    let (pi, rect) = if control { (ship.panels.controls[k].panel, &ship.panels.controls[k].rect) } else { (ship.panels.indicators[k].panel, &ship.panels.indicators[k].rect) };
+    let f = Panels::frame(kind, s, &kind.panels[pi]);
+    let n = f.transform_vector3(Vec3::Z).normalize();
+    let at = f.transform_point3(Vec3::new((rect.x + rect.w * 0.5) / 1000.0, (rect.y + rect.h * 0.5) / 1000.0, 0.0));
+    let to = at - eye;
+    let dist = to.length();
+    let dir = to / dist;
+    let turn = dir.dot(side).atan2(dir.dot(ahead)).to_degrees().abs();
+    let pitch = dir.y.asin().to_degrees();
+    let over = (-dir).dot(n).asin().to_degrees();
+    if dist > if control { REACH } else { READ } {
+        return Some(format!("está a {dist:.2} m"));
+    }
+    if turn > HEAD_TURN || pitch > HEAD_UP || pitch < -HEAD_DOWN {
+        return Some(format!("pide girar la cabeza {turn:.0}° y {pitch:+.0}°"));
+    }
+    if over < FLATTEST {
+        return Some(format!("se ve de canto ({over:.0}° sobre su placa)"));
+    }
+    // aimed at its middle, on the plate or at the height its body stands off it
+    let mut found = None;
+    let mut other = String::new();
+    for lift in [0.0, 0.03, 0.015] {
+        let dir = (at + n * lift - eye).normalize();
+        let wall = s.raycast(eye, dir, REACH);
+        let hit = if control {
+            let p = ship.panels.pick(kind, s, eye, dir, REACH);
+            if let Some((j, _, _)) = p.filter(|(j, _, _)| *j != k) {
+                other = ship.panels.controls[j].id.clone();
+            }
+            p.filter(|(j, _, _)| *j == k || ship.panels.controls[k].cover == Some(*j)).map(|x| x.2)
+        } else {
+            ship.panels.pick_indicator(kind, s, eye, dir, READ).filter(|(j, _)| *j == k).map(|x| x.1)
+        };
+        match hit {
+            Some(t) if wall.is_none_or(|h| t <= h.t + 0.08) => {
+                found = Some(Ok(()));
+                break;
+            }
+            Some(_) => found = found.or(Some(Err(kind.parts[wall.map_or(0, |h| h.part) as usize].clone()))),
+            None => {}
+        }
+    }
+    match found {
+        Some(Ok(())) => None,
+        Some(Err(part)) => Some(format!("queda detrás de {part}")),
+        None if other.is_empty() => Some("no lo encuentra la mano".to_string()),
+        None => Some(format!("no lo encuentra la mano: encuentra {other} en su lugar")),
+    }
 }
 
 // ---------------------------------------------------------------- what it holds and what it weighs

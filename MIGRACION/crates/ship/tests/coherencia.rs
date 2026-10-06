@@ -18,7 +18,10 @@
 //!   engines that swing, the ship does not turn by itself, its thrusters fire when they must and
 //!   its momentum wheels do not stay full;
 //! - **the autopilot where it can do nothing**: past every body's reach, a hold or a program that
-//!   needs a ground under it says so (`ap.sin_cuerpo`) instead of showing itself at work.
+//!   needs a ground under it says so (`ap.sin_cuerpo`) instead of showing itself at work;
+//! - **a seat that moves** (a platform that takes it out of the hull): at each end of its travel,
+//!   on the ground, a control that moves it is in sight and within reach of whoever sits on it,
+//!   and a key of the seat moves it too.
 //!
 //! Run with `--nocapture` for the table of what every key does on every ship.
 mod comun;
@@ -469,4 +472,78 @@ fn past_every_body_the_autopilot_says_what_it_cannot_do() {
         }
     }
     report("piloto automático sin cuerpo", &bad);
+}
+
+// ---------------------------------------------------------------- a seat that moves
+
+/// The signals `order` is worked out from, through the ship's derived logic (and itself).
+fn feeding(kind: &ShipKind, order: &str) -> Vec<String> {
+    let mut out = vec![order.to_string()];
+    let mut i = 0;
+    while i < out.len() && out.len() < 64 {
+        if let Some(expr) = kind.def.derivadas.get(&out[i]) {
+            for w in expr.split(|c: char| !(c.is_alphanumeric() || c == '.' || c == '_')) {
+                if w.contains('.') && w.parse::<f64>().is_err() && !out.iter().any(|o| o == w) {
+                    out.push(w.to_string());
+                }
+            }
+        }
+        i += 1;
+    }
+    out
+}
+
+#[test]
+fn a_seat_that_moves_has_what_moves_it_at_hand_wherever_it_takes_you() {
+    let mut bad = Vec::new();
+    for kind in comun::vuelo::hangar().kinds.iter() {
+        for (i, seat) in kind.seats.iter().enumerate() {
+            // the joint it rides on, and the actuators that drive that joint
+            let Some(j) = kind.joints.iter().position(|j| j.parts.contains(&seat.part)) else { continue };
+            let probe = Flight::new(kind);
+            let mut movers: Vec<usize> = Vec::new();
+            for a in kind.actuators.iter().filter(|a| a.joint == j) {
+                let order = a.def.control.orden.clone().unwrap_or_else(|| format!("{}.orden", a.id));
+                for n in feeding(kind, &order) {
+                    if let Some(k) = comun::vuelo::writer(&probe.ship, &n).filter(|k| !movers.contains(k)) {
+                        movers.push(k);
+                    }
+                }
+            }
+            let what = format!("{} asiento {}", kind.id, seat.def.id);
+            if movers.is_empty() {
+                bad.push(format!("{what}: va sobre {} y ningún mando lo mueve", kind.joints[j].id));
+                continue;
+            }
+            let (keys, _) = seat_keys::keys(&probe.ship, i);
+            if !keys.iter().any(|k| movers.contains(&k.control)) {
+                bad.push(format!("{what}: ninguna tecla del asiento mueve {}", kind.joints[j].id));
+            }
+            // at each end of its travel, on the ground: something that moves it in sight and reach
+            let mut f = Flight::new(kind);
+            f.fly(2.0);
+            let yaw = seat.def.rumbo.to_radians();
+            let (ahead, side) = (Vec3::new(yaw.sin(), 0.0, yaw.cos()), Vec3::new(yaw.cos(), 0.0, -yaw.sin()));
+            let pos = format!("{}.pos", kind.joints[j].id);
+            for end in ["arriba", "abajo"] {
+                let eye = f.ship.seat_eyes(i);
+                let why: Vec<String> = movers.iter().filter_map(|&k| lunar_ship::diag::in_sight(&f.ship, f.s(), eye, ahead, side, true, k).map(|w| format!("{} {w}", f.ship.panels.controls[k].id))).collect();
+                if why.len() == movers.len() {
+                    bad.push(format!("{what} con {} {end} ({:.2}): nada que lo mueva a mano: {}", kind.joints[j].id, f.ship.signal(&pos).unwrap_or(-1.0), why.join("; ")));
+                }
+                // to the other end, by the first of its controls in sight (or the first)
+                let k = movers.iter().copied().find(|&k| lunar_ship::diag::in_sight(&f.ship, f.s(), eye, ahead, side, true, k).is_none()).unwrap_or(movers[0]);
+                f.intent(k, &Intent::Press { elem: 0 });
+                f.fly(0.2);
+                f.intent(k, &Intent::Release);
+                let was = f.ship.signal(&pos).unwrap_or(0.0);
+                f.fly(20.0);
+                if (f.ship.signal(&pos).unwrap_or(0.0) - was).abs() < 0.05 {
+                    bad.push(format!("{what}: {} no se mueve con {}", kind.joints[j].id, f.ship.panels.controls[k].id));
+                    break;
+                }
+            }
+        }
+    }
+    report("asientos que se mueven", &bad);
 }

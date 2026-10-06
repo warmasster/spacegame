@@ -221,7 +221,7 @@ impl Crowd {
             def: def.clone(),
         };
         for (k, (body, p, h)) in homes.into_iter().enumerate() {
-            let mut rng = Random(k as u32 * 2654435761 ^ 0xa11ce);
+            let mut rng = Random((k as u32).wrapping_mul(2654435761) ^ 0xa11ce);
             let b = bodies.get(body);
             let local = Site::new(body, b, p - b.center);
             let a = rng.next_f64() * std::f64::consts::TAU;

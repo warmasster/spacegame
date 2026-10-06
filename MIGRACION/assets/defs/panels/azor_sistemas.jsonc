@@ -30,7 +30,7 @@
     { "id": "compuertas", "kind": "pulsador", "grupo": "mec", "rotulo": "BAHÍA", "modo": "momentaneo", "color": "amarillo", "luz": "rampa.abierta > 0.02", "tamano": [26, 26],
       "nombre": "Compuertas de la bahía", "ayuda": "Abre o cierra las dos compuertas de popa (la rampa y la visera) que dan a la bahía de utilidades." },
     { "id": "plataforma", "kind": "pulsador", "grupo": "mec", "rotulo": "ASIENTO", "modo": "momentaneo", "color": "amarillo", "luz": "plataforma.pos > 0.02", "tamano": [26, 26],
-      "nombre": "Plataforma del asiento", "ayuda": "Baja o sube el asiento por la panza de la nave, contigo encima. Solo posado." },
+      "nombre": "Plataforma del asiento", "ayuda": "Baja o sube el asiento contigo encima, por las compuertas de la panza, hasta el suelo. Solo posado. También el botón ASIENTO del reposabrazos derecho y P." },
     { "id": "giro", "kind": "interruptor", "grupo": "mec", "rotulo": "GIRÓSC.", "bind": { "senal": "giro.marcha" }, "defecto": 1,
       "nombre": "Giróscopos", "ayuda": "Giran la nave sin gastar propelente. Si se llenan (lámpara), el ordenador los descarga con las toberas." },
     { "id": "lamp_giro", "kind": "lampara", "grupo": "mec", "rotulo": "SATUR.", "requiere": { "energia": "1 W" },

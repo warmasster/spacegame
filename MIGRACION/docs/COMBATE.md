@@ -159,9 +159,15 @@ puesta vuelve a arrancar. Arranca con las baterías en 6 s y luego ya no las nec
 
 Caza monoplaza de 11 m y 12 t, posado en horizontal sobre tres patas largas.
 
-- **Entrar:** panel exterior a babor, tras el ala: ASIENTO baja el asiento por la panza. Te
-  sientas (E) y lo subes con ASIENTO en la repisa de tu derecha. Levantarte con el asiento
-  abajo te deja en el suelo junto a la nave; con él arriba, en la cabina.
+- **Entrar** (V40): el Azor está sobre patas largas, con la panza a 2,1 m del suelo: se pasa por
+  debajo de pie. ASIENTO, en el panel exterior a babor tras el ala, abre las **dos compuertas de
+  la panza** y, solo con las dos abiertas, baja el asiento en su plataforma **hasta el suelo**
+  (los mástiles se alargan con mangas telescópicas). Te sientas (E) de pie, sin agacharte, y lo
+  subes con el botón ASIENTO del **reposabrazos derecho**, que baja y sube con el asiento, o con
+  **P**; al llegar arriba las compuertas se cierran. También desde la repisa de la derecha.
+  Levantarte con el asiento abajo te deja en el suelo junto a la nave; con él arriba, en la
+  cabina. Lo comprueba para toda nave `coherencia.rs` (un asiento que se mueve tiene a mano, en
+  cada extremo, lo que lo mueve, y una tecla).
 - **Bahía de utilidades:** BAHÍA abre las dos compuertas de popa (rampa de tres tramos y visera).
   Dentro: grupo de energía, ordenador, dos baterías, hidráulica, giróscopos.
 - **Tambor de paneles** sobre la consola izquierda: el selector PANEL lo gira. NAVEG. (piloto

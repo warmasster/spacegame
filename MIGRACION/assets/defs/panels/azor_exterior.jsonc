@@ -9,7 +9,7 @@
   "grupos": [ { "id": "acceso", "titulo": "ACCESO", "celda": [0, 0], "ocupa": [2, 1] } ],
   "mandos": [
     { "id": "plataforma", "kind": "pulsador", "grupo": "acceso", "rotulo": "ASIENTO", "modo": "momentaneo", "color": "amarillo", "luz": "plataforma.pos > 0.02", "tamano": [32, 32],
-      "nombre": "Plataforma del asiento", "ayuda": "Baja el asiento por la panza de la nave hasta casi el suelo (o lo sube). Bájalo, siéntate (E) y súbelo desde dentro con ASIENTO, en la repisa de tu derecha." },
+      "nombre": "Plataforma del asiento", "ayuda": "Abre las compuertas de la panza y baja el asiento hasta el suelo (o lo sube y las cierra). Bájalo, siéntate (E) y súbelo con el botón ASIENTO del reposabrazos derecho, que baja con el asiento, o con P." },
     { "id": "compuertas", "kind": "pulsador", "grupo": "acceso", "rotulo": "BAHÍA", "modo": "momentaneo", "color": "amarillo", "luz": "rampa.abierta > 0.02", "tamano": [32, 32],
       "nombre": "Compuertas de la bahía", "ayuda": "Abre o cierra la rampa y la visera de popa, por donde se entra a la bahía de utilidades." }
   ]
