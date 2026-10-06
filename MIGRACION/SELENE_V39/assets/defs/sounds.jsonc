@@ -1,0 +1,139 @@
+// Every sound of the game, made as it sounds (no recordings): a few layers each, an oscillator or
+// a noise through a filter with an envelope (crates/audio/src/def.rs).
+//
+//   onda      seno | triangulo | sierra | cuadrada | ruido | ruido_rosa | ruido_marron
+//   hz        an oscillator's frequency; "hasta": a blow glides there; "alterna": [other hz, times/s]
+//   filtro    { tipo: bajo | alto | banda, hz, q }
+//   ataque    seconds to full level;  caida: a blow dies away with this time constant (s)
+//   tremolo   [times a second, depth]
+//   dura      a blow: seconds it lasts. Without it, a loop: the game holds its level
+//   via       aire      through the air round the head: silent in a vacuum
+//             contacto  through what the body touches: dull, whatever the air
+//             traje     inside the suit: always there
+//   variacion each blow tuned at random within this share
+//
+// Who plays what is the game's (crates/app/src/sound.rs); a sound added here is just there to ask for.
+{
+  // ---------------------------------------------------------------- the suit
+  // one's own breath in the helmet, slow
+  "respiracion": { "via": "traje", "ganancia": 0.085, "capas": [
+    { "onda": "ruido_rosa", "filtro": { "tipo": "banda", "hz": 520, "q": 1.2 }, "tremolo": [0.27, 1.0] }
+  ] },
+  // the suit's fan, behind the neck
+  "ventilador": { "via": "traje", "ganancia": 0.03, "capas": [
+    { "onda": "seno", "hz": 118 },
+    { "onda": "ruido_rosa", "filtro": { "tipo": "bajo", "hz": 900 }, "ganancia": 0.6 }
+  ] },
+  // the pack's jets, through its frame on the back
+  "mochila": { "via": "traje", "ganancia": 0.42, "capas": [
+    { "onda": "ruido", "filtro": { "tipo": "banda", "hz": 1400, "q": 0.8 }, "ganancia": 0.45 },
+    { "onda": "ruido_marron", "filtro": { "tipo": "bajo", "hz": 240 } }
+  ] },
+  // the suit's own beep (a notice of the HUD that matters)
+  "aviso": { "via": "traje", "dura": 0.09, "ganancia": 0.16, "capas": [
+    { "onda": "seno", "hz": 1320, "ataque": 0.003, "caida": 0.05 }
+  ] },
+
+  // ---------------------------------------------------------------- steps, through the boots
+  "paso_cubierta": { "via": "contacto", "dura": 0.18, "variacion": 0.08, "ganancia": 1.0, "capas": [
+    { "onda": "seno", "hz": 140, "hasta": 85, "caida": 0.04 },
+    { "onda": "ruido", "filtro": { "tipo": "banda", "hz": 950, "q": 2.5 }, "caida": 0.02, "ganancia": 0.8 },
+    { "onda": "seno", "hz": 410, "caida": 0.05, "ganancia": 0.25 }
+  ] },
+  "paso_regolito": { "via": "contacto", "dura": 0.22, "variacion": 0.1, "ganancia": 0.9, "capas": [
+    { "onda": "ruido_rosa", "filtro": { "tipo": "bajo", "hz": 520 }, "ataque": 0.012, "caida": 0.05 },
+    { "onda": "seno", "hz": 70, "hasta": 48, "caida": 0.05, "ganancia": 0.7 }
+  ] },
+  // coming down on both feet
+  "caida": { "via": "contacto", "dura": 0.4, "variacion": 0.06, "ganancia": 1.2, "capas": [
+    { "onda": "seno", "hz": 62, "hasta": 38, "caida": 0.09 },
+    { "onda": "ruido_marron", "filtro": { "tipo": "bajo", "hz": 300 }, "caida": 0.06 }
+  ] },
+
+  // ---------------------------------------------------------------- controls, under the hand
+  "interruptor": { "via": "aire", "dura": 0.06, "variacion": 0.05, "ganancia": 0.5, "capas": [
+    { "onda": "ruido", "filtro": { "tipo": "alto", "hz": 2500 }, "caida": 0.004 },
+    { "onda": "seno", "hz": 1900, "caida": 0.008, "ganancia": 0.5 },
+    { "onda": "seno", "hz": 240, "caida": 0.012, "ganancia": 0.6 }
+  ] },
+  "palanca": { "via": "aire", "dura": 0.16, "variacion": 0.06, "ganancia": 0.55, "capas": [
+    { "onda": "seno", "hz": 170, "hasta": 95, "caida": 0.035 },
+    { "onda": "ruido", "filtro": { "tipo": "banda", "hz": 700, "q": 1.5 }, "caida": 0.02, "ganancia": 0.7 }
+  ] },
+  "tapa": { "via": "aire", "dura": 0.1, "variacion": 0.05, "ganancia": 0.45, "capas": [
+    { "onda": "ruido", "filtro": { "tipo": "banda", "hz": 1500, "q": 1.2 }, "caida": 0.012 },
+    { "onda": "seno", "hz": 520, "caida": 0.02, "ganancia": 0.5 }
+  ] },
+
+  // ---------------------------------------------------------------- cargo
+  // a clamp's hooks closing on (or letting go of) what it holds
+  "anclaje": { "via": "aire", "dura": 0.34, "variacion": 0.05, "ganancia": 0.8, "capas": [
+    { "onda": "seno", "hz": 310, "caida": 0.07 },
+    { "onda": "seno", "hz": 495, "caida": 0.05, "ganancia": 0.6 },
+    { "onda": "ruido", "filtro": { "tipo": "banda", "hz": 1200, "q": 2.0 }, "caida": 0.015 },
+    { "onda": "seno", "hz": 90, "hasta": 60, "caida": 0.08 }
+  ] },
+  // an electropermanent magnet switching: the capacitor's pulse and the pad pulling home
+  "iman": { "via": "aire", "dura": 0.45, "ganancia": 0.9, "capas": [
+    { "onda": "seno", "hz": 55, "hasta": 45, "caida": 0.12 },
+    { "onda": "ruido", "filtro": { "tipo": "bajo", "hz": 400 }, "caida": 0.03 },
+    { "onda": "seno", "hz": 2200, "hasta": 900, "caida": 0.03, "ganancia": 0.15 }
+  ] },
+  // taking something in the hands, setting it down
+  "agarre": { "via": "contacto", "dura": 0.14, "variacion": 0.08, "ganancia": 0.8, "capas": [
+    { "onda": "ruido_rosa", "filtro": { "tipo": "bajo", "hz": 600 }, "caida": 0.03 },
+    { "onda": "seno", "hz": 120, "hasta": 80, "caida": 0.03, "ganancia": 0.6 }
+  ] },
+  // something heavy striking what one stands on
+  "golpe": { "via": "contacto", "dura": 0.32, "variacion": 0.1, "ganancia": 1.1, "capas": [
+    { "onda": "seno", "hz": 80, "hasta": 42, "caida": 0.07 },
+    { "onda": "ruido_marron", "filtro": { "tipo": "bajo", "hz": 350 }, "caida": 0.05 }
+  ] },
+
+  // ---------------------------------------------------------------- a ship, through its hull and its air
+  // engines and thrusters pushing: felt more than heard
+  "motor": { "via": "contacto", "ganancia": 0.9, "capas": [
+    { "onda": "ruido_marron", "filtro": { "tipo": "bajo", "hz": 140 }, "ganancia": 1.2 },
+    { "onda": "sierra", "hz": 47, "filtro": { "tipo": "bajo", "hz": 220 }, "ganancia": 0.5 },
+    { "onda": "ruido_rosa", "filtro": { "tipo": "banda", "hz": 320, "q": 0.9 }, "tremolo": [11.0, 0.3], "ganancia": 0.4 }
+  ] },
+  // a pressurised cabin: its air moving, the hum of what feeds it
+  "cabina": { "via": "aire", "ganancia": 0.07, "capas": [
+    { "onda": "ruido_rosa", "filtro": { "tipo": "banda", "hz": 430, "q": 0.6 } },
+    { "onda": "seno", "hz": 59, "ganancia": 0.2 }
+  ] },
+  // something of it moving on its motor: a ramp, a leg, a crane
+  "mecanismo": { "via": "aire", "ganancia": 0.2, "capas": [
+    { "onda": "sierra", "hz": 190, "filtro": { "tipo": "bajo", "hz": 900 }, "ganancia": 0.5 },
+    { "onda": "ruido", "filtro": { "tipo": "banda", "hz": 1100, "q": 1.2 }, "ganancia": 0.3 },
+    { "onda": "seno", "hz": 95, "ganancia": 0.4 }
+  ] },
+  // a piston compressor at work (`sonido.compresor`: how fast its motor turns): the beat of its
+  // strokes, its motor's whine, the breath of its valves
+  "compresor": { "via": "aire", "ganancia": 0.3, "capas": [
+    { "onda": "sierra", "hz": 24, "filtro": { "tipo": "bajo", "hz": 300 }, "ganancia": 0.9 },
+    { "onda": "ruido_marron", "filtro": { "tipo": "bajo", "hz": 180 }, "tremolo": [24.0, 0.6], "ganancia": 0.8 },
+    { "onda": "seno", "hz": 290, "ganancia": 0.12 },
+    { "onda": "ruido", "filtro": { "tipo": "banda", "hz": 2200, "q": 1.4 }, "tremolo": [12.0, 0.5], "ganancia": 0.14 }
+  ] },
+  // air through a valve opened by hand (`sonido.silbido`: by how much goes through): a hiss
+  "silbido": { "via": "aire", "ganancia": 0.26, "capas": [
+    { "onda": "ruido", "filtro": { "tipo": "banda", "hz": 3400, "q": 0.8 } },
+    { "onda": "ruido_rosa", "filtro": { "tipo": "alto", "hz": 1200 }, "ganancia": 0.5 }
+  ] },
+  // the master alarm: two tones taking turns (as a Shuttle's caution and warning: 375 and 1000 Hz)
+  "alarma": { "via": "aire", "ganancia": 0.2, "capas": [
+    { "onda": "triangulo", "hz": 375, "alterna": [1000, 2.5], "filtro": { "tipo": "bajo", "hz": 2600 } }
+  ] },
+
+  // ---------------------------------------------------------------- tools and weapons, through the glove
+  "herramienta": { "via": "aire", "ganancia": 0.3, "capas": [
+    { "onda": "sierra", "hz": 100, "filtro": { "tipo": "alto", "hz": 500 }, "ganancia": 0.5 },
+    { "onda": "ruido", "filtro": { "tipo": "banda", "hz": 2400, "q": 0.7 }, "tremolo": [50.0, 0.5], "ganancia": 0.5 },
+    { "onda": "seno", "hz": 200, "ganancia": 0.3 }
+  ] },
+  "disparo": { "via": "contacto", "dura": 0.2, "variacion": 0.05, "ganancia": 1.0, "capas": [
+    { "onda": "seno", "hz": 95, "hasta": 50, "caida": 0.04 },
+    { "onda": "ruido", "filtro": { "tipo": "bajo", "hz": 700 }, "caida": 0.02 }
+  ] }
+}

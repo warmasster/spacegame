@@ -1,0 +1,95 @@
+# Objetivo
+Crea en Rust un prototipo mínimo viable (MVP) de un juego lunar para MEDIR RENDIMIENTO. Es la prueba
+que decide si migramos a Rust un juego que hoy está hecho en TypeScript + three.js + WebGL. No hay red,
+ni audio, ni menús. Solo: la Luna, moverse, muchas naves y muchos NPC, sombras, y un modo benchmark
+que dé números comparables. Prioridad absoluta: rendimiento y código limpio y modular.
+
+# Stack (obligatorio)
+- Rust estable, workspace de Cargo. Usa las versiones estables más recientes de cada crate, fíjalas en
+  Cargo.toml y consulta la API de ESA versión de wgpu antes de escribir código. No inventes APIs.
+- wgpu (backend DX12/Vulkan), winit, glam (f32 en GPU, f64 en CPU para posiciones de mundo), bytemuck,
+  rayon (paralelismo), egui solo para el overlay de diagnóstico (egui-wgpu), gltf (cargar el astronauta),
+  profiling/puffin o tracy (opcional, detrás de una feature).
+- PROHIBIDO Bevy o cualquier motor: queremos control total del render.
+
+# Estructura
+workspace/
+  crates/core     → matemáticas, ruido y función de altura lunar (portada del TS adjunto), cube-sphere,
+                    escena en datos (SoA). Sin dependencias gráficas. Con tests.
+  crates/render   → wgpu: terreno, instancias, sombras, culling en GPU, overlay.
+  crates/app      → ventana, input, cámara, bucle, modo benchmark, CLI.
+- Módulos pequeños (<400 líneas), datos por índices (sin Rc/RefCell en caminos calientes), cero
+  asignaciones por frame en caminos calientes, sin genéricos ni macros innecesarios.
+
+# Mundo
+1. Luna: esfera de radio real (1737,4 km) con cube-sphere. La altura del suelo sale de PORTAR la función
+   del archivo adjunto surface.ts (tierras altas, mares, montañas, relieve fBm, cráteres a todas las
+   escalas). La misma función en Rust (core, para física y tests) y en WGSL (GPU, para generar alturas).
+   Test: Rust y GPU dan la misma altura (±1 cm) en 1000 puntos.
+2. Terreno CDLOD en GPU:
+   - UNA sola malla de rejilla (p. ej. 64×64) dibujada instanciada, una instancia por nodo del quadtree;
+   - las alturas y normales de cada nodo en una textura array, generadas por un compute shader al crear
+     el nodo (nada de generar en CPU);
+   - morph entre niveles en el vertex shader y faldones para tapar grietas;
+   - objetivo: todo el terreno en 1-3 draws más 1 por cascada.
+3. Cielo negro con estrellas (un único draw de puntos), la Tierra como esfera lejana, y el sol como luz
+   direccional baja (elevación 16°, azimut 98°).
+4. Rocas repartidas de forma procedural alrededor del jugador, instanciadas con 3 LOD.
+
+# Entidades (stress test)
+- Naves: 3 tipos procedurales (pequeña ~15 m, mediana ~30 m, grande ~60 m), hechas con cajas,
+  cilindros y cuñas combinadas. Por tipo: LOD0 (~20k tris), LOD1 (~3k), LOD2 (~300), y un impostor
+  octaédrico para distancias muy grandes. Todas instanciadas; el LOD de cada instancia lo decide la GPU.
+  El 80 % aparcadas en el suelo en un radio configurable (por defecto 1,5 km) y el 20 % volando en
+  circuitos (círculos o lemniscatas a 50-500 m de altura) para tener instancias en movimiento.
+- NPC: el astronauta del GLB adjunto, con skinning en GPU usando la animación horneada en una textura
+  (una animación de andar y otra de estar quieto). Instanciados: 1 draw por LOD para TODOS. Deambulan
+  por el suelo con un paso simple (sin física), actualizados en paralelo con rayon.
+
+# Render (optimizaciones obligatorias)
+- Culling en GPU con un compute shader: frustum + oclusión con Hi-Z (pirámide de profundidad del frame
+  anterior) + selección de LOD. La salida son buffers de dibujo indirecto. Usa multi_draw_indirect si el
+  adaptador lo soporta; si no, draw_indirect por lote.
+- Profundidad Z invertida con plano lejano infinito (nada de profundidad logarítmica). Render relativo a
+  la cámara: posiciones f64 en CPU y f32 relativas a la cámara en GPU (sin temblores a 1737 km).
+- Sombras en cascada: 3 cascadas en ALTA y 1 en BAJA. Culling POR CASCADA en GPU: un proyector solo
+  entra en las cascadas cuyo tramo de vista alcanza su sombra (su esfera barrida a lo largo de la luz).
+  Las cascadas lejanas se actualizan en frames alternos y se cachea la sombra de lo estático.
+- Todo agrupado por material y pipeline: pocas pipelines y bind groups persistentes; los buffers de
+  instancias se actualizan con queue.write_buffer desde un buffer de staging reutilizado.
+- Posproceso mínimo: mapeo de tonos ACES y FXAA/SMAA. Escala de resolución dinámica ligada al tiempo de GPU.
+- Presentación: Mailbox o Immediate cuando se mide y Fifo en juego normal (flag).
+- Perfiles BAJA/ALTA (sombras, resolución, distancia de LOD), elegidos por el nombre del adaptador:
+  integrada → BAJA.
+
+# Movimiento
+- A pie: gravedad lunar 1,62 m/s², andar 1,8 m/s, correr 4 m/s, salto de ~1,2 m, pegado al suelo
+  esférico con la función de altura (sin motor de física). Ratón para mirar y WASD.
+- Vuelo libre con F: cámara libre rápida (Shift acelera ×10, hasta 2 km/s) para recorrer la Luna y ver
+  el streaming del terreno.
+
+# Diagnóstico y benchmark
+- Overlay F3 (egui, compacto, en dos columnas): FPS, ms de CPU por fase (sim, culling, preparación,
+  envío), ms de GPU por pase (timestamp queries), draws, triángulos, instancias visibles por tipo y LOD,
+  nodos de terreno y memoria de GPU.
+- CLI: --ships N --npcs N --radius M --profile low|high --bench SEGUNDOS --out resultados.json
+  --vsync on|off. En modo bench, la cámara sigue un recorrido fijo y reproducible (andar, mirar a los
+  NPC, mirar al cielo, volar por encima de la flota) y escribe un JSON con la media, el p99 y el máximo
+  del ms de frame, CPU y GPU por fase, draws y triángulos, por tramo del recorrido.
+- Escenarios predefinidos: 10, 30, 60, 100, 300 y 1000 naves (con el mismo número de NPC).
+
+# Objetivos (lo que tiene que superar; la versión TS hoy)
+- TS: con 100 naves + 100 NPC, ~13 ms de CPU de cliente por frame y ~480 draws (solo naves y NPC);
+  mirando a 12 NPC en ALTA ~1700 draws y ~90 FPS.
+- Rust: con 100+100, menos de 2 ms de CPU y menos de 50 draws en total. Con 1000+1000, 144+ FPS en una
+  GPU dedicada y 60 FPS en una Intel Iris Xe en BAJA a 1080p.
+
+# Entregables
+- Código que compila sin warnings (clippy en limpio), `cargo test` en verde (altura CPU/GPU, cube-sphere,
+  selección de LOD, culling por cascada con casos cercano/medio/lejano).
+- README corto: cómo ejecutar, controles, flags y una tabla con los resultados de bench en la máquina donde
+  lo pruebes.
+- Trabaja por hitos y deja cada uno compilando y ejecutable:
+  (1) ventana + terreno CDLOD + cámara libre; (2) andar sobre el suelo + sol + sombras;
+  (3) naves instanciadas + culling GPU + LOD; (4) NPC con skinning GPU; (5) Hi-Z + impostores +
+  caché de sombras; (6) bench + JSON.

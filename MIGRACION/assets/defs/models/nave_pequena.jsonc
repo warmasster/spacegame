@@ -1,0 +1,72 @@
+// nave pequeña: a twin-nacelle shuttle, about 15 m. Parts: one shape (box, cyl [r, len],
+// cone [r_back, r_front, len], wedge, dome r, ball r), position, rotation (Euler XYZ degrees;
+// cylinders and cones run along +Y, and rot [90, 0, 0] lays them nose (+Z) forward), palette
+// material. "hull" parts (boxes, cylinders, cones) get greebles; "lod_max" keeps a part up to that
+// LOD. A "mirror" group is written for +X and also built mirrored. Fine detail (plates, seams,
+// grime, windows) is the material's shader plating, not triangles.
+{
+  "name": "nave pequeña",
+  "kind": "hull",
+  "seed": 1592590336,
+  // finest first: on-screen radius (px) it is drawn from, greeble budget, round-shape detail
+  "lods": [
+    { "min_px": 150.0, "budget": 9000, "segments": 1.0, "min_segments": 8, "greeble": 0.4, "bevel": true, "pipes": true },
+    { "min_px": 40.0, "budget": 1800, "segments": 0.35, "min_segments": 8, "greeble": 0.9 },
+    { "min_px": 1.2, "budget": 300, "segments": 0.14, "min_segments": 5 },
+  ],
+  "greebles": { "dark": "oscuro", "metal": "metal", "dark_below": 0.2, "metal_below": 0.3, "pipe_chance": 0.15, "attempts": 12000 },
+  // emissive parts drawn as sprites from afar: engines (big) and beacons
+  "glows": {
+    "min_emissive": 200,
+    "engine_size": 0.3,
+    "engine": { "scale": 1.3, "intensity": 40.0 },
+    "beacon": { "scale": 1.8, "intensity": 18.0 },
+  },
+  "parts": [
+    // fuselage, nose and tail cone
+    {"cyl": [1.35, 9.0], "at": [0, 2.9, 0], "rot": [90, 0, 0], "mat": "casco", "hull": true},
+    {"cone": [1.35, 0.4, 3.6], "at": [0, 2.9, 6.3], "rot": [90, 0, 0], "mat": "casco"},
+    {"ball": 0.4, "at": [0, 2.9, 8.1], "mat": "grafito", "lod_max": 1},
+    {"cone": [0.95, 1.35, 1.2], "at": [0, 2.9, -5.1], "rot": [90, 0, 0], "mat": "grafito", "hull": true},
+    // livery bands
+    {"cyl": [1.39, 0.5], "at": [0, 2.9, -0.6], "rot": [90, 0, 0], "mat": "naranja", "lod_max": 1},
+    {"cyl": [1.39, 0.18], "at": [0, 2.9, -1.1], "rot": [90, 0, 0], "mat": "grafito", "lod_max": 1},
+    {"cone": [1.39, 1.12, 0.9], "at": [0, 2.9, 4.95], "rot": [90, 0, 0], "mat": "naranja", "lod_max": 1},
+    // canopy
+    {"dome": 1.0, "at": [0, 3.75, 3.4], "mat": "cristal", "lod_max": 1},
+    {"cyl": [1.04, 0.14], "at": [0, 3.75, 3.4], "mat": "grafito", "lod_max": 1},
+    // centre engine
+    {"cone": [0.7, 0.55, 0.7], "at": [0, 2.9, -6.05], "rot": [90, 0, 0], "mat": "oscuro"},
+    {"cyl": [0.56, 0.05], "at": [0, 2.9, -6.42], "rot": [90, 0, 0], "mat": "motor", "lod_max": 1},
+    // tail fin and its beacon
+    {"wedge": [0.22, 2.2, 2.6], "at": [0, 5.3, -3.6], "mat": "casco"},
+    {"wedge": [0.26, 0.5, 0.59], "at": [0, 6.15, -4.6], "mat": "naranja", "lod_max": 1},
+    {"box": [0.2, 0.2, 0.2], "at": [0, 6.5, -4.8], "mat": "blanco", "lod_max": 1},
+    // antenna, nose leg
+    {"cyl": [0.04, 1.3], "at": [0.5, 4.8, 1.2], "mat": "metal", "lod_max": 1},
+    {"cyl": [0.13, 1.6], "at": [0, 0.85, 4.2], "mat": "metal", "lod_max": 1},
+    {"cyl": [0.3, 0.12], "at": [0, 0.06, 4.2], "mat": "oscuro", "lod_max": 1},
+    { "mirror": [
+      // nacelles on pylons: intake, body, bell, flame
+      {"box": [1.3, 0.32, 2.6], "at": [1.4, 2.55, -3.4], "mat": "grafito", "hull": true, "lod_max": 1},
+      {"cyl": [0.72, 4.6], "at": [2.15, 2.45, -3.4], "rot": [90, 0, 0], "mat": "casco2", "hull": true},
+      {"cone": [0.72, 0.5, 0.9], "at": [2.15, 2.45, -0.65], "rot": [90, 0, 0], "mat": "grafito", "lod_max": 1},
+      {"cyl": [0.75, 0.4], "at": [2.15, 2.45, -2.2], "rot": [90, 0, 0], "mat": "naranja", "lod_max": 1},
+      {"cone": [0.66, 0.48, 0.85], "at": [2.15, 2.45, -6.12], "rot": [90, 0, 0], "mat": "oscuro"},
+      {"cyl": [0.56, 0.05], "at": [2.15, 2.45, -6.56], "rot": [90, 0, 0], "mat": "motor", "lod_max": 1},
+      // swept wing with a leading-edge stripe, winglet and nav light
+      {"box": [4.6, 0.18, 2.9], "at": [3.9, 2.25, -2.6], "rot": [0, 25, 6], "mat": "casco2", "hull": true},
+      {"box": [4.4, 0.2, 0.45], "at": [4.4, 2.27, -1.45], "rot": [0, 25, 6], "mat": "naranja", "lod_max": 1},
+      {"box": [0.14, 1.3, 1.5], "at": [5.95, 3.0, -3.75], "rot": [0, 25, -8], "mat": "casco", "lod_max": 1},
+      {"box": [0.18, 0.18, 0.18], "at": [6.05, 3.72, -3.75], "mat": "verde", "mirror_mat": "rojo", "lod_max": 1},
+      // cabin windows (rows of 0.5 m: the window plates line up with them)
+      {"box": [0.12, 0.5, 3.0], "at": [1.29, 3.25, 1.2], "mat": "ventanas", "lod_max": 1},
+      // RCS quads
+      {"box": [0.3, 0.3, 0.3], "at": [1.28, 2.9, 5.0], "mat": "oscuro", "lod_max": 1},
+      {"box": [0.3, 0.3, 0.3], "at": [1.33, 3.4, -4.4], "mat": "oscuro", "lod_max": 1},
+      // rear legs under the nacelles
+      {"cyl": [0.13, 1.7], "at": [2.15, 0.9, -3.6], "mat": "metal", "lod_max": 1},
+      {"cyl": [0.32, 0.12], "at": [2.15, 0.06, -3.6], "mat": "oscuro", "lod_max": 1},
+    ] },
+  ],
+}

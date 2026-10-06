@@ -1,0 +1,308 @@
+// PROCEDIMIENTOS — lo que hace una tripulación para sacarle algo a una nave, y cuánto debería
+// esperar como mucho (crates/ship/src/procedures.rs, docs/TIEMPOS.md). Nada de esto corre en el
+// juego mientras nadie lo pida; la prueba crates/ship/tests/procedimientos.rs hace cada
+// procedimiento en cada nave a la que se aplica, desde la nave fría, y falla si alguno pasa de
+// su presupuesto ("max") o si la nave tiene algo que tarda y que ningún procedimiento ejercita.
+//
+// Un procedimiento se aplica a una nave cuando esa nave tiene todo lo que nombra. Sus pasos:
+//   { "poner": "<mando>", "a": 1 }      el mando a ese valor (número, o cantidad: "100 %")
+//   { "pulsar": "<mando>" }             pulsar y soltar
+//   { "girar": "<mando>", "muescas": 20 }
+//   { "mantener": "<mando>", "eje": 0, "a": -1 }   una palanca con muelle, sujeta
+//   { "espera": "2 s" }   { "hasta": "<condición>", "max": "10 s" }
+// <mando> es su id ("techo/apu") o "senal:<señal>": el mando que escribe esa señal, esté en el
+// panel que esté (o la señal misma si es de los datos: la palanca de un anclaje). Con "*" son
+// todos los que casan ("senal:ct.*": todos los contactores). La tapa que guarde un mando se
+// levanta sola antes de tocarlo. Cada mando cuesta "mano" segundos. Un paso puede llevar "texto"
+// (su línea en una lista de comprobación, en castellano; si no, sale de cómo se llama el mando)
+// y "hecho" (la condición que lo da por hecho en esa lista: hace falta en los pulsadores, que
+// no dejan nada que mirar).
+// "hecho": la condición que dice que ha terminado, en el lenguaje de las lámparas y las señales
+// derivadas. "max": su presupuesto, en segundos desde el primer paso. "tras": lo que se hace
+// antes (con "?": solo si la nave lo tiene). "preparar": de dónde parte, sin contar su tiempo;
+// ahí valen también los pasos del banco de pruebas ("aire": el aire de un compartimento puesto a
+// una presión; "estado": el estado de una máquina puesto tal cual). "mundo": dónde se hace
+// ("altura": en vuelo). "cada": una familia — un procedimiento por cada mando, máquina,
+// articulación... cuyo nombre case con el patrón; {1}, {2} son lo que valió cada "*" (en
+// "modelo:", {1} es la máquina) y {orden:marcha} la señal que manda esa máquina.
+{
+  "mano": "0.3 s",
+
+  // Modelos de máquina que no tienen arranque ni transición propios, y por qué. Todo modelo de
+  // toda nave está aquí o dice cuándo va de camino a algo (Machine::settling): uno nuevo que no
+  // esté en ninguno de los dos sitios hace fallar la prueba.
+  "sin_transitorio": {
+    "luz": "se enciende en 0,1 s",
+    "carga": "consume o no consume",
+    "rejilla": "deja pasar el aire que le llega",
+    "depurador": "retira CO2 mientras tiene corriente y caudal: lo mide 'depurar'",
+    "inyector": "regula mientras falte presión: lo miden 'represurizar' de cada compartimento",
+    "botella": "da gas mientras le quede",
+    "deposito": "da propelente mientras le quede",
+    "deposito_aire": "guarda lo que le meten: lo miden los procedimientos del compresor",
+    "bucle": "masa térmica: su calentamiento lo miden los procedimientos del reactor",
+    "radiador": "irradia según su área: su despliegue es una articulación",
+    "conversor_termico": "da lo que el salto de temperatura permite: lo miden los del reactor",
+    "convertidor": "un tic de retraso",
+    "bateria": "se carga y se descarga sin fin propio: lo mide 'baterias'",
+    "acumulador": "se llena con la unidad hidráulica: lo mide 'hidraulica'",
+    "rcs": "empuja en cuanto se le pide: lo mide 'rcs'",
+    "panel_solar": "da lo que el sol",
+    "generador_o2": "produce mientras tiene corriente",
+    "pasivo": "no hace nada",
+    "arma": "dispara en cuanto se le pide: el giro de un cañón (un cuarto de segundo) es suyo"
+  },
+
+  // Lo que no se mide, nave por nave, y por qué (la prueba lo lista; si lo eximido deja de
+  // existir, falla). "que": procedimientos (con lo que valió su familia), máquinas, articulaciones.
+  "exentos": [
+    { "nave": "cachalote", "que": ["represurizar:bodega", "repres_o2", "repres_n2"],
+      "motivo": "su bodega es de 700 m3: no cabe en sus botellas (540 kg de aire). Se trabaja al vacío" },
+    { "nave": "cachalote", "que": ["compresor_vaciar", "compresor_devolver"],
+      "motivo": "el depósito de aire recuperado (60 kg) se llena con la décima parte de su bodega: allí el compresor es para cabina y puente" },
+    { "nave": "cachalote", "que": ["igualar:bodega"],
+      "motivo": "igualar con su bodega es vaciar la cabina en 700 m3 (queda a 5 kPa): no es una maniobra, es una avería" }
+  ],
+
+  "procedimientos": [
+    // ---------------------------------------------------------------- energía
+    { "id": "apagar", "nombre": "Dejar la nave fría y a oscuras",
+      "pasos": [ { "poner": "senal:ct.*", "a": 0 } ],
+      "hecho": "ordenador.on < 0.5 && energia.consumo < 1", "max": "5 s" },
+    { "id": "energia", "nombre": "Dar energía desde frío (baterías, buses, convertidores)", "tras": ["apagar"],
+      "pasos": [ { "poner": "senal:ct.*", "a": 1 } ],
+      "hecho": "ordenador.on > 0.5", "max": "8 s" },
+    { "id": "apu", "nombre": "Arrancar la APU", "cada": "modelo:generador",
+      "pasos": [ { "poner": "senal:{orden:marcha}", "a": 1 } ],
+      "hecho": "{1}.estado == 2", "max": "12 s" },
+    { "id": "reactor_linea", "nombre": "Reactor: en línea", "cada": "modelo:reactor",
+      "pasos": [ { "poner": "senal:{orden:marcha}", "a": 1 } ],
+      "hecho": "{1}.estado == 2", "max": "20 s" },
+    { "id": "reactor_consumo", "nombre": "Reactor: cubre el consumo de la nave", "cada": "modelo:reactor",
+      "pasos": [ { "poner": "senal:{orden:marcha}", "a": 1 } ],
+      "hecho": "energia.balance > 0", "max": "60 s" },
+    { "id": "reactor_pleno", "nombre": "Reactor: a plena potencia", "cada": "modelo:reactor",
+      "pasos": [ { "poner": "senal:rad.orden", "a": 1 }, { "poner": "senal:{orden:marcha}", "a": 1 }, { "poner": "senal:{orden:potencia}", "a": "100 %" } ],
+      "hecho": "for({1}.n > 0.88 && {1}.limitado < 0.5 && abs(rate(energia.generacion)) < 250, 2 s)", "max": "90 s",
+      "nota": "plena potencia: el núcleo en la banda de su consigna (del 88 % arriba: el último tramo lo sube muy despacio) y la potencia eléctrica ya casi sin subir (menos de 250 W por segundo durante 2 s)" },
+    { "id": "baterias", "nombre": "Cargar las baterías del 50 al 90 % con el reactor a plena potencia", "tras": ["reactor_pleno"],
+      "preparar": [ { "estado": "modelo:bateria", "a": [0.5, 293.15, 0] } ],
+      "hecho": "energia.carga > 0.9", "max": "300 s" },
+
+    { "id": "grupo_energia", "nombre": "Grupo de energía: en línea", "cada": "modelo:reactor_unificado",
+      "pasos": [ { "poner": "senal:{orden:marcha}", "a": 1 } ],
+      "hecho": "{1}.estado == 2", "max": "10 s" },
+    { "id": "grupo_energia_parar", "nombre": "Grupo de energía: parado sin disparo", "cada": "modelo:reactor_unificado", "tras": ["grupo_energia"],
+      "pasos": [ { "poner": "senal:{orden:marcha}", "a": 0 } ],
+      "hecho": "{1}.estado == 0 && {1}.causa == 0", "max": "2 s" },
+
+    // ---------------------------------------------------------------- sensores (docs/COMBATE.md)
+    { "id": "radar_listo", "nombre": "Radar: de apagado a listo", "cada": "modelo:radar",
+      "pasos": [ { "poner": "senal:{orden:encender}", "a": 1 } ],
+      "hecho": "{1}.on > 0.5", "max": "4 s" },
+    { "id": "radar_emite", "nombre": "Radar: radiando", "cada": "modelo:radar", "tras": ["radar_listo"],
+      "pasos": [ { "poner": "senal:{orden:emitir}", "a": 1 } ],
+      "hecho": "{1}.emite > 0.5", "max": "1 s" },
+    { "id": "infrarrojo_listo", "nombre": "Buscador infrarrojo: listo", "cada": "modelo:irst",
+      "pasos": [ { "poner": "senal:{orden:encender}", "a": 0 }, { "espera": "0.5 s" }, { "poner": "senal:{orden:encender}", "a": 1 } ],
+      "hecho": "{1}.on > 0.5", "max": "4 s" },
+    { "id": "alertador_listo", "nombre": "Alertador de radar: listo", "cada": "modelo:alertador",
+      "pasos": [ { "poner": "senal:{orden:encender}", "a": 0 }, { "espera": "0.5 s" }, { "poner": "senal:{orden:encender}", "a": 1 } ],
+      "hecho": "{1}.on > 0.5", "max": "4 s" },
+    { "id": "transpondedor_listo", "nombre": "Transpondedor: listo", "cada": "modelo:transpondedor",
+      "pasos": [ { "poner": "senal:{orden:encender}", "a": 0 }, { "espera": "0.5 s" }, { "poner": "senal:{orden:encender}", "a": 1 } ],
+      "hecho": "{1}.on > 0.5", "max": "4 s" },
+    { "id": "perturbador_listo", "nombre": "Perturbador: radiando", "cada": "modelo:perturbador",
+      "pasos": [ { "poner": "senal:{orden:encender}", "a": 1 } ],
+      "hecho": "{1}.emite > 0.5", "max": "4 s" },
+
+    // ---------------------------------------------------------------- lo que se despliega
+    { "id": "radiadores_fuera", "nombre": "Desplegar los radiadores",
+      "pasos": [ { "poner": "senal:rad.orden", "a": 1 } ],
+      "hecho": "rad_izq.pos > 0.98 && rad_der.pos > 0.98", "max": "8 s" },
+    { "id": "radiadores_dentro", "nombre": "Recoger los radiadores", "tras": ["radiadores_fuera"],
+      "pasos": [ { "poner": "senal:rad.orden", "a": 0 } ],
+      "hecho": "rad_izq.pos < 0.02 && rad_der.pos < 0.02", "max": "8 s" },
+    { "id": "antena_fuera", "nombre": "Sacar el mástil de la antena",
+      "pasos": [ { "poner": "senal:antena.orden", "a": 1 } ],
+      "hecho": "mastil.pos > 0.98", "max": "8 s" },
+    { "id": "antena_dentro", "nombre": "Recoger el mástil de la antena", "tras": ["antena_fuera"],
+      "pasos": [ { "poner": "senal:antena.orden", "a": 0 } ],
+      "hecho": "mastil.pos < 0.02", "max": "8 s" },
+
+    // ---------------------------------------------------------------- hidráulica y tren
+    { "id": "hidraulica", "nombre": "Hidráulica a presión y acumulador cargado, con una bomba", "cada": "modelo:unidad_hidraulica",
+      "pasos": [ { "poner": "senal:{orden:marcha}", "a": 1 } ],
+      "hecho": "{1}.presion > 18 MPa && acumulador.presion > 18 MPa", "max": "8 s",
+      "nota": "la presión está en el colector a los 0,3 s; lo que tarda es cargar el acumulador" },
+    { "id": "tren_arriba", "nombre": "Subir el tren (en vuelo)", "tras": ["hidraulica"], "mundo": { "altura": "50 m" },
+      "pasos": [ { "poner": "senal:tren.orden", "a": 0 } ],
+      "hecho": "tren_izq.pos < 0.02 && tren_der.pos > 0.98 && tren_morro.pos > 0.98 && act_tren_izq.bloqueado && act_tren_der.bloqueado && act_tren_morro.bloqueado", "max": "8 s" },
+    { "id": "tren_abajo", "nombre": "Bajar el tren y tres verdes (en vuelo)", "tras": ["tren_arriba"], "mundo": { "altura": "50 m" },
+      "pasos": [ { "poner": "senal:tren.orden", "a": 1 } ],
+      "hecho": "tren.verde_i && tren.verde_d && tren.verde_m", "max": "8 s" },
+
+    // (un caza: tres patas que se pliegan hacia delante)
+    { "id": "tren_caza_arriba", "nombre": "Subir el tren del caza (en vuelo)", "tras": ["hidraulica"], "mundo": { "altura": "50 m" },
+      "pasos": [ { "poner": "senal:tren.orden", "a": 0 } ],
+      "hecho": "pata_izq.pos < 0.02 && pata_der.pos < 0.02 && pata_morro.pos < 0.02 && act_pata_izq.bloqueado && act_pata_der.bloqueado && act_pata_morro.bloqueado", "max": "8 s" },
+    { "id": "tren_caza_abajo", "nombre": "Bajar el tren del caza y tres verdes (en vuelo)", "tras": ["tren_caza_arriba"], "mundo": { "altura": "50 m" },
+      "pasos": [ { "poner": "senal:tren.orden", "a": 1 } ],
+      "hecho": "tren.verde_i && tren.verde_d && tren.verde_m && pata_izq.pos > 0.98", "max": "8 s" },
+
+    // ---------------------------------------------------------------- lo que mueve un caza
+    { "id": "compuertas_abrir", "nombre": "Abrir las dos compuertas de la bahía (con la nave fría)",
+      "pasos": [ { "pulsar": "sistemas/compuertas", "hecho": "rampa.orden > 0.5" } ],
+      "hecho": "rampa.abierta > 0.98 && visera.abierta > 0.98 && rampa_ext.pos > 0.98 && rampa_ext2.pos > 0.98", "max": "8 s" },
+    { "id": "compuertas_cerrar", "nombre": "Cerrar las dos compuertas de la bahía", "tras": ["compuertas_abrir"],
+      "pasos": [ { "pulsar": "sistemas/compuertas", "hecho": "rampa.orden < 0.5" } ],
+      "hecho": "rampa.cerrada > 0.5 && visera.cerrada > 0.5", "max": "8 s" },
+    { "id": "plataforma_bajar", "nombre": "Bajar la plataforma del asiento",
+      "pasos": [ { "pulsar": "sistemas/plataforma", "hecho": "plataforma.orden > 0.5" } ],
+      "hecho": "plataforma.pos > 0.98", "max": "5 s" },
+    { "id": "plataforma_subir", "nombre": "Subir la plataforma del asiento", "tras": ["plataforma_bajar"],
+      "pasos": [ { "pulsar": "sistemas/plataforma", "hecho": "plataforma.orden < 0.5" } ],
+      "hecho": "plataforma.pos < 0.02", "max": "5 s" },
+    { "id": "tambor_girar", "nombre": "Tambor de paneles: de una cara a la del otro extremo",
+      "pasos": [ { "poner": "senal:tambor.cara", "a": 2 } ],
+      "hecho": "tambor.pos > 0.98", "max": "3 s" },
+    { "id": "tambor_volver", "nombre": "Tambor de paneles: de vuelta", "tras": ["tambor_girar"],
+      "pasos": [ { "poner": "senal:tambor.cara", "a": 0 } ],
+      "hecho": "tambor.pos < 0.02", "max": "3 s" },
+
+    // ---------------------------------------------------------------- rampa y puertas
+    { "id": "rampa_cerrar", "nombre": "Cerrar la rampa",
+      "pasos": [ { "pulsar": "rampa_bodega/rampa", "hecho": "rampa.orden < 0.5" } ],
+      "hecho": "rampa.cerrada > 0.5", "max": "12 s" },
+    { "id": "rampa_abrir", "nombre": "Abrir la rampa", "tras": ["rampa_cerrar"],
+      "pasos": [ { "pulsar": "rampa_bodega/rampa", "hecho": "rampa.orden > 0.5" } ],
+      "hecho": "rampa.abierta > 0.98", "max": "12 s" },
+    { "id": "puerta_abrir", "nombre": "Abrir una puerta ({2}, desde {1})", "cada": "mando:sala_*/abrir_puerta_*", "tras": ["rampa_cerrar?"],
+      "preparar": [ { "aire": "*", "a": "70 kPa" }, { "hasta": "puerta_{2}.dp < 1 kPa", "max": "10 s" } ],
+      "pasos": [ { "pulsar": "sala_{1}/abrir_puerta_{2}", "hecho": "puerta_{2}.orden > 0.5" } ],
+      "hecho": "puerta_{2}.abierta > 0.98", "max": "4 s" },
+    { "id": "puerta_cerrar", "nombre": "Cerrar una puerta ({2}, desde {1})", "cada": "mando:sala_*/abrir_puerta_*", "tras": ["puerta_abrir"],
+      "pasos": [ { "pulsar": "sala_{1}/abrir_puerta_{2}", "hecho": "puerta_{2}.orden < 0.5" } ],
+      "hecho": "puerta_{2}.cerrada > 0.5", "max": "4 s" },
+
+    // ---------------------------------------------------------------- motores y maniobra
+    { "id": "motores", "nombre": "Motor de frío a empuje disponible", "cada": "modelo:motor_cohete",
+      "pasos": [ { "poner": "senal:{orden:armado}", "a": 1 }, { "poner": "senal:{orden:arranque}", "a": 1 },
+                 { "pulsar": "senal:{orden:arranque}", "hecho": "{1}.estado >= 1", "texto": "Arranque del motor: a ARRANQUE y soltar (vuelve a MARCHA)" } ],
+      "hecho": "{1}.estado == 4", "max": "8 s" },
+    { "id": "gondolas_crucero", "nombre": "Góndolas de VTOL a crucero", "cada": "articulacion:gondola_*",
+      "pasos": [ { "poner": "senal:gondolas.orden", "a": 1 } ],
+      "hecho": "gondola_{1}.pos > 0.98", "max": "10 s" },
+    { "id": "gondolas_vtol", "nombre": "Góndolas de crucero a VTOL", "cada": "articulacion:gondola_*", "tras": ["gondolas_crucero"],
+      "pasos": [ { "poner": "senal:gondolas.orden", "a": 0 } ],
+      "hecho": "gondola_{1}.pos < 0.02", "max": "10 s" },
+    { "id": "vector_crucero", "nombre": "Góndolas vectoriales: de arriba a crucero con la palanca", "cada": "articulacion:vector_*",
+      "pasos": [ { "poner": "senal:gondolas.orden", "a": 1 } ],
+      "hecho": "vector_{1}.pos > 0.98", "max": "6 s" },
+    { "id": "vector_freno", "nombre": "Góndolas vectoriales: de crucero a freno (la vuelta entera)", "cada": "articulacion:vector_*", "tras": ["vector_crucero"],
+      "pasos": [ { "poner": "senal:gondolas.orden", "a": 0 } ],
+      "hecho": "vector_{1}.pos < 0.02", "max": "8 s" },
+    { "id": "vector_arriba", "nombre": "Góndolas vectoriales: de freno a arriba", "cada": "articulacion:vector_*", "tras": ["vector_freno"],
+      "pasos": [ { "poner": "senal:gondolas.orden", "a": 0.5 } ],
+      "hecho": "vector_{1}.pos < 0.52 && vector_{1}.pos > 0.48", "max": "6 s" },
+    { "id": "rcs", "nombre": "De a oscuras a maniobra: las toberas responden", "tras": ["apagar"],
+      "pasos": [ { "poner": "senal:ct.*", "a": 1 }, { "poner": "senal:rcs.maestro", "a": 1 }, { "mantener": "senal:vuelo.ty", "eje": 0, "a": -1 } ],
+      "hecho": "rcs_proa_izq_arriba.empuje > 1", "max": "8 s",
+      "nota": "las toberas no tienen calentamiento: lo que se espera es el arranque del ordenador de vuelo (sin él, la palanca no manda)" },
+    { "id": "giroscopos", "nombre": "Giróscopos de parados a su régimen", "cada": "modelo:giroscopo",
+      "preparar": [ { "poner": "senal:{orden:marcha}", "a": 0 }, { "estado": "{1}", "a": [0, 0, 0, 0] } ],
+      "pasos": [ { "poner": "senal:{orden:marcha}", "a": 1 } ],
+      "hecho": "{1}.giro > 0.95", "max": "12 s" },
+
+    // ---------------------------------------------------------------- aire
+    { "id": "ventear", "nombre": "Ventear un compartimento ({1})", "cada": "mando:sala_*/venteo", "tras": ["rampa_cerrar?"],
+      "preparar": [ { "aire": "{1}", "a": "70 kPa" } ],
+      "pasos": [ { "poner": "sala_{1}/venteo", "a": 1 } ],
+      "hecho": "{1}.p < 3 kPa", "max": "20 s" },
+    { "id": "represurizar", "nombre": "Represurizar un compartimento desde el vacío ({1})", "cada": "mando:sala_*/repres", "tras": ["rampa_cerrar?"],
+      "preparar": [ { "aire": "{1}", "a": 0 } ],
+      "pasos": [ { "poner": "sala_{1}/repres", "a": 1 } ],
+      "hecho": "{1}.p > 65 kPa", "max": "40 s" },
+    { "id": "igualar", "nombre": "Igualar dos compartimentos con la válvula de mano ({1})", "cada": "mando:vi_*_a/volante", "tras": ["rampa_cerrar?"],
+      "preparar": [ { "aire": "*", "a": "70 kPa" }, { "aire": "{1}", "a": 0 } ],
+      "pasos": [ { "poner": "vi_{1}_a/volante", "a": "100 %" } ],
+      "hecho": "vi_{1}.dp < 5 kPa", "max": "20 s" },
+    { "id": "compresor_vaciar", "nombre": "Compresor: vaciar la bodega al depósito", "tras": ["rampa_cerrar"],
+      "preparar": [ { "aire": "bodega", "a": "70 kPa" } ],
+      "pasos": [ { "poner": "panel_compresor_aire/origen", "a": 1 }, { "poner": "panel_compresor_aire/destino", "a": 0 }, { "poner": "panel_compresor_aire/marcha", "a": 1 } ],
+      "hecho": "compresor_aire.estado == 3", "max": "120 s" },
+    { "id": "compresor_devolver", "nombre": "Compresor: devolver el aire del depósito a la bodega", "tras": ["compresor_vaciar"],
+      "pasos": [ { "poner": "panel_compresor_aire/marcha", "a": 0 }, { "poner": "panel_compresor_aire/origen", "a": 0 }, { "poner": "panel_compresor_aire/destino", "a": 1 }, { "poner": "panel_compresor_aire/marcha", "a": 1 } ],
+      "hecho": "compresor_aire.estado == 3", "max": "45 s" },
+    { "id": "compresor_prisa", "nombre": "Compresor: de la bodega a la cabina (con prisa)", "tras": ["rampa_cerrar"],
+      "preparar": [ { "aire": "bodega", "a": "70 kPa" } ],
+      "pasos": [ { "poner": "panel_compresor_aire/origen", "a": 1 }, { "poner": "panel_compresor_aire/destino", "a": 2 }, { "poner": "panel_compresor_aire/marcha", "a": 1 } ],
+      "hecho": "compresor_aire.estado == 4", "max": "45 s" },
+    { "id": "compresor_puente", "nombre": "Compresor: vaciar el puente al depósito",
+      "pasos": [ { "poner": "senal:aire.vent", "a": 0 }, { "poner": "panel_compresor_aire/origen", "a": 3 }, { "poner": "panel_compresor_aire/destino", "a": 0 }, { "poner": "panel_compresor_aire/marcha", "a": 1 } ],
+      "hecho": "compresor_aire.estado == 3", "max": "45 s" },
+    { "id": "depurar", "nombre": "Depurador: de CO2 ALTO (1,5 kPa) a aviso apagado (1 kPa) en la cabina",
+      "preparar": [ { "aire": "cabina", "a": "70 kPa", "co2": "1.5 kPa" } ],
+      "pasos": [ { "poner": "senal:aire.vent", "a": 1 }, { "poner": "senal:aire.depurador", "a": 1 } ],
+      "hecho": "cabina.co2 < 1 kPa", "max": "100 s" },
+
+    // ---------------------------------------------------------------- carga
+    { "id": "grua_puente", "nombre": "Grúa: el puente de punta a punta",
+      "pasos": [ { "poner": "grua/puente", "a": 1 } ],
+      "hecho": "grua_puente.pos > 0.98", "max": "12 s" },
+    { "id": "grua_carro", "nombre": "Grúa: el carro de banda a banda",
+      "preparar": [ { "poner": "grua/carro", "a": 0 }, { "hasta": "grua_carro.pos < 0.02", "max": "60 s" } ],
+      "pasos": [ { "poner": "grua/carro", "a": 1 } ],
+      "hecho": "grua_carro.pos > 0.98", "max": "12 s" },
+    { "id": "grua_izado", "nombre": "Grúa: el izado de arriba abajo",
+      "pasos": [ { "poner": "grua/gancho", "a": 1 } ],
+      "hecho": "grua_gancho.pos > 0.98", "max": "8 s" },
+    { "id": "iman", "nombre": "Imán: agarrar, soltar y listo para agarrar otra vez", "cada": "modelo:electroiman",
+      "pasos": [ { "poner": "senal:{orden:agarrar}", "a": 1 }, { "hasta": "{1}.activo > 0.5", "max": "10 s", "texto": "Esperar a que agarre" },
+                 { "poner": "senal:{orden:agarrar}", "a": 0 }, { "hasta": "{1}.activo < 0.5", "max": "10 s", "texto": "Esperar a que suelte" }, { "poner": "senal:{orden:agarrar}", "a": 1 } ],
+      "hecho": "{1}.activo > 0.5 && {1}.listo > 0.5", "max": "6 s" },
+    { "id": "anclaje", "nombre": "Soltar un anclaje de carga", "cada": "anclaje:*",
+      "pasos": [ { "poner": "senal:{1}.soltar", "a": 1 } ],
+      "hecho": "{1}.sujeta < 0.5", "max": "2 s" },
+
+    // ---------------------------------------------------------------- de frío a listo para despegar
+    { "id": "listo_despegar", "nombre": "De fría y a oscuras a lista para despegar, siguiendo el manual", "tras": ["apagar"],
+      "pasos": [
+        { "poner": "senal:ct.*", "a": 1 },
+        { "hasta": "ordenador.on > 0.5", "max": "20 s", "texto": "Esperar al ordenador de vuelo" },
+        { "poner": "senal:rx.marcha", "a": 1 },
+        { "poner": "senal:rad.orden", "a": 1 },
+        { "poner": "senal:hid.a", "a": 1 },
+        { "pulsar": "rampa_bodega/rampa", "hecho": "rampa.orden < 0.5", "texto": "Rampa: pulsar (cerrar)" },
+        { "hasta": "reactor.estado == 2 && rampa.cerrada > 0.5 && hid.colector > 18 MPa", "max": "600 s", "texto": "Esperar: reactor EN LÍNEA, rampa cerrada y trabada, hidráulica a presión" },
+        { "poner": "senal:motor_izq.armado", "a": 1 }, { "poner": "senal:motor_der.armado", "a": 1 },
+        { "poner": "senal:motor_izq.arranque", "a": 1 }, { "poner": "senal:motor_der.arranque", "a": 1 },
+        { "pulsar": "senal:motor_izq.arranque", "hecho": "gondola_izq.estado >= 1", "texto": "MOT IZQ: a ARRANQUE y soltar" },
+        { "pulsar": "senal:motor_der.arranque", "hecho": "gondola_der.estado >= 1", "texto": "MOT DER: a ARRANQUE y soltar" }
+      ],
+      "hecho": "gondola_izq.estado == 4 && gondola_der.estado == 4 && reactor.estado == 2 && rampa.cerrada > 0.5 && hid.colector > 18 MPa && ordenador.on > 0.5", "max": "60 s" },
+    { "id": "listo_caza", "nombre": "De frío y a oscuras a listo para despegar (caza)", "tras": ["apagar"],
+      "pasos": [
+        { "poner": "senal:ct.*", "a": 1 },
+        { "poner": "senal:pv.prop", "a": 1 },
+        { "poner": "senal:rx.marcha", "a": 1 },
+        { "poner": "senal:hid.marcha", "a": 1 },
+        { "poner": "senal:radar.encender", "a": 1 },
+        { "hasta": "ordenador.on > 0.5", "max": "20 s", "texto": "Esperar al ordenador" },
+        { "poner": "senal:motores.armado", "a": 1 },
+        { "poner": "senal:motores.arranque", "a": 1 },
+        { "pulsar": "senal:motores.arranque", "hecho": "gondola_izq.estado >= 1", "texto": "MOTORES: a ARRANQUE y soltar" }
+      ],
+      "hecho": "gondola_izq.estado == 4 && gondola_der.estado == 4 && reactor.estado == 2 && giroscopo.giro > 0.95 && ordenador.on > 0.5 && radar.on > 0.5 && hid.colector > 18 MPa && acumulador.presion > 18 MPa", "max": "20 s" },
+    { "id": "listo_remolcador", "nombre": "De frío y a oscuras a listo para despegar (un solo bus)", "tras": ["apagar"],
+      "pasos": [
+        { "poner": "senal:ct.*", "a": 1 },
+        { "poner": "senal:pv.prop", "a": 1 },
+        { "hasta": "ordenador.on > 0.5", "max": "20 s", "texto": "Esperar al ordenador de vuelo" },
+        { "poner": "senal:motores.armado", "a": 1 },
+        { "poner": "senal:motores.arranque", "a": 1 },
+        { "pulsar": "senal:motores.arranque", "hecho": "motor_proa_izq.estado >= 1", "texto": "MOTORES: a ARRANQUE y soltar" }
+      ],
+      "hecho": "motor_proa_izq.estado == 4 && motor_proa_der.estado == 4 && motor_popa_izq.estado == 4 && motor_popa_der.estado == 4 && giroscopo.giro > 0.95 && ordenador.on > 0.5", "max": "20 s" }
+  ]
+}

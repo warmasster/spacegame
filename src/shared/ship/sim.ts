@@ -23,19 +23,14 @@ const SUN_DIR = sunDirection(SUN.az, SUN.el);
 
 /** Every ship the game knows, by id (ships/index.ts). */
 export { SHIP_DEFS } from './ships/index.js';
+import type { WeaponMounts } from './modules/weapons.js';
 
 /** A panel below this integrity is a hole (damage below it blows the panel out completely). */
 export const SOLID_HP = 30;
 /** HP per second one astronaut restores with the repair tool. */
 export const REPAIR_RATE = 22;
-export const BLAST = { radius: 2.8, damage: 75 };
-/** Crew-scale radius of a rocket blast (m): other explosions scale the ship blast by radius / this. */
-export const CREW_BLAST_RADIUS = 6;
-
-/** Ship-scale blast of an explosion given in crew scale (rocket = 6 m, 75 dmg). Same on server and offline. */
-export function shipBlast(radius = CREW_BLAST_RADIUS, damage = BLAST.damage) {
-  return { radius: BLAST.radius * Math.max(1, radius / CREW_BLAST_RADIUS), damage };
-}
+import { BLAST } from './blast.js';
+export { BLAST, CREW_BLAST_RADIUS, shipBlast } from './blast.js';
 /** Max distances (m) from the astronaut's eye to act on a control / repair a panel. */
 export const REACH = { control: 2.4, repair: 3.2 };
 export { DOOR_DP } from './modules/life.js';
@@ -152,6 +147,11 @@ export class ShipSim {
       }
     }
     this.rampAngle = a;
+  }
+
+  /** Its weapon mounts, if it has any (modules/weapons.ts). */
+  get mounts(): WeaponMounts | undefined {
+    return this.sys.use<WeaponMounts>('mounts');
   }
 
   snapshot(): ShipSnapshot {
@@ -297,6 +297,7 @@ export class ShipSim {
   interact(index: number, dir = 0): { changed: Record<string, number> } | { reason: string } {
     const c = this.def.controls[index];
     if (!c) return { reason: 'Mando desconocido' };
+    if (c.command) return { reason: 'Mando del puesto: úsalo desde su asiento' };
     const reason = this.blocked(c, dir);
     if (reason) return { reason };
     const cur = this.sw[c.key] ?? 0;

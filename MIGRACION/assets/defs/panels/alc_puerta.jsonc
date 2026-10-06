@@ -1,0 +1,13 @@
+// Door panel (one on each side of every inner door): the button toggles its door.
+{
+  "name": "Puerta",
+  "tamano": ["0.22 m", "0.28 m"],
+  "rejilla": [1, 2],
+  "margen": "8 mm",
+  "separacion": "4 mm",
+  "mandos": [
+    { "id": "abrir", "kind": "pulsador", "rotulo": "PUERTA", "modo": "momentaneo", "color": "verde", "luz": "$puerta.pos > 0.05", "tamano": [32, 32],
+      "bind": { "senal": "$aqui.boton" }, "nombre": "Puerta", "ayuda": "Abre o cierra la puerta. No abre con más de 5 kPa de diferencia." },
+    { "id": "dp", "kind": "display7", "senal": "$puerta.dp", "unidad": "kPa", "decimales": 1, "digitos": 4, "rotulo": "ΔP", "requiere": { "energia": "1 W" } }
+  ]
+}

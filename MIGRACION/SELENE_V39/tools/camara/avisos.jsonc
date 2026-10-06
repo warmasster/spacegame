@@ -1,0 +1,22 @@
+// The Alcotán's annunciator (every cell lettered at one size, in one or two short lines) and the
+// glow round what the hand is aimed at. Run: luna --guion tools/camara/avisos.jsonc → out/camara/avisos_*.png
+{
+  "registro": "out/camara/avisos.log",
+  "pasos": [
+    { "nave": "alcotan" },
+    { "esperar": 3.0 },
+    { "camara": { "panel": "principal", "distancia": 0.55, "fov": 60 } },
+    { "foto": "out/camara/avisos_reposo.png" },
+    // a pump asked for with its breaker open: low pressure is a fault now
+    { "senal": { "nombre": "hid.a", "valor": 1 } },
+    { "pulsar": "disyuntores/hid_a" },
+    { "esperar": 3.0 },
+    { "foto": "out/camara/avisos_hidraulica.png" },
+    { "apuntar": "principal/alarma_general" },
+    { "camara": { "mando": "principal/alarma_general", "distancia": 0.3, "fov": 50 } },
+    { "foto": "out/camara/avisos_apuntado.png" },
+    { "apuntar": "pedestal/tapa_arm_izq" },
+    { "camara": { "panel": "pedestal", "distancia": 0.45, "fov": 60 } },
+    { "foto": "out/camara/avisos_apuntado_pedestal.png" }
+  ]
+}

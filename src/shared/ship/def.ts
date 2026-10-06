@@ -25,6 +25,7 @@ import {
   type V3,
 } from './geom.js';
 import { AP_MODES } from './flight/autopilot.js';
+import type { MountPlacement } from '../items/mounts.js';
 
 /** hull = outer skin (wall/roof), glass = window, floor = deck plate, bulkhead = interior wall. */
 export type PanelKind = 'hull' | 'glass' | 'floor' | 'bulkhead';
@@ -93,6 +94,8 @@ export interface ControlDef extends Frame {
   id: string;
   key: string;
   action: ControlAction;
+  /** Client station command. The adapter handles it; it is never a shared power switch. */
+  command?: import('../screens.js').ConsoleCommand;
   /** Value written by `set` controls (MFD page buttons). */
   value?: number;
   kind: ControlKind;
@@ -357,9 +360,14 @@ export type ScreenPage = string;
 /** Multi-function display: `pages` selectable with its bezel buttons (switch key = `id`). */
 export interface ScreenDef extends Frame {
   id: string;
+  console?: string;
   w: number;
   h: number;
   pages: ScreenPage[];
+  /** Live camera display, handled by the reusable PiP renderer rather than canvas MFD pages. */
+  camera?: import('../screens.js').CameraDisplayDef;
+  /** Ship adapter activation: a player must occupy this seat for the screen to turn on. */
+  seat?: string;
   host: number;
   hostPart: number;
   /** Circuit that powers it. */
@@ -484,7 +492,20 @@ export interface SeatDef {
   root: V3;
   yaw: number;
   exit: V3;
+  /** Weapon mounts the one sitting here aims and fires (ids in `ShipDef.mounts`): a gunner's seat. */
+  mounts?: string[];
 }
+
+/**
+ * A weapon mount on the ship (shared/items/mounts.ts): its placement, and the machine it rides on
+ * (`part`: its power switch, circuit and integrity are the mount's). `at` defaults to the top of the
+ * part's box, `up` to +Y, `fwd` to the nose (−Z).
+ */
+export interface ShipMountDef extends MountPlacement {
+  part: string;
+}
+
+export type ShipMountSpec = Omit<ShipMountDef, 'at' | 'up' | 'fwd'> & Partial<Pick<ShipMountDef, 'at' | 'up' | 'fwd'>>;
 
 /** A box in seat space (x right, y up, z toward the backrest), for colliders and picking. */
 export interface SeatBox {
@@ -592,6 +613,8 @@ export interface ShipDef {
   gear?: { key: string; legs: V3[] };
   zones: ZoneDef[];
   seats: SeatDef[];
+  /** Weapon mounts (turrets, fixed guns): see ShipMountDef. */
+  mounts: ShipMountDef[];
   cargo: CargoDef[];
   extLights: ExtLightDef[];
   subsystems: SubsystemDef[];
@@ -1303,6 +1326,7 @@ export interface ControlSpec {
   at: V2;
   requires?: SubsystemId;
   action?: ControlAction;
+  command?: import('../screens.js').ConsoleCommand;
   value?: number;
   /** Flip cover over the control (a separate clickable cover is generated). */
   guard?: string;
@@ -1329,7 +1353,7 @@ export interface ConsoleSpec {
   /** One face of a rotating drum (see DrumFace): every face gives the same frame and size. */
   drum?: DrumFace;
   controls: ControlSpec[];
-  screens?: Array<{ id: string; pages: ScreenPage[]; at: V2; w: number; h: number; circuit?: SubsystemId }>;
+  screens?: Array<{ id: string; pages?: ScreenPage[]; camera?: import('../screens.js').CameraDisplayDef; seat?: string; at: V2; w: number; h: number; circuit?: SubsystemId }>;
   indicators?: Array<{ kind: IndicatorKind; at: V2; ref?: string }>;
 }
 
@@ -1418,6 +1442,7 @@ export function buildConsoles(specs: ConsoleSpec[], panels: PanelDef[], parts: A
         id,
         key: c.key,
         action: c.action ?? 'toggle',
+        command: c.command,
         value: c.value,
         kind: c.kind,
         label: c.label,
@@ -1435,13 +1460,13 @@ export function buildConsoles(specs: ConsoleSpec[], panels: PanelDef[], parts: A
       });
     };
     for (const s of spec.screens ?? []) {
-      screens.push({ ...onConsole(f, s.at[0], s.at[1], 0.004), id: s.id, w: s.w, h: s.h, pages: s.pages, host, hostPart, circuit: s.circuit ?? 'avionics' });
+      screens.push({ ...onConsole(f, s.at[0], s.at[1], 0.004), id: s.id, console: spec.id, w: s.w, h: s.h, pages: s.pages ?? [], camera: s.camera, seat: s.seat, host, hostPart, circuit: s.circuit ?? 'avionics' });
       // bezel buttons under the display select its page
-      s.pages.forEach((pg, i) => {
-        const x = s.at[0] - s.w / 2 + ((i + 0.5) * s.w) / s.pages.length;
+      s.pages?.forEach((pg, i) => {
+        const x = s.at[0] - s.w / 2 + ((i + 0.5) * s.w) / s.pages!.length;
         const label = pageLabel(pg);
         const help = SCREEN_PAGES[pg]?.help;
-        add({ key: s.id, kind: 'bezel', label, name: `Pantalla · ${label}`, help: `Muestra la página ${label}${help ? `: ${help}` : ''}.`, states: s.pages.map(pageLabel), at: [x, s.at[1] - s.h / 2 - 0.028], action: 'set', value: i });
+        add({ key: s.id, kind: 'bezel', label, name: `Pantalla · ${label}`, help: `Muestra la página ${label}${help ? `: ${help}` : ''}.`, states: s.pages!.map(pageLabel), at: [x, s.at[1] - s.h / 2 - 0.028], action: 'set', value: i });
       });
     }
     for (const c of spec.controls) {
@@ -1544,7 +1569,8 @@ export function rampSensor(r: RampDef): { min: V3; max: V3 } {
 
 /** What a ship file has to give; everything else defaults to "none". */
 export type ShipSpec = Pick<ShipDef, 'id' | 'name' | 'registry' | 'floorHeight' | 'panels' | 'modules' | 'bounds'> &
-  Partial<Omit<ShipDef, 'id' | 'name' | 'registry' | 'floorHeight' | 'panels' | 'modules' | 'bounds' | 'lighting' | 'livery'>> & {
+  Partial<Omit<ShipDef, 'id' | 'name' | 'registry' | 'floorHeight' | 'panels' | 'modules' | 'bounds' | 'lighting' | 'livery' | 'mounts'>> & {
+    mounts?: ShipMountSpec[];
     lighting?: Partial<LightingDef>;
     livery?: Partial<LiveryDef>;
   };
@@ -1593,7 +1619,9 @@ export function finishShip(spec: ShipSpec): ShipDef {
     lighting: { ...DEFAULT_LIGHTING, ...lightingCircuits(spec.subsystems ?? []), ...(spec.lighting ?? {}) },
     livery: { ...DEFAULT_LIVERY, ...(spec.livery ?? {}) },
     defaults: { ...(spec.defaults ?? {}) },
+    mounts: [],
   };
+  def.mounts = (spec.mounts ?? []).map((m) => placeMount(def, m));
   routeConduits(def.panels, def.subsystems);
   def.openings = def.openings.map((o) => placeOpening(def, o));
   for (const c of def.subsystems) {
@@ -1675,9 +1703,17 @@ export function checkShip(def: ShipDef): string[] {
   dup(def.subsystems.map((c) => c.id), 'circuito');
   dup(def.compartments.map((c) => c.id), 'compartimento');
   dup(def.movers.map((m) => m.key), 'mecanismo');
+  dup(def.screens.map((s) => s.id), 'pantalla');
+  dup(def.seats.map((s) => s.id), 'asiento');
   for (const c of def.controls) circuit(c.requires, `mando ${c.id}`);
   for (const s of def.screens) {
     circuit(s.circuit, `pantalla ${s.id}`);
+    if (!s.camera && !s.pages.length) out.push(`pantalla ${s.id}: faltan páginas o una cámara`);
+    if (s.camera && (!s.camera.source.kind || !s.camera.source.ref)) out.push(`pantalla ${s.id}: fuente de cámara incompleta`);
+    if (s.camera && s.pages.length) out.push(`pantalla ${s.id}: una cámara no lleva páginas MFD`);
+    if (s.camera?.zoom && (!s.camera.zoom.length || s.camera.zoom[0] !== 1 || s.camera.zoom.some((z, i, all) => !Number.isFinite(z) || z < 1 || z > 8 || (i > 0 && z <= all[i - 1])))) out.push(`pantalla ${s.id}: aumentos inválidos (1..8, ascendentes, empezando por 1)`);
+    if (s.console && !def.consoles.some(c => c.id === s.console)) out.push(`pantalla ${s.id}: consola "${s.console}" desconocida`);
+    if (s.seat && !def.seats.some(seat => seat.id === s.seat)) out.push(`pantalla ${s.id}: el asiento "${s.seat}" no existe`);
     for (const pg of s.pages) if (!SCREEN_PAGES[pg]) out.push(`pantalla ${s.id}: página "${pg}" no registrada en SCREEN_PAGES`);
   }
   for (const l of def.loads) {
@@ -1739,6 +1775,14 @@ export function checkShip(def: ShipDef): string[] {
     if (!def.movers.some((m) => m.key === p.gimbal!.key) && !def.controls.some((c) => c.key === p.gimbal!.key)) out.push(`máquina ${p.id}: la góndola la mueve "${p.gimbal.key}", que ni es mecanismo ni mando`);
   }
   for (const s of def.seats) if (!zoneAtPoint(def.zones, [s.root[0], s.root[1] + 1, s.root[2]])) out.push(`asiento ${s.id}: fuera de cualquier zona`);
+  const mountIds = new Set<string>();
+  for (const m of def.mounts) {
+    if (mountIds.has(m.id)) out.push(`montaje ${m.id}: repetido`);
+    mountIds.add(m.id);
+    if (!def.parts.some((p) => p.id === m.part)) out.push(`montaje ${m.id}: la máquina "${m.part}" no existe`);
+    if (Math.abs(dot(m.up, m.fwd)) > 1e-3) out.push(`montaje ${m.id}: 'up' y 'fwd' tienen que ser perpendiculares`);
+  }
+  for (const s of def.seats) for (const m of s.mounts ?? []) if (!mountIds.has(m)) out.push(`asiento ${s.id}: el montaje "${m}" no existe`);
   for (let i = 1; i < def.decks.length; i++) if (def.decks[i].y <= def.decks[i - 1].y) out.push(`cubierta ${def.decks[i].id}: las cubiertas van de abajo arriba`);
   for (const h of def.hatches) {
     if (!movers.has(h.key)) out.push(`escotilla ${h.key}: no hay mecanismo con esa tecla`);
@@ -1748,6 +1792,20 @@ export function checkShip(def: ShipDef): string[] {
   // a plate with a compartment across it (bulkhead, deck between decks) must name a real one
   if (comps.size) for (const p of def.panels) if (p.other !== undefined && !comps.has(p.other)) out.push(`panel ${p.id}: al otro lado "${p.other}", que no es un compartimento`);
   return out;
+}
+
+/** A mount's placement filled in from the machine it rides on (see ShipMountDef). */
+function placeMount(def: ShipDef, m: ShipMountSpec): ShipMountDef {
+  const part = def.parts.find((p) => p.id === m.part);
+  const up = norm(m.up ?? [0, 1, 0]);
+  const at: V3 = m.at ?? (part ? [part.c[0] + up[0] * part.half[1], part.c[1] + up[1] * part.half[1], part.c[2] + up[2] * part.half[1]] : [0, 0, 0]);
+  return { ...m, at, up, fwd: norm(m.fwd ?? [0, 0, -1]) };
+}
+
+/** The seat whose pan is under a ship-space point (feet), if any (same reach as the umbilical's). */
+export function seatAt(def: ShipDef, feet: readonly number[]): SeatDef | null {
+  for (const s of def.seats) if (Math.hypot(feet[0] - s.root[0], feet[2] - s.root[2]) < 0.4 && Math.abs(feet[1] - s.root[1]) < 1) return s;
+  return null;
 }
 
 /**

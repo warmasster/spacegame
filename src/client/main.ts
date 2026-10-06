@@ -1,5 +1,6 @@
 import { Game } from './game';
 import { sfx } from './audio/engine';
+import { gpuInfo, suggestedQuality } from './render/gpuTier';
 
 const canvas = document.getElementById('view') as HTMLCanvasElement;
 const ui = document.getElementById('ui') as HTMLDivElement;
@@ -67,30 +68,55 @@ pause.innerHTML = `<div class="sc-pause">
   <small>EVA EN PAUSA · CONTROL LOCAL</small>
   <button type="button" class="sc-cta" id="resume"><span>REANUDAR</span><b>▸</b></button>
   <button type="button" class="sc-ghost" id="leave">ABANDONAR EVA</button>
-  <label class="sc-audio">VOLUMEN <input type="range" id="volume" min="0" max="100" step="1" /></label>
-  <label class="sc-audio">SONIDO EN EL VACÍO
+  <small class="sc-sub">SONIDO</small>
+  <label class="sc-audio">VOLUMEN <output id="volume-v"></output>
+    <input type="range" id="volume" min="0" max="100" step="1" />
+  </label>
+  <label class="sc-audio">EN EL VACÍO
     <select id="vacuum">
-      <option value="physical">FÍSICO · solo lo que llega por aire, casco, suelo o traje</option>
-      <option value="muffled">AMORTIGUADO · todo se oye, apagado</option>
+      <option value="physical">FÍSICO</option>
+      <option value="muffled">AMORTIGUADO</option>
     </select>
   </label>
+  <p class="sc-hint" id="vacuum-help"></p>
   <p>WASD moverse · Espacio saltar/jetpack · Clic disparar/soldar · E accionar/sentarse · 1/2 herramienta · rueda selector/zoom · M manual · V cámara · L luces · H ayuda</p>
 </div>`;
 ui.appendChild(pause);
 
 // sound settings (kept in the browser by the audio engine)
 const volume = pause.querySelector('#volume') as HTMLInputElement;
+const volumeV = pause.querySelector('#volume-v') as HTMLOutputElement;
 const vacuum = pause.querySelector('#vacuum') as HTMLSelectElement;
+const vacuumHelp = pause.querySelector('#vacuum-help') as HTMLParagraphElement;
+const VACUUM_HELP: Record<string, string> = {
+  physical: 'Sin aire no viaja el sonido: fuera solo oyes lo que te llega por el suelo, la estructura que pisas o tu propio traje.',
+  muffled: 'Todo se oye aunque no haya aire, como un retumbo apagado.',
+};
+const showAudio = () => {
+  volumeV.textContent = `${volume.value} %`;
+  vacuumHelp.textContent = VACUUM_HELP[vacuum.value] ?? '';
+};
 volume.value = String(Math.round(sfx.volume * 100));
 vacuum.value = sfx.mode;
-volume.addEventListener('input', () => sfx.setVolume(Number(volume.value) / 100));
-vacuum.addEventListener('change', () => sfx.setMode(vacuum.value === 'muffled' ? 'muffled' : 'physical'));
+showAudio();
+volume.addEventListener('input', () => {
+  sfx.setVolume(Number(volume.value) / 100);
+  showAudio();
+});
+vacuum.addEventListener('change', () => {
+  sfx.setMode(vacuum.value === 'muffled' ? 'muffled' : 'physical');
+  showAudio();
+});
 
 const nameInput = menu.querySelector('#name') as HTMLInputElement;
 const quality = menu.querySelector('#quality') as HTMLSelectElement;
 const status = menu.querySelector('#status') as HTMLParagraphElement;
 nameInput.value = localStorageGet('selene.name') ?? '';
-quality.value = localStorageGet('selene.quality') ?? (isLikelyLowEnd() ? 'low' : 'high');
+// the profile follows the machine's graphics (render/gpuTier.ts) unless the player picked one
+const gpu = gpuInfo();
+quality.value = localStorageGet('selene.qualityPicked') === '1' ? (localStorageGet('selene.quality') ?? suggestedQuality(gpu)) : suggestedQuality(gpu);
+quality.title = `Gráfica: ${gpu.renderer || 'desconocida'}${gpu.integrated ? ' (integrada)' : gpu.software ? ' (por software)' : ''}`;
+quality.addEventListener('change', () => localStorageSet('selene.qualityPicked', '1'));
 
 let game: Game | null = null;
 
@@ -165,6 +191,4 @@ function localStorageSet(k: string, v: string) {
     /* private mode */
   }
 }
-function isLikelyLowEnd() {
-  return (navigator.hardwareConcurrency ?? 8) <= 4;
-}
+

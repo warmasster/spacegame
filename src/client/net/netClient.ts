@@ -2,6 +2,8 @@ import {
   PROTOCOL_VERSION,
   type ClientMessage,
   type CrateWire,
+  type EntityKind,
+  type EntityWire,
   type PlayerInfo,
   type PlayerState,
   type PoseWire,
@@ -17,10 +19,11 @@ export type Welcome = Extract<ServerMessage, { type: 'welcome' }>;
 export interface NetEvents {
   join(p: PlayerInfo): void;
   leave(id: number): void;
-  state(id: number, serverTime: number, s: PlayerState): void;
+  /** Another astronaut's state; `t`: the time of its owner's step (ms, server clock). */
+  state(id: number, t: number, s: PlayerState): void;
   disconnect(reason: string): void;
-  /** A shot of weapon `w`; `fr`: fired aboard that ship (`o`, `d`, `v` in its space). */
-  fire(id: number, w: string, o: Vec3, d: Vec3, v?: Vec3, fr?: number): void;
+  /** A shot of weapon `w`; `fr`: fired aboard that ship (`o`, `d`, `v` in its space); `t`: when it left (ms, server clock). */
+  fire(id: number, w: string, o: Vec3, d: Vec3, v?: Vec3, fr?: number, m?: number, t?: number): void;
   /** `aboard`: it happened in or against that ship, at `l` in its space; `k`: the projectile kind (none: a ship's own blast). */
   explode(id: number, p: Vec3, mod?: TerrainMod, aboard?: { fr: number; l: Vec3 }, k?: string): void;
   health(id: number, hp: number, by?: number, dead?: boolean): void;
@@ -32,7 +35,15 @@ export interface NetEvents {
   shipSync(snap: ShipSnapshot): void;
   shipPose(ship: number, t: number, pose: PoseWire): void;
   pilot(ship: number, id: number): void;
+  /** A ship jumped to another system (shared/space/jump.ts): it is at `p` now, at rest. */
+  jump(ship: number, to: number, p: Vec3): void;
   crate(c: CrateWire, rest: boolean): void;
+  /** Things that came into our interest (docs/RED.md). */
+  spawn(e: EntityWire[]): void;
+  /** Things we can forget (out of interest, or gone from the world). */
+  gone(k: EntityKind, ids: number[]): void;
+  /** States of the world's people we know (docs/MUNDO.md §11). */
+  npcs(states: Array<{ id: number; t: number; s: PlayerState }>): void;
   say(ship: number, text: string): void;
   vitals(o2: number, cabin: boolean): void;
 }
@@ -103,7 +114,7 @@ export class NetClient {
             for (const st of msg.states) if (st.id !== this.selfId) this.events.state(st.id, st.t, st.s);
             break;
           case 'fire':
-            this.events.fire(msg.id, msg.w, msg.o, msg.d, msg.v, msg.fr);
+            this.events.fire(msg.id, msg.w, msg.o, msg.d, msg.v, msg.fr, msg.m, msg.t);
             break;
           case 'explode':
             this.events.explode(msg.id, msg.p, msg.mod, msg.fr !== undefined && msg.l ? { fr: msg.fr, l: msg.l } : undefined, msg.k);
@@ -132,8 +143,20 @@ export class NetClient {
           case 'pilot':
             this.events.pilot(msg.ship, msg.id);
             break;
+          case 'jump':
+            this.events.jump(msg.ship, msg.to, msg.p);
+            break;
           case 'crate':
             this.events.crate(msg.c, msg.rest === true);
+            break;
+          case 'spawn':
+            this.events.spawn(msg.e);
+            break;
+          case 'gone':
+            this.events.gone(msg.k, msg.ids);
+            break;
+          case 'npcs':
+            this.events.npcs(msg.states);
             break;
           case 'say':
             this.events.say(msg.ship, msg.text);
@@ -162,12 +185,19 @@ export class NetClient {
     return performance.now() + this.clockOffset;
   }
 
-  sendState(s: PlayerState) {
-    this.send({ type: 'state', s });
+  /** Our state, stamped with the time of the step it belongs to (`t`: our step clock, ms). */
+  sendState(s: PlayerState, t: number) {
+    this.send({ type: 'state', t, s });
   }
 
-  sendFire(w: string, o: Vec3, d: Vec3, v?: Vec3, fr?: number) {
-    this.send({ type: 'fire', w, o, d, v, fr });
+  /** `m`: fired by that weapon mount of the ship `fr`; `t`: the time of the step it left the muzzle. */
+  sendFire(w: string, o: Vec3, d: Vec3, v?: Vec3, fr?: number, m?: number, t?: number) {
+    this.send({ type: 'fire', w, o, d, v, fr, m, t });
+  }
+
+  /** The gunner's aim for mount `m` of a ship (head angles). */
+  sendAim(ship: number, m: number, y: number, p: number) {
+    this.send({ type: 'aim', ship, m, y, p });
   }
 
   sendHit(k: string, p: Vec3, fr?: number) {
@@ -189,6 +219,11 @@ export class NetClient {
   /** Take (on) or leave the helm. */
   sendPilot(ship: number, on: boolean) {
     this.send({ type: 'pilot', ship, on });
+  }
+
+  /** Ask for a jump of the ship we pilot to region `to`. */
+  sendJump(ship: number, to: number) {
+    this.send({ type: 'jump', ship, to });
   }
 
   /** Our flight of a ship we pilot (pose at server time `t`, height above ground, thruster outputs). */

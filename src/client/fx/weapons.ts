@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { WEAPON_LIST, type WeaponDef as WeaponData } from '../../shared/items';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
 /**
  * How each weapon of the catalog (shared/items/weapons.ts: what it does, its rate, its recoil) is
@@ -191,13 +192,47 @@ const RIFLE: WeaponLook = {
 };
 
 /** How each catalog weapon looks (a catalog weapon without one here is an error at start). */
-const LOOKS: Record<string, WeaponLook> = { launcher: LAUNCHER, welder: WELDER, rifle: RIFLE };
+export const WEAPON_LOOKS: Readonly<Record<string, WeaponLook>> = { launcher: LAUNCHER, welder: WELDER, rifle: RIFLE };
+
+/**
+ * A weapon's parts merged into one mesh per material (a weapon is rigid: ~10 parts become ~3 draws,
+ * in the view and in the shadow cascade, for every astronaut that carries it).
+ */
+export function mergeByMaterial(group: THREE.Object3D): THREE.Object3D {
+  group.updateMatrixWorld(true);
+  const byMat = new Map<THREE.Material, { geos: THREE.BufferGeometry[]; cast: boolean }>();
+  const meshes: THREE.Mesh[] = [];
+  group.traverse((o) => {
+    const m = o as THREE.Mesh;
+    if (!m.isMesh || Array.isArray(m.material)) return;
+    meshes.push(m);
+  });
+  for (const m of meshes) {
+    const g = m.geometry.clone().applyMatrix4(m.matrixWorld);
+    const e = byMat.get(m.material as THREE.Material) ?? { geos: [], cast: false };
+    e.geos.push(g);
+    e.cast ||= m.castShadow;
+    byMat.set(m.material as THREE.Material, e);
+  }
+  const out = new THREE.Group();
+  out.name = group.name;
+  for (const [mat, e] of byMat) {
+    const merged = e.geos.length === 1 ? e.geos[0] : mergeGeometries(e.geos.every((g) => g.index) ? e.geos : e.geos.map((g) => (g.index ? g.toNonIndexed() : g)));
+    // parts that don't merge (different attributes): the weapon as it was
+    if (!merged) return group;
+    const mesh = new THREE.Mesh(merged, mat);
+    mesh.castShadow = e.cast;
+    out.add(mesh);
+  }
+  for (const m of meshes) m.geometry.dispose();
+  return out;
+}
 
 /** Every weapon of the catalog with its look, in catalog order (the number keys). */
 export const WEAPON_ORDER: WeaponDef[] = WEAPON_LIST.map((w) => {
-  const look = LOOKS[w.id];
+  const look = WEAPON_LOOKS[w.id];
   if (!look) throw new Error(`weapon "${w.id}" has no look (client/fx/weapons.ts)`);
-  return { ...w, ...look };
+  return { ...w, ...look, build: () => mergeByMaterial(look.build()) };
 });
 
 export const WEAPONS: Record<string, WeaponDef> = Object.fromEntries(WEAPON_ORDER.map((w) => [w.id, w]));

@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>El universo que no te necesita · simulación</title>
+<link rel="stylesheet" href="estilo.css">
+</head>
+<body>
+<canvas id="mapa"></canvas>
+
+<header id="barra">
+  <span class="marca">El universo que no te necesita</span>
+  <span id="fecha" class="fecha">—</span>
+  <span class="grupo" id="vel">
+    <button data-v="0" title="Pausa (espacio)">⏸</button>
+    <button data-v="1" title="1 día por segundo (1)">▶</button>
+    <button data-v="6" title="6 días por segundo (2)">▶▶</button>
+    <button data-v="30" title="Un mes por segundo (3)">▶▶▶</button>
+    <button data-v="180" title="Medio año por segundo (4)">⏩</button>
+  </span>
+  <label class="grupo">Capa
+    <select id="capa">
+      <option value="politico">Política</option>
+      <option value="hambre">Hambre</option>
+      <option value="agravio">Agravio contra el régimen</option>
+      <option value="calle">Gente en la calle</option>
+      <option value="control">Control de la capital</option>
+      <option value="grano">Precio del grano</option>
+      <option value="rebeliones">Solo rebeliones (calle, facciones, contagio)</option>
+      <option value="relaciones">Interrelaciones (guerras, alianzas, lazos)</option>
+      <option value="comercio">Comercio (por dónde va el género)</option>
+      <option value="estrategia">Estrategia (pasos clave y flotas)</option>
+      <option value="tecnica">Nivel técnico</option>
+      <option value="paro">Paro</option>
+      <option value="fama">Fama (dónde se conoce a quien has elegido)</option>
+      <option value="credo">Credos (cuánta gente cree)</option>
+      <option value="peste">Peste</option>
+      <option value="sangre">Sangre (muertes acumuladas)</option>
+      <option value="memoria">Memoria (dónde ha pasado la historia)</option>
+      <option value="centro">Centro y periferia</option>
+      <option value="noticia">Quién se ha enterado (del hecho elegido)</option>
+    </select>
+  </label>
+  <span id="resumen" class="resumen"></span>
+  <span class="hueco"></span>
+  <span id="carga" class="carga" title="Si la simulación no llega a tiempo, el mundo lejano va un poco tarde"></span>
+  <button id="btnAspecto" title="Aspecto: tema, colores, gráficas, letra y ancho del panel">🎨</button>
+  <button id="btnAyuda" title="Ayuda (H)">?</button>
+</header>
+
+<aside id="mano">
+  <div class="titulo">LA MANO</div>
+  <div id="herramientas"></div>
+</aside>
+
+<aside id="panel">
+  <div id="navega"><button id="navAtras" title="Atrás (Alt + ←)" disabled>◀</button><button id="navAdelante" title="Adelante (Alt + →)" disabled>▶</button><span id="navDonde"></span></div>
+  <nav id="pestanas">
+    <button data-p="ficha" class="activa">📋 Ficha</button>
+    <button data-p="cronica">📜 Crónica</button>
+    <button data-p="historiador">🔎 Historiador</button>
+    <button data-p="sismografo">📈 Sismógrafo</button>
+    <button data-p="estados">🏛 Estados</button>
+    <button data-p="facciones">✊ Facciones</button>
+    <button data-p="personas">👤 Personas</button>
+    <button data-p="historia">🏺 Historia</button>
+    <button data-p="arsenal">⚙ Arsenal</button>
+    <button data-p="batallas">⚔ Batallas</button>
+    <button data-p="economia">💰 Economía</button>
+    <button data-p="teorias">📚 Teorías</button>
+  </nav>
+  <div id="contenido"></div>
+</aside>
+
+<div id="aspecto" class="oculto"></div>
+
+<footer id="pie"><span id="aviso"></span><span id="ultimo"></span></footer>
+
+<div id="inicio">
+  <div class="caja">
+    <h1>El universo que no te necesita</h1>
+    <p class="sub">Una galaxia que funciona sola. De lejos, números; de cerca, carne. Tú solo miras… y de vez en cuando metes la mano.</p>
+    <div class="campos">
+      <label>Semilla <input id="semilla" type="number" value="2291" min="1"></label>
+      <label>Sistemas
+        <select id="sistemas"><option value="24">24 (rápido)</option><option value="40" selected>40</option><option value="56">56 (lento)</option></select>
+      </label>
+      <label>Prehistoria
+        <select id="prehistoria"><option value="3">3 años</option><option value="12" selected>12 años</option><option value="30">30 años</option><option value="60">60 años</option></select>
+      </label>
+    </div>
+    <button id="crear">Crear universo</button>
+    <div id="progreso"><div id="barraProg"></div></div>
+    <p id="estadoInicio" class="nota">Con la misma semilla y las mismas intervenciones, la historia se repite exacta.</p>
+  </div>
+</div>
+
+<div id="ayuda" class="oculto">
+  <div class="caja">
+    <h2>Cómo se mira</h2>
+    <ul>
+      <li><b>Rueda</b>: zoom. <b>Arrastrar</b>: mover. De lejos ves estados y rutas; al acercarte, órbitas, asentamientos, instalaciones y caras.</li>
+      <li><b>Clic</b> en cualquier cosa: su ficha (sistema, asentamiento, instalación, nave, persona, estado, facción, objeto).</li>
+      <li><b>Ficha</b> sin nada elegido: el mundo en cifras. Pulsa cualquiera (masacres, conquistas, abordajes, gente en la calle…) y verás su historia entera, hecho a hecho.</li>
+      <li><b>Crónica</b>: lo que va pasando. <b>Historiador</b>: elige un hecho y verás su historia como una línea de tiempo con ramas: arriba de dónde viene, abajo lo que provocó.</li>
+      <li><b>Muy de cerca</b>: una batalla se ve nave a nave (cada disparo con el color de su arma) y un asentamiento se abre en plano, con sus edificios, su gente, sus soldados, sus colas y sus ruinas.</li>
+      <li><b>Batallas</b>: cada bando en su bloque y con su color (el de sus naves en el mapa): quién es, qué hace ahí, qué le queda, por qué pega como pega y quién va ganando.</li>
+      <li><b>Capas</b> (arriba): política, hambre, solo rebeliones, interrelaciones, comercio, estrategia… <b>Seguir</b> a una persona o a una nave: botón 👁 en su ficha.</li>
+      <li><b>Historia</b>: las épocas del mundo, un mapa de calor de qué pasó cada año y quién pesó más. La ficha de cada persona trae su biografía escrita.</li>
+      <li><b>Personas</b>: los más mortíferos, quienes gobiernan, vengadores, piratas… <b>Arsenal</b>: los diseños de cada Estado y cómo evolucionan. <b>Teorías</b>: qué modelos mueven el mundo.</li>
+      <li><b>Sismógrafo</b>: series de precios, hambre, agravio, represión, λ₂… para ver cuándo algo va a romperse. Tú eliges cuáles; pasa el ratón para leer cada momento.</li>
+      <li><b>🎨 Aspecto</b> (arriba a la derecha): tema, color de acento, paleta y estilo de las gráficas, periodo, tamaño de letra y ancho del panel. Se queda guardado.</li>
+      <li><b>La mano</b> (izquierda): elige una herramienta y haz clic en el mapa, o usa los botones de cada ficha. El mundo no sabe que existes: le buscará un culpable.</li>
+      <li><b>◀ ▶</b> (arriba del panel): atrás y adelante por lo que has ido mirando, como en un navegador. También <b>Alt + ←</b> y <b>Alt + →</b>, o los botones laterales del ratón.</li>
+      <li><b>Espacio</b> pausa · <b>1–4</b> velocidad · <b>Esc</b> suelta la herramienta · <b>H</b> esta ayuda.</li>
+    </ul>
+    <p class="nota">Nada está escrito: cada hecho sale de un sistema (economía, información, lealtades, umbrales de revuelta, sucesión, Lanchester, ley de Paris…). Los valores son puntos de partida para ajustar mirando.</p>
+    <button id="cerrarAyuda">Cerrar</button>
+  </div>
+</div>
+
+<script src="nucleo/00-base.js"></script>
+<script src="nucleo/01-registros.js"></script>
+<script src="nucleo/02-mundo.js"></script>
+<script src="nucleo/07-objetos.js"></script>
+<script src="nucleo/08-personas.js"></script>
+<script src="nucleo/04-economia.js"></script>
+<script src="nucleo/09-sociedad.js"></script>
+<script src="nucleo/06-informacion.js"></script>
+<script src="nucleo/05-naves.js"></script>
+<script src="nucleo/10-facciones.js"></script>
+<script src="nucleo/11-politica.js"></script>
+<script src="nucleo/12-combate.js"></script>
+<script src="nucleo/13-justicia.js"></script>
+<script src="nucleo/14-dios.js"></script>
+<script src="nucleo/16-tecnica.js"></script>
+<script src="nucleo/17-teorias.js"></script>
+<script src="nucleo/18-contenido.js"></script>
+<script src="nucleo/frases/00-espec.js"></script>
+<script src="nucleo/frases/10-origen.js"></script>
+<script src="nucleo/frases/20-carrera.js"></script>
+<script src="nucleo/frases/30-muerte.js"></script>
+<script src="nucleo/frases/40-figuras.js"></script>
+<script src="nucleo/19-historia.js"></script>
+<script src="nucleo/03-generacion.js"></script>
+<script src="nucleo/15-sim.js"></script>
+<script src="ui/prefs.js"></script>
+<script src="ui/graficas.js"></script>
+<script src="ui/arte.js"></script>
+<script src="ui/local.js"></script>
+<script src="ui/mapa.js"></script>
+<script src="ui/paneles.js"></script>
+<script src="ui/paneles2.js"></script>
+<script src="ui/paneles3.js"></script>
+<script src="ui/paneles4.js"></script>
+<script src="ui/paneles5.js"></script>
+<script src="ui/main.js"></script>
+</body>
+</html>

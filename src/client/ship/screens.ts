@@ -9,7 +9,6 @@ import { LOCK, LOCK_NAME } from '../../shared/ship/modules/airlock';
 import type { SolarArray } from '../../shared/ship/modules/solar';
 import { STORES, type Stores } from '../../shared/ship/modules/stores';
 import { AP_KEY, apModes, bearingTo, flightReadout, mainUse, NAV_POINTS, performance, type FlightReadout } from '../../shared/ship/flight';
-import { MOON } from '../../shared/constants';
 import type { ShipSim } from '../../shared/ship/sim';
 import { sharpText } from './materials';
 
@@ -508,7 +507,8 @@ const PAGES: Record<ScreenPage, (p: PageCtx) => void> = {
     p.header('MASA Y EMPUJE');
     const r = p.rows(46);
     const m = sim.flight.mp;
-    const perf = performance(sim.def, m, MOON.gravity);
+    // against the gravity of the body it flies round (another system's is not the Moon's)
+    const perf = performance(sim.def, m, bodyAt(sim.pose.p).def.gravity);
     r.row('MASA', `${(m.mass / 1000).toFixed(2)} t`, C.txt);
     const g = m.groups;
     r.row('  SECA', `${((g.estructura + g.máquinas + g.mobiliario) / 1000).toFixed(2)} t`, C.dim);
@@ -591,13 +591,22 @@ const PAGES: Record<ScreenPage, (p: PageCtx) => void> = {
     p.header('ARMAMENTO');
     const r = p.rows(46);
     for (const key of sim.def.readouts?.weapons ?? []) p.switchRow(r, key);
-    for (const part of sim.def.parts.filter((x) => x.type === 'turret')) {
-      const fed = part.circuit ? sim.powered(part.circuit) : true;
+    const mounts = sim.mounts;
+    for (const m of mounts?.list ?? []) {
+      const part = m.part;
       const hp = sim.partHp(part) / part.maxHp;
-      r.row('CIRCUITO', fed ? 'CON TENSIÓN' : 'CORTE', fed ? C.ok : C.bad);
-      r.row(part.name.toUpperCase().slice(0, 14), `${Math.round(hp * 100)} %`, hp < 0.5 ? C.bad : C.ok);
+      const ready = sim.st[m.iReady] === 1;
+      r.row(m.kind.name.toUpperCase().slice(0, 14), ready ? 'EN SERVICIO' : 'SIN SERVICIO', ready ? C.ok : C.bad);
+      r.row('INTEGRIDAD', `${Math.round(hp * 100)} %`, hp < 0.5 ? C.bad : C.ok);
+      if (m.kind.magazine > 0) {
+        const n = Math.floor(sim.st[m.iAmmo]);
+        r.row('CARGADOR', `${n} / ${m.kind.magazine}`, n === 0 ? C.bad : C.ok);
+      }
+      const deg = (a: number) => `${Math.round((a * 180) / Math.PI)}°`;
+      r.row('RUMBO / ALZA', `${deg(sim.st[m.iYaw])} / ${deg(sim.st[m.iPitch])}`, C.ok);
     }
-    p.note('La torreta aún no dispara. El interruptor y el daño sí cuentan.', r.y + 8);
+    const gunner = sim.def.seats.find((st) => st.mounts?.length);
+    p.note(gunner ? `Se maneja desde el ${gunner.name.toLowerCase()}: mirada para apuntar, clic para disparar.` : 'Ningún asiento maneja el armamento.', r.y + 8);
   },
 };
 
@@ -644,6 +653,7 @@ export class ShipScreens {
     private surfaces: Surfaces,
   ) {
     for (const def of sim.def.screens) {
+      if (def.camera) continue; // Camera displays use the independent PiP renderer.
       const w = 512;
       const h = Math.round((w * def.h) / def.w);
       const canvas = document.createElement('canvas');
@@ -678,7 +688,7 @@ export class ShipScreens {
 
   /**
    * Redraw at ~4 Hz (they are text, nobody needs 60); flight instruments at 12 Hz. Only the screens
-   * someone can read are redrawn (`eye`: the camera, world), each on its own beat; a new page is
+   * someone can read are redrawn (`eye`: this frame's camera, render space), each on its own beat; a new page is
    * drawn at once.
    */
   update(time: number, anim: ShipAnimState, hidden: (host: number) => boolean, eye?: THREE.Vector3) {

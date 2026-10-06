@@ -1,0 +1,266 @@
+{
+ "modelo": "tableta",
+ "marco": "x a la izquierda de quien lo lleva, y arriba, z adelante; metros; origen: ver la receta",
+ "triangulos": 7218,
+ "presupuesto": 9000,
+ "caja": [
+  [
+   -0.141,
+   -0.109,
+   -0.025
+  ],
+  [
+   0.2631,
+   0.093,
+   0.0399
+  ]
+ ],
+ "tam": [
+  0.4041,
+  0.202,
+  0.0649
+ ],
+ "piezas": {
+  "cuerpo": {
+   "en": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "triangulos": 6867,
+   "caja": [
+    [
+     -0.141,
+     -0.109,
+     -0.025
+    ],
+    [
+     0.2631,
+     0.093,
+     0.0399
+    ]
+   ]
+  },
+  "boton_1": {
+   "en": [
+    0.052,
+    -0.076,
+    -0.0068
+   ],
+   "triangulos": 109,
+   "caja": [
+    [
+     0.035,
+     -0.085,
+     -0.007
+    ],
+    [
+     0.069,
+     -0.067,
+     -0.001
+    ]
+   ],
+   "eje": [
+    0.0,
+    0.0,
+    1.0
+   ],
+   "recorre": 0.0025,
+   "nota": "pulsada entra hacia +z"
+  },
+  "boton_2": {
+   "en": [
+    0.0,
+    -0.076,
+    -0.0068
+   ],
+   "triangulos": 133,
+   "caja": [
+    [
+     -0.017,
+     -0.085,
+     -0.007
+    ],
+    [
+     0.017,
+     -0.067,
+     -0.001
+    ]
+   ],
+   "eje": [
+    0.0,
+    0.0,
+    1.0
+   ],
+   "recorre": 0.0025,
+   "nota": "pulsada entra hacia +z"
+  },
+  "boton_3": {
+   "en": [
+    -0.052,
+    -0.076,
+    -0.0068
+   ],
+   "triangulos": 109,
+   "caja": [
+    [
+     -0.069,
+     -0.085,
+     -0.007
+    ],
+    [
+     -0.035,
+     -0.067,
+     -0.001
+    ]
+   ],
+   "eje": [
+    0.0,
+    0.0,
+    1.0
+   ],
+   "recorre": 0.0025,
+   "nota": "pulsada entra hacia +z"
+  }
+ },
+ "puntos": {
+  "boton_1": {
+   "en": [
+    0.052,
+    -0.076,
+    -0.0068
+   ],
+   "palma": [
+    0.0,
+    -0.5,
+    0.866
+   ],
+   "traves": [
+    -1.0,
+    0.0,
+    0.0
+   ],
+   "pieza": "boton_1",
+   "nota": "la yema del índice derecho sobre la tecla"
+  },
+  "boton_2": {
+   "en": [
+    0.0,
+    -0.076,
+    -0.0068
+   ],
+   "palma": [
+    0.0,
+    -0.5,
+    0.866
+   ],
+   "traves": [
+    -1.0,
+    0.0,
+    0.0
+   ],
+   "pieza": "boton_2",
+   "nota": "la yema del índice derecho sobre la tecla"
+  },
+  "boton_3": {
+   "en": [
+    -0.052,
+    -0.076,
+    -0.0068
+   ],
+   "palma": [
+    0.0,
+    -0.5,
+    0.866
+   ],
+   "traves": [
+    -1.0,
+    0.0,
+    0.0
+   ],
+   "pieza": "boton_3",
+   "nota": "la yema del índice derecho sobre la tecla"
+  },
+  "agarre_izq": {
+   "en": [
+    0.172,
+    -0.008,
+    0.014
+   ],
+   "palma": [
+    -1.0,
+    0.0,
+    0.0
+   ],
+   "traves": [
+    0.0,
+    -1.0,
+    0.0
+   ],
+   "mano": "izq",
+   "mango": 0.044,
+   "nota": "mano izquierda en el asa, pulgar arriba, bajo la cincha"
+  },
+  "toque": {
+   "en": [
+    -0.03,
+    0.0,
+    0.0
+   ],
+   "palma": [
+    0.0,
+    -0.5,
+    0.866
+   ],
+   "traves": [
+    -1.0,
+    0.0,
+    0.0
+   ],
+   "nota": "donde el índice derecho toca el cristal (cualquier punto de la pantalla vale)"
+  }
+ },
+ "pantallas": {
+  "pantalla": {
+   "centro": [
+    0,
+    0,
+    0
+   ],
+   "tam": [
+    0.18,
+    0.12
+   ],
+   "normal": [
+    0.0,
+    0.0,
+    -1.0
+   ],
+   "arriba": [
+    0.0,
+    1.0,
+    0.0
+   ],
+   "derecha": [
+    -1.0,
+    0.0,
+    0.0
+   ],
+   "nota": "cristal plano hundido 3 mm tras el marco; el juego dibuja sobre él"
+  }
+ },
+ "luces": {},
+ "sosten": {
+  "en": [
+   0.03,
+   -0.2,
+   0.4
+  ],
+  "giro": [
+   -24,
+   0,
+   0
+  ],
+  "nota": "sugerido: ante el pecho, la pantalla vuelta al ojo"
+ }
+}

@@ -327,16 +327,14 @@ export const MACHINES: Record<string, ModelBuilder> = {
     undo();
   },
 
+  // the fixed ring of a weapon mount: the head that turns is the mount's own look (client/fx/mountLooks.ts)
   turret(k, h) {
     const [hx, hy, hz] = h;
-    k.cyl('dark', 'y', Math.min(hx, hz) * 0.95, hy * 0.35, 0, -hy + hy * 0.175, 0, 20);
-    k.cyl('body', 'y', Math.min(hx, hz) * 0.72, hy * 0.7, 0, -hy * 0.3, 0, 16, Math.min(hx, hz) * 0.6);
-    k.torus('trim', 'y', Math.min(hx, hz) * 0.73, 0.02, 0, -hy * 0.6, 0, 20);
-    for (const s of [-1, 1]) {
-      k.box('trim', hx * 0.35, hy * 0.5, hz * 1.4, s * hx * 0.38, hy * 0.35, hz * 0.1);
-      k.cyl('dark', 'z', hy * 0.14, hz * 0.3, s * hx * 0.38, hy * 0.35, -hz * 0.75, 8);
-    }
-    k.box('accent', hx * 0.2, hy * 0.2, hz * 0.2, 0, hy * 0.2, -hz * 0.2);
+    const r = Math.min(hx, hz);
+    k.cyl('dark', 'y', r * 0.95, hy * 0.5, 0, -hy * 0.75, 0, 20);
+    k.cyl('body', 'y', r * 0.82, hy * 1.5, 0, hy * 0.25, 0, 20, r * 0.72);
+    k.torus('trim', 'y', r * 0.8, 0.02, 0, -hy * 0.5, 0, 20);
+    k.bolts('chrome', 'y', r * 0.62, 10, 0, hy, 0, 0.012);
   },
 
   grav(k, h) {

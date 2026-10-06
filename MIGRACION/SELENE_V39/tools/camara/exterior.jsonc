@@ -1,0 +1,37 @@
+// The ships from outside and close by: wings, fins, gear, frames, the crane.
+// Run: luna --guion tools/camara/exterior.jsonc → out/camara/exterior_*.png
+{
+  "registro": "out/camara/exterior.log",
+  "pasos": [
+    { "nave": "alcotan" },
+    { "esperar": 3.0 },
+    { "camara": { "en": [11.0, 4.5, 9.0], "mira": [0.5, 1.0, -2.0], "fov": 50 } },
+    { "foto": "out/camara/exterior_alcotan.png" },
+    { "camara": { "en": [6.5, 2.6, -1.2], "mira": [3.4, 1.0, -4.0], "fov": 55 } },
+    { "foto": "out/camara/exterior_ala.png" },
+    { "camara": { "en": [3.6, -0.9, -2.4], "mira": [2.0, -1.1, -4.2], "fov": 55 } },
+    { "foto": "out/camara/exterior_tren.png" },
+    { "camara": { "en": [4.2, 5.2, -11.5], "mira": [0.6, 3.2, -7.6], "fov": 50 } },
+    { "foto": "out/camara/exterior_aletas.png" },
+    { "camara": { "en": [1.9, 1.5, 3.2], "mira": [1.12, 0.45, 4.8], "fov": 60 } },
+    { "linterna": true },
+    { "foto": "out/camara/exterior_consola_lateral.png" },
+    { "linterna": false },
+    { "nave": "abejorro" },
+    { "esperar": 5.0 },
+    { "camara": { "en": [4.2, 1.3, 4.6], "mira": [0, 0.1, 0.2], "fov": 55 } },
+    { "foto": "out/camara/exterior_abejorro.png" },
+    { "camara": { "en": [2.6, -0.5, 3.6], "mira": [1.2, -0.9, 2.3], "fov": 55 } },
+    { "foto": "out/camara/exterior_abejorro_pata.png" },
+    { "nave": "cachalote" },
+    { "esperar": 3.0 },
+    { "linterna": true },
+    { "camara": { "en": [2.6, 2.6, -17.0], "mira": [0.0, 3.6, -20.6], "fov": 70 } },
+    { "foto": "out/camara/exterior_grua.png" },
+    { "linterna": false },
+    { "camara": { "en": [11.0, 4.4, 2.5], "mira": [5.6, 2.3, -2.4], "fov": 55 } },
+    { "foto": "out/camara/exterior_cachalote_ala.png" },
+    { "camara": { "en": [10.0, 11.0, -29.0], "mira": [1.5, 6.2, -20.5], "fov": 50 } },
+    { "foto": "out/camara/exterior_cachalote_aletas.png" }
+  ]
+}

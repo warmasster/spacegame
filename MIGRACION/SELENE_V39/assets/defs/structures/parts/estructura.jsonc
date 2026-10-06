@@ -1,0 +1,13 @@
+// Structural parts. shape: box {size}, cylinder {radius, height, sides, taper} (round Y) or
+// wedge {size}; hollow: wall thickness of a shell (m); ports: networks it plugs into; module: the
+// machine it is; function: share of hit points under which it stops working; color / glow
+// override the material.
+{
+  "viga":        { "name": "Viga", "shape": { "kind": "box", "size": [0.3, 0.3, 3.0] }, "material": "acero" },
+  "pilar":       { "name": "Pilar", "shape": { "kind": "box", "size": [0.4, 4.0, 0.4] }, "material": "acero" },
+  "pata":        { "name": "Pata", "shape": { "kind": "box", "size": [0.2, 2.0, 0.2] }, "material": "aluminio" },
+  "mastil":      { "name": "Mástil", "shape": { "kind": "cylinder", "radius": 0.12, "height": 5.0, "sides": 8 }, "material": "acero", "ports": ["energia", "datos"] },
+  "placa":       { "name": "Placa", "shape": { "kind": "box", "size": [2.0, 0.08, 2.0] }, "material": "aluminio" },
+  "casco":       { "name": "Casco", "shape": { "kind": "box", "size": [3.0, 2.4, 3.0] }, "material": "aluminio", "hollow": 0.015, "ports": ["energia", "aire", "propelente", "datos"], "module": { "kind": "cabina", "params": { "store": { "energia": 50000.0 }, "consume": { "energia": 1.0 }, "priority": 2 } } },
+  "rampa":       { "name": "Rampa", "shape": { "kind": "wedge", "size": [3.0, 1.0, 3.0] }, "material": "aluminio" }
+}

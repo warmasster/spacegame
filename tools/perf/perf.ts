@@ -5,20 +5,20 @@
  * something goes past its budget (BUDGET below), like `test:ship` does for the rules.
  *
  *   npm run perf                  every section
- *   npm run perf -- ships rocks   some sections (ships, sim, rocks, world, net)
+ *   npm run perf -- ships rocks   some sections (ships, sim, rocks, terrain, world, net)
  *   npm run perf -- --json out.json
  *
  * GPU time is not measured here (no GPU): F3 in the game shows the real draw calls per frame.
  */
 import './dom.js';
-import { writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import * as THREE from 'three';
 import { SHIP_SPAWNS } from '../../src/shared/constants.js';
 import { SHIP_DEFS, ShipSim, placeShip } from '../../src/shared/ship/sim.js';
 import { FLIGHT_IDLE } from '../../src/shared/ship/flight/index.js';
 import { groundAltOn, startCrates } from '../../src/shared/ship/spawn.js';
-import { MOON_BODY, surfaceOf, type CelestialBody } from '../../src/shared/space/body.js';
-import { cellOf, faceOf, facePoint } from '../../src/shared/space/cubeSphere.js';
+import { MOON_BODY, sunDirection, surfaceOf, type CelestialBody } from '../../src/shared/space/body.js';
+import { cellOf, cubeArc, cubeDir, faceOf, facePoint } from '../../src/shared/space/cubeSphere.js';
 import { ROCK_STRIDE, ROCK_VARIANTS, rocksInTile, rockTileLevel } from '../../src/shared/space/rocks.js';
 import { siteById } from '../../src/shared/space/sites.js';
 import { BodySurface, surfaceSample } from '../../src/shared/space/surface.js';
@@ -28,6 +28,13 @@ import { siteGround, spawnPoint } from '../../src/shared/space/world.js';
 import { VarSync } from '../../src/shared/ship/state.js';
 import { crewContext } from '../../src/shared/ship/crew.js';
 import { ShipView } from '../../src/client/ship/view.js';
+import { ROCK_CASTERS, ROCK_LOD_TRIANGLES, ROCK_RINGS, rockLod } from '../../src/client/world/rocks.js';
+import { TERRAIN_RES, TERRAIN_SHADOW_RANGE, TERRAIN_SPLIT } from '../../src/client/world/terrainGrid.js';
+import { DETAIL_MATERIALS } from '../../src/client/player/astronaut.js';
+import { ShadowCull } from '../../src/client/render/shadowCull.js';
+import { CSM } from 'three/addons/csm/CSM.js';
+import { SUN } from '../../src/shared/constants.js';
+import { siteCrews, siteToWorld } from '../../src/shared/ship/spawn.js';
 import { updateInteriorLights } from '../../src/client/ship/interiorLights.js';
 import { allocIt, close, kb, ms, sceneStats, timeIt, type Alloc } from './measure.js';
 
@@ -189,36 +196,48 @@ async function simulation() {
 // ---------------------------------------------------------------------------------------------------
 
 async function rocks() {
-  // the rings of world/rocks.ts, in rock tiles (cube-sphere cells) round the spawn
-  const RINGS: Array<[number, number]> = [
-    [1, 0],
-    [3, 0.28],
-    [6, 0.75],
-  ];
+  // the rings of world/rocks.ts round the spawn, with its own rules: the LOD each rock gets at its
+  // distance from the eye, the ones too small to see, and who casts a shadow (drawn once per cascade)
   const T = rockTileLevel(surface);
   const at = spawnPoint(0, surfaces);
   const c = MOON_BODY.center;
+  const up = [at[0] - c[0], at[1] - c[1], at[2] - c[2]];
+  const ul = Math.hypot(up[0], up[1], up[2]);
+  const eye = up.map((v, i) => at[i] + (v / ul) * 1.7);
   const f = faceOf(at[0] - c[0], at[1] - c[1], at[2] - c[2], facePoint());
   const ti = cellOf(f.a, T);
   const tj = cellOf(f.b, T);
-  let count = 0;
-  let tiles = 0;
+  let count = 0, drawn = 0, tiles = 0, main = 0, cast = 0;
   const list: number[] = [];
-  for (const [ring, minSize] of RINGS) {
+  ROCK_RINGS.forEach(([ring, minSize], ri) => {
     for (let dz = -ring; dz <= ring; dz++) {
       for (let dx = -ring; dx <= ring; dx++) {
-        const inner = RINGS.find(([r]) => Math.max(Math.abs(dx), Math.abs(dz)) <= r)!;
+        const inner = ROCK_RINGS.find(([r]) => Math.max(Math.abs(dx), Math.abs(dz)) <= r)!;
         if (inner[0] !== ring) continue;
         tiles++;
         list.length = 0;
-        count += rocksInTile(surface, f.face, ti + dx, tj + dz, minSize, Infinity, list).length / ROCK_STRIDE;
+        rocksInTile(surface, f.face, ti + dx, tj + dz, minSize, Infinity, list);
+        for (let k = 0; k < list.length; k += ROCK_STRIDE) {
+          count++;
+          const r = MOON_BODY.radius + list[k + 3];
+          const p = [c[0] + list[k] * r, c[1] + list[k + 1] * r, c[2] + list[k + 2] * r];
+          const size = list[k + 4];
+          const lod = rockLod(size, Math.hypot(p[0] - eye[0], p[1] - eye[1], p[2] - eye[2]));
+          if (lod < 0) continue;
+          drawn++;
+          main += ROCK_LOD_TRIANGLES[lod];
+          if (size >= ROCK_CASTERS[ri]) cast += ROCK_LOD_TRIANGLES[lod];
+        }
       }
     }
-  }
-  const perPass = count * 720;
-  table('Rocas alrededor del punto de aparición', ['Baldosas', 'Rocas', 'Variantes', 'Triángulos por pasada', 'Pasadas', 'Triángulos por frame'], [[tiles, count, ROCK_VARIANTS, `${(perPass / 1e6).toFixed(2)} M`, 4, `${((perPass * 4) / 1e6).toFixed(2)} M`]]);
-  report.rocks = { tiles, count, trianglesPerFrame: perPass * 4 };
-  check('rocas: triángulos por frame', perPass * 4, BUDGET.rockTrianglesPerFrame);
+  });
+  const rows = (['high', 'low'] as const).map((q) => {
+    const cascades = q === 'high' ? 3 : 1;
+    return [q === 'high' ? 'ALTA' : 'BAJA', tiles, count, drawn, `${(main / 1e3).toFixed(0)} K`, `${(cast / 1e3).toFixed(0)} K × ${cascades}`, `${((main + cast * cascades) / 1e6).toFixed(2)} M`];
+  });
+  table('Rocas alrededor del punto de aparición (sus reglas de LOD y sombra)', ['Perfil', 'Baldosas', 'Rocas', 'Dibujadas', 'Triángulos (vista)', 'Sombra (por cascada)', 'Triángulos por frame'], rows);
+  report.rocks = { tiles, count, drawn, main, cast, trianglesPerFrame: main + cast * 3 };
+  check('rocas: triángulos por frame', main + cast * 3, BUDGET.rockTrianglesPerFrame);
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -296,10 +315,262 @@ async function net() {
   report.net = { welcome: welcome(0), welcome4000: welcome(4000), snapshots: snap, pose, state, shipStAvg: msgs ? bytes / msgs : 0, shipStMsgs: msgs };
 }
 
+
+// ---------------------------------------------------------------------------------------------------
+// Terrain: the quadtree's nodes round the spawn (draw calls: one per node, and per cascade it casts in)
+// ---------------------------------------------------------------------------------------------------
+
+/**
+ * The selection of world/sphereTerrain.ts (split, horizon, view, shadow range), run here with every
+ * node built (its heights sampled from the ground), for a camera at the spawn's eye looking along the
+ * horizon: nodes drawn, nodes casting, and the largest level jump between neighbours (the morph between
+ * levels needs it ≤ 1).
+ */
+/** The quadtree's leaves round the spawn, the camera at eye height looking level toward `yaw` (rad). */
+function terrainNodes(res: number, split: number, shadowRange: number, yaw = 0) {
+  const R = MOON_BODY.radius;
+  const c = MOON_BODY.center;
+  const maxLevel = Math.ceil(Math.log2(cubeArc(2, R) / (res * 0.4)));
+  const at = spawnPoint(0, surfaces);
+  const up = new THREE.Vector3(at[0] - c[0], at[1] - c[1], at[2] - c[2]).normalize();
+  const eye = new THREE.Vector3(...at).addScaledVector(up, 1.7);
+  const cam = new THREE.PerspectiveCamera(72, 16 / 9, 0.05, 1e7);
+  cam.position.copy(eye);
+  cam.up.copy(up);
+  cam.lookAt(eye.clone().add(new THREE.Vector3(1, 0, 0).projectOnPlane(up).normalize().applyAxisAngle(up, yaw)));
+  cam.updateMatrixWorld();
+  const frustum = new THREE.Frustum().setFromProjectionMatrix(new THREE.Matrix4().multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse));
+  const camRel = eye.clone().sub(new THREE.Vector3(...c));
+  const low = R + Math.max(surface.lowest, -3000);
+  type N = { face: number; level: number; a0: number; b0: number; size: number; dir: number[]; arc: number; hMin: number; hMax: number };
+  const node = (face: number, level: number, a0: number, b0: number, size: number): N => {
+    const hs = [[0.5, 0.5], [0, 0], [1, 0], [0, 1], [1, 1], [0.25, 0.75], [0.75, 0.25]].map(([u, v]) => surface.height(cubeDir(face, a0 + u * size, b0 + v * size, [0, 0, 0])));
+    return { face, level, a0, b0, size, dir: cubeDir(face, a0 + size / 2, b0 + size / 2, [0, 0, 0]), arc: cubeArc(size, R), hMin: Math.min(...hs), hMax: Math.max(...hs) };
+  };
+  const D = camRel.length();
+  const hidden = (n: N) => {
+    const g = Math.acos(Math.max(-1, Math.min(1, camRel.dot(new THREE.Vector3(...n.dir)) / D)));
+    return g > Math.acos(Math.min(1, low / D)) + Math.acos(Math.min(1, low / (R + Math.max(n.hMax, 0)))) + (n.arc * 0.75) / R;
+  };
+  const dist = (n: N) => Math.max(0, new THREE.Vector3(...n.dir).multiplyScalar(R + (n.hMin + n.hMax) / 2).distanceTo(camRel) - n.arc * 0.75 - (n.hMax - n.hMin) / 2);
+  let drawn = 0, casters = 0;
+  const leaves: N[] = [];
+  const spheres: Array<{ sphere: THREE.Sphere; caster: boolean }> = [];
+  const walk = (n: N) => {
+    if (hidden(n)) return;
+    const d = dist(n);
+    if (n.level < maxLevel && d < n.arc * split) {
+      const h = n.size / 2, l = n.level + 1;
+      for (const [da, db] of [[0, 0], [h, 0], [0, h], [h, h]]) walk(node(n.face, l, n.a0 + da, n.b0 + db, h));
+      return;
+    }
+    leaves.push(n);
+    const caster = d < shadowRange;
+    const centre = new THREE.Vector3(...n.dir).multiplyScalar(R + (n.hMin + n.hMax) / 2).add(new THREE.Vector3(...c));
+    const sphere = new THREE.Sphere(centre, n.arc * 0.75 + (n.hMax - n.hMin) / 2);
+    spheres.push({ sphere, caster });
+    const visible = frustum.intersectsSphere(sphere);
+    if (visible) drawn++;
+    if (caster) casters++;
+  };
+  for (let f = 0; f < 6; f++) walk(node(f, 0, -1, -1, 2));
+  let jump = 0;
+  for (const l of leaves) {
+    const e = l.size * 1e-3;
+    for (let k = 0; k < 4; k++)
+      for (let t = 0.1; t < 1; t += 0.2) {
+        const a = k === 0 ? l.a0 - e : k === 1 ? l.a0 + l.size + e : l.a0 + t * l.size;
+        const b = k === 2 ? l.b0 - e : k === 3 ? l.b0 + l.size + e : l.b0 + t * l.size;
+        const nb = leaves.find((o) => o.face === l.face && a >= o.a0 && a < o.a0 + o.size && b >= o.b0 && b < o.b0 + o.size);
+        if (nb) jump = Math.max(jump, Math.abs(nb.level - l.level));
+      }
+  }
+  return { drawn, casters, triangles: drawn * res * res * 2, jump, spheres, finest: cubeArc(2, R) / 2 ** maxLevel / res };
+}
+
+async function crew() {
+  // the suit as the GLB has it: one primitive per draw (materials: the model's parts)
+  const glb = readFileSync(new URL('../../public/assets/astronaut.glb', import.meta.url));
+  const json = JSON.parse(glb.subarray(20, 20 + glb.readUInt32LE(12)).toString()) as { nodes: Array<{ mesh?: number }>; meshes: Array<{ primitives: Array<{ material?: number }> }>; materials: Array<{ name: string }> };
+  let all = 0, detail = 0;
+  for (const n of json.nodes) {
+    if (n.mesh === undefined) continue;
+    for (const p of json.meshes[n.mesh].primitives) {
+      // the bubble inside the helmet is never drawn
+      const name = json.materials[p.material ?? 0]?.name ?? '';
+      if (name === 'HelmetInner') continue;
+      all++;
+      if (DETAIL_MATERIALS.has(name)) detail++;
+    }
+  }
+  const rows = [
+    ['antes', all, all, all, `${all} × 2`, all + all * 2],
+    ['ahora', all, all - detail, all - detail, `${all - detail} × 1`, all - detail + (all - detail)],
+  ];
+  table('Astronautas: draws de cada uno (jugadores, NPC)', ['', 'Cerca (< 12 m)', 'Lejos', 'Con sombra', 'Sombra × cascadas (BAJA)', 'Total lejos (BAJA)'], rows);
+  report.crew = { all, detail };
+}
+
+async function terrain() {
+  const rows: Array<Array<string | number>> = [];
+  const cases: Array<[string, number, number, number, number]> = [
+    ['antes (32 × 2,2), ALTA', 32, 2.2, 260, 3],
+    ['antes (32 × 2,2), BAJA', 32, 2.2, 260, 2],
+    [`ahora (${TERRAIN_RES} × ${TERRAIN_SPLIT}), ALTA`, TERRAIN_RES, TERRAIN_SPLIT, TERRAIN_SHADOW_RANGE.high, 3],
+    [`ahora (${TERRAIN_RES} × ${TERRAIN_SPLIT}), BAJA`, TERRAIN_RES, TERRAIN_SPLIT, TERRAIN_SHADOW_RANGE.low, 1],
+    ...(process.env.GRIDS ?? '').split(',').filter(Boolean).map((g): [string, number, number, number, number] => {
+      const [r, sp] = g.split('x').map(Number);
+      return [`${r} × ${sp}, BAJA`, r, sp, TERRAIN_SHADOW_RANGE.low, 1];
+    }),
+  ];
+  // the view turned round (8 headings): nodes in view vary with where one looks
+  const YAWS = 8;
+  for (const [name, res, split, range, cascades] of cases) {
+    const all = Array.from({ length: YAWS }, (_, k) => terrainNodes(res, split, range, (k / YAWS) * Math.PI * 2));
+    const t = all[0];
+    const drawn = all.map((a) => a.drawn);
+    const mean = Math.round(drawn.reduce((a, b) => a + b, 0) / YAWS);
+    const most = Math.max(...drawn);
+    const jump = Math.max(...all.map((a) => a.jump));
+    rows.push([name, `${mean} (${Math.min(...drawn)}-${most})`, `${t.casters} × ${cascades}`, most + t.casters * cascades, `${((mean * res * res * 2) / 1e3).toFixed(0)} K`, `${(1 / (res * split)).toFixed(4)} rad`, `${t.finest.toFixed(2)} m`, jump]);
+    if (res === TERRAIN_RES) check(`terreno ${name}: salto de nivel entre vecinos`, jump, 1);
+  }
+  table('Terreno alrededor del punto de aparición (nodos = draws; los cercanos, además, una vez por cascada; 8 direcciones)', ['Rejilla y perfil', 'Nodos a la vista: media (mín-máx)', 'Con sombra × cascadas', 'Draws (máx.)', 'Triángulos a la vista (media)', 'Celda vista', 'Celda más fina', 'Salto de nivel'], rows);
+}
+
+
+
+// ---------------------------------------------------------------------------------------------------
+// The whole frame at the base: what the main pass and the shadow cascade draw, looking up and at a ship
+// ---------------------------------------------------------------------------------------------------
+
+/**
+ * The base's scene in Node — the three ships (their real views, where they park), the terrain nodes
+ * the quadtree picks (as spheres), the crew and the player (as their suit's meshes), the low profile's
+ * real cascade (three's CSM) — and a camera at the spawn's eye. Counted as three.js does: the main
+ * pass draws what is visible and in the view (or never culled), the cascade what casts and is in its
+ * box. With and without render/shadowCull.ts. Sky, particles, crates, rocks and the post passes (a
+ * few dozen draws, always) are not in it.
+ */
+async function frame() {
+  const scene = new THREE.Scene();
+  // ships where they park
+  for (let i = 0; i < defs.length; i++) {
+    const sim = makeSim(i);
+    const view = new ShipView(sim, null, surfaces);
+    const anim = { movers: Object.fromEntries(defs[i].def.movers.map((m) => [m.key, sim.mover(m.key)])) };
+    view.update(1 / 60, 0, anim, sim.pose, sim.flight.feetAnywhere(sim.pose, surface, sim.flight.gear()));
+    scene.add(view.root);
+  }
+  // the terrain the quadtree picks, as spheres (one draw each; the near ones cast)
+  const bare = new THREE.MeshBasicMaterial();
+  const sphereMesh = (center: THREE.Vector3, radius: number, cast: boolean, name: string) => {
+    const g = new THREE.BufferGeometry();
+    g.boundingSphere = new THREE.Sphere(new THREE.Vector3(), radius);
+    const m = new THREE.Mesh(g, bare);
+    m.position.copy(center);
+    m.castShadow = cast;
+    m.name = name;
+    return m;
+  };
+  for (const n of terrainNodes(TERRAIN_RES, TERRAIN_SPLIT, TERRAIN_SHADOW_RANGE.low).spheres) scene.add(sphereMesh(n.sphere.center, n.sphere.radius, n.caster, 'terreno'));
+  // the crew round where they gather and the player: a suit each (its draws; the detail parts cast nothing)
+  const glb = readFileSync(new URL('../../public/assets/astronaut.glb', import.meta.url));
+  const json = JSON.parse(glb.subarray(20, 20 + glb.readUInt32LE(12)).toString()) as { nodes: Array<{ mesh?: number }>; meshes: Array<{ primitives: Array<{ material?: number }> }>; materials: Array<{ name: string }> };
+  const parts: string[] = [];
+  for (const n of json.nodes) if (n.mesh !== undefined) for (const pr of json.meshes[n.mesh].primitives) parts.push(json.materials[pr.material ?? 0]?.name ?? '');
+  const crew = siteCrews(surfaces)[0];
+  const spawnAt = spawnPoint(0, surfaces);
+  const people = [spawnAt, ...Array.from({ length: 6 }, (_, k) => siteToWorld(surfaces, crew.site, crew.x + Math.cos(k) * 2.5, crew.z + Math.sin(k) * 2.5)!)];
+  for (const p of people) for (const name of parts) if (name !== 'HelmetInner') scene.add(sphereMesh(new THREE.Vector3(p[0], p[1] + 0.9, p[2]), 1.2, !DETAIL_MATERIALS.has(name), 'astronautas'));
+  scene.updateMatrixWorld(true);
+  // the camera at the spawn's eye, and the low profile's cascade
+  const up = new THREE.Vector3(spawnAt[0] - MOON_BODY.center[0], spawnAt[1] - MOON_BODY.center[1], spawnAt[2] - MOON_BODY.center[2]).normalize();
+  const eye = new THREE.Vector3(spawnAt[0], spawnAt[1], spawnAt[2]).addScaledVector(up, 1.7);
+  const cam = new THREE.PerspectiveCamera(72, 16 / 9, 0.05, 60000);
+  cam.position.copy(eye);
+  cam.up.copy(up);
+  const sd = sunDirection(SUN.az, SUN.el);
+  const sun = new THREE.Vector3(sd[0], sd[1], sd[2]);
+  const csm = new CSM({ camera: cam, parent: scene, cascades: 1, maxFar: 90, mode: 'practical', shadowMapSize: 2048, lightDirection: sun.clone().negate(), lightNear: 1, lightFar: 900, lightMargin: 160 });
+  const count = (from: THREE.Vector3, look: THREE.Vector3, cull: boolean) => {
+    cam.position.copy(from);
+    cam.lookAt(look);
+    cam.updateMatrixWorld(true);
+    csm.updateFrustums();
+    csm.update();
+    scene.updateMatrixWorld(true);
+    const culler = new ShadowCull(scene, cam, () => csm.lightDirection);
+    if (cull) culler.before();
+    const view = new THREE.Frustum().setFromProjectionMatrix(new THREE.Matrix4().multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse));
+    const sc = csm.lights[0].shadow.camera;
+    sc.updateMatrixWorld(true);
+    const box = new THREE.Frustum().setFromProjectionMatrix(new THREE.Matrix4().multiplyMatrices(sc.projectionMatrix, sc.matrixWorldInverse));
+    const by = new Map<string, [number, number]>();
+    let main = 0;
+    let shadow = 0;
+    scene.traverseVisible((o) => {
+      const m = o as THREE.Mesh;
+      if (!m.isMesh || !m.geometry) return;
+      if ((m as unknown as THREE.InstancedMesh).isInstancedMesh && (m as unknown as THREE.InstancedMesh).count === 0) return;
+      const list = Array.isArray(m.material) ? m.material : [m.material];
+      const groups = Array.isArray(m.material) ? Math.max(1, m.geometry.groups.length) : list[0].visible ? 1 : 0;
+      if (!groups) return;
+      if (!m.geometry.boundingSphere) m.geometry.computeBoundingSphere();
+      const inView = !m.frustumCulled || view.intersectsObject(m);
+      const inBox = m.castShadow && (!m.frustumCulled || box.intersectsObject(m));
+      const key = m.name === 'terreno' || m.name === 'astronautas' ? m.name : 'naves';
+      const e = by.get(key) ?? [0, 0];
+      if (inView) {
+        e[0] += groups;
+        main += groups;
+      }
+      if (inBox) {
+        e[1] += groups;
+        shadow += groups;
+      }
+      by.set(key, e);
+    });
+    if (cull) culler.after();
+    return { main, shadow, total: main + shadow, by: Object.fromEntries(by) };
+  };
+  const sky = eye.clone().addScaledVector(up, 100).add(new THREE.Vector3(1, 0, 0).projectOnPlane(up).multiplyScalar(30));
+  const poses = defs.map((_, i) => makeSim(i).pose.p);
+  poses.sort((a, b) => Math.hypot(a[0] - eye.x, a[2] - eye.z) - Math.hypot(b[0] - eye.x, b[2] - eye.z));
+  const ship = new THREE.Vector3(poses[0][0], poses[0][1], poses[0][2]);
+  const rows: Array<Array<string | number>> = [];
+  const out: Record<string, unknown> = {};
+  const fmt = (r: { by: Record<string, [number, number]> }) =>
+    Object.entries(r.by)
+      .map(([k, [m, sh]]) => `${k} ${m}+${sh}`)
+      .join(' · ');
+  // 12 m from the nearest ship's centre, toward the spawn, at eye height
+  const close = ship.clone().add(eye.clone().sub(ship).projectOnPlane(up).setLength(12));
+  close.addScaledVector(up, eye.clone().sub(close).dot(up));
+  const skyClose = close.clone().addScaledVector(up, 100).add(new THREE.Vector3(1, 0, 0).projectOnPlane(up).multiplyScalar(30));
+  for (const [name, from, look] of [
+    ['al cielo', eye, sky],
+    ['a la nave', eye, ship],
+    ['junto a la nave, al cielo', close, skyClose],
+    ['junto a la nave, a ella', close, ship],
+  ] as const) {
+    const a = count(from, look, false);
+    const b = count(from, look, true);
+    rows.push([`${name}, antes`, a.main, a.shadow, a.total, fmt(a)]);
+    rows.push([`${name}, con recorte de sombras`, b.main, b.shadow, b.total, fmt(b)]);
+    out[name] = { before: a, after: b };
+  }
+  table('El frame en la base (BAJA): pasada principal + cascada de sombra', ['Mirando', 'Principal', 'Sombra', 'Total', 'Por grupo (principal+sombra)'], rows);
+  report.frame = out;
+}
+
 const sections: Array<[string, () => Promise<void>]> = [
   ['ships', ships],
   ['sim', simulation],
   ['rocks', rocks],
+  ['terrain', terrain],
+  ['crew', crew],
+  ['frame', frame],
   ['world', world],
   ['net', net],
 ];

@@ -1,0 +1,50 @@
+// Reactor panel of the Alcotán (hold, starboard wall): start, power set point (continuous wheel),
+// SCRAM under a sealed cover, rearm by key, coolant pumps, temperatures.
+{
+  "name": "Reactor RX-2",
+  "tamano": ["0.80 m", "0.70 m"],
+  "rejilla": [8, 6],
+  "margen": "12 mm",
+  "separacion": "6 mm",
+  "grupos": [
+    { "id": "mando", "titulo": "MANDO", "celda": [0, 0], "ocupa": [3, 3] },
+    { "id": "temp", "titulo": "TEMPERATURAS", "celda": [3, 0], "ocupa": [5, 3] },
+    { "id": "refrig", "titulo": "REFRIGERACIÓN", "celda": [0, 3], "ocupa": [4, 3] },
+    { "id": "salida", "titulo": "SALIDA", "celda": [4, 3], "ocupa": [4, 3] }
+  ],
+  "mandos": [
+    { "id": "tapa_marcha", "kind": "tapa", "grupo": "mando", "protege": ["marcha"] },
+    { "id": "marcha", "kind": "interruptor", "grupo": "mando", "rotulo": "MARCHA", "posiciones": ["PARO", "MARCHA"], "bind": { "senal": "rx.marcha" },
+      "nombre": "Marcha del reactor", "ayuda": "Saca las barras hasta crítico y sube a la potencia pedida. Necesita refrigerante circulando y corriente de control." },
+    { "id": "potencia", "kind": "rueda", "grupo": "mando", "rotulo": "POTENCIA", "rango": ["0 %", "110 %"], "resolucion": "0.1 %", "defecto": "60 %",
+      "paso": "1 %", "paso_grueso": "10 %", "paso_fino": "0.1 %", "unidad": "%",
+      "aceleracion": { "desde": 4.0, "k": 0.5, "gamma": 1.4, "max": 8.0 }, "inercia": { "momento": 0.002, "amortiguamiento": 5.0 },
+      "retenes": [ { "en": "100 %", "fuerza": 0.7, "ancho": "1.5 %" } ], "recorrido": 300, "pulsar": "grueso",
+      "bind": { "senal": "rx.potencia" }, "nombre": "Potencia pedida",
+      "ayuda": "Rueda continua: 1 % por muesca, Mayús 10 %, Ctrl 0,1 %. Giros rápidos aceleran y siguen girando. Retén en 100 %. Pulsar: pasos gruesos." },
+    { "id": "tapa_scram", "kind": "tapa", "grupo": "mando", "protege": ["scram"], "precinto": true },
+    { "id": "scram", "kind": "pulsador", "grupo": "mando", "modo": "seta", "rotulo": "SCRAM", "bind": { "senal": "rx.scram" },
+      "nombre": "SCRAM", "ayuda": "Parada de emergencia: las barras caen. Gira la seta para soltarla." },
+    { "id": "rearme", "kind": "llave", "grupo": "mando", "rotulo": "REARME", "posiciones": ["BLOQ.", "REARME"], "llave": "jefe", "bind": { "senal": "rx.rearme" },
+      "nombre": "Llave de rearme", "ayuda": "Tras un SCRAM, con el combustible por debajo de 300 °C, rearma el reactor." },
+
+    { "id": "t_comb", "kind": "aguja", "grupo": "temp", "senal": "reactor.t_comb", "escala": ["0 °C", "900 °C"], "unidad": "°C", "rotulo": "COMB.",
+      "zonas": { "verde": ["250 °C", "600 °C"], "ambar": ["600 °C", "750 °C"], "roja": ["750 °C", "900 °C"] }, "requiere": { "energia": "1 W" } },
+    { "id": "t_b1", "kind": "aguja", "grupo": "temp", "senal": "bucle_1.t", "escala": ["0 °C", "600 °C"], "unidad": "°C", "rotulo": "BUCLE 1",
+      "zonas": { "roja": ["450 °C", "600 °C"] }, "requiere": { "energia": "1 W" } },
+    { "id": "t_b2", "kind": "aguja", "grupo": "temp", "senal": "bucle_2.t", "escala": ["0 °C", "200 °C"], "unidad": "°C", "rotulo": "BUCLE 2",
+      "zonas": { "roja": ["140 °C", "200 °C"] }, "requiere": { "energia": "1 W" } },
+
+    { "id": "b1", "kind": "interruptor", "grupo": "refrig", "rotulo": "BOMBA 1", "bind": { "senal": "refrig.b1" }, "defecto": 1, "nombre": "Bomba del bucle primario" },
+    { "id": "b2", "kind": "interruptor", "grupo": "refrig", "rotulo": "BOMBA 2", "bind": { "senal": "refrig.b2" }, "defecto": 1, "nombre": "Bomba del bucle secundario" },
+    { "id": "lamp_flujo", "kind": "lampara", "grupo": "refrig", "rotulo": "FLUJO", "requiere": { "energia": "1 W" },
+      "reglas": [ { "si": "bomba_1.on && bomba_2.on", "color": "verde" }, { "si": "bomba_1.on || bomba_2.on", "color": "ambar" } ] },
+    { "id": "lamp_estado", "kind": "lampara", "grupo": "refrig", "rotulo": "ESTADO", "requiere": { "energia": "1 W" },
+      "reglas": [ { "si": "reactor.estado == 3", "color": "rojo", "parpadeo": 2.0 }, { "si": "reactor.estado == 2 && reactor.limitado", "color": "ambar" }, { "si": "reactor.estado == 2", "color": "verde" }, { "si": "reactor.estado == 1", "color": "ambar", "parpadeo": 1.0 } ],
+      "nombre": "Estado del reactor", "ayuda": "Ámbar intermitente: arrancando. Verde: en línea. Ámbar fijo: limitado por temperatura (el calor no tiene salida: da menos de lo pedido; despliega los radiadores o baja la potencia). Rojo: SCRAM." },
+
+    { "id": "p_term", "kind": "display7", "grupo": "salida", "senal": "reactor.p_termica", "unidad": "kW", "decimales": 1, "digitos": 5, "rotulo": "TÉRMICA", "requiere": { "energia": "1 W" } },
+    { "id": "p_elec", "kind": "display7", "grupo": "salida", "senal": "conversor.p", "unidad": "kW", "decimales": 1, "digitos": 5, "rotulo": "ELÉCTRICA", "requiere": { "energia": "1 W" } },
+    { "id": "barras", "kind": "barra", "grupo": "salida", "senal": "reactor.barras", "rotulo": "BARRAS", "color": "cian", "requiere": { "energia": "1 W" } }
+  ]
+}

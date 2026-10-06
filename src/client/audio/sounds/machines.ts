@@ -13,17 +13,15 @@ import { ad, add, brown, buf, crackle, dc, edges, filter, fit, loopOf, modes, no
 defineSound('mach.hum', {
   loop: true,
   ref: 0.8,
-  range: 30,
-  gain: 0.2,
+  range: 25,
+  gain: 0.14,
+  body: 0.12,
   make: (s) => {
     const L = 2;
     return loopOf(
       s,
       L,
-      (b) => {
-        pink(s, b, 0.05);
-        filter(s, b, 'bp', 2200, 0.6);
-      },
+      null,
       (b) => {
         const am = (t: number) => 0.9 + 0.1 * Math.sin(2 * Math.PI * fit(3, L) * t);
         for (const [f, a] of [[100, 0.5], [200, 0.28], [300, 0.3], [400, 0.12], [600, 0.08], [1000, 0.03]] as const) tone(s, b, fit(f, L), (t) => a * am(t));
@@ -33,26 +31,19 @@ defineSound('mach.hum', {
   },
 });
 
-// the reactor: a deep beating hum with the coolant rushing through its loop
+// the reactor: a deep beating hum (tonal only: no rushing noise bed, which reads as wind)
 defineSound('mach.reactor', {
   loop: true,
   ref: 2,
-  range: 80,
-  gain: 0.55,
+  range: 70,
+  gain: 0.45,
+  body: 0.6,
   make: (s) => {
     const L = 4;
-    const flow = wobble(s, L, 1.5);
     return loopOf(
       s,
       L,
-      (b) => {
-        pink(s, b, (t) => 0.22 * (0.7 + 0.3 * flow(t)));
-        filter(s, b, 'bp', 900, 0.7);
-        const r = buf(s, b.length / s.sr);
-        brown(s, r, 0.3);
-        filter(s, r, 'lp', 120);
-        add(s, b, r);
-      },
+      null,
       (b) => {
         const throb = (t: number) => 0.85 + 0.15 * Math.sin(2 * Math.PI * fit(0.5, L) * t);
         for (const [f, a] of [[45, 0.6], [45.5, 0.3], [90, 0.35], [135, 0.22], [180, 0.12], [270, 0.05]] as const) tone(s, b, fit(f, L), (t) => a * throb(t));
@@ -67,6 +58,7 @@ defineSound('mach.turbine', {
   ref: 1.5,
   range: 160,
   gain: 0.6,
+  body: 0.6,
   make: (s) => {
     const L = 2;
     const fl = wobble(s, L, 6);
@@ -90,8 +82,9 @@ defineSound('mach.turbine', {
 defineSound('mach.pump', {
   loop: true,
   ref: 0.8,
-  range: 35,
-  gain: 0.32,
+  range: 30,
+  gain: 0.26,
+  body: 0.35,
   make: (s) => {
     const L = 2;
     return loopOf(
@@ -100,10 +93,6 @@ defineSound('mach.pump', {
       (b) => {
         const n = 14 * (b.length / s.sr / L);
         for (let i = 0; i < n; i++) thump(s, b, i / 7 + s.rng.range(0, 0.004), 95, 70, 0.035, 0.5);
-        const w = buf(s, b.length / s.sr);
-        noise(s, w, (t) => 0.2 * (0.5 + 0.5 * Math.cos(2 * Math.PI * 7 * t)));
-        filter(s, w, 'bp', 700, 0.8);
-        add(s, b, w);
       },
       (b) => {
         tone(s, b, fit(240, L), 0.08);
@@ -113,26 +102,28 @@ defineSound('mach.pump', {
   },
 });
 
-// ventilation fan: air through a duct and the blades' tone
+// ventilation fan: its motor whirring behind a grille (the blades' tone, a faint whir: no rushing
+// air bed, which reads as wind)
 defineSound('mach.fan', {
   loop: true,
-  ref: 1.5,
-  range: 22,
-  gain: 0.16,
+  ref: 1,
+  range: 12,
+  gain: 0.07,
+  body: 0.06,
   make: (s) => {
     const L = 3;
-    const w = wobble(s, L, 0.8);
     return loopOf(
       s,
       L,
       (b) => {
-        pink(s, b, (t) => 0.6 * (0.85 + 0.15 * w(t)));
-        filter(s, b, 'bp', 650, 0.45);
-        filter(s, b, 'hs', 3000, 0.7, -8);
+        noise(s, b, 0.03);
+        filter(s, b, 'bp', 2400, 1.5);
       },
       (b) => {
-        tone(s, b, fit(147, L), (t) => 0.05 * (0.8 + 0.2 * Math.sin(2 * Math.PI * fit(4, L) * t)));
-        tone(s, b, fit(294, L), 0.02);
+        tone(s, b, fit(147, L), (t) => 0.5 * (0.85 + 0.15 * Math.sin(2 * Math.PI * fit(4, L) * t)));
+        tone(s, b, fit(294, L), 0.2);
+        tone(s, b, fit(441, L), 0.08);
+        tone(s, b, fit(1180, L), 0.03);
       },
     );
   },

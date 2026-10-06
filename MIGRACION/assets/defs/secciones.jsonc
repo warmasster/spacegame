@@ -1,0 +1,207 @@
+// Sections of a panel: a titled group of controls written once and carried by any panel that
+// names it on one of its groups ("seccion": "<id>"; crates/ship/src/sections.rs). In the panel,
+// each control is called <group>_<control>. What they show are signals every ship has.
+{
+  // The ship's electrical balance (crates/ship/src/power.rs): what its generators give, what
+  // its loads take, how full its batteries are and how long they would last at this rate.
+  "energia": {
+    "titulo": "ENERGÍA",
+    "mandos": [
+      { "id": "genera", "kind": "display7", "senal": "energia.generacion", "unidad": "kW", "decimales": 1, "digitos": 4, "rotulo": "GENERA", "requiere": { "energia": "1 W" },
+        "nombre": "Generación", "ayuda": "Lo que dan ahora todos los generadores de la nave (reactor, grupo auxiliar, paneles), en kW." },
+      { "id": "consumo", "kind": "display7", "senal": "energia.consumo", "unidad": "kW", "decimales": 1, "digitos": 4, "rotulo": "CONSUMO", "requiere": { "energia": "1 W" },
+        "nombre": "Consumo", "ayuda": "Lo que gastan ahora todos los aparatos de la nave, en kW. Si es más que GENERA, la diferencia sale de las baterías." },
+      { "id": "quedan", "kind": "display7", "senal": "energia.autonomia", "unidad": "min", "decimales": 0, "digitos": 4, "rotulo": "QUEDAN min", "requiere": { "energia": "1 W" },
+        "nombre": "Autonomía de las baterías", "ayuda": "Minutos que durarían las baterías al ritmo al que se gastan ahora. 9999: no se están gastando." },
+      { "id": "carga", "kind": "barra", "senal": "energia.carga", "rotulo": "BATERÍAS", "color": "verde", "requiere": { "energia": "1 W" },
+        "nombre": "Carga de las baterías", "ayuda": "Cuánto les queda a las baterías, todas juntas." },
+      { "id": "estado", "kind": "lampara", "rotulo": "BATERÍA", "requiere": { "energia": "1 W" },
+        "reglas": [ { "si": "energia.baterias > 50", "color": "ambar" }, { "si": "energia.baterias < -50", "color": "verde" } ],
+        "nombre": "Estado de las baterías", "ayuda": "Ámbar: las baterías se están gastando (se consume más de lo que se genera). Verde: se están cargando." }
+    ]
+  },
+  // What the ship weighs (crates/ship/src/mass.rs): its mass with all it carries, its
+  // propellant, the change of speed that propellant is worth and its engines' push over its
+  // weight where it is.
+  "masa": {
+    "titulo": "MASA",
+    "mandos": [
+      { "id": "masa", "kind": "display7", "senal": "nave.masa", "unidad": "t", "decimales": 2, "digitos": 4, "rotulo": "MASA t", "requiere": { "energia": "1 W" },
+        "nombre": "Masa de la nave", "ayuda": "Lo que pesa ahora la nave con todo lo que lleva (casco, carga, propelente, lo que sujetan sus anclajes), en toneladas. Baja según gasta propelente." },
+      { "id": "propelente", "kind": "display7", "senal": "nave.propelente", "unidad": "kg", "decimales": 0, "digitos": 5, "rotulo": "PROPEL. kg", "requiere": { "energia": "1 W" },
+        "nombre": "Propelente", "ayuda": "Los kilos de propelente que quedan en todos los depósitos." },
+      { "id": "dv", "kind": "display7", "senal": "nave.dv", "unidad": "m/s", "decimales": 0, "digitos": 5, "rotulo": "DELTA-V m/s", "requiere": { "energia": "1 W" },
+        "nombre": "Delta-v", "ayuda": "Cuánto puede cambiar aún su velocidad la nave con el propelente que le queda (ecuación del cohete, con el impulso específico de sus motores). Suspenderse sobre la Luna gasta 1,62 m/s cada segundo." },
+      { "id": "empuje_peso", "kind": "display7", "senal": "nave.empuje_peso", "decimales": 2, "digitos": 4, "rotulo": "EMPUJE/PESO", "requiere": { "energia": "1 W" },
+        "nombre": "Empuje sobre peso", "ayuda": "Lo que empujan los motores a tope dividido por lo que pesa la nave aquí. Por debajo de 1 no despega; cargada o en un cuerpo con más gravedad, baja." },
+      { "id": "nivel", "kind": "barra", "senal": "nave.propelente_nivel", "rotulo": "PROPEL.", "color": "verde", "requiere": { "energia": "1 W" },
+        "nombre": "Nivel de propelente", "ayuda": "Cuánto queda de lo que cabe en todos los depósitos." },
+      { "id": "reserva", "kind": "lampara", "rotulo": "RESERVA", "requiere": { "energia": "1 W" },
+        "reglas": [ { "si": "nave.propelente_nivel < 0.15", "color": "rojo", "parpadeo": 2.0 }, { "si": "nave.propelente_nivel < 0.3", "color": "ambar" } ],
+        "nombre": "Reserva de propelente", "ayuda": "Ámbar: queda menos del 30 % del propelente. Rojo: menos del 15 %." }
+    ]
+  },
+  // ------------------------------------------------------------------ combat (docs/COMBATE.md)
+  // What a ship with a tactical system has (crates/ship/src/tactical.rs): any panel of any ship
+  // that mounts the machines may carry these. They name the machines by the ids they are
+  // mounted with by custom: "radar", "irst", "rwr", "iff", "ecm".
+  "radar": {
+    "titulo": "RADAR",
+    "mandos": [
+      { "id": "enc", "kind": "interruptor", "rotulo": "RADAR", "bind": { "senal": "radar.encender" },
+        "nombre": "Radar", "ayuda": "Lo enciende (tarda un par de segundos en estar listo). Encendido y en SILENCIO no radia: nadie lo oye." },
+      { "id": "emitir", "kind": "interruptor", "rotulo": "EMISIÓN", "posiciones": ["SILEN.", "EMITE"], "bind": { "senal": "radar.emitir" },
+        "nombre": "Emisión del radar", "ayuda": "EMITE: el radar barre su sector y hace trazas de lo que encuentra. Quien tenga un alertador lo oye desde tres veces más lejos de lo que el radar ve: radiar te delata." },
+      { "id": "escala", "kind": "selector", "rotulo": "ALCANCE km", "posiciones": ["5", "20", "40", "80"], "defecto": 1, "bind": { "senal": "radar.escala" },
+        "nombre": "Escala de alcance", "ayuda": "Hasta dónde llega la pantalla y, con ello, cuánto radia el radar: solo la potencia que hace falta para ese alcance (la mitad de alcance es la dieciseisava parte de potencia). Corto: ves cerca y casi no se te oye." },
+      { "id": "lamp", "kind": "lampara", "rotulo": "EMITE", "requiere": { "energia": "1 W" },
+        "reglas": [ { "si": "tac.emite", "color": "ambar" }, { "si": "radar.on", "color": "verde" } ],
+        "nombre": "Estado del radar", "ayuda": "Verde: listo y callado. Ámbar: radiando." }
+    ]
+  },
+  "sensores": {
+    "titulo": "SENSORES",
+    "mandos": [
+      { "id": "irst", "kind": "interruptor", "rotulo": "INFRARR.", "bind": { "senal": "irst.encender" }, "defecto": 1,
+        "nombre": "Buscador infrarrojo", "ayuda": "Encuentra lo que está caliente por delante (motores encendidos) sin radiar nada. Lo que tiene los motores apagados no lo ve." },
+      { "id": "rwr", "kind": "interruptor", "rotulo": "ALERTAD.", "bind": { "senal": "rwr.encender" }, "defecto": 1,
+        "nombre": "Alertador de radar", "ayuda": "Oye los radares que barren la nave, los que la tienen fijada y los misiles que vienen guiados por radar, y dice por dónde." },
+      { "id": "iff", "kind": "interruptor", "rotulo": "IDENTIF.", "bind": { "senal": "iff.encender" }, "defecto": 1,
+        "nombre": "Transpondedor", "ayuda": "Responde con el código de la nave y pregunta a los demás: lo que responde con código sale como CIVIL (o AMIGO si es el tuyo); lo que no responde, DESCONOCIDO. Apagado nadie te identifica y tú tampoco." },
+      { "id": "codigo", "kind": "rueda", "rotulo": "CÓDIGO", "rango": [0, 9999], "resolucion": 1, "paso": 1, "paso_grueso": 100, "paso_fino": 1, "defecto": 4100, "bind": { "senal": "iff.codigo" },
+        "nombre": "Código del transpondedor", "ayuda": "El código con el que respondes. Quien lleve el mismo te ve como AMIGO." },
+      { "id": "tapa_ecm", "kind": "tapa", "protege": ["ecm"] },
+      { "id": "ecm", "kind": "interruptor", "rotulo": "PERTURB.", "bind": { "senal": "ecm.encender" },
+        "nombre": "Perturbador", "ayuda": "Ruido contra los radares que te miran: les acorta el alcance. A cambio te oye cualquier alertador, mires adonde mires. Bajo tapa." }
+    ]
+  },
+  "objetivo": {
+    "titulo": "OBJETIVO",
+    "mandos": [
+      { "id": "sig", "kind": "pulsador", "rotulo": "SIG.", "modo": "momentaneo", "bind": { "senal": "tac.siguiente" }, "nombre": "Traza siguiente", "ayuda": "Elige la traza siguiente, de la más cercana a la más lejana." },
+      { "id": "ant", "kind": "pulsador", "rotulo": "ANT.", "modo": "momentaneo", "bind": { "senal": "tac.anterior" }, "nombre": "Traza anterior" },
+      { "id": "cerca", "kind": "pulsador", "rotulo": "CERCA", "modo": "momentaneo", "bind": { "senal": "tac.cercano" }, "nombre": "Traza más cercana" },
+      { "id": "morro", "kind": "pulsador", "rotulo": "MORRO", "modo": "momentaneo", "bind": { "senal": "tac.morro" }, "nombre": "Traza ante el morro", "ayuda": "Elige lo que tengas más cerca de la línea del morro." },
+      { "id": "fijar", "kind": "pulsador", "rotulo": "FIJAR", "modo": "momentaneo", "color": "rojo", "luz": "tac.fijado", "bind": { "senal": "tac.fijar" },
+        "nombre": "Fijar", "ayuda": "Fija el radar en la traza elegida (o la suelta). Hace falta que el radar la esté viendo. Vale para cualquier traza: civil, desconocida o lo que sea. El fijado lo oye su alertador." },
+      { "id": "soltar", "kind": "pulsador", "rotulo": "SOLTAR", "modo": "momentaneo", "bind": { "senal": "tac.soltar" }, "nombre": "Soltar la traza" },
+      { "id": "hostil", "kind": "pulsador", "rotulo": "HOSTIL", "modo": "momentaneo", "color": "rojo", "luz": "tac.obj.iff == 3", "bind": { "senal": "tac.hostil" },
+        "nombre": "Declarar hostil", "ayuda": "Marca la traza elegida como hostil (o le quita la marca). Lo que te fija o te dispara se marca solo. El fuego automático solo tira a lo hostil." }
+    ]
+  },
+  "armas": {
+    "titulo": "ARMAS",
+    "mandos": [
+      { "id": "tapa", "kind": "tapa", "protege": ["maestro"] },
+      { "id": "maestro", "kind": "interruptor", "rotulo": "MAESTRO", "posiciones": ["SEGURO", "ARMADO"], "bind": { "senal": "armas.maestro" },
+        "nombre": "Maestro de armas", "ayuda": "En SEGURO nada dispara. Es el único seguro: armado, el gatillo tira a lo que haya delante, sea lo que sea." },
+      { "id": "auto", "kind": "interruptor", "rotulo": "AUTO", "bind": { "senal": "armas.auto" },
+        "nombre": "Fuego automático", "ayuda": "Con el maestro armado, dispara sola cuando tiene solución sobre una traza declarada hostil. Con el piloto automático en PERSEG., la nave apunta y tira sola." },
+      { "id": "municion", "kind": "display7", "senal": "armas.municion", "decimales": 0, "digitos": 4, "rotulo": "MUNICIÓN", "requiere": { "energia": "1 W" },
+        "nombre": "Munición", "ayuda": "Lo que queda del arma elegida." },
+      { "id": "lamp", "kind": "lampara", "rotulo": "EN TIRO", "requiere": { "energia": "1 W" },
+        "reglas": [ { "si": "tac.en_tiro", "color": "verde" }, { "si": "armas.maestro", "color": "rojo" } ],
+        "nombre": "Solución de tiro", "ayuda": "Rojo: armas armadas. Verde: el arma elegida da en la traza elegida si disparas ahora." }
+    ]
+  },
+  "contramedidas": {
+    "titulo": "SEÑUELOS",
+    "mandos": [
+      { "id": "soltar", "kind": "pulsador", "rotulo": "SOLTAR", "modo": "momentaneo", "color": "ambar", "tamano": [26, 26], "bind": { "senal": "cm.soltar" },
+        "nombre": "Soltar señuelos", "ayuda": "Suelta una nube de dipolos (engaña al radar) y una bengala (engaña al infrarrojo). En el vacío no se frenan: siguen a tu lado hasta que giras o aceleras. Suéltalos y aléjate de ellos." },
+      { "id": "programa", "kind": "selector", "rotulo": "PROGRAMA", "posiciones": ["MANUAL", "MISIL", "FIJADO"], "bind": { "senal": "cm.programa" },
+        "nombre": "Programa de señuelos", "ayuda": "MANUAL: solo con SOLTAR. MISIL: los suelta sola cuando viene un misil. FIJADO: también cuando un radar te fija." },
+      { "id": "quedan", "kind": "display7", "senal": "cm.quedan", "decimales": 0, "digitos": 3, "rotulo": "QUEDAN", "requiere": { "energia": "1 W" }, "nombre": "Señuelos que quedan" },
+      { "id": "lamp_fijado", "kind": "lampara", "rotulo": "FIJADO", "requiere": { "energia": "1 W" },
+        "reglas": [ { "si": "rwr.fijado", "color": "rojo", "parpadeo": 2.0 }, { "si": "rwr.amenazas > 0", "color": "ambar" } ],
+        "nombre": "Aviso de radar", "ayuda": "Ámbar: un radar te barre. Rojo: te tiene fijado." },
+      { "id": "lamp_misil", "kind": "lampara", "rotulo": "MISIL", "requiere": { "energia": "1 W" },
+        "reglas": [ { "si": "rwr.misil", "color": "rojo", "parpadeo": 4.0 } ],
+        "nombre": "Aviso de misil", "ayuda": "Viene un misil hacia la nave." }
+    ]
+  },
+  // The autopilot (crates/ship/src/autopilot.rs): the positions of its two selectors are its
+  // modes, in the order of `NAV` and `COMBAT` there (a test holds them to it)
+  "piloto_nav": {
+    "titulo": "PILOTO AUTOMÁTICO",
+    "mandos": [
+      { "id": "modo", "kind": "selector", "rotulo": "PROGRAMA", "posiciones": ["OFF", "ACTITUD", "PROGR.", "RETRO", "FRENAR", "SEGUIR", "DESPEG.", "ATERRIZ."], "tamano": [44, 44], "bind": { "senal": "ap.nav" },
+        "nombre": "Programa del piloto automático",
+        "ayuda": "FRENAR: se para sobre el suelo y se queda sostenida. SEGUIR: va a la traza elegida (N, U) y se queda a la distancia pedida, yendo como ella. DESPEG.: sube en vertical a la altura de la rueda ALT (50 m sin ALTURA puesta). ATERRIZ.: baja en vertical donde estés, cada vez más despacio, y al posarse suelta los motores. ACTITUD: mantiene hacia donde miras. PROGR. / RETRO: el morro a favor o en contra de tu velocidad. Mover la palanca de mando manda sobre él." },
+      { "id": "lamp", "kind": "lampara", "rotulo": "ACTIVO", "requiere": { "energia": "1 W" },
+        "reglas": [ { "si": "ap.sin_objetivo", "color": "ambar", "parpadeo": 1.0 }, { "si": "ap.activo == 1", "color": "verde" } ],
+        "nombre": "Piloto automático", "ayuda": "Verde: vuela él. Ámbar intermitente: el programa necesita una traza elegida y no hay ninguna." },
+      { "id": "altura", "kind": "interruptor", "rotulo": "ALTURA", "bind": { "senal": "ap.altura" },
+        "nombre": "Mantener altura", "ayuda": "Mantiene la altura sobre el suelo de la rueda ALT (sigue el relieve). Con cualquiera de las tres retenciones puesta el ordenador vuela los motores y mueve las góndolas: lo que no retienes sigue como va y las teclas de traslación empujan." },
+      { "id": "altura_sel", "kind": "rueda", "rotulo": "ALT m", "rango": ["5 m", "25000 m"], "resolucion": "5 m", "paso": "10 m", "paso_grueso": "100 m", "paso_fino": "5 m", "defecto": "100 m", "unidad": "m",
+        "aceleracion": { "desde": 4.0, "k": 0.5, "gamma": 1.4, "max": 8.0 }, "bind": { "senal": "ap.altura_sel" },
+        "nombre": "Altura elegida", "ayuda": "Altura sobre el suelo: 10 m por muesca, Mayús 100 m, Ctrl 5 m. Giros rápidos aceleran." },
+      { "id": "altura_ve", "kind": "display7", "senal": "ap.altura_sel", "unidad": "m", "decimales": 0, "digitos": 5, "rotulo": "ALT", "requiere": { "energia": "1 W" } },
+      { "id": "rumbo", "kind": "interruptor", "rotulo": "RUMBO", "bind": { "senal": "ap.rumbo" },
+        "nombre": "Mantener rumbo", "ayuda": "Gira hasta el rumbo de brújula de la rueda RUMBO (0 norte, 90 este) y lo mantiene. Con VELOC. puesta, la velocidad va hacia ese rumbo." },
+      { "id": "rumbo_sel", "kind": "rueda", "rotulo": "RUMBO °", "rango": [0, 359], "resolucion": 1, "paso": 5, "paso_grueso": 30, "paso_fino": 1, "defecto": 0,
+        "bind": { "senal": "ap.rumbo_sel" },
+        "nombre": "Rumbo elegido", "ayuda": "Rumbo de brújula en grados: 5 por muesca, Mayús 30, Ctrl 1." },
+      { "id": "rumbo_ve", "kind": "display7", "senal": "ap.rumbo_sel", "decimales": 0, "digitos": 3, "rotulo": "RUMBO", "requiere": { "energia": "1 W" } },
+      { "id": "velocidad", "kind": "interruptor", "rotulo": "VELOC.", "bind": { "senal": "ap.velocidad" },
+        "nombre": "Mantener velocidad", "ayuda": "Control de crucero: lleva la velocidad sobre el suelo a la de la rueda VEL, hacia donde mira el morro (o hacia el rumbo retenido), y frena sola al bajarla. Fuera de todo cuerpo: a lo largo de como vas." },
+      { "id": "velocidad_sel", "kind": "rueda", "rotulo": "VEL m/s", "rango": ["0 m/s", "1800 m/s"], "resolucion": "1 m/s", "paso": "5 m/s", "paso_grueso": "50 m/s", "paso_fino": "1 m/s", "defecto": "50 m/s", "unidad": "m/s",
+        "aceleracion": { "desde": 4.0, "k": 0.5, "gamma": 1.4, "max": 8.0 }, "bind": { "senal": "ap.velocidad_sel" },
+        "nombre": "Velocidad elegida", "ayuda": "Velocidad sobre el suelo: 5 m/s por muesca, Mayús 50, Ctrl 1." },
+      { "id": "velocidad_ve", "kind": "display7", "senal": "ap.velocidad_sel", "unidad": "m/s", "decimales": 0, "digitos": 4, "rotulo": "VEL", "requiere": { "energia": "1 W" } }
+    ]
+  },
+  "piloto_combate": {
+    "titulo": "PILOTO · COMBATE",
+    "mandos": [
+      { "id": "modo", "kind": "selector", "rotulo": "MODO", "posiciones": ["OFF", "PERSEG.", "APUNTAR", "DISTAN.", "EVADIR", "SEPARAR"], "tamano": [44, 44], "bind": { "senal": "ap.combate" },
+        "nombre": "Piloto automático de combate",
+        "ayuda": "PERSEG.: pone el morro donde hay que tirar y va hasta la distancia pedida de la traza, yendo luego como ella. APUNTAR: solo el morro donde hay que tirar; los motores son tuyos. DISTAN.: el morro en la traza misma y la distancia pedida. EVADIR: a toda potencia cruzado a la amenaza, cambiando de lado. SEPARAR: se aleja a toda potencia. Gira primero de lado y luego arriba o abajo, sin volcarse. Manda sobre el otro piloto; la palanca de mando manda sobre los dos." },
+      { "id": "distancia", "kind": "rueda", "rotulo": "DISTANCIA m", "rango": ["100 m", "5000 m"], "resolucion": "50 m", "paso": "50 m", "paso_grueso": "500 m", "paso_fino": "50 m", "defecto": "800 m", "unidad": "m", "bind": { "senal": "ap.distancia" },
+        "nombre": "Distancia a mantener", "ayuda": "A qué distancia de la traza se queda el piloto (PERSEG., DISTAN. y SEGUIR)." },
+      { "id": "lamp", "kind": "lampara", "rotulo": "ACTIVO", "requiere": { "energia": "1 W" },
+        "reglas": [ { "si": "ap.sin_objetivo", "color": "ambar", "parpadeo": 1.0 }, { "si": "ap.activo == 2", "color": "rojo" } ],
+        "nombre": "Piloto de combate", "ayuda": "Rojo: vuela él. Ámbar intermitente: no hay traza elegida." }
+    ]
+  },
+  // What the pilot sets of the flight computer (crates/ship/src/flight.rs: FlightDef "perfil",
+  // "limite")
+  "ordenador_vuelo": {
+    "titulo": "ORDENADOR DE VUELO",
+    "mandos": [
+      { "id": "perfil", "kind": "selector", "rotulo": "PERFIL", "posiciones": ["FINO", "NORMAL", "COMBATE"], "defecto": 1, "bind": { "senal": "fcs.perfil" },
+        "nombre": "Perfil de vuelo", "ayuda": "FINO: giros lentos, para posarse y acercarse a algo. NORMAL: la nave como es. COMBATE: giros rápidos y una respuesta más dura." },
+      { "id": "limite", "kind": "rueda", "rotulo": "LÍMITE g", "rango": [0, 12], "resolucion": 0.5, "paso": 0.5, "paso_grueso": 2, "paso_fino": 0.5, "defecto": 0, "bind": { "senal": "fcs.limite" },
+        "nombre": "Límite de aceleración", "ayuda": "Lo más que el piloto automático pide a los motores, en g. 0: todo lo que den." },
+      { "id": "sas", "kind": "interruptor", "rotulo": "ESTAB.", "bind": { "senal": "vuelo.sas" }, "defecto": 1,
+        "nombre": "Estabilizador", "ayuda": "Frena los giros al soltar la palanca de mando." },
+      { "id": "mantener", "kind": "interruptor", "rotulo": "MANTENER", "bind": { "senal": "vuelo.mantener" },
+        "nombre": "Mantener", "ayuda": "El ordenador sostiene la nave contra la gravedad y anula la deriva: quieta donde está, y las teclas de traslación piden velocidad. En una nave de góndolas vectoriales las mueve él." },
+      { "id": "lamp", "kind": "lampara", "rotulo": "MODO", "requiere": { "energia": "1 W" },
+        "reglas": [ { "si": "vuelo.modo == 0", "color": "rojo" }, { "si": "vuelo.modo == 3", "color": "cian" }, { "si": "vuelo.modo >= 1", "color": "verde" } ],
+        "nombre": "Modo de vuelo", "ayuda": "Rojo: sin ordenador (vuelo directo). Verde: con él. Cian: manteniendo." }
+    ]
+  },
+  // A unified power pack (crates/machines/src/models/powerpack.rs), mounted as "reactor" and
+  // commanded by rx.marcha and rx.scram. It says why it stopped, and rearms by itself
+  "grupo_energia": {
+    "titulo": "GRUPO DE ENERGÍA",
+    "mandos": [
+      { "id": "marcha", "kind": "interruptor", "rotulo": "REACTOR", "posiciones": ["PARO", "MARCHA"], "bind": { "senal": "rx.marcha" },
+        "nombre": "Marcha del grupo de energía", "ayuda": "MARCHA: arranca con corriente de las baterías y en unos segundos está en línea; ya no las necesita. PARO: lo apaga, sin más: no hay nada que rearmar." },
+      { "id": "tapa_scram", "kind": "tapa", "protege": ["scram"] },
+      { "id": "scram", "kind": "pulsador", "modo": "seta", "rotulo": "PARADA", "bind": { "senal": "rx.scram" },
+        "nombre": "Parada de emergencia", "ayuda": "Lo para al momento. Gira la seta para soltarla: en cuanto se enfríe se rearma solo y, si MARCHA sigue puesta, vuelve a arrancar." },
+      { "id": "estado", "kind": "pantalla", "tamano": [92, 34], "requiere": { "energia": "2 W" },
+        "paginas": [ { "titulo": "RU-40", "lineas": ["{reactor.estado|PARADO|ARRANCANDO|EN LINEA|DISPARADO}", "{reactor.causa|SIN AVISOS|SETA PULSADA|MUY CALIENTE|DAÑADO}"] } ],
+        "nombre": "Estado del grupo de energía", "ayuda": "Qué hace y, si se ha parado solo, por qué. MUY CALIENTE: saca los radiadores y espera; se rearma solo. SETA PULSADA: gírala para soltarla." },
+      { "id": "p", "kind": "display7", "senal": "reactor.p", "unidad": "kW", "decimales": 1, "digitos": 4, "rotulo": "DA kW", "requiere": { "energia": "1 W" }, "nombre": "Potencia que da" },
+      { "id": "t", "kind": "aguja", "senal": "reactor.t", "escala": ["0 °C", "1000 °C"], "unidad": "°C", "rotulo": "TEMP.", "tamano": [56, 56],
+        "zonas": { "verde": ["0 °C", "700 °C"], "ambar": ["700 °C", "870 °C"], "roja": ["870 °C", "1000 °C"] }, "requiere": { "energia": "1 W" },
+        "nombre": "Temperatura del grupo", "ayuda": "En ámbar da menos de lo pedido (lámpara LIMITADO): le falta por dónde soltar calor. Saca los radiadores." },
+      { "id": "lamp", "kind": "lampara", "rotulo": "LIMITADO", "requiere": { "energia": "1 W" },
+        "reglas": [ { "si": "reactor.estado == 3", "color": "rojo", "parpadeo": 2.0 }, { "si": "reactor.limitado", "color": "ambar" }, { "si": "reactor.estado == 2", "color": "verde" }, { "si": "reactor.estado == 1", "color": "ambar", "parpadeo": 1.0 } ],
+        "nombre": "Estado", "ayuda": "Ámbar intermitente: arrancando. Verde: en línea. Ámbar fijo: limitado por temperatura (saca los radiadores). Rojo: parado por un disparo; mira la pantalla de al lado." }
+    ]
+  }
+}

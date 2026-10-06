@@ -1,0 +1,43 @@
+// The Alcotán's cableways: the hold, the cabin and the bridge from several sides, close up on the
+// trunks. Run: luna --guion tools/camara/cables.jsonc → out/camara/cables_*.png
+{
+  "registro": "out/camara/cables.log",
+  "pasos": [
+    { "nave": "alcotan" },
+    { "esperar": 3.0 },
+    { "camara": { "en": [0, 1.6, -8.8], "mira": [0, 1.4, -3.4], "fov": 75 } },
+    { "foto": "out/camara/cables_bodega_proa.png" },
+    { "camara": { "en": [0, 1.6, -3.9], "mira": [0, 1.2, -9.3], "fov": 75 } },
+    { "foto": "out/camara/cables_bodega_popa.png" },
+    { "camara": { "en": [-0.8, 1.5, -5.0], "mira": [1.9, 2.2, -7.5], "fov": 70 } },
+    { "foto": "out/camara/cables_bodega_estribor.png" },
+    { "camara": { "en": [0.8, 1.5, -5.0], "mira": [-1.9, 2.2, -7.5], "fov": 70 } },
+    { "foto": "out/camara/cables_bodega_babor.png" },
+    { "camara": { "en": [0, 1.6, -3.0], "mira": [0, 1.6, 2.6], "fov": 75 } },
+    { "foto": "out/camara/cables_cabina_proa.png" },
+    { "camara": { "en": [0, 1.6, 2.2], "mira": [0, 1.4, -3.4], "fov": 75 } },
+    { "foto": "out/camara/cables_cabina_popa.png" },
+    { "camara": { "en": [-0.6, 1.6, -1.0], "mira": [1.9, 2.3, 0.5], "fov": 65 } },
+    { "foto": "out/camara/cables_cabina_disyuntores.png" },
+    { "camara": { "en": [0.2, 2.0, -6.5], "mira": [1.9, 2.4, -6.0], "fov": 60 } },
+    { "foto": "out/camara/cables_mazo_cerca.png" },
+    { "camara": { "en": [0, 1.5, 2.9], "mira": [0, 1.2, 6.0], "fov": 75 } },
+    { "foto": "out/camara/cables_puente.png" },
+    { "camara": { "panel": "reactor", "distancia": 1.1 } },
+    { "foto": "out/camara/cables_panel_reactor.png" },
+    { "camara": { "panel": "disyuntores", "distancia": 1.3 } },
+    { "foto": "out/camara/cables_panel_disyuntores.png" },
+    // outside: the landing lights under the nose, the wings, the tail
+    { "camara": { "en": [1.6, -0.1, 9.6], "mira": [0.45, -0.3, 7.4], "fov": 55 } },
+    { "foto": "out/camara/cables_focos_morro.png" },
+    { "camara": { "en": [-5.5, 3.2, -1.5], "mira": [-3.3, 1.0, -4.1], "fov": 60 } },
+    { "foto": "out/camara/cables_ala.png" },
+    { "camara": { "en": [3.5, 4.5, -12.5], "mira": [0.5, 2.6, -8.0], "fov": 60 } },
+    { "foto": "out/camara/cables_popa.png" },
+    // the ceiling ducts and their bends
+    { "camara": { "en": [0.3, 1.3, -0.5], "mira": [-0.2, 2.6, -2.2], "fov": 70 } },
+    { "foto": "out/camara/cables_conductos_techo.png" },
+    { "camara": { "en": [0.0, 1.2, -7.0], "mira": [0.3, 2.7, -5.6], "fov": 70 } },
+    { "foto": "out/camara/cables_techo_bodega.png" }
+  ]
+}

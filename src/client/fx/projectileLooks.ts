@@ -88,6 +88,12 @@ defineProjectileLook('rocket', {
   },
 });
 
+/** A visual variant reuses the geometry/material pool, scaled at creation (never per frame). */
+export function scaledProjectileLook(base: ProjectileLook, scale: number): ProjectileLook {
+  return { tail: base.tail * scale, mesh() { const mesh = base.mesh(); mesh.scale.multiplyScalar(scale); return mesh; }, trail: base.trail, launch: base.launch };
+}
+defineProjectileLook('minimissile', scaledProjectileLook(PROJECTILE_LOOKS.rocket, 0.55));
+
 // --- tracer: a bright streak (a bullet is too small and fast to see; its tracer is what shows) ---
 
 let tracerParts: { geo: THREE.BufferGeometry; mat: THREE.Material } | null = null;

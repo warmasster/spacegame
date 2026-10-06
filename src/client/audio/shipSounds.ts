@@ -1,28 +1,25 @@
-// A ship's sounds on this client, for any ship, from its data and the replicated state. Nothing
-// here knows a machine by name:
+// A ship as an acoustic host (acoustics.ts): one adapter between the ship's data and the generic
+// sound system. It says what the audio needs to know about any host — its air spaces (the
+// compartments) and their pressure, the ways between them (doors, hatches, the ramp, vents and
+// ducts, blown panels), its footing on the ground — and plays what the ship's modules declare
+// (`ShipSystems.soundCues()`, through the generic CuePlayer). What only ships have lives here too,
+// all by data, nothing by name:
 //
-//   cues      every module declares what its machines sound like (`ShipModule.sounds()`, gathered
-//             by `ShipSystems.soundCues()`: the reactor, the engines, the movers, the master alarm…);
-//             this plays them from where they are — loops as loud as their `level`, one-shots on
-//             the edge of `on`, travel noise from `motion`.
-//   physics   what any ship does the same way: a control's click by its kind (CONTROL_SOUNDS), the
-//             buzzer of a refusal, gas rushing out of every opening (airflow vents), panels
-//             creaking under pressure, struck, blown out, welded shut, machines hit and wrecked,
-//             the touchdown.
-//   air       its rooms' pressure and how open the way is from the listener to each of them, for
-//             the medium (it answers `Acoustics` for every ship).
-//
-// Far from the listener a ship sleeps: no loops, no edges (they are re-read on waking, so what
-// changed meanwhile doesn't play late).
+//   controls  a click by the control's kind (CONTROL_SOUNDS), the buzzer of a refusal, switches
+//             moved by other crew or by the machinery itself
+//   air       gas rushing through every opening that has a place (shared/ship/airflow vents),
+//             panels groaning under pressure
+//   hull      panels struck, blown out, welded shut; machines struck and wrecked; the touchdown
 
 import * as THREE from 'three';
 import { panelLoad, panelStrain, type Vent } from '../../shared/ship/airflow';
 import { zoneAtPoint, type ControlKind } from '../../shared/ship/def';
-import type { SoundCue } from '../../shared/ship/modules/api';
-import { bodyAt } from '../../shared/space/body';
+import type { SoundCue } from '../../shared/sound';
 import type { ShipClient } from '../ship/ship';
+import { acousticHosts, AirWays, type AcousticHost } from './acoustics';
+import { CuePlayer, type CueSpot, type Footing } from './cues';
 import { sfx, type Loop } from './engine';
-import { newPlace, type Acoustics, type Place, type V3 } from './medium';
+import { newPlace, type Place, type V3 } from './medium';
 
 /** The voice of each kind of control (bank ids). A new kind of control is one entry. */
 export const CONTROL_SOUNDS: Record<ControlKind, string> = {
@@ -42,44 +39,23 @@ export const CONTROL_SOUNDS: Record<ControlKind, string> = {
 const SELF_MOVING: ReadonlySet<ControlKind> = new Set<ControlKind>(['breaker', 'lever', 'toggle', 'rotary', 'valve']);
 
 /** The same machine smaller sounds higher, bigger lower (catalog size class). */
-const SIZE_PITCH: Record<string, number> = { XS: 1.25, S: 1.12, M: 1, L: 0.86 };
+export const SIZE_PITCH: Record<string, number> = { XS: 1.25, S: 1.12, M: 1, L: 0.86 };
 
-/** Beyond this (m, past the ship's own size) a ship sleeps. */
-const WAKE = 450;
-
-interface LiveCue {
-  cue: SoundCue;
-  sound: string;
-  /** Ship-space point (refreshed by `at` when it is a function). */
-  local: V3;
-  atFn: ((st: Float64Array, sw: Record<string, number>, out: V3) => V3) | null;
-  room: number;
-  exterior: boolean;
-  /** Integrity variable of its part (-1: none): a wreck is silent. */
-  hp: number;
-  pitch: number;
-  gain: number;
-  loop: Loop | null;
-  /** Last value of `on` (-1: not read yet). */
-  was: number;
-  /** `motion`: last value and smoothed speed. */
-  mv: number;
-  speed: number;
-}
-
-const byId = new Map<number, ShipSounds>();
 const _w3 = new THREE.Vector3();
+const _p3 = new THREE.Vector3();
 
-export class ShipSounds {
-  private cues: LiveCue[] = [];
+export class ShipSounds implements AcousticHost {
+  readonly radius: number;
+  private cues: CuePlayer;
   /** Controls by switch key. */
   private byKey = new Map<string, number[]>();
-  /** Pressure of each room (kPa), this frame. */
+  /** Pressure of each compartment (kPa), this frame. */
   private press: Float64Array;
-  /** How open the way is from the listener to each room (and, last, to the outside round the ship). */
-  private way: Float64Array;
-  /** Air ways between rooms (-1 = the outside): openings (their key) and panels (a hole). */
-  private edges: Array<{ a: number; b: number; key: string | null; vent: boolean; panel: number }> = [];
+  private ways: AirWays;
+  /** What each air passage is: a panel (open when blown out), a mover key (its travel), a valve key. */
+  private passPanel: number[] = [];
+  private passKey: string[] = [];
+  private passValve: boolean[] = [];
   private vents: Vent[] = [];
   private ventKey: number[] = [];
   private ventLoop: Loop[] = [];
@@ -91,13 +67,14 @@ export class ShipSounds {
   private wasLanded: boolean;
   private lastSpeed = 0;
   private awake = false;
-  private radius: number;
   private agl = 0;
   private aglT = 0;
+  private foot: Footing = { exterior: 0, interior: 0 };
   private shot: Place = newPlace();
+  private centreL: V3;
+  private bounds: { min: V3; max: V3 };
 
   constructor(readonly ship: ShipClient) {
-    byId.set(ship.id, this);
     const sim = ship.sim;
     const def = sim.def;
     const sys = sim.sys;
@@ -106,124 +83,141 @@ export class ShipSounds {
       if (list) list.push(c.index);
       else this.byKey.set(c.key, [c.index]);
     }
-    const n = def.compartments.length;
-    this.press = new Float64Array(n);
-    this.way = new Float64Array(n + 1);
-    for (const o of def.openings) this.edges.push({ a: sys.compIndex(o.a), b: o.b === null ? -1 : sys.compIndex(o.b), key: o.key, vent: o.kind === 'vent' || o.kind === 'duct', panel: -1 });
+    this.press = new Float64Array(def.compartments.length);
+    this.ways = new AirWays(def.compartments.length);
+    for (const o of def.openings) this.pass(sys.compIndex(o.a), o.b === null ? -1 : sys.compIndex(o.b), -1, o.key, o.kind === 'vent' || o.kind === 'duct');
     for (const p of def.panels) {
       const a = sys.compIndex(p.zone);
       const b = p.other !== undefined ? sys.compIndex(p.other) : -1;
-      if (a >= 0 || b >= 0) this.edges.push({ a, b, key: null, vent: false, panel: p.index });
+      if (a >= 0 || b >= 0) this.pass(a, b, p.index, '', false);
     }
     this.creak = new Float64Array(def.panels.length);
     this.hpIdx = Int32Array.from(def.parts, (p) => sys.hpIndex(p.id));
     this.hpWas = new Float64Array(def.parts.length);
     this.wasLanded = sim.landed;
     const b = def.bounds;
+    this.bounds = { min: [...b.min] as V3, max: [...b.max] as V3 };
     this.radius = Math.hypot(b.max[0] - b.min[0], b.max[1] - b.min[1], b.max[2] - b.min[2]) / 2;
-    const centre: V3 = [(b.min[0] + b.max[0]) / 2, (b.min[1] + b.max[1]) / 2, (b.min[2] + b.max[2]) / 2];
-    for (const cue of sys.soundCues()) {
-      const part = cue.part;
-      // where: its own point, its machine, its room's middle, the ship's middle
-      let zone: string | null = cue.zone !== undefined ? cue.zone : part ? part.zone : null;
-      const at = typeof cue.at === 'function' ? null : cue.at;
-      let local: V3 = at ? [at[0], at[1], at[2]] : part ? [part.c[0], part.c[1], part.c[2]] : [...centre];
-      if (!at && !part && zone) {
-        const z = def.zones.find((x) => x.id === zone);
-        if (z) local = [(z.min[0] + z.max[0]) / 2, (z.min[1] + z.max[1]) / 2, (z.min[2] + z.max[2]) / 2];
-      }
-      if (cue.zone === undefined && !part && at) zone = zoneAtPoint(def.zones, at)?.id ?? null;
-      this.cues.push({
-        cue,
-        sound: (part && cue.role && part.sounds?.[cue.role]) || cue.sound,
-        local,
-        atFn: typeof cue.at === 'function' ? cue.at : null,
-        room: sys.compIndex(zone),
-        exterior: zone === null,
-        hp: part ? sys.hpIndex(part.id) : -1,
-        pitch: part?.size ? SIZE_PITCH[part.size] ?? 1 : 1,
-        gain: cue.gain ?? 1,
-        loop: null,
-        was: -1,
-        mv: NaN,
-        speed: 0,
-      });
+    this.centreL = [(b.min[0] + b.max[0]) / 2, (b.min[1] + b.max[1]) / 2, (b.min[2] + b.max[2]) / 2];
+    this.cues = new CuePlayer(ship.id, sys.soundCues(), (cue) => this.spot(cue));
+    acousticHosts.add(this);
+  }
+
+  get id() {
+    return this.ship.id;
+  }
+
+  private pass(a: number, b: number, panel: number, key: string, valve: boolean) {
+    this.ways.add(a, b, valve);
+    this.passPanel.push(panel);
+    this.passKey.push(key);
+    this.passValve.push(valve);
+  }
+
+  /** Where a declared cue sounds: its point, its machine, its compartment's middle, the ship's middle. */
+  private spot(cue: SoundCue): CueSpot {
+    const def = this.ship.sim.def;
+    const sys = this.ship.sim.sys;
+    const part = cue.part;
+    let zone: string | null = cue.zone !== undefined ? cue.zone : part ? part.zone : null;
+    const at = typeof cue.at === 'function' ? null : cue.at;
+    let local: V3 = at ? [at[0], at[1], at[2]] : part ? [part.c[0], part.c[1], part.c[2]] : [...this.centreL];
+    if (!at && !part && zone) {
+      const z = def.zones.find((x) => x.id === zone);
+      if (z) local = [(z.min[0] + z.max[0]) / 2, (z.min[1] + z.max[1]) / 2, (z.min[2] + z.max[2]) / 2];
     }
+    if (cue.zone === undefined && !part && at) zone = zoneAtPoint(def.zones, at)?.id ?? null;
+    return {
+      sound: (part && cue.role && part.sounds?.[cue.role]) || cue.sound,
+      local,
+      space: sys.compIndex(zone),
+      exterior: zone === null,
+      pitch: part?.size ? SIZE_PITCH[part.size] ?? 1 : 1,
+      hp: part && sys.part(part.id) ? sys.hpIndex(part.id) : -1,
+    };
   }
 
-  static of(id: number) {
-    return byId.get(id) ?? null;
+  // --- the acoustic host (acoustics.ts) -----------------------------------------------------
+
+  centre(out: V3) {
+    const c = this.ship.position;
+    out[0] = c.x;
+    out[1] = c.y;
+    out[2] = c.z;
+    return out;
   }
 
-  /** Pressure of a room (kPa), as of this frame. */
-  pressure(room: number) {
-    return room >= 0 && room < this.press.length ? this.press[room] : 0;
+  toLocal(p: V3, out: V3, margin: number) {
+    const l = this.ship.local(_p3.set(p[0], p[1], p[2]), _w3);
+    const b = this.bounds;
+    if (l.x < b.min[0] - margin || l.x > b.max[0] + margin || l.y < b.min[1] - margin || l.y > b.max[1] + margin || l.z < b.min[2] - margin || l.z > b.max[2] + margin) return false;
+    out[0] = l.x;
+    out[1] = l.y;
+    out[2] = l.z;
+    return true;
   }
 
-  /** How open the air way is from the listener to a room (-1: the outside round the ship). */
-  wayTo(room: number) {
-    return room >= 0 ? this.way[room] ?? 0 : this.way[this.way.length - 1];
+  toWorld(l: V3, out: V3) {
+    const w = this.ship.world(l, _w3);
+    out[0] = w.x;
+    out[1] = w.y;
+    out[2] = w.z;
   }
 
-  /** Every frame (the audio system): cues, air, and what any ship does. */
-  update(dt: number) {
-    const L = sfx.listener;
-    const ship = this.ship;
-    const sim = ship.sim;
-    const c = ship.position;
-    const d = Math.hypot(c.x - L.p[0], c.y - L.p[1], c.z - L.p[2]);
-    if (d > this.radius + WAKE) {
+  spaceAt(l: V3) {
+    return this.ship.sim.sys.compIndex(zoneAtPoint(this.ship.sim.def.zones, l)?.id ?? null);
+  }
+
+  air(space: number) {
+    return space >= 0 && space < this.press.length ? this.press[space] : 0;
+  }
+
+  way(space: number) {
+    return this.ways.way(space);
+  }
+
+  footing() {
+    return this.ship.sim.landed ? 1 : 0;
+  }
+
+  private openness = (i: number) => {
+    const sim = this.ship.sim;
+    const panel = this.passPanel[i];
+    if (panel >= 0) return sim.hole(panel) ? 1 : 0;
+    const key = this.passKey[i];
+    if (this.passValve[i]) return sim.sw[key] === 1 ? 1 : 0;
+    return this.ship.anim.movers[key] ?? sim.mover(key);
+  };
+
+  /** Every frame (acoustics.updateHosts): its air, its declared sounds and what any ship does. */
+  update(dt: number, near: boolean) {
+    if (!near) {
       if (this.awake) this.sleep();
       return;
     }
+    const L = sfx.listener;
+    const ship = this.ship;
+    const sim = ship.sim;
     const waking = !this.awake;
     this.awake = true;
     const st = sim.st;
-    const sw = sim.sw;
     const def = sim.def;
     for (let i = 0; i < this.press.length; i++) this.press[i] = sim.sys.pressure(st, def.compartments[i].id);
-    this.buildWay();
+    // the ways from the listener: its space here, or the outside round us
+    this.ways.solve(L.host === ship.id && L.space >= 0 ? L.space : L.space < 0 ? -1 : -2, this.openness);
     // the ground under it carries what it does: all of it when it stands there, its exhausts when low
     this.aglT -= dt;
     if (this.aglT <= 0) {
       this.aglT = 0.25;
       this.agl = sim.landed ? 0 : ship.altitude();
     }
-    const gExt = sim.landed ? 1 : Math.max(0, 1 - this.agl / 25);
-    const gIn = sim.landed ? 0.5 : 0;
-
-    for (let k = 0; k < this.cues.length; k++) {
-      const lc = this.cues[k];
-      const cue = lc.cue;
-      if (lc.atFn) lc.atFn(st, sw, lc.local);
-      const alive = lc.hp < 0 || st[lc.hp] > 0;
-      if (cue.on) {
-        const now = cue.on(st, sw) ? 1 : 0;
-        if (lc.was === 0 && now === 1 && alive && !waking) {
-          const pl = this.fill(this.shot, lc, gExt, gIn);
-          sfx.play(lc.sound, pl, lc.gain, lc.pitch);
-        }
-        lc.was = now;
-      }
-      if (!cue.level && !cue.motion) continue;
-      let level = 0;
-      if (cue.motion) {
-        const v = cue.motion.value(st, sw);
-        if (lc.mv === lc.mv) lc.speed = Math.max(Math.abs(v - lc.mv) / Math.max(dt, 1e-3), lc.speed * Math.exp(-dt / 0.3));
-        lc.mv = v;
-        level = Math.min(1, lc.speed / cue.motion.rate);
-        if (level < 0.05) level = 0;
-      }
-      if (cue.level) level = cue.motion ? level * cue.level(st, sw) : cue.level(st, sw);
-      if (!alive) level = 0;
-      if (level <= 0 && !lc.loop) continue;
-      lc.loop ??= sfx.loop(lc.sound, lc.gain);
-      lc.loop.level = level;
-      lc.loop.pitch = lc.pitch * (cue.pitch ? cue.pitch(st, sw) : 1);
-      this.fill(lc.loop.place, lc, gExt, gIn);
-    }
+    this.foot.exterior = sim.landed ? 1 : Math.max(0, 1 - this.agl / 25);
+    this.foot.interior = sim.landed ? 0.5 : 0;
+    this.cues.update(dt, st, sim.sw, this.foot, waking);
+    this.centre(_c);
+    const d = Math.hypot(_c[0] - L.p[0], _c[1] - L.p[1], _c[2] - L.p[2]);
     const close = d < this.radius + 150;
-    if (close) this.air(d, dt);
+    if (close) this.airflow(d, dt);
     this.parts(!waking && close);
     // touchdown: the gear takes the weight
     if (sim.landed && !this.wasLanded && !waking) this.touchdown();
@@ -231,34 +225,18 @@ export class ShipSounds {
     this.wasLanded = sim.landed;
   }
 
-  /** Where a cue sounds (a ship point: the engine follows the ship while it plays). */
-  private fill(pl: Place, lc: LiveCue, gExt: number, gIn: number) {
-    pl.ship = this.ship.id;
-    pl.room = lc.room;
-    pl.ground = lc.exterior ? gExt : gIn;
-    pl.own = 0;
-    pl.structural = !!lc.cue.structural;
-    pl.local ??= [0, 0, 0];
-    pl.local[0] = lc.local[0];
-    pl.local[1] = lc.local[1];
-    pl.local[2] = lc.local[2];
-    return pl;
-  }
-
-  /** A ship point as a place for a one-shot (its room from the point). */
+  /** A ship point as a place for a one-shot (its compartment from the point). */
   placeOf(local: readonly number[], out: Place = this.shot): Place {
-    const def = this.ship.sim.def;
-    const z = zoneAtPoint(def.zones, local as V3);
     const landed = this.ship.sim.landed;
-    out.ship = this.ship.id;
-    out.room = this.ship.sim.sys.compIndex(z?.id ?? null);
-    out.ground = landed ? (z ? 0.5 : 1) : 0;
-    out.own = 0;
-    out.structural = false;
+    out.host = this.ship.id;
     out.local ??= [0, 0, 0];
     out.local[0] = local[0];
     out.local[1] = local[1];
     out.local[2] = local[2];
+    out.space = this.spaceAt(out.local);
+    out.ground = landed ? (out.space >= 0 ? 0.5 : 1) : 0;
+    out.own = 0;
+    out.structural = false;
     return out;
   }
 
@@ -306,7 +284,7 @@ export class ShipSounds {
     const sim = this.ship.sim;
     const p = sim.def.panels[i];
     const pl = this.placeOf(p.c);
-    pl.room = sim.sys.compIndex(p.zone);
+    pl.space = sim.sys.compIndex(p.zone);
     if (flipped && sim.hole(i)) {
       sfx.play(p.kind === 'glass' ? 'glass.break' : 'hull.breach', pl);
       // air behind it: the explosive decompression
@@ -315,8 +293,8 @@ export class ShipSounds {
     else if (before - after > 0.5) sfx.play('hull.hit', pl, Math.min(1, 0.3 + (before - after) / 40));
   }
 
-  /** Gas through every opening (breach, door, ramp, valve): a rush as loud as its flow. Panels past what they hold groan. */
-  private air(d: number, dt: number) {
+  /** Gas through every opening with a place (breach, door, ramp): a rush as loud as its flow. Panels past what they hold groan. */
+  private airflow(d: number, dt: number) {
     const sim = this.ship.sim;
     this.stamp++;
     sim.vents(this.vents);
@@ -336,8 +314,8 @@ export class ShipSounds {
       // small holes whistle higher, fast jets roar higher
       l.pitch = 0.65 + Math.min(0.7, v.speed / 500) + 0.25 * Math.max(0, 1 - v.r0 / 0.25);
       const pl = l.place;
-      pl.ship = this.ship.id;
-      pl.room = v.up >= 0 ? v.up : v.down;
+      pl.host = this.ship.id;
+      pl.space = v.up >= 0 ? v.up : v.down;
       pl.ground = 0;
       pl.local ??= [0, 0, 0];
       pl.local[0] = v.at[0];
@@ -384,44 +362,8 @@ export class ShipSounds {
     }
     const pl = this.placeOf(at);
     pl.ground = 1;
-    pl.room = -1;
+    pl.space = -1;
     sfx.play('ship.touchdown', pl, Math.min(1.2, 0.35 + this.lastSpeed / 3));
-  }
-
-  /** How open the air way is from the listener (in a room of this ship, or outside round it) to every room. */
-  private buildWay() {
-    const way = this.way;
-    way.fill(0);
-    const L = sfx.listener;
-    const n = this.press.length;
-    const from = L.ship === this.ship.id && L.room >= 0 ? L.room : L.room < 0 ? n : -2;
-    if (from === -2) return;
-    way[from] = 1;
-    const sim = this.ship.sim;
-    const anim = this.ship.anim.movers;
-    // strongest way (product of openings) by relaxing the edges a few times: a handful of rooms
-    for (let pass = 0; pass <= n; pass++) {
-      let changed = false;
-      for (const e of this.edges) {
-        let open: number;
-        if (e.panel >= 0) open = sim.hole(e.panel) ? 1 : 0;
-        else if (e.vent) open = sim.sw[e.key!] === 1 ? 0.15 : 0;
-        else open = anim[e.key!] ?? sim.mover(e.key!);
-        if (open <= 0.005) continue;
-        const t = e.vent ? open : 0.3 + 0.7 * Math.sqrt(open);
-        const a = e.a < 0 ? n : e.a;
-        const b = e.b < 0 ? n : e.b;
-        if (way[a] * t > way[b] + 1e-6) {
-          way[b] = way[a] * t;
-          changed = true;
-        }
-        if (way[b] * t > way[a] + 1e-6) {
-          way[a] = way[b] * t;
-          changed = true;
-        }
-      }
-      if (!changed) break;
-    }
   }
 
   /** The whole state was replaced (a snapshot): what changed meanwhile doesn't play now. */
@@ -431,33 +373,9 @@ export class ShipSounds {
 
   private sleep() {
     this.awake = false;
-    for (const lc of this.cues) {
-      lc.was = -1;
-      lc.mv = NaN;
-      lc.speed = 0;
-      if (lc.loop) lc.loop.level = 0;
-    }
+    this.cues.sleep();
     for (const l of this.ventLoop) l.level = 0;
   }
 }
 
-/** Every ship's air for the medium (and the outside's, from the body's atmosphere). */
-export const shipAcoustics: Acoustics = {
-  air(ship, room, p) {
-    if (ship !== 0 && room >= 0) return byId.get(ship)?.pressure(room) ?? 0;
-    const rho = bodyAt(p).def.atmosphereDensity;
-    return rho > 0 ? (rho / 1.225) * 101.3 : 0;
-  },
-  way(ship, room) {
-    return byId.get(ship)?.wayTo(room) ?? 0;
-  },
-  toWorld(ship, local, out) {
-    const s = byId.get(ship);
-    if (!s) return false;
-    const w = s.ship.world(local, _w3);
-    out[0] = w.x;
-    out[1] = w.y;
-    out[2] = w.z;
-    return true;
-  },
-};
+const _c: V3 = [0, 0, 0];

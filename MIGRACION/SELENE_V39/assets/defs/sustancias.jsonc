@@ -1,0 +1,37 @@
+// Substances: what things hold (crates/core/src/structure/contents.rs). A container says which
+// one it holds and how much ("contenido" on a component kind or on a component placed; "holds"
+// on a structure's part kind); what it weighs, what is written on it, what a scanner reads of it
+// and what it does when it is destroyed all come from here. Nothing per substance in the code.
+//
+// nombre:   as it is written in a sentence ("agua"); labels write it in capitals.
+// densidad: kg/m³ as it is carried (a liquid's; a loose solid's as it is packed).
+// estado:   "liquido", "granel" (a loose solid: soil, powder), "piezas" (things packed in it) or
+//           "gas". All but a gas lie on the low side of what holds them; a gas fills it whole.
+// medida:   how it is counted for whoever reads it, "L" or "kg" (without it: a liquid by the
+//           litre, anything else by the kilo).
+// estalla:  what a container of it lets go of when it is destroyed, by what it held as built:
+//           energia J per kg, radio m per cube root of kg (a blast reaches as the cube root of
+//           its energy), efecto the explosion shown (assets/defs/explosions).
+//
+// Where the figures come from: docs/CARGA.md.
+{
+  "agua":       { "nombre": "agua", "densidad": 1000, "estado": "liquido" },
+  // the storable fuel the ships' engines burn: the density of monomethylhydrazine (0.875 g/cm³
+  // at 20 °C; flash point -8 °C). A 170 L drum of it goes off like a grenade.
+  "propelente": { "nombre": "propelente", "densidad": 875, "estado": "liquido", "estalla": { "energia": 5400, "radio": 1.13, "efecto": "granada" } },
+  // lunar soil packed down in sacks (in place it measures 1.36 to 1.99 g/cm³: 1.50 the top
+  // 15 cm, 1.66 the top 60)
+  "regolito":   { "nombre": "regolito", "densidad": 1750, "estado": "granel" },
+  // mixed spares in their packing (no source: a crate of parts and foam)
+  "repuestos":  { "nombre": "repuestos", "densidad": 400, "estado": "piezas" },
+  // gases, as dense as they are in what carries them full: a bottle at 20 MPa and 300 K (oxygen
+  // 270.3 kg/m³, nitrogen 212.5: NIST), the tank of recovered air at its 12 MPa and 294 K (the
+  // tank's own model is an ideal gas: 12 MPa x 29.2 g/mol / (R x 294 K) = 143.4, rounded up so
+  // that its fullest fits). What a bottle or a tank of them takes is its inside times this
+  "oxigeno":    { "nombre": "oxígeno", "densidad": 270, "estado": "gas" },
+  "nitrogeno":  { "nombre": "nitrógeno", "densidad": 212, "estado": "gas" },
+  "aire":       { "nombre": "aire", "densidad": 144, "estado": "gas" },
+  // the coolant of the loops: water with 60 % of ethylene glycol (1.113 g/cm³ pure; the mix
+  // freezes at -45 °C)
+  "refrigerante": { "nombre": "refrigerante", "densidad": 1070, "estado": "liquido" }
+}

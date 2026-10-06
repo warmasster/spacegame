@@ -345,7 +345,7 @@ const HELP: Record<string, string> = {
   rad: 'Despliega las alas de los radiadores sobre el lomo: de 8 a 28 m² para echar el calor del reactor al espacio. A potencias altas hace falta tenerlos fuera o el refrigerante se calienta.',
   grav: 'Compensador inercial (6 kW): a bordo el suelo sigue siendo «abajo» aunque la nave se incline, frene o acelere, así que la carga y la tripulación no resbalan. Apagado o sin energía se nota todo; en caída libre, se flota.',
   heat: 'Calefacción de los compartimentos presurizados (0,6 kW cada uno). Sin ella el aire se enfría poco a poco hacia −18 °C.',
-  turret: 'Da energía a la torreta de minimisiles del lomo (1,5 kW de ARMAMENTO). Aún no dispara.',
+  turret: 'Da energía a la torreta de minimisiles del lomo (1,5 kW de ARMAMENTO). El copiloto dispone de una consola con cámara: G/APUNTAR dirige la torreta con el ratón, T/DISPARO dispara; ZOOM amplía y FIJAR mantiene la mira sobre un punto del suelo. El cargador se repone mientras tiene energía.',
   'ls.mode': 'AUTOMÁTICO mantiene cada compartimento estanco a 70 kPa con gas de las botellas (se suspende si hay fuga). MANUAL solo mete gas donde abras la válvula de represurización. APAGADO no repone nada.',
   o2gen: 'Generador de oxígeno por electrólisis (4 kW) en la bodega. Repone el O₂ que respira la tripulación; los ventiladores lo reparten al resto de la nave.',
   scrub: 'Depurador de CO₂ (1,5 kW) en la bodega. Retira el CO₂ que exhala la tripulación; necesita los ventiladores para limpiar el aire de la cabina y el pasillo.',
@@ -407,6 +407,26 @@ const CONSOLES: ConsoleSpec[] = [
       { key: 'gear', kind: 'lever', label: 'TREN', name: 'Tren de aterrizaje', states: ['ARRIBA', 'ABAJO Y BLOCADO'], at: [1.2, 0.02], requires: 'hyd' },
       { key: 'helm.throttle', kind: 'rotary', label: 'ACELER.', name: 'Acelerador de los motores', states: Array.from({ length: 11 }, (_, i) => `${i * 10} %`), at: [0.98, -0.12], action: 'cycle', wrap: false },
       { key: 'caution', kind: 'master', label: 'ALARMA', name: 'Alarma general (reconocer)', states: ['SIN AVISOS', 'AVISO ACTIVO'], at: [0, -0.2], action: 'reset' },
+    ],
+  },
+  {
+    id: 'ck.gun',
+    title: 'ARTILLERÍA · CÁMARA',
+    frame: boardFrame([0.83, 1.46, -8.98], norm([0, 0.12, 1])),
+    w: 0.78,
+    h: 0.52,
+    depth: 0.045,
+    free: true,
+    screens: [{ id: 'camera.turret', camera: { source: { kind: 'mount', ref: 'turret' }, width: 384, height: 216, fps: 12, zoom: [1, 1.5, 3], effects: [{ kind: 'vhs', amount: 0.2 }] }, seat: 'ck.copilot', at: [-0.02, 0.045], w: 0.56, h: 0.315, circuit: 'avionics' }],
+    controls: [
+      { key: 'turret', kind: 'toggle', label: 'ON', name: 'Alimentación de la torreta', help: HELP.turret, states: ON_OFF, at: [0.33, 0.045], requires: 'weapons' },
+      ...([
+        ['aim', 'APUNTAR', 'Apuntar con la cámara', 'G alterna entre dirigir la torreta con el ratón y mirar la cabina. En APUNTAR, clic y T disparan.'],
+        ['lock', 'FIJAR', 'Fijar o liberar un punto', 'Mantiene la mira sobre el punto de la superficie bajo la cruz de la cámara. No sigue objetivos móviles ni guía los misiles. Pulsa otra vez para liberar.'],
+        ['zoom', 'ZOOM', 'Zoom de la cámara', 'Alterna la cámara entre 1×, 1,5× y 3×. Reduce la velocidad del ratón para apuntar con precisión.'],
+        ['center', 'CENTRO', 'Centrar la torreta', 'Libera el punto fijado y devuelve la torreta al centro de su recorrido.'],
+        ['fire', 'DISPARO', 'Disparar un minimisil', 'Dispara desde la torreta. También T, o clic en modo APUNTAR. Requiere copiloto sentado, torreta encendida, energía, munición y cadencia cumplida.'],
+      ] as const).map(([action, label, name, help], i): ControlSpec => ({ key: `gun.${action}`, kind: 'bezel', label, name, help, at: [-0.29 + i * 0.145, -0.205], action: 'pulse', command: { namespace: 'gunnery', target: 'turret', action } })),
     ],
   },
   {
@@ -797,8 +817,10 @@ function buildDef(): ShipDef {
     ],
     seats: [
       { id: 'ck.pilot', name: 'Asiento del piloto', root: [-0.72, 0, -7.78], yaw: 0, exit: [-0.72, 0, -6.8] },
-      { id: 'ck.copilot', name: 'Asiento del copiloto', root: [0.72, 0, -7.78], yaw: 0, exit: [0.72, 0, -6.8] },
+      { id: 'ck.copilot', name: 'Asiento del copiloto', root: [0.72, 0, -7.78], yaw: 0, exit: [0.72, 0, -6.8], mounts: ['turret'] },
     ],
+    // the dorsal turret, on its machine: the copilot aims it with the head and fires it
+    mounts: [{ id: 'turret', kind: 'turret.minimissile', part: 'turret' }],
     // the forward half of the bay is engineering (reactor, life support): cargo rides aft
     cargo: [
       { pos: [-1.95, 0.38, 1.4], half: [0.45, 0.375, 0.45], yaw: 0, mass: 70, paint: 'orange' },

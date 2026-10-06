@@ -1,0 +1,39 @@
+// The multi-function displays of the Alcotán (their pages by the bezel buttons) and the panels of
+// each compartment. Run: luna --guion tools/camara/pantallas.jsonc → out/camara/mfd_*.png
+{
+  "registro": "out/camara/pantallas.log",
+  "pasos": [
+    { "nave": "alcotan" },
+    { "esperar": 3.0 },
+    { "camara": { "mando": "principal/mfd2_bisel", "distancia": 0.55 } },
+    { "foto": "out/camara/mfd_energia.png" },
+    { "pulsar": "principal/mfd2_bisel#1" },
+    { "esperar": 0.5 },
+    { "foto": "out/camara/mfd_reactor.png" },
+    { "pulsar": "principal/mfd2_bisel#2" },
+    { "esperar": 0.5 },
+    { "foto": "out/camara/mfd_aire.png" },
+    { "pulsar": "principal/mfd2_bisel#3" },
+    { "esperar": 0.5 },
+    { "foto": "out/camara/mfd_casco.png" },
+    { "camara": { "mando": "principal/mfd1_bisel", "distancia": 0.55 } },
+    { "esperar": 0.5 },
+    { "foto": "out/camara/mfd_vuelo.png" },
+    { "pulsar": "principal/mfd1_bisel#1" },
+    { "esperar": 0.5 },
+    { "foto": "out/camara/mfd_motores.png" },
+    { "pulsar": "principal/mfd1_bisel#2" },
+    { "esperar": 0.5 },
+    { "foto": "out/camara/mfd_depositos.png" },
+    { "camara": { "panel": "principal", "distancia": 1.1 } },
+    { "foto": "out/camara/mfd_panel.png" },
+    { "camara": { "panel": "sala_bodega", "distancia": 1.0 } },
+    { "foto": "out/camara/sala_bodega.png" },
+    { "camara": { "panel": "sala_cabina", "distancia": 1.0 } },
+    { "foto": "out/camara/sala_cabina.png" },
+    { "camara": { "panel": "sala_puente", "distancia": 1.0 } },
+    { "foto": "out/camara/sala_puente.png" },
+    { "camara": { "panel": "rampa_ext", "distancia": 0.8 } },
+    { "foto": "out/camara/rampa_ext.png" }
+  ]
+}

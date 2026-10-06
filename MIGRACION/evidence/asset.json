@@ -1,0 +1,14 @@
+{
+  "bytes": 3446868,
+  "meshes": 21,
+  "primitives": 24,
+  "nodes": 44,
+  "materials": 21,
+  "skins": [
+    {
+      "joints": 22
+    }
+  ],
+  "animations": [],
+  "triangles": 89532
+}

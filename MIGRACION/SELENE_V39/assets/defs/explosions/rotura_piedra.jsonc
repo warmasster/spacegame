@@ -1,0 +1,7 @@
+// Concrete, sintered regolith or composite cracking apart: dust and grit.
+{
+  "name": "Piedra rota",
+  "emitters": [
+    { "style": "polvo", "count": 34, "speed": [0.5, 4.0], "cone": 180.0, "size": [0.2, 0.6], "life": [1.5, 4.0], "spread": 0.8 }
+  ]
+}

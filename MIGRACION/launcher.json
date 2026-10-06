@@ -1,0 +1,17 @@
+{
+  "version": null,
+  "edition": "demo",
+  "quality": "auto",
+  "fullscreen": true,
+  "window": [
+    1600,
+    900
+  ],
+  "vsync": true,
+  "backend": "auto",
+  "sound": true,
+  "skip_menu": false,
+  "close_on_play": true,
+  "server": "127.0.0.1:47600",
+  "name": "Fernando"
+}

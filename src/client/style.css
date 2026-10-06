@@ -225,16 +225,25 @@ html, body { margin: 0; height: 100%; background: #000; overflow: hidden; color:
 .sc-text { font-size: 12px; line-height: 1.7; color: rgba(216, 246, 255, 0.75); max-width: 460px; }
 .menu .menu-status { color: var(--holo-dim); }
 .pause { background: rgba(0, 8, 12, 0.55); cursor: default; }
-.pause .sc-pause { display: grid; gap: 12px; width: 340px; padding: 24px; text-align: left; font-family: var(--mono);
+.pause .sc-pause { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; width: 340px; box-sizing: border-box; padding: 24px; text-align: left; font-family: var(--mono);
   background: linear-gradient(180deg, rgba(6, 22, 30, 0.9), rgba(3, 10, 14, 0.94)); border: 1px solid var(--holo-dim);
   clip-path: polygon(0 14px, 14px 0, 100% 0, 100% calc(100% - 14px), calc(100% - 14px) 100%, 0 100%); }
 .pause .sc-pause small { font-size: 10px; letter-spacing: 0.3em; color: var(--holo); }
 .pause .sc-pause p { margin: 4px 0 0; font-size: 10px; line-height: 1.6; color: var(--holo-dim); }
-.pause .sc-audio { display: grid; gap: 6px; font-size: 10px; letter-spacing: 0.3em; color: var(--holo-dim); }
-.pause .sc-audio input[type='range'] { width: 100%; accent-color: var(--holo); }
-.pause .sc-audio select { font: 500 11px/1.2 var(--mono); color: #eafcff; background: rgba(0, 20, 28, 0.6); border: 1px solid var(--holo-dim);
-  padding: 8px; outline: none; letter-spacing: 0.04em; }
+/* the old centred pause card rules (.pause span/b) must not reach the holo panel's own text */
+.pause .sc-pause .sc-cta span { font: inherit; color: inherit; }
+.pause .sc-pause .sc-cta b { font: inherit; letter-spacing: 0; }
+.pause .sc-pause .sc-sub { margin-top: 6px; padding-top: 12px; border-top: 1px dashed var(--holo-faint); }
+.pause .sc-audio { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px 10px; min-width: 0;
+  font-size: 10px; letter-spacing: 0.3em; color: var(--holo-dim); }
+.pause .sc-audio output { font: 600 11px/1 var(--mono); letter-spacing: 0.08em; color: #eafcff; }
+.pause .sc-audio input, .pause .sc-audio select { grid-column: 1 / -1; width: 100%; min-width: 0; box-sizing: border-box; margin: 0; }
+.pause .sc-audio input[type='range'] { height: 18px; accent-color: var(--holo); cursor: pointer; }
+.pause .sc-audio select { font: 600 11px/1.2 var(--mono); color: #eafcff; background: rgba(0, 20, 28, 0.6); border: 1px solid var(--holo-dim);
+  padding: 9px 10px; outline: none; letter-spacing: 0.2em; cursor: pointer; }
+.pause .sc-audio select:focus { border-color: var(--holo); }
 .pause .sc-audio select option { background: #031018; }
+.pause .sc-pause .sc-hint { margin: -4px 0 0; font-size: 10px; line-height: 1.5; letter-spacing: 0.02em; color: rgba(216, 246, 255, 0.6); }
 @media (max-width: 760px) { .sc-frame { grid-template-columns: 1fr; } .sc-panel { border-left: 0; } }
 
 /* ---------- diagnostics (F3) ---------- */
@@ -245,6 +254,10 @@ html, body { margin: 0; height: 100%; background: #000; overflow: hidden; color:
 .debug-overlay span { color: var(--holo-dim); }
 .debug-overlay i { font-style: normal; }
 .debug-overlay small { display: block; margin-top: 6px; color: var(--holo-dim); }
+.diag-panel { top: 76px; width: 480px; font-size: 10.5px; line-height: 1.35; max-height: calc(100vh - 100px); overflow: hidden; }
+.diag-panel section { display: grid; grid-template-columns: 1fr 1fr; column-gap: 18px; }
+.diag-panel section .wide { grid-column: 1 / -1; }
+.diag-panel b { margin-top: 4px; }
 .joints-panel { left: auto; right: 28px; top: 90px; width: auto; margin: 0; white-space: pre; font-size: 10.5px; line-height: 1.45; }
 
 /* ---------- ship manual (M) ---------- */
@@ -392,6 +405,11 @@ html, body { margin: 0; height: 100%; background: #000; overflow: hidden; color:
 .led.g { background: #3cff9a; box-shadow: 0 0 8px #3cff9a; } .led.a { background: #ffb020; box-shadow: 0 0 8px #ffb020; } .led.r { background: #ff4020; box-shadow: 0 0 8px #ff4020; } .led.o { background: #ff8a30; box-shadow: 0 0 12px #ff8a30; } .led.c { background: #30d8ff; box-shadow: 0 0 8px #30d8ff; }
 .led.blink { animation: mnlive 0.7s steps(2) infinite; }
 /* search */
+.hud-station { position: absolute; left: 50%; bottom: 12%; transform: translateX(-50%); width: min(440px, 80vw); display: flex; flex-direction: column; gap: 5px; padding: 12px 16px; background: rgba(2, 12, 22, .88); border: 1px solid #64cbdf; border-radius: 6px; font: 12px var(--mono); color: #c1edf5; text-align: center; }
+.hud-station b { font-size: 13px; letter-spacing: .08em; color: #8ff0c8; }
+.hud-station small { font-size: 10px; color: #9ec8d7; }
+.hud-station.warning { border-color: #ffc04a; }
+.hud-station.warning b { color: #ffc04a; }
 .mn .miss, .mn .empty { display: none !important; }
 .mn.searching .mn-sec > p, .mn.searching .mn-sec > ol, .mn.searching .mn-sec > .mn-fig:not(:has([data-search])), .mn.searching .mn-live, .mn.searching .mn-lead, .mn.searching .mn-zone { display: none; }
 @media (max-width: 900px) { .mn-wrap { grid-template-columns: 1fr; } .mn-nav { display: none; } .mn { inset: 10px; } }

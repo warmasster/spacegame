@@ -7,3 +7,4 @@ import './air';
 import './impacts';
 import './crew';
 import './alarms';
+import './weapons';

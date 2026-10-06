@@ -1,0 +1,45 @@
+// Right sill of the Azor: what keeps it alive. The power pack, the two batteries and their
+// buses, the hydraulics, and what moves: radiators, bay doors, the seat's platform, lights.
+{
+  "name": "Sistemas",
+  "tamano": ["0.62 m", "0.27 m"],
+  "rejilla": [12, 4],
+  "margen": "7 mm",
+  "separacion": "4 mm",
+  "grupos": [
+    { "id": "rx", "seccion": "grupo_energia", "celda": [0, 0], "ocupa": [7, 2] },
+    { "id": "elec", "titulo": "BATERÍAS", "celda": [7, 0], "ocupa": [5, 2] },
+    { "id": "mec", "titulo": "MECANISMOS", "celda": [0, 2], "ocupa": [7, 2] },
+    { "id": "luces", "titulo": "LUCES", "celda": [7, 2], "ocupa": [5, 2] }
+  ],
+  "mandos": [
+    { "id": "bat1", "kind": "interruptor", "grupo": "elec", "rotulo": "BAT 1", "posiciones": ["DESC", "CONEC"], "bind": { "senal": "ct.bat1" }, "defecto": 1,
+      "nombre": "Contactor de la batería 1", "ayuda": "La batería 1 al bus A." },
+    { "id": "bat2", "kind": "interruptor", "grupo": "elec", "rotulo": "BAT 2", "posiciones": ["DESC", "CONEC"], "bind": { "senal": "ct.bat2" }, "defecto": 1,
+      "nombre": "Contactor de la batería 2", "ayuda": "La batería 2 al bus B." },
+    { "id": "enlace", "kind": "interruptor", "grupo": "elec", "rotulo": "ENLACE", "bind": { "senal": "ct.enlace" }, "defecto": 1,
+      "nombre": "Enlace de buses", "ayuda": "Une el bus A y el B: con uno solo con tensión se alimentan los dos. Ábrelo si un bus se ha ido a masa." },
+    { "id": "v_a", "kind": "display7", "grupo": "elec", "senal": "elec.bus_a", "unidad": "V", "decimales": 1, "digitos": 4, "requiere": { "energia": "1 W" }, "rotulo": "V BUS A" },
+    { "id": "v_b", "kind": "display7", "grupo": "elec", "senal": "elec.bus_b", "unidad": "V", "decimales": 1, "digitos": 4, "requiere": { "energia": "1 W" }, "rotulo": "V BUS B" },
+    { "id": "carga", "kind": "barra", "grupo": "elec", "senal": "energia.carga", "rotulo": "CARGA", "color": "verde", "requiere": { "energia": "1 W" } },
+
+    { "id": "hid", "kind": "interruptor", "grupo": "mec", "rotulo": "HIDRÁUL.", "bind": { "senal": "hid.marcha" },
+      "nombre": "Bomba hidráulica", "ayuda": "Presión para subir y bajar el tren: enciéndela antes de tocar su palanca. Las compuertas y la plataforma no la necesitan (llevan su propio accionamiento)." },
+    { "id": "radiadores", "kind": "interruptor", "grupo": "mec", "rotulo": "RADIAD.", "posiciones": ["DENTRO", "FUERA"], "bind": { "senal": "rad.orden" },
+      "nombre": "Radiadores", "ayuda": "Fuera, el grupo de energía da toda su potencia. Dentro (para no llevarlos expuestos) se queda a algo más de la mitad." },
+    { "id": "compuertas", "kind": "pulsador", "grupo": "mec", "rotulo": "BAHÍA", "modo": "momentaneo", "color": "amarillo", "luz": "rampa.abierta > 0.02", "tamano": [26, 26],
+      "nombre": "Compuertas de la bahía", "ayuda": "Abre o cierra las dos compuertas de popa (la rampa y la visera) que dan a la bahía de utilidades." },
+    { "id": "plataforma", "kind": "pulsador", "grupo": "mec", "rotulo": "ASIENTO", "modo": "momentaneo", "color": "amarillo", "luz": "plataforma.pos > 0.02", "tamano": [26, 26],
+      "nombre": "Plataforma del asiento", "ayuda": "Baja o sube el asiento por la panza de la nave, contigo encima. Solo posado." },
+    { "id": "giro", "kind": "interruptor", "grupo": "mec", "rotulo": "GIRÓSC.", "bind": { "senal": "giro.marcha" }, "defecto": 1,
+      "nombre": "Giróscopos", "ayuda": "Giran la nave sin gastar propelente. Si se llenan (lámpara), el ordenador los descarga con las toberas." },
+    { "id": "lamp_giro", "kind": "lampara", "grupo": "mec", "rotulo": "SATUR.", "requiere": { "energia": "1 W" },
+      "reglas": [ { "si": "giroscopo.carga > 0.95", "color": "rojo", "parpadeo": 2.0 }, { "si": "giroscopo.carga > 0.6", "color": "ambar" }, { "si": "giroscopo.on", "color": "verde" } ] },
+
+    { "id": "l_nav", "kind": "interruptor", "grupo": "luces", "rotulo": "NAVEG.", "bind": { "senal": "luces.nav" },
+      "nombre": "Luces de navegación y destello", "ayuda": "Apagadas en combate: se ven de lejos." },
+    { "id": "l_foco", "kind": "interruptor", "grupo": "luces", "rotulo": "FOCO", "bind": { "senal": "luces.foco" }, "nombre": "Foco de aterrizaje" },
+    { "id": "l_cabina", "kind": "interruptor", "grupo": "luces", "rotulo": "CABINA", "bind": { "senal": "luces.cabina" }, "defecto": 1, "nombre": "Luz de cabina" },
+    { "id": "l_bahia", "kind": "interruptor", "grupo": "luces", "rotulo": "BAHÍA", "bind": { "senal": "luces.bahia_cabina" }, "nombre": "Luces de la bahía" }
+  ]
+}

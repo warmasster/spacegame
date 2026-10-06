@@ -59,4 +59,4 @@ export function helmSeatIndex(def: ShipDef): number {
 
 /** One line for the HUD when someone sits in the pilot seat. */
 export const PILOT_KEYS =
-  'Piloto: W/S adelante/atrás · A/D guiñada · R/F subir/bajar · Z/C lateral · ↑/↓ cabeceo · ←/→ alabeo · P piloto automático · Espacio levantarse';
+  'Piloto: W/S adelante/atrás · A/D guiñada · R/F subir/bajar · Z/C lateral · ↑/↓ cabeceo · ←/→ alabeo · P piloto automático · J salto al siguiente sistema · Espacio levantarse';

@@ -1,0 +1,12 @@
+// The ship's electrical balance on a plate of its own: the "energia" section (secciones.jsonc)
+// and nothing else. Any ship mounts it where its crew would look for it.
+{
+  "name": "Balance de energía",
+  "tamano": ["0.52 m", "0.24 m"],
+  "rejilla": [1, 1],
+  "margen": "10 mm",
+  "separacion": "5 mm",
+  "grupos": [
+    { "id": "energia", "seccion": "energia", "orden": "filas", "celda": [0, 0], "ocupa": [1, 1] }
+  ]
+}

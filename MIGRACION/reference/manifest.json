@@ -1,0 +1,201 @@
+{
+  "version": 1,
+  "files": [
+    {
+      "path": "src/shared/space/surface.ts",
+      "exists": true,
+      "bytes": 15610,
+      "sha256": "aeb9f2f5295fd277742248d76ea040e09a52e5ac8d825a3aa2309b859730155b",
+      "group": "essential"
+    },
+    {
+      "path": "src/shared/noise.ts",
+      "exists": true,
+      "bytes": 7052,
+      "sha256": "97eda2e17d14c6614b68b27d56507ad03893504292dbdf96552c2483fb70dfe3",
+      "group": "essential"
+    },
+    {
+      "path": "src/shared/space/cubeSphere.ts",
+      "exists": true,
+      "bytes": 3898,
+      "sha256": "07db1f5d896e399ad6b32b1439146e964b1f831743ca6d917470d702c5f3003e",
+      "group": "essential"
+    },
+    {
+      "path": "src/shared/space/body.ts",
+      "exists": true,
+      "bytes": 16093,
+      "sha256": "fca81e1e5f44427116dd31adec9de6d442b6fc704abb16017f135d85f0955c7b",
+      "group": "essential"
+    },
+    {
+      "path": "src/shared/constants.ts",
+      "exists": true,
+      "bytes": 2402,
+      "sha256": "f60d65e393ea58ab706c8290eed1aa67b501f9cb067e5d288177655e8bb6ba18",
+      "group": "essential"
+    },
+    {
+      "path": "public/assets/astronaut.glb",
+      "exists": true,
+      "bytes": 3446868,
+      "sha256": "1eee73ea1ead80a0981df9750750a00104303b954b7c5482a349dca1edc261ab",
+      "group": "essential"
+    },
+    {
+      "path": "docs/RENDIMIENTO.md",
+      "exists": true,
+      "bytes": 12408,
+      "sha256": "294dc4a717c1701f4a4bae58561b4ec5c9d7afaa4fbb26a473c693c89a21fda8",
+      "group": "essential"
+    },
+    {
+      "path": "src/client/world/sphereTerrain.ts",
+      "exists": true,
+      "bytes": 25581,
+      "sha256": "5006178c80f09be646c9d4b54239221c413d1ad271f6e21f336b64c1b46b3f61",
+      "group": "useful"
+    },
+    {
+      "path": "src/client/world/terrainGrid.ts",
+      "exists": true,
+      "bytes": 1206,
+      "sha256": "82c5e50adc8751ca97b955e109c216c64caf8bba06482943b6552bc5b1033d5a",
+      "group": "useful"
+    },
+    {
+      "path": "src/client/world/terrain.worker.ts",
+      "exists": true,
+      "bytes": 24758,
+      "sha256": "74698db2b994ad42be6a8f779c612f670401f2cac9455a7e7d27e88101b644ad",
+      "group": "useful"
+    },
+    {
+      "path": "src/client/render/shadowCull.ts",
+      "exists": true,
+      "bytes": 6653,
+      "sha256": "dd62fa144d682a8d1860befb8d2ce2a10c7ae9ef5d5d5bba5fd9595eb7474bcf",
+      "group": "useful"
+    },
+    {
+      "path": "src/client/world/lighting.ts",
+      "exists": true,
+      "bytes": 4800,
+      "sha256": "5a70d0a71afe3fe02bc9e83d431a4864015c3d980769ea2883cb27f767ef86d7",
+      "group": "useful"
+    },
+    {
+      "path": "tools/perf/fleet.ts",
+      "exists": true,
+      "bytes": 12617,
+      "sha256": "3d5127e446f0825344fe17db61c3e2af00a9f8a3e7371040242f952f71fb4297",
+      "group": "useful"
+    },
+    {
+      "path": "src/client/player/controller.ts",
+      "exists": true,
+      "bytes": 17089,
+      "sha256": "a8449bfeddc00e1278ebc68149a23e1a9572290d8aeb91bc557ceb1de2e38f94",
+      "group": "optional"
+    },
+    {
+      "path": "src/shared/space/rocks.ts",
+      "exists": true,
+      "bytes": 4643,
+      "sha256": "3ce022d993a06389d2595b9a6f76158844c7880bf36c8218356de8b2ce6811d8",
+      "group": "optional"
+    },
+    {
+      "path": "src/client/world/rocks.ts",
+      "exists": true,
+      "bytes": 19841,
+      "sha256": "58470cb3040c94b958c5165e975557dd5765918022077f64400698423e1c13d4",
+      "group": "optional"
+    },
+    {
+      "path": "src/client/world/sky.ts",
+      "exists": true,
+      "bytes": 15677,
+      "sha256": "700848a3defe6c287e37e409c2cb99f3338e98fae327219df54b76ccedae4802",
+      "group": "optional"
+    },
+    {
+      "path": "src/client/world/terrainShader.ts",
+      "exists": true,
+      "bytes": 1330,
+      "sha256": "efa6f023b6959eab986bb82c1f2d0702561a62137a7c95ba771824e57a3d636e",
+      "group": "dependency"
+    },
+    {
+      "path": "src/client/player/astronaut.ts",
+      "exists": true,
+      "bytes": 64544,
+      "sha256": "2620739733e4254071ee338c584e6752db7dc4c34f9e18cef5a147ddc34d81f1",
+      "group": "dependency"
+    },
+    {
+      "path": "tools/blender/astronaut.py",
+      "exists": true,
+      "bytes": 38306,
+      "sha256": "2f9e139024c8cb7fc756f63a66abb4a7071c93f0921ab5d659110cdccc1bacb3",
+      "group": "dependency"
+    },
+    {
+      "path": "package.json",
+      "exists": true,
+      "bytes": 2399,
+      "sha256": "1e92c68e7b5a441e522f7b6c96835088bf0d2909609e3e68748ba8bc9ba23d23",
+      "group": "dependency"
+    },
+    {
+      "path": "src/shared/space/angle.ts",
+      "exists": true,
+      "bytes": 662,
+      "sha256": "d586a66935bdcbe4551345ec51654f0f1594126cb7c3dad0b94b7d25604bbf14",
+      "group": "dependency"
+    },
+    {
+      "path": "src/shared/space/terrainMods/kinds.ts",
+      "exists": true,
+      "bytes": 6400,
+      "sha256": "34c78b72d9913e90d16b2de49b21ab23043b6e180f0c254af8cc6db1a005a0b7",
+      "group": "dependency"
+    },
+    {
+      "path": "src/shared/space/terrainMods/store.ts",
+      "exists": true,
+      "bytes": 19044,
+      "sha256": "3d6fa7371bb280abfcb2d1a4f3f007f59a1ca5a36b068a30be8456d3a4fd617e",
+      "group": "dependency"
+    },
+    {
+      "path": "src/sim/core/rng.ts",
+      "exists": true,
+      "bytes": 2941,
+      "sha256": "7c9b1a6ddb283be1607b25f6f582f5d7c2b4b8998fab1a2e2c359ff9c3070550",
+      "group": "dependency"
+    },
+    {
+      "path": "src/shared/space/galaxy.ts",
+      "exists": true,
+      "bytes": 7117,
+      "sha256": "8e623bfebbc2e07f7e25209359dc5933eb85335f5570a40a20907125faf0e8db",
+      "group": "dependency"
+    },
+    {
+      "path": "src/shared/space/tangent.ts",
+      "exists": true,
+      "bytes": 10968,
+      "sha256": "2a476050dcb98a6239f5d8de8629acd65ef7e19cee103c1aa35b5e4504c4b365",
+      "group": "dependency"
+    },
+    {
+      "path": "src/shared/space/sites.ts",
+      "exists": true,
+      "bytes": 10150,
+      "sha256": "9fdb3751de6ade7f420c02357d9c51bdf7de5d18518b9ab4e4047c9e82ff1e5e",
+      "group": "dependency"
+    }
+  ]
+}

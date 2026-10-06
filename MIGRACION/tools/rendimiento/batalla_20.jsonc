@@ -1,0 +1,20 @@
+// Performance: 20 Alcotán under fire from all round, 120 machine-gun rounds a second for 12 s:
+// parts damaged and destroyed, plates blown off, pieces flying. No look is rebuilt for any of it
+// (see "mallas rehechas" in the summary).
+// Run: luna --guion tools/rendimiento/batalla_20.jsonc → out/rendimiento/batalla_20.json (+ .log, .png)
+{
+  "naves": ["alcotan"],
+  "registro": "out/rendimiento/batalla_20.log",
+  "pasos": [
+    { "nave": "alcotan" },
+    { "esperar": 2.0 },
+    { "flota": { "nave": "alcotan", "cuenta": [4, 5], "paso": 34, "este": -10, "norte": 24 } },
+    { "camara": { "en": [0, 45, -120], "mira": [0, 0, 0], "fov": 70 } },
+    { "esperar": 4.0 },
+    { "perfil": "out/rendimiento/batalla_20.json" },
+    { "fuego": { "tiro": "metralleta", "por_segundo": 120, "segundos": 12 } },
+    { "esperar": 13.0 },
+    "fin_perfil",
+    { "foto": "out/rendimiento/batalla_20.png" }
+  ]
+}

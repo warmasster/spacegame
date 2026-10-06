@@ -1,0 +1,45 @@
+// The welder-scanner at work on a damaged Alcotán: what it reads on its own screen, its
+// integrity view (damaged parts glowing red, the more the worse; missing ones purple where they
+// should be), and a part put back. Run: luna --guion tools/camara/soldador.jsonc → out/camara/soldador_*.png
+{
+  "registro": "out/camara/soldador.log",
+  "pasos": [
+    { "nave": "alcotan" },
+    { "esperar": 2.0 },
+    // hurt it: a hydraulic unit badly, a trunk and an outlet, a battery a little; a wall plate and a lamp gone
+    { "danar": { "pieza": "hpu_a*", "dano": 0.75 } },
+    { "danar": { "pieza": "canal.bodega.babor.1", "dano": 0.5 } },
+    { "danar": { "pieza": "toma.2", "dano": 0.85 } },
+    { "danar": { "pieza": "bateria_1", "dano": 0.3 } },
+    { "danar": { "pieza": "acumulador", "dano": 0.95 } },
+    { "danar": { "pieza": "casco.1.3", "dano": 1.0 } },
+    { "danar": { "pieza": "plafon_bod#1*", "dano": 1.0 } },
+    { "equipo": "soldador" },
+    { "camara": { "en": [-0.2, 1.35, -5.6], "mira": [1.6, 0.45, -7.2], "fov": 72 } },
+    { "esperar": 1.0 },
+    "medir",
+    { "foto": "out/camara/soldador_lectura.png" },
+    { "vista_integridad": true },
+    { "foto": "out/camara/soldador_vista.png" },
+    { "camara": { "en": [-0.6, 1.6, -4.0], "mira": [0.8, 1.2, -9.3], "fov": 78 } },
+    { "foto": "out/camara/soldador_vista_bodega.png" },
+    // the missing wall plate: looked at, then put back and mended
+    { "camara": { "en": [-0.3, 1.35, -5.3], "mira": [2.1, 1.15, -5.25], "fov": 72 } },
+    { "esperar": 0.5 },
+    "medir",
+    { "foto": "out/camara/soldador_falta.png" },
+    { "gatillo": true },
+    { "esperar": 1.2 },
+    { "foto": "out/camara/soldador_reconstruyendo.png" },
+    { "esperar": 6.0 },
+    "medir",
+    { "gatillo": false },
+    { "foto": "out/camara/soldador_reparado.png" },
+    // from outside, the whole ship in the view
+    { "camara": { "en": [14, 5, -16], "mira": [0, 1.5, -3], "fov": 60 } },
+    { "foto": "out/camara/soldador_vista_fuera.png" },
+    { "vista_integridad": false },
+    { "equipo": "lanzacohetes" },
+    { "foto": "out/camara/soldador_lanzacohetes.png" }
+  ]
+}

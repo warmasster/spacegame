@@ -1,0 +1,201 @@
+// Walking and running seen from the side, frame after frame: one foot after the other at a
+// walk (never both in the air), a moment in the air between strides at a run.
+// Run: luna --guion tools/camara/andar.jsonc → out/camara/andar_*.png
+{
+ "registro": "out/camara/andar.log",
+ "naves": [
+  "abejorro"
+ ],
+ "pasos": [
+  {
+   "nave": "abejorro"
+  },
+  {
+   "esperar": 2.0
+  },
+  {
+   "linterna": true
+  },
+  {
+   "ir": [
+    8.0,
+    -1.65,
+    -6.0
+   ]
+  },
+  {
+   "mirar": [
+    90,
+    0
+   ]
+  },
+  {
+   "esperar": 0.5
+  },
+  {
+   "camara_jugador": {
+    "en": [
+     3.4,
+     0.9,
+     0.6
+    ],
+    "mira": [
+     0,
+     0.85,
+     0.6
+    ],
+    "fov": 42
+   }
+  },
+  {
+   "andar": [
+    1,
+    0
+   ]
+  },
+  {
+   "esperar": 1.6
+  },
+  {
+   "foto": "out/camara/andar_00.png"
+  },
+  {
+   "esperar": 0.07
+  },
+  {
+   "foto": "out/camara/andar_01.png"
+  },
+  {
+   "esperar": 0.07
+  },
+  {
+   "foto": "out/camara/andar_02.png"
+  },
+  {
+   "esperar": 0.07
+  },
+  {
+   "foto": "out/camara/andar_03.png"
+  },
+  {
+   "esperar": 0.07
+  },
+  {
+   "foto": "out/camara/andar_04.png"
+  },
+  {
+   "esperar": 0.07
+  },
+  {
+   "foto": "out/camara/andar_05.png"
+  },
+  {
+   "esperar": 0.07
+  },
+  {
+   "foto": "out/camara/andar_06.png"
+  },
+  {
+   "esperar": 0.07
+  },
+  {
+   "foto": "out/camara/andar_07.png"
+  },
+  {
+   "esperar": 0.07
+  },
+  {
+   "foto": "out/camara/andar_08.png"
+  },
+  {
+   "esperar": 0.07
+  },
+  {
+   "foto": "out/camara/andar_09.png"
+  },
+  {
+   "esperar": 0.07
+  },
+  {
+   "foto": "out/camara/andar_10.png"
+  },
+  {
+   "esperar": 0.07
+  },
+  {
+   "foto": "out/camara/andar_11.png"
+  },
+  {
+   "esperar": 0.07
+  },
+  {
+   "correr": true
+  },
+  {
+   "esperar": 1.6
+  },
+  {
+   "foto": "out/camara/andar_c00.png"
+  },
+  {
+   "esperar": 0.06
+  },
+  {
+   "foto": "out/camara/andar_c01.png"
+  },
+  {
+   "esperar": 0.06
+  },
+  {
+   "foto": "out/camara/andar_c02.png"
+  },
+  {
+   "esperar": 0.06
+  },
+  {
+   "foto": "out/camara/andar_c03.png"
+  },
+  {
+   "esperar": 0.06
+  },
+  {
+   "foto": "out/camara/andar_c04.png"
+  },
+  {
+   "esperar": 0.06
+  },
+  {
+   "foto": "out/camara/andar_c05.png"
+  },
+  {
+   "esperar": 0.06
+  },
+  {
+   "foto": "out/camara/andar_c06.png"
+  },
+  {
+   "esperar": 0.06
+  },
+  {
+   "foto": "out/camara/andar_c07.png"
+  },
+  {
+   "esperar": 0.06
+  },
+  {
+   "correr": false
+  },
+  {
+   "andar": [
+    0,
+    0
+   ]
+  },
+  {
+   "esperar": 1.0
+  },
+  {
+   "foto": "out/camara/andar_parado.png"
+  }
+ ]
+}

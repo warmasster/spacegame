@@ -1,0 +1,141 @@
+// The test scenario: where you start, how you move, the crowd and the structures round the site.
+// The command line (--ships, --flying, --npcs, --radius) overrides the counts and the radius.
+{
+  "site": { "body": "luna", "dir": [0.0, 1.0, 0.0], "east": 30.0, "north": -70.0 },
+  "player": {
+    "yaw": -0.35,
+    "pitch": -0.07,
+    "eye_height": 1.75,
+    "walk_speed": 1.8,
+    "run_speed": 4.0,
+    "jump_height": 1.2,
+    // a step of up to 45 cm is walked up (and down) without a jump; the boots hold 0.9 of the
+    // weight on them sideways and the legs brake with 3 m/s² more: what stops you when you
+    // come down with speed
+    "escalon": 0.45,
+    "agarre": 0.9,
+    "frenada": 3.0,
+    // the body among what it bumps into: 150 kg in the suit with its pack; three spheres of 30 cm
+    // one over another (feet, hips, head); crouched, the eyes at 1.15 m, 0.8 m/s, down or up at
+    // 3 m/s. Ground steeper than acos(0.55) = 57 degrees is a wall; parts under 6 cm are not
+    // bumped into; the boots hold 0.6 g against a gale; nothing slides you faster than 40 m/s.
+    // A step: the foot goes 6 to 24 cm past its face, the legs reach down at 2.6 m/s, the eyes
+    // catch up at 9 1/s. A landing: the eyes go down 1.3 m/s per m/s (8 at most), 0.3 m at
+    // most, and come up with a half-life of 0.11 s. The look: 87 degrees up or down; seated the
+    // head turns 137 degrees to each side.
+    // Which way is up is the way one weighs (the ground's pull; aboard a ship with gravity of
+    // its own, its decks): the body rights itself to it at 8 1/s of the angle to go, 2.5 rad/s
+    // at most, and that from a weight of 0.5 m/s² on (with less, as much slower: where nothing
+    // weighs nothing turns one). Weighing under 0.05 m/s² on what is underfoot one does not
+    // walk: one floats ("sin_peso": 0 would make the boots hold any deck they touch)
+    "cuerpo": {
+      "masa": 150.0,
+      "radio": 0.3,
+      "esferas": [0.3, 0.85, 1.45],
+      "agachado": { "ojos": 1.15, "esferas": [0.3, 0.6, 0.85], "paso": 0.8, "ritmo": 3.0 },
+      "apoyo": 0.55,
+      "menudo": 0.06,
+      "vendaval": 0.6,
+      "deriva": 40.0,
+      "pisada": [0.06, 0.24],
+      "piernas": 2.6,
+      "tras_escalon": 9.0,
+      "rodillas": { "hundimiento": 1.3, "vida": 0.11, "golpe": 8.0, "tope": 0.3 },
+      "cabeza": { "arriba": 1.52, "sentado": 2.4 },
+      "enderezar": { "ritmo": 8.0, "giro": 2.5, "peso": 0.5 },
+      "sin_peso": 0.05,
+    },
+    // the helmet's lamps: 6 cm over the eyes and 12 ahead, 28 m of reach, a cone of 37 degrees
+    "linterna": { "en": [0.06, 0.12], "color": [5.0, 4.8, 4.4], "alcance": 28.0, "cono": 0.8 },
+    "fov": 72.0,
+    "near": 0.05,
+    // bare hands: a click held on something loose takes it (it follows the look; the wheel brings
+    // it nearer or farther). 1200 N lifts a crate or a drum on the Moon and only drags a pallet
+    "manos": { "fuerza": 1200, "masa": 2500, "alcance": 2.6, "frecuencia": 3.0 },
+    "mouse": 0.002,
+    "flight": {
+      "speed": 30.0,
+      "min_speed": 1.0,
+      "max_speed": 200.0,
+      "wheel_step": 1.25,
+      // Shift x10; Alt x10 more (Esc menu: 1-100)
+      "run_factor": 10.0,
+      "boost_factor": 10.0,
+      "up_follow": 3.0,
+    },
+    // the suit's jet pack: Space up, the walking keys sideways in the air, Ctrl down; hands off
+    // it steadies you and holds your height (burning what your weight asks); 45 s of full push,
+    // filled again in 12 s aboard a ship
+    // it pushes down 0.6 of what it pushes up; the side jets burn 0.35 of a full push and the
+    // steadying 0.15; it takes over after 0.35 s off the ground, nulls a speed up or down in
+    // 0.35 s and leaves be what is under 5 cm/s sideways. What it steadies you to ("junto"): what
+    // within 60 m of you goes most as you do (a ship as it goes now, or the ground); another
+    // only if you go under half as fast from it, less 0.25 m/s; how a ship beside you speeds up
+    // is smoothed over 0.15 s and taken to 30 m/s² at most
+    "mochila": {
+      "empuje": 4.2, "lateral": 2.6, "frenada": 7.0, "autonomia": 45.0, "recarga": 12.0,
+      "abajo": 0.6, "gasto_lado": 0.35, "gasto_freno": 0.15, "despegue": 0.35, "sosten": 0.35, "quieto": 0.05,
+      "junto": { "alcance": 60.0, "mejora": 0.5, "margen": 0.25, "suavizado": 0.15, "aceleracion": 30.0 },
+    },
+  },
+  "layout": { "radius": 1500.0, "inner": 90.0 },
+  // Traffic: ships going from field to field round the site, and a few in low orbit. Light (a
+  // flight plan each, no systems), and they never meet: a pad each, levels 120 m apart, and a
+  // level is taken only if nobody comes near at it (crates/core/src/traffic.rs).
+  "trafico": {
+    "naves": 2000,
+    // 64 fields of 49 pads within 60 km, gathered toward the site (half within 12 km); the
+    // home field 600 m north-east of it, where one flight in six goes
+    "radio": 60000.0, "bases": 64, "plazas": 49, "plaza": 60.0, "casa": [450.0, 420.0],
+    "concentracion": 2.3, "casa_reparto": 0.16,
+    // levels from 300 m to 2.4 km over the highest ground round here; 70-240 m/s along, 28 m/s up and down
+    "niveles": [300.0, 2400.0], "nivel_paso": 120.0, "velocidad": [70.0, 240.0], "ascenso": 28.0,
+    // half a minute to four on the ground between flights; one in twenty in orbit, 12 to 19 km up
+    // (under where the body's pull begins to fade: bodies/<id>.jsonc, "reach")
+    "espera": [30.0, 240.0], "orbita": 0.05, "orbita_altura": [12000.0, 19000.0],
+  },
+  // parked and circling models round the site (the bench's numbers; the traffic above is what
+  // flies in play)
+  "fleet": {
+    "models": ["nave_pequena", "nave_mediana", "nave_grande"],
+    "count": 0,
+    "flying_share": 0.2,
+    "circuit": {
+      "radius": [120.0, 500.0],
+      "altitude": [50.0, 500.0],
+      "omega": [0.04, 0.12],
+      "figure_eight": 0.4,
+      "bank": 0.6,
+      "bank_max": 0.5,
+    },
+  },
+  "crowd": {
+    "model": "astronauta",
+    "count": 100,
+    "offset": [18.0, 6.0],
+    "walk_speed": 1.3,
+    "stride": 1.6,
+    "idle_rate": 0.25,
+    "resample": 0.6,
+    "leash": 35.0,
+    "walk_time": [3.0, 10.0],
+    "idle_time": [1.5, 5.5],
+    "wander": 1.2,
+    "home_turn": 1.2,
+  },
+  // structures/builds/<build>.jsonc, metres east and north of the site, yaw in degrees
+  "structures": [
+    { "build": "estacion", "east": -25.0, "north": 75.0, "yaw": 20.0 },
+    { "build": "torre", "east": 30.0, "north": 95.0, "yaw": -15.0 },
+    { "build": "modulo_lunar", "east": -50.0, "north": 40.0, "yaw": 60.0 },
+  ],
+  // ships/<ship>.jsonc with all their systems, metres east and north of the site, nose yaw in degrees
+  "ships": [
+    { "ship": "alcotan", "east": -10.0, "north": 24.0, "yaw": -20.0 },
+    { "ship": "abejorro", "east": 14.0, "north": 16.0, "yaw": 35.0 },
+    // (it carries a second Abejorro docked in its dorsal cradle)
+    { "ship": "cachalote", "east": 52.0, "north": 58.0, "yaw": 200.0 },
+    // the fighter, apart on the apron
+    { "ship": "azor", "east": 30.0, "north": 2.0, "yaw": 60.0 },
+  ],
+}

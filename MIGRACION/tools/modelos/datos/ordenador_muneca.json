@@ -1,0 +1,137 @@
+{
+ "modelo": "ordenador_muneca",
+ "marco": "origen en el eje del antebrazo; z a lo largo del antebrazo hacia la mano, y hacia fuera por el cristal, x = y × z (el \"arriba\" de la pantalla); metros de mundo (no del modelo del astronauta: su escala es 1,057)",
+ "triangulos": 2714,
+ "presupuesto": 5000,
+ "caja": [
+  [
+   -0.0762,
+   -0.0815,
+   -0.0624
+  ],
+  [
+   0.0762,
+   0.0947,
+   0.059
+  ]
+ ],
+ "tam": [
+  0.1524,
+  0.1762,
+  0.1214
+ ],
+ "piezas": {
+  "cuerpo": {
+   "en": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "triangulos": 2714,
+   "caja": [
+    [
+     -0.0762,
+     -0.0815,
+     -0.0624
+    ],
+    [
+     0.0762,
+     0.0947,
+     0.059
+    ]
+   ]
+  }
+ },
+ "puntos": {
+  "tecla_1": {
+   "en": [
+    0.019,
+    0.0947,
+    -0.0485
+   ],
+   "nota": "la yema del índice derecho sobre la tecla (fija: no es una pieza)"
+  },
+  "tecla_2": {
+   "en": [
+    -0.019,
+    0.0947,
+    -0.0485
+   ],
+   "nota": "la yema del índice derecho sobre la tecla (fija: no es una pieza)"
+  },
+  "toque": {
+   "en": [
+    0,
+    0.0895,
+    0.006
+   ],
+   "palma": [
+    0.0,
+    -1.0,
+    0.0
+   ],
+   "traves": [
+    0.0,
+    0.0,
+    -1.0
+   ],
+   "nota": "donde el índice derecho toca el cristal"
+  }
+ },
+ "pantallas": {
+  "pantalla": {
+   "centro": [
+    0,
+    0.0895,
+    0.006
+   ],
+   "tam": [
+    0.094,
+    0.068
+   ],
+   "normal": [
+    0.0,
+    1.0,
+    0.0
+   ],
+   "arriba": [
+    1.0,
+    0.0,
+    0.0
+   ],
+   "derecha": [
+    0.0,
+    0.0,
+    1.0
+   ],
+   "nota": "ancha a lo largo del antebrazo; su \"derecha\" es +z (hacia la mano), su \"arriba\" +x"
+  }
+ },
+ "luces": {},
+ "hueso": {
+  "hueso": "forearm.L",
+  "a_lo_largo": 0.4,
+  "origen_modelo": [
+   0.357,
+   1.076,
+   -0.018
+  ],
+  "eje_z_modelo": [
+   0.3199,
+   -0.9398,
+   0.12
+  ],
+  "eje_y_modelo": [
+   -0.0387,
+   0.1136,
+   0.9928
+  ],
+  "eje_x_modelo": [
+   -0.9467,
+   -0.3222,
+   0.0
+  ],
+  "radio_manga": 0.0715,
+  "nota": "origen = cabeza del hueso + 0.40 (cola - cabeza); z = el eje del hueso (codo -> muñeca); y = el +z del modelo del astronauta (su frente) hecho perpendicular al hueso; x = y × z. Los cuatro vectores \"_modelo\" son eso mismo en ejes y unidades del modelo del astronauta en reposo (multiplicar el origen por la escala 1,057). El giro alrededor de z es libre: es donde la manga lleva su propia lista."
+ }
+}

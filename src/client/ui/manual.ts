@@ -401,10 +401,10 @@ export class ShipManual {
     for (const [zone, list] of groups) {
       html += `<h3 class="mn-zone">${esc(zone)}</h3>`;
       for (const con of list) {
-        const ctls = def.controls.filter((c) => c.console === con.id && c.kind !== 'cover' && c.kind !== 'bezel');
-        const screens = def.screens.filter((s) => def.controls.some((c) => c.console === con.id && c.key === s.id));
+        const ctls = def.controls.filter((c) => c.console === con.id && c.kind !== 'cover' && (c.kind !== 'bezel' || c.command));
+        const screens = def.screens.filter((s) => s.console === con.id || def.controls.some((c) => c.console === con.id && c.key === s.id));
         const scr = screens
-          .map((s) => `<div class="mn-screen"><b>Pantalla</b>${s.pages.map((p, i) => `<span data-screen="${esc(s.id)}" data-page="${i}" title="${esc(SCREEN_PAGES[p]?.help ?? '')}">${esc(pageLabel(p))}</span>`).join('')}</div>`)
+          .map((s) => `<div class="mn-screen"><b>${s.camera ? 'Cámara' : 'Pantalla'}</b>${s.camera ? `<span>${esc(s.camera.source.kind)} · ${s.camera.width ?? 256}×${s.camera.height ?? 144}${s.seat ? ' · requiere asiento ocupado' : ''}</span>` : s.pages.map((p, i) => `<span data-screen="${esc(s.id)}" data-page="${i}" title="${esc(SCREEN_PAGES[p]?.help ?? '')}">${esc(pageLabel(p))}</span>`).join('')}</div>`)
           .join('');
         html += `<div class="mn-console" id="con-${esc(con.id)}"><header><b>${esc(con.title)}</b><small>${ctls.length} mandos${screens.length ? ` · ${screens.length} pantalla${screens.length > 1 ? 's' : ''}` : ''}</small></header>${scr}<div class="mn-cards">${ctls.map((c) => this.card(c)).join('')}</div></div>`;
       }

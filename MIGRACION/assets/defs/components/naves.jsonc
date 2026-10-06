@@ -1,0 +1,601 @@
+// Components ships are fitted with (crates/ship/src/components.rs). Each is one or more convex
+// pieces (forma: box size / cylinder radius+height(+taper) / wedge size / hull points), placed in
+// the component's frame (+Y up, +Z forward, metres; cylinders stand along +Y, "rot" turns them).
+// A component that works brings its default machine ("maquina": model, params; the ship wires its
+// ports) and, if it shines, its light ("luz"). "anclajes.puerto": where its stub conduits plug in.
+// Every piece is a part: it breaks on its own; the machine lives in the first piece (or "pieza").
+{
+  // ---------------- furniture ----------------
+  // a seat for a crew member in a suit with its pack on (origin on the deck under its column, +z
+  // the way the sitter faces): the pan ("cojin": its pad's top at y 0.46 under the thighs, its
+  // shell on behind as a shelf under the pack), a cradle for the pack instead of a back
+  // ("respaldo": an upright plate behind the pack, which reaches back to z -0.49), a helmet rest
+  // over the pack ("cabeza"), an armrest each side outside the thighs
+  "asiento": {
+    "nombre": "Asiento",
+    "material": "aluminio",
+    "piezas": [
+      { "id": "base", "acabado": "pintura", "forma": { "kind": "box", "size": [0.46, 0.36, 0.46] }, "en": [0, 0.18, 0], "color": [58, 60, 66] },
+      { "id": "cojin", "acabado": "tela", "forma": { "kind": "box", "size": [0.6, 0.1, 0.83] }, "en": [0, 0.41, -0.125], "material": "goma", "color": [44, 52, 66] },
+      { "id": "respaldo", "acabado": "tela", "forma": { "kind": "box", "size": [0.64, 1.0, 0.1] }, "en": [0, 0.95, -0.555], "material": "goma", "color": [44, 52, 66] },
+      { "id": "cabeza", "acabado": "tela", "forma": { "kind": "box", "size": [0.36, 0.12, 0.26] }, "en": [0, 1.5, -0.42], "material": "goma", "color": [36, 42, 54] },
+      { "id": "brazo_i", "acabado": "goma", "forma": { "kind": "box", "size": [0.06, 0.18, 0.38] }, "en": [0.31, 0.56, 0.01], "color": [70, 72, 78] },
+      { "id": "brazo_d", "acabado": "goma", "forma": { "kind": "box", "size": [0.06, 0.18, 0.38] }, "en": [-0.31, 0.56, 0.01], "color": [70, 72, 78] }
+    ]
+  },
+  "consola_puente": {
+    "nombre": "Consola de vuelo",
+    "material": "aluminio",
+    "piezas": [
+      { "id": "cuerpo", "acabado": "pintura", "hueco": 0.004, "forma": { "kind": "box", "size": [2.5, 0.72, 0.5] }, "en": [0, 0.36, 0.12], "color": [64, 66, 72], "chapa": 0.6 },
+      { "id": "cara", "forma": { "kind": "box", "size": [2.42, 0.05, 0.7] }, "en": [0, 0.92, -0.02], "rot": [-53, 0, 0], "material": "electronica", "color": [46, 48, 52] },
+      { "id": "visera", "acabado": "plastico", "forma": { "kind": "box", "size": [2.3, 0.05, 0.3] }, "en": [0, 1.22, 0.16], "rot": [12, 0, 0], "color": [38, 40, 44] }
+    ]
+  },
+  "pedestal": {
+    "nombre": "Pedestal central",
+    "material": "aluminio",
+    "piezas": [
+      { "id": "cuerpo", "acabado": "pintura", "hueco": 0.004, "forma": { "kind": "box", "size": [0.4, 0.62, 0.98] }, "en": [0, 0.31, 0], "color": [62, 64, 70] },
+      { "id": "cara", "forma": { "kind": "box", "size": [0.42, 0.04, 1.0] }, "en": [0, 0.64, 0], "material": "electronica", "color": [44, 46, 50] }
+    ]
+  },
+  "panel_techo": {
+    "nombre": "Panel de techo",
+    "material": "aluminio",
+    "piezas": [ { "id": "", "forma": { "kind": "box", "size": [1.05, 0.1, 0.72] }, "material": "electronica", "color": [46, 48, 52] } ]
+  },
+  // an overhead console hung from the canopy's spine by an arm: placed tilted, its face (the
+  // underside of its plate) toward the seats
+  "consola_techo": {
+    "nombre": "Consola de techo",
+    "material": "aluminio",
+    "piezas": [
+      { "id": "", "forma": { "kind": "box", "size": [1.05, 0.1, 0.72] }, "material": "electronica", "color": [46, 48, 52] },
+      { "id": "brazo", "acabado": "pintura", "forma": { "kind": "box", "size": [0.09, 0.16, 0.09] }, "en": [0, 0.13, -0.25], "color": [58, 60, 66] }
+    ]
+  },
+  // a cargo clamp: a rail across the deck with a lock at each end and the lever that opens it.
+  // What it holds is cargo placed with "anclaje": its id (crates/ship/src/cargo.rs)
+  "anclaje_carga": {
+    "nombre": "Anclaje de carga",
+    "material": "acero",
+    // shut, it takes what is loose over it: up to six things of at most 2.5 t, set down as they lie
+    "anclaje": { "centro": [0, 0.5, 0], "zona": [0.62, 0.5, 0.62], "masa": 2500, "cuantos": 6 },
+    "piezas": [
+      { "id": "", "acabado": "cepillado", "forma": { "kind": "box", "size": [1.18, 0.012, 0.14] }, "en": [0, 0.006, 0], "color": [118, 122, 128] },
+      { "id": "cierre_i", "acabado": "pintura", "forma": { "kind": "box", "size": [0.07, 0.07, 0.16] }, "en": [0.555, 0.035, 0], "color": [208, 164, 28] },
+      { "id": "cierre_d", "acabado": "pintura", "forma": { "kind": "box", "size": [0.07, 0.07, 0.16] }, "en": [-0.555, 0.035, 0], "color": [208, 164, 28] },
+      { "id": "palanca", "acabado": "pintura", "forma": { "kind": "box", "size": [0.03, 0.16, 0.03] }, "en": [0.555, 0.145, 0], "rot": [0, 0, -12], "color": [196, 38, 30] }
+    ]
+  },
+  "caja_pared": {
+    "nombre": "Caja de pared",
+    "material": "aluminio",
+    "piezas": [ { "id": "", "forma": { "kind": "box", "size": [0.1, 0.9, 0.9] }, "material": "electronica", "color": [52, 54, 58] } ]
+  },
+  "caja_pequena": {
+    "nombre": "Caja de mando",
+    "material": "aluminio",
+    "piezas": [ { "id": "", "forma": { "kind": "box", "size": [0.08, 0.34, 0.3] }, "material": "electronica", "color": [56, 58, 62] } ]
+  },
+  "armario": {
+    "nombre": "Taquilla",
+    // what is written on it (crates/ship/src/def.rs, LabelDef)
+    "rotulos": [
+      {"texto": "EQUIPO EVA", "en": [-0.2455, 1.4, 0], "normal": [-1, 0, 0], "alto": 0.016, "color": [20, 20, 22]}
+    ],
+    "material": "aluminio",
+    "piezas": [
+      { "id": "cuerpo", "acabado": "pintura", "hueco": 0.003, "forma": { "kind": "box", "size": [0.5, 1.9, 0.55] }, "en": [0, 0.95, 0], "color": [118, 122, 128], "chapa": 0.5 },
+      { "id": "asa", "acabado": "pintura", "forma": { "kind": "box", "size": [0.03, 0.25, 0.04] }, "en": [-0.27, 1.0, 0.18], "color": [40, 40, 44] }
+    ]
+  },
+  "baranda": {
+    "nombre": "Pasamanos",
+    "material": "acero",
+    "piezas": [ { "id": "", "acabado": "pintura", "forma": { "kind": "cylinder", "radius": 0.02, "height": 1.0, "sides": 8 }, "rot": [90, 0, 0], "color": [190, 150, 40], "liso": true } ]
+  },
+
+  // ---------------- lights ----------------
+  "plafon": {
+    "nombre": "Plafón",
+    "material": "aluminio",
+    "piezas": [
+      { "id": "carcasa", "acabado": "pintura", "forma": { "kind": "box", "size": [0.56, 0.05, 0.22] }, "color": [210, 210, 206] },
+      { "id": "difusor", "forma": { "kind": "box", "size": [0.5, 0.012, 0.16] }, "en": [0, -0.031, 0], "material": "compuesto", "color": [250, 246, 236] }
+    ],
+    "maquina": { "modelo": "luz", "params": { "potencia": "36 W" } },
+    "luz": { "color": [255, 238, 214], "alcance": 7.0, "intensidad": 2.4, "en": [0, -0.06, 0], "lente": 0.1, "dir": [0, -1, 0] }
+  },
+  // a console lamp on a stalk: it lights the panel under it and little else
+  "flexo": {
+    "nombre": "Flexo de consola",
+    "material": "aluminio",
+    "piezas": [
+      { "id": "", "acabado": "pintura", "forma": { "kind": "cylinder", "radius": 0.008, "height": 0.2, "sides": 6 }, "en": [0, 0.1, 0], "color": [40, 40, 44] },
+      { "id": "pantalla", "acabado": "pintura", "forma": { "kind": "cylinder", "radius": 0.035, "height": 0.05, "sides": 10, "taper": 0.55 }, "en": [0, 0.22, 0], "color": [40, 40, 44], "liso": true }
+    ],
+    "maquina": { "modelo": "luz", "params": { "potencia": "4 W" } },
+    "luz": { "color": [255, 232, 196], "alcance": 2.2, "intensidad": 1.8, "en": [0, 0.19, 0], "lente": 0.025, "dir": [0, -1, 0], "cono": 105.0 }
+  },
+  // an amber beacon for what moves overhead (a crane): it flashes while it does
+  "baliza_obra": {
+    "nombre": "Baliza de maniobra",
+    "material": "compuesto",
+    "piezas": [ { "id": "", "forma": { "kind": "cylinder", "radius": 0.06, "height": 0.09, "sides": 10 }, "color": [120, 80, 10], "liso": true } ],
+    "maquina": { "modelo": "luz", "params": { "potencia": "10 W" } },
+    "luz": { "color": [255, 170, 30], "alcance": 9.0, "intensidad": 3.2, "en": [0, -0.06, 0], "lente": 0.06, "dir": [0, -1, 0], "parpadeo": [0.5, 0.22] }
+  },
+  // a high-bay lamp for a tall hold
+  "campana": {
+    "nombre": "Lámpara de nave",
+    "material": "aluminio",
+    "piezas": [
+      { "id": "", "acabado": "pintura", "forma": { "kind": "cylinder", "radius": 0.22, "height": 0.2, "sides": 12, "taper": 0.5 }, "color": [200, 200, 196], "liso": true }
+    ],
+    "maquina": { "modelo": "luz", "params": { "potencia": "15 W" } },
+    "luz": { "color": [255, 242, 222], "alcance": 15.0, "intensidad": 5.5, "en": [0, -0.12, 0], "lente": 0.16, "dir": [0, -1, 0], "cono": 110.0 }
+  },
+  "luz_emergencia": {
+    "nombre": "Luz de emergencia",
+    "material": "compuesto",
+    "piezas": [ { "id": "", "forma": { "kind": "box", "size": [0.18, 0.05, 0.08] }, "color": [70, 20, 18] } ],
+    "maquina": { "modelo": "luz", "params": { "potencia": "6 W", "prioridad": 3 } },
+    "luz": { "color": [255, 50, 30], "alcance": 4.5, "intensidad": 0.9, "en": [0, -0.03, 0], "lente": 0.05, "dir": [0, -1, 0] }
+  },
+  "tira_suelo": {
+    "nombre": "Tira de luz de suelo",
+    "material": "compuesto",
+    "piezas": [ { "id": "", "forma": { "kind": "box", "size": [0.03, 0.02, 1.2] }, "color": [30, 40, 60] } ],
+    "maquina": { "modelo": "luz", "params": { "potencia": "4 W" } },
+    "luz": { "color": [110, 170, 255], "alcance": 1.6, "intensidad": 0.25, "en": [0, 0.02, 0] }
+  },
+  "luz_nav": {
+    "nombre": "Luz de navegación",
+    "material": "compuesto",
+    "piezas": [ { "id": "", "forma": { "kind": "cylinder", "radius": 0.07, "height": 0.07, "sides": 10 }, "color": [60, 60, 60], "liso": true } ],
+    "maquina": { "modelo": "luz", "params": { "potencia": "10 W" } },
+    "luz": { "color": [255, 40, 30], "alcance": 6.0, "intensidad": 1.6, "en": [0, 0.05, 0], "lente": 0.06, "dir": [0, 1, 0] }
+  },
+  "estroboscopio": {
+    "nombre": "Destellador",
+    "material": "compuesto",
+    "piezas": [ { "id": "", "forma": { "kind": "cylinder", "radius": 0.05, "height": 0.06, "sides": 10 }, "color": [60, 60, 60], "liso": true } ],
+    "maquina": { "modelo": "luz", "params": { "potencia": "25 W" } },
+    "luz": { "color": [255, 255, 255], "alcance": 14.0, "intensidad": 7.0, "en": [0, 0.05, 0], "lente": 0.05, "dir": [0, 1, 0], "parpadeo": [1.1, 0.07] }
+  },
+  "baliza": {
+    "nombre": "Baliza",
+    "material": "compuesto",
+    "piezas": [ { "id": "", "forma": { "kind": "cylinder", "radius": 0.08, "height": 0.1, "sides": 12 }, "color": [90, 20, 18], "liso": true } ],
+    "maquina": { "modelo": "luz", "params": { "potencia": "20 W" } },
+    "luz": { "color": [255, 30, 20], "alcance": 9.0, "intensidad": 3.0, "en": [0, 0.07, 0], "lente": 0.07, "dir": [0, 1, 0], "parpadeo": [0.9, 0.3] }
+  },
+  "foco": {
+    "nombre": "Foco",
+    "material": "aluminio",
+    "piezas": [
+      { "id": "carcasa", "acabado": "pintura", "forma": { "kind": "cylinder", "radius": 0.11, "height": 0.16, "sides": 12, "taper": 1.15 }, "color": [44, 46, 50], "liso": true }
+    ],
+    "maquina": { "modelo": "luz", "params": { "potencia": "150 W" } },
+    "luz": { "color": [255, 246, 228], "alcance": 45.0, "intensidad": 22.0, "en": [0, 0.09, 0], "lente": 0.1, "dir": [0, 1, 0], "cono": 42.0 }
+  },
+
+  // ---------------- air ----------------
+  "rejilla": {
+    "nombre": "Rejilla de ventilación",
+    "material": "aluminio",
+    "piezas": [
+      { "id": "", "acabado": "rejilla", "forma": { "kind": "box", "size": [0.42, 0.03, 0.26] }, "color": [150, 152, 156], "chapa": 0.05 }
+    ],
+    "maquina": { "modelo": "rejilla", "params": { "caudal": "0.15 m3/s" } }
+  },
+  "ventilador": {
+    "nombre": "Ventilador",
+    "material": "aluminio",
+    "piezas": [
+      { "id": "carcasa", "acabado": "pintura", "hueco": 0.004, "forma": { "kind": "cylinder", "radius": 0.2, "height": 0.34, "sides": 14 }, "rot": [90, 0, 0], "color": [140, 142, 146], "liso": true },
+      { "id": "motor", "acabado": "fundicion", "forma": { "kind": "box", "size": [0.22, 0.2, 0.18] }, "en": [0, 0.2, -0.05], "color": [60, 62, 68] }
+    ],
+    "maquina": { "modelo": "ventilador", "params": { "caudal": "0.35 m3/s", "potencia_motor": "260 W" } },
+    "fabricante": "Hokuto"
+  },
+  "depurador": {
+    "nombre": "Depurador de CO₂",
+    "material": "aluminio",
+    "piezas": [ { "id": "", "acabado": "pintura", "hueco": 0.004, "forma": { "kind": "box", "size": [0.62, 0.42, 0.5] }, "color": [120, 150, 150], "chapa": 0.3 } ],
+    "maquina": { "modelo": "depurador", "params": { "capacidad": "0.5 mol/s", "potencia": "1.4 kW" } },
+    "fabricante": "Hokuto"
+  },
+  "inyector": {
+    "nombre": "Inyector de gas",
+    "material": "acero",
+    "piezas": [ { "id": "", "acabado": "pintura", "forma": { "kind": "box", "size": [0.24, 0.2, 0.18] }, "color": [70, 120, 80] } ],
+    "maquina": { "modelo": "inyector", "params": { "caudal": "0.012 kg/s" } }
+  },
+  "botella": {
+    "nombre": "Botella de gas",
+    // what is written on it (crates/ship/src/def.rs, LabelDef)
+    "rotulos": [
+      {"texto": "{etiqueta}", "en": [0.131, 0.8, 0.0], "normal": [1, 0, 0], "alto": 0.085, "color": [226, 96, 30], "radio": 0.131},
+      {"texto": "{etiqueta}", "en": [0.0, 0.8, 0.131], "normal": [0, 0, 1], "alto": 0.085, "color": [226, 96, 30], "radio": 0.131},
+      {"texto": "{etiqueta}", "en": [-0.131, 0.8, -0.0], "normal": [-1, 0, 0], "alto": 0.085, "color": [226, 96, 30], "radio": 0.131},
+      {"texto": "{etiqueta}", "en": [-0.0, 0.8, -0.131], "normal": [0, 0, -1], "alto": 0.085, "color": [226, 96, 30], "radio": 0.131}
+    ],
+    "material": "acero",
+    "piezas": [
+      { "id": "cuerpo", "hueco": 0.01, "forma": { "kind": "cylinder", "radius": 0.13, "height": 1.1, "sides": 14 }, "en": [0, 0.55, 0], "liso": true },
+      { "id": "valvula", "acabado": "cepillado", "forma": { "kind": "cylinder", "radius": 0.04, "height": 0.14, "sides": 8 }, "en": [0, 1.17, 0], "color": [180, 160, 60] }
+    ],
+    // it holds what fits in it at its 20 MPa (docs/CARGA.md): its machine takes how much from
+    // here ("cabida", "inicial": the machine's own parameters), and what it weighs follows what
+    // the machine says is left ("nivel"). Oxygen unless where it is placed says another gas
+    "contenido": { "sustancia": "oxigeno", "piezas": ["cuerpo"], "nivel": "masa", "cabida": "capacidad", "inicial": "masa_inicial" },
+    "maquina": { "modelo": "botella", "params": { "caudal_max": "2 kg/s" } },
+    "anclajes": { "puerto": [0, 1.2, 0] },
+    "fabricante": "Lunagen"
+  },
+
+  // ---------------- air moved on purpose (crates/ship/src/airworks.rs, docs/AIRE.md) ----------------
+  // a hand valve through a bulkhead 6 cm thick (its origin in the middle of the wall, +z the way
+  // from its first compartment to its second): the valve itself in the wall and, on each side,
+  // a plate that carries its wheel and the gauge of the pressure across it (the panel `airworks`
+  // makes for it; the wheels of both sides are one). "boca": where its air comes out
+  "valvula_igualacion": {
+    "nombre": "Válvula de igualación",
+    // what is written on it (crates/ship/src/def.rs, LabelDef)
+    "rotulos": [
+      {"texto": "IGUALACIÓN DE PRESIÓN", "en": [0, 0.201, -0.0755], "normal": [0, 0, -1], "alto": 0.014, "color": [230, 232, 226]},
+      {"texto": "ABRIR A IZQUIERDAS · N/S {serie}", "en": [0, -0.203, -0.0755], "normal": [0, 0, -1], "alto": 0.009, "color": [230, 232, 226]},
+      {"texto": "IGUALACIÓN DE PRESIÓN", "en": [0, 0.201, 0.0755], "normal": [0, 0, 1], "alto": 0.014, "color": [230, 232, 226]},
+      {"texto": "ABRIR A IZQUIERDAS · N/S {serie}", "en": [0, -0.203, 0.0755], "normal": [0, 0, 1], "alto": 0.009, "color": [230, 232, 226]}
+    ],
+    "material": "acero",
+    "piezas": [
+      { "id": "", "acabado": "fundicion", "forma": { "kind": "cylinder", "radius": 0.05, "height": 0.058, "sides": 12 }, "rot": [90, 0, 0], "color": [96, 100, 108], "liso": true },
+      { "id": "placa_a", "acabado": "pintura", "forma": { "kind": "box", "size": [0.24, 0.44, 0.045] }, "en": [0, 0, -0.0525], "color": [62, 66, 74] },
+      { "id": "placa_b", "acabado": "pintura", "forma": { "kind": "box", "size": [0.24, 0.44, 0.045] }, "en": [0, 0, 0.0525], "color": [62, 66, 74] }
+    ],
+    "anclajes": { "boca": [0, -0.28, 0] },
+    "fabricante": "Hokuto"
+  },
+  // the same out to space, through a wall of the hull: one plate, inside; the valve goes through
+  // the wall and ends outside in its nozzle
+  "valvula_venteo": {
+    "nombre": "Válvula de venteo",
+    // what is written on it (crates/ship/src/def.rs, LabelDef)
+    "rotulos": [
+      {"texto": "VENTEO AL VACÍO", "en": [0, 0.201, -0.0755], "normal": [0, 0, -1], "alto": 0.016, "color": [244, 200, 48]},
+      {"texto": "ABRIR A IZQUIERDAS · N/S {serie}", "en": [0, -0.203, -0.0755], "normal": [0, 0, -1], "alto": 0.009, "color": [230, 232, 226]}
+    ],
+    "material": "acero",
+    "piezas": [
+      { "id": "", "acabado": "fundicion", "forma": { "kind": "cylinder", "radius": 0.055, "height": 0.17, "sides": 12 }, "en": [0, 0, 0.055], "rot": [90, 0, 0], "color": [96, 100, 108], "liso": true },
+      { "id": "placa_a", "acabado": "pintura", "forma": { "kind": "box", "size": [0.24, 0.44, 0.045] }, "en": [0, 0, -0.0525], "color": [62, 66, 74] }
+    ],
+    "anclajes": { "boca": [0, 0, 0.15] },
+    "fabricante": "Hokuto"
+  },
+  // a four-stage piston compressor with its intercoolers: it draws one place down into another
+  // (crates/machines/src/models/air.rs). Its service side is -x: placed against a wall to port
+  // as it is, to starboard turned half round. The ship says what its manifold reaches ("lugares")
+  "compresor_aire": {
+    "nombre": "Compresor de aire",
+    // what is written on it (crates/ship/src/def.rs, LabelDef)
+    "rotulos": [
+      {"texto": "COMPRESOR DE AIRE", "en": [-0.3115, 0.235, 0], "normal": [-1, 0, 0], "alto": 0.05, "color": [230, 232, 226]},
+      {"texto": "RECUPERACIÓN · 15 kW · 120 BAR · N/S {serie}", "en": [-0.3115, 0.165, 0], "normal": [-1, 0, 0], "alto": 0.02, "color": [230, 232, 226]}
+    ],
+    "material": "acero",
+    "piezas": [
+      { "id": "cuerpo", "acabado": "pintura", "hueco": 0.008, "forma": { "kind": "box", "size": [0.62, 0.36, 0.8] }, "en": [0, 0.18, 0], "color": [44, 92, 104], "chapa": 0.3 },
+      { "id": "etapas", "acabado": "fundicion", "hueco": 0.01, "forma": { "kind": "box", "size": [0.34, 0.36, 0.42] }, "en": [0.1, 0.54, -0.15], "color": [96, 100, 108] },
+      { "id": "motor", "acabado": "pintura", "forma": { "kind": "cylinder", "radius": 0.15, "height": 0.34, "sides": 14 }, "en": [0.08, 0.51, 0.22], "rot": [90, 0, 0], "color": [58, 60, 66], "liso": true }
+    ],
+    // INVENTED FOR PLAY (docs/TIEMPOS.md, docs/AIRE.md): a real machine this size sweeps 120 L/s
+    // at an isothermal efficiency of 0.65 and takes 34 minutes to empty a 58 m3 hold with its
+    // 15 kW. Nobody waits that: it sweeps 2000 L/s at an "efficiency" of 16 (sixteen times what
+    // its motor's work would move) and its return line is 22 mm: the hold is empty in 100 s
+    "maquina": { "modelo": "compresor", "pieza": "cuerpo",
+      "params": { "caudal": "2000 L/s", "potencia": "15 kW", "eficiencia": 16, "etapas": 4, "espacio_muerto": 0.06, "presion_minima": "5 kPa",
+                  "admision_max": "150 kPa", "presion_max": "101 kPa", "paso": "22 mm", "potencia_reposo": "40 W" } },
+    "anclajes": { "puerto": [0.2, 0.6, 0.38] },
+    "fabricante": "Hokuto"
+  },
+  // the tank that keeps what the compressor recovers, each gas by its moles: a wound vessel
+  // lying on its cradle along z (its markings on its -x side)
+  "deposito_aire": {
+    "nombre": "Depósito de aire recuperado",
+    // what is written on it (crates/ship/src/def.rs, LabelDef)
+    "rotulos": [
+      {"texto": "AIRE RECUPERADO", "en": [-0.3015, 0.37, 0], "normal": [-1, 0, 0], "alto": 0.075, "color": [40, 84, 150]},
+      {"texto": "O2 + N2 · MÁX 120 BAR · N/S {serie}", "en": [-0.2892, 0.285, 0], "normal": [-0.959, -0.283, 0], "arriba": [-0.283, 0.959, 0], "alto": 0.026, "color": [40, 84, 150]}
+    ],
+    "material": "compuesto",
+    "piezas": [
+      { "id": "cuerpo", "acabado": "pintura", "hueco": 0.012, "forma": { "kind": "cylinder", "radius": 0.3, "height": 1.5, "sides": 16 }, "en": [0, 0.37, 0], "rot": [90, 0, 0], "color": [226, 228, 222], "liso": true },
+      { "id": "cuna", "acabado": "pintura", "material": "acero", "forma": { "kind": "box", "size": [0.44, 0.08, 1.1] }, "en": [0, 0.04, 0], "color": [58, 60, 66] }
+    ],
+    // empty as built; what the compressor puts in it weighs ("nivel"). Its machine's volume is
+    // its body's inside ("volumen": 0.38 m³ in its walls of 12 mm), so that what it takes at
+    // its 12 MPa is what fits in it
+    "contenido": { "sustancia": "aire", "piezas": ["cuerpo"], "lleno": 0, "nivel": "masa", "volumen": "volumen" },
+    "maquina": { "modelo": "deposito_aire", "pieza": "cuerpo", "params": { "presion_max": "12 MPa" } },
+    "fabricante": "Lunagen"
+  },
+
+  // ---------------- power ----------------
+  "bateria": {
+    "nombre": "Banco de baterías",
+    "material": "electronica",
+    "piezas": [
+      { "id": "", "acabado": "plastico", "forma": { "kind": "box", "size": [0.72, 0.52, 0.46] }, "en": [0, 0.26, 0], "color": [40, 56, 92], "chapa": 0.25 }
+    ],
+    // INVENTED FOR PLAY (docs/TIEMPOS.md): "ganancia_carga": what goes into it counts twelve
+    // times toward its charge (what comes out is what it had), so that it fills in minutes
+    "maquina": { "modelo": "bateria", "params": { "celdas_serie": 7, "celdas_paralelo": 120, "capacidad_celda": "5 Ah", "soc_inicial": 0.85, "ganancia_carga": 12 } },
+    "anclajes": { "puerto": [0, 0.56, 0] },
+    "fabricante": "Lunagen"
+  },
+  "convertidor_cc": {
+    "nombre": "Convertidor CC-CC",
+    "material": "electronica",
+    "piezas": [ { "id": "", "hueco": 0.004, "forma": { "kind": "box", "size": [0.36, 0.5, 0.3] }, "en": [0, 0.25, 0], "color": [70, 74, 80], "chapa": 0.2 } ],
+    "maquina": { "modelo": "convertidor", "params": { "potencia": "14 kW", "tension": "28 V" } }
+  },
+  "apu": {
+    "nombre": "APU",
+    "material": "acero",
+    "piezas": [
+      { "id": "cuerpo", "acabado": "pintura", "hueco": 0.008, "forma": { "kind": "box", "size": [0.8, 0.62, 1.3] }, "en": [0, 0.31, 0], "color": [96, 98, 104], "chapa": 0.4 },
+      { "id": "escape", "acabado": "pintura", "forma": { "kind": "cylinder", "radius": 0.11, "height": 0.4, "sides": 10 }, "en": [0, 0.4, -0.85], "rot": [90, 0, 0], "color": [60, 50, 44], "liso": true }
+    ],
+    "maquina": { "modelo": "generador", "params": { "potencia": "15 kW", "arranque": "8 s", "energia_arranque": "2.5 kW" } },
+    "fabricante": "Kestrel"
+  },
+  "reactor_compacto": {
+    "nombre": "Reactor RX-2",
+    // what is written on it (crates/ship/src/def.rs, LabelDef)
+    "rotulos": [
+      {"texto": "RX-2", "en": [0.0, 0.885, 0.503], "normal": [0, 0, 1], "alto": 0.11, "color": [230, 232, 226], "radio": 0.503},
+      {"texto": "PELIGRO · RADIACIÓN", "en": [0.0, 0.612, 0.503], "normal": [0, 0, 1], "alto": 0.042, "color": [244, 200, 48], "radio": 0.503},
+      {"texto": "RX-2", "en": [-0.0, 0.885, -0.503], "normal": [0, 0, -1], "alto": 0.11, "color": [230, 232, 226], "radio": 0.503},
+      {"texto": "PELIGRO · RADIACIÓN", "en": [-0.0, 0.612, -0.503], "normal": [0, 0, -1], "alto": 0.042, "color": [244, 200, 48], "radio": 0.503},
+      {"texto": "RX-2", "en": [-0.503, 0.885, -0.0], "normal": [-1, 0, 0], "alto": 0.11, "color": [230, 232, 226], "radio": 0.503},
+      {"texto": "PELIGRO · RADIACIÓN", "en": [-0.503, 0.612, -0.0], "normal": [-1, 0, 0], "alto": 0.042, "color": [244, 200, 48], "radio": 0.503}
+    ],
+    "material": "acero",
+    "piezas": [
+      { "id": "nucleo", "acabado": "fundicion", "hueco": 0.06, "forma": { "kind": "cylinder", "radius": 0.5, "height": 1.5, "sides": 16 }, "en": [0, 0.75, 0], "color": [92, 96, 104], "liso": true },
+      { "id": "blindaje", "acabado": "fundicion", "hueco": 0.03, "forma": { "kind": "box", "size": [1.2, 0.16, 1.2] }, "en": [0, 1.58, 0], "color": [70, 72, 76], "chapa": 0.3 },
+      { "id": "base", "acabado": "fundicion", "hueco": 0.03, "forma": { "kind": "box", "size": [1.2, 0.12, 1.2] }, "en": [0, 0.06, 0], "color": [70, 72, 76] }
+    ],
+    // BENT FOR PLAY (docs/TIEMPOS.md): a core this light, rods this quick and a climb on a
+    // 1.5 s period are no real reactor's (a real one takes hours); its trips are all still there
+    "maquina": { "modelo": "reactor", "params": { "potencia_termica": "120 kW", "capacidad_combustible": "3000 J/K", "ua": "2400 W/K", "velocidad_barras": 0.25, "periodo": "1.5 s" } },
+    "anclajes": { "puerto": [0, 1.7, 0] },
+    "fabricante": "Kestrel"
+  },
+  "conversor_termico": {
+    "nombre": "Conversor termoeléctrico",
+    "material": "acero",
+    "piezas": [ { "id": "", "acabado": "pintura", "hueco": 0.01, "forma": { "kind": "box", "size": [0.7, 0.9, 0.6] }, "en": [0, 0.45, 0], "color": [110, 90, 60], "chapa": 0.3 } ],
+    "maquina": { "modelo": "conversor_termico", "params": { "calor_nominal": "140 kW", "fraccion_carnot": 0.6, "tension": "120 V" } }
+  },
+  "bomba_refrigerante": {
+    "nombre": "Bomba de refrigerante",
+    "material": "acero",
+    "piezas": [
+      { "id": "carcasa", "acabado": "pintura", "hueco": 0.008, "forma": { "kind": "cylinder", "radius": 0.16, "height": 0.32, "sides": 12 }, "en": [0, 0.16, 0], "color": [60, 100, 170], "liso": true },
+      { "id": "motor", "acabado": "pintura", "forma": { "kind": "box", "size": [0.22, 0.22, 0.3] }, "en": [0, 0.11, -0.28], "color": [58, 60, 66] }
+    ],
+    "maquina": { "modelo": "bomba", "params": { "medio": "refrigerante", "caudal": "1.2 kg/s", "potencia_motor": "1.8 kW" } }
+  },
+  "deposito_refrigerante": {
+    "nombre": "Vaso de expansión",
+    // what is written on it (crates/ship/src/def.rs, LabelDef)
+    "rotulos": [
+      {"texto": "REFRIG.", "en": [0.2015, 0.345, 0], "normal": [1, 0, 0], "alto": 0.045, "color": [230, 232, 226], "radio": 0.2015},
+      {"texto": "REFRIG.", "en": [-0.2015, 0.345, 0], "normal": [-1, 0, 0], "alto": 0.045, "color": [230, 232, 226], "radio": 0.2015}
+    ],
+    "material": "acero",
+    "piezas": [ { "id": "", "acabado": "pintura", "hueco": 0.006, "forma": { "kind": "cylinder", "radius": 0.2, "height": 0.6, "sides": 12 }, "en": [0, 0.3, 0], "color": [70, 110, 180], "liso": true } ],
+    // half full of coolant, as an expansion vessel stands (it is not spent: it always weighs that)
+    "contenido": { "sustancia": "refrigerante", "lleno": 0.5 },
+    "maquina": { "modelo": "bucle", "params": { "masa": "70 kg" } }
+  },
+  "ordenador": {
+    "nombre": "Ordenador de vuelo",
+    "material": "electronica",
+    "piezas": [ { "id": "", "hueco": 0.004, "forma": { "kind": "box", "size": [0.5, 0.32, 0.42] }, "en": [0, 0.16, 0], "color": [44, 46, 52], "chapa": 0.15 } ],
+    "maquina": { "modelo": "ordenador", "params": { "potencia": "320 W", "arranque": "4 s" } },
+    "fabricante": "Vanta"
+  },
+  "rack": {
+    "nombre": "Bastidor de aviónica",
+    "material": "electronica",
+    "piezas": [ { "id": "", "hueco": 0.004, "forma": { "kind": "box", "size": [0.5, 0.9, 0.5] }, "en": [0, 0.45, 0], "color": [48, 50, 56], "chapa": 0.12 } ],
+    "maquina": { "modelo": "carga", "params": { "potencia": "450 W" } }
+  },
+
+  // ---------------- hydraulics ----------------
+  "unidad_hidraulica": {
+    "nombre": "Unidad hidráulica",
+    // what is written on it (crates/ship/src/def.rs, LabelDef)
+    "rotulos": [
+      {"texto": "HIDRÁULICA · 210 BAR", "en": [0, 0.3, 0.2515], "normal": [0, 0, 1], "alto": 0.034, "color": [20, 20, 22]},
+      {"texto": "HIDRÁULICA · 210 BAR", "en": [0, 0.3, -0.2515], "normal": [0, 0, -1], "alto": 0.034, "color": [20, 20, 22]}
+    ],
+    "material": "acero",
+    "piezas": [
+      { "id": "cuerpo", "acabado": "pintura", "hueco": 0.008, "forma": { "kind": "box", "size": [0.7, 0.5, 0.5] }, "en": [0, 0.25, 0], "color": [170, 110, 40], "chapa": 0.3 },
+      { "id": "deposito", "acabado": "cepillado", "hueco": 0.004, "forma": { "kind": "cylinder", "radius": 0.16, "height": 0.5, "sides": 12 }, "en": [0.22, 0.75, 0], "color": [150, 150, 154], "liso": true }
+    ],
+    "maquina": { "modelo": "unidad_hidraulica", "params": { "caudal": "38 L/min", "presion": "21 MPa", "potencia_motor": "6.5 kW", "deposito": "14 L" } },
+    "fabricante": "Kestrel"
+  },
+  "acumulador": {
+    "nombre": "Acumulador",
+    "material": "acero",
+    "piezas": [ { "id": "", "acabado": "pintura", "hueco": 0.01, "forma": { "kind": "cylinder", "radius": 0.12, "height": 0.6, "sides": 12 }, "en": [0, 0.3, 0], "color": [190, 120, 40], "liso": true } ],
+    "maquina": { "modelo": "acumulador", "params": { "volumen": "6 L", "precarga": "11 MPa" } }
+  },
+
+  // ---------------- propulsion ----------------
+  "deposito_ala": {
+    "nombre": "Depósito de propelente",
+    // what is written on it (crates/ship/src/def.rs, LabelDef)
+    "rotulos": [
+      {"texto": "PROPELENTE", "en": [0.4215, 0, 0.35], "normal": [1, 0, 0], "alto": 0.09, "color": [20, 20, 22]},
+      {"texto": "PROPELENTE", "en": [-0.4215, 0, 0.35], "normal": [-1, 0, 0], "alto": 0.09, "color": [20, 20, 22]}
+    ],
+    "material": "aluminio",
+    "piezas": [
+      { "id": "cuerpo", "acabado": "pintura", "hueco": 0.006, "forma": { "kind": "cylinder", "radius": 0.42, "height": 2.6, "sides": 16 }, "rot": [90, 0, 0], "color": [214, 214, 208], "liso": true, "chapa": 0.8 },
+      { "id": "proa", "acabado": "pintura", "hueco": 0.006, "forma": { "kind": "cylinder", "radius": 0.42, "height": 0.5, "sides": 16, "taper": 0.3 }, "en": [0, 0, 1.55], "rot": [90, 0, 0], "color": [214, 214, 208], "liso": true },
+      { "id": "popa", "acabado": "pintura", "hueco": 0.006, "forma": { "kind": "cylinder", "radius": 0.42, "height": 0.4, "sides": 16, "taper": 0.4 }, "en": [0, 0, -1.5], "rot": [-90, 0, 0], "color": [52, 54, 58], "liso": true }
+    ],
+    // its propellant weighs: what its machine says is left ("nivel") lies in its three pieces.
+    // How much it takes and starts with is its machine's ("cabida", "inicial": 1 300 kg of the
+    // 1 415 that fit to the brim): more than fits is refused when the ship is put together.
+    // It feeds an engine at full and the thrusters with it (24 kg/s)
+    "contenido": { "sustancia": "propelente", "piezas": ["cuerpo", "proa", "popa"], "nivel": "masa", "cabida": "capacidad", "inicial": "masa_inicial" },
+    "maquina": { "modelo": "deposito", "params": { "capacidad": "1300 kg", "masa_inicial": "1150 kg", "presion": "2.4 MPa", "caudal_max": "24 kg/s" } },
+    "fabricante": "Selk"
+  },
+  "gondola": {
+    "nombre": "Góndola motora",
+    // what is written on it (crates/ship/src/def.rs, LabelDef)
+    "rotulos": [
+      {"texto": "ORELL M-48", "en": [0.683, 0, 0.02], "normal": [1, 0, 0], "arriba": [0, 0, 1], "alto": 0.07, "color": [20, 20, 22], "radio": 0.683},
+      {"texto": "PELIGRO · CHORRO", "en": [0.683, 0, -0.95], "normal": [1, 0, 0], "arriba": [0, 0, 1], "alto": 0.075, "color": [196, 40, 30], "radio": 0.683},
+      {"texto": "ORELL M-48", "en": [-0.683, 0, 0.02], "normal": [-1, 0, 0], "arriba": [0, 0, 1], "alto": 0.07, "color": [20, 20, 22], "radio": 0.683},
+      {"texto": "PELIGRO · CHORRO", "en": [-0.683, 0, -0.95], "normal": [-1, 0, 0], "arriba": [0, 0, 1], "alto": 0.075, "color": [196, 40, 30], "radio": 0.683}
+    ],
+    "material": "aluminio",
+    "piezas": [
+      { "id": "carcasa", "acabado": "pintura", "hueco": 0.012, "forma": { "kind": "cylinder", "radius": 0.68, "height": 2.7, "sides": 18 }, "rot": [90, 0, 0], "color": [210, 210, 204], "liso": true, "chapa": 0.7 },
+      { "id": "admision", "acabado": "cepillado", "hueco": 0.01, "forma": { "kind": "cylinder", "radius": 0.74, "height": 0.28, "sides": 18 }, "en": [0, 0, 1.45], "rot": [90, 0, 0], "color": [52, 54, 58], "liso": true },
+      { "id": "franja", "acabado": "pintura", "hueco": 0.008, "forma": { "kind": "cylinder", "radius": 0.7, "height": 0.3, "sides": 18 }, "en": [0, 0, 0.5], "rot": [90, 0, 0], "color": [230, 110, 30], "liso": true },
+      { "id": "tobera", "acabado": "fundicion", "hueco": 0.02, "forma": { "kind": "cylinder", "radius": 0.5, "height": 0.75, "sides": 18, "taper": 1.25 }, "en": [0, 0, -1.7], "rot": [-90, 0, 0], "material": "acero", "color": [70, 64, 60], "liso": true }
+    ],
+    "maquina": { "modelo": "motor_cohete", "pieza": "carcasa", "empuje": [0, 1, 0],
+      "params": { "empuje_vacio": "48 kN", "isp_vacio": "8000 s", "isp_mar": "6800 s", "pc_nominal": "1.1 MPa", "estrangulamiento": [0.02, 1.05], "t_purga": "0.5 s", "tau_subida": "0.9 s", "tau_bajada": "0.4 s" } },
+    "fabricante": "Orell"
+  },
+  "tobera_rcs": {
+    "nombre": "Tobera RCS",
+    "material": "acero",
+    "piezas": [ { "id": "", "acabado": "pintura", "forma": { "kind": "cylinder", "radius": 0.055, "height": 0.13, "sides": 10, "taper": 1.6 }, "color": [64, 60, 58], "liso": true } ],
+    "maquina": { "modelo": "rcs", "empuje": [0, -1, 0], "params": { "empuje": "2.2 kN", "isp": "7200 s" } },
+    "fabricante": "Orell"
+  },
+  "bloque_rcs": {
+    "nombre": "Bloque RCS",
+    "material": "aluminio",
+    "piezas": [ { "id": "", "acabado": "pintura", "forma": { "kind": "box", "size": [0.26, 0.26, 0.26] }, "color": [52, 54, 58] } ]
+  },
+
+  // ---------------- for small craft and cranes ----------------
+  // a cluster of three momentum wheels: it turns the hull without propellant, until it is full
+  // (crates/machines/src/models/inertial.rs)
+  "giroscopo_cmg": {
+    "nombre": "Giróscopos de control",
+    // what is written on it (crates/ship/src/def.rs, LabelDef)
+    "rotulos": [
+      {"texto": "GIRÓSCOPOS · NO ABRIR EN MARCHA", "en": [0, 0.1, 0.2815], "normal": [0, 0, 1], "alto": 0.022, "color": [244, 200, 48]},
+      {"texto": "GIRÓSCOPOS · NO ABRIR EN MARCHA", "en": [0, 0.1, -0.2815], "normal": [0, 0, -1], "alto": 0.022, "color": [244, 200, 48]}
+    ],
+    "material": "acero",
+    "piezas": [
+      { "id": "", "acabado": "pintura", "hueco": 0.01, "forma": { "kind": "box", "size": [0.56, 0.5, 0.56] }, "en": [0, 0.25, 0], "color": [58, 62, 70], "chapa": 0.2 },
+      { "id": "volante", "acabado": "cepillado", "hueco": 0.02, "forma": { "kind": "cylinder", "radius": 0.2, "height": 0.1, "sides": 16 }, "en": [0, 0.55, 0], "color": [170, 172, 176], "liso": true }
+    ],
+    "maquina": { "modelo": "giroscopo", "params": { "momento": 1500, "par": 700, "potencia_reposo": "90 W", "potencia_par": "500 W", "arranque": "8 s", "parada": "240 s" } },
+    "fabricante": "Vanta"
+  },
+  // an electropermanent cargo magnet: a pad under a pylon. A clamp ("iman": it takes what is
+  // under it as it is) with its machine (the pulses that switch it). It takes everything under
+  // its face (the middle of each thing within a hand of the pad's edge, its top against the
+  // pad), the nearest first, up to its rated load ("carga", kg: a lifting magnet is rated by
+  // mass; a pad this size lifts 2.5 t at 3:1); what would take it past that it leaves, and
+  // says so (<id>.sobrecarga). <id>.masa: what it holds weighs
+  "electroiman_carga": {
+    "nombre": "Imán de carga",
+    "material": "acero",
+    "piezas": [
+      { "id": "", "acabado": "pintura", "forma": { "kind": "box", "size": [0.8, 0.08, 0.8] }, "en": [0, -0.24, 0], "color": [196, 60, 30] },
+      { "id": "pilon", "acabado": "pintura", "forma": { "kind": "box", "size": [0.14, 0.2, 0.14] }, "en": [0, -0.1, 0], "color": [58, 60, 66] },
+      { "id": "bobina", "acabado": "cepillado", "forma": { "kind": "cylinder", "radius": 0.2, "height": 0.06, "sides": 14 }, "en": [0, -0.17, 0], "color": [170, 120, 60], "liso": true }
+    ],
+    "anclaje": { "centro": [0, -0.78, 0], "zona": [0.5, 0.5, 0.5], "masa": 2500, "carga": 2500, "modo": "iman" },
+    "maquina": { "modelo": "electroiman", "params": { "condensador": 1500, "pulso": 600, "potencia_carga": "300 W" } },
+    "fabricante": "Kestrel"
+  },
+  // a cradle for a small ship on a bigger one's back: four pads on a frame. A clamp that takes
+  // what is set down in it, to its middle and squared ("cuna")
+  "cuna_atraque": {
+    "nombre": "Cuna de atraque",
+    "material": "acero",
+    "piezas": [
+      { "id": "", "acabado": "pintura", "hueco": 0.008, "forma": { "kind": "box", "size": [3.4, 0.08, 0.2] }, "en": [0, 0.04, 2.25], "color": [206, 164, 30] },
+      { "id": "viga_popa", "acabado": "pintura", "hueco": 0.008, "forma": { "kind": "box", "size": [3.4, 0.08, 0.2] }, "en": [0, 0.04, -2.25], "color": [206, 164, 30] },
+      { "id": "larguero_i", "acabado": "pintura", "hueco": 0.008, "forma": { "kind": "box", "size": [0.2, 0.08, 4.7] }, "en": [1.3, 0.04, 0], "color": [206, 164, 30] },
+      { "id": "larguero_d", "acabado": "pintura", "hueco": 0.008, "forma": { "kind": "box", "size": [0.2, 0.08, 4.7] }, "en": [-1.3, 0.04, 0], "color": [206, 164, 30] },
+      { "id": "garra_i", "acabado": "pintura", "forma": { "kind": "box", "size": [0.16, 0.22, 0.5] }, "en": [1.62, 0.15, 0], "color": [196, 60, 30] },
+      { "id": "garra_d", "acabado": "pintura", "forma": { "kind": "box", "size": [0.16, 0.22, 0.5] }, "en": [-1.62, 0.15, 0], "color": [196, 60, 30] }
+    ],
+    "anclaje": { "centro": [0, 1.7, 0], "zona": [2.6, 1.62, 3.4], "masa": 9000, "cuantos": 1, "modo": "cuna" }
+  },
+  "motor_elevacion": {
+    "nombre": "Motor de elevación",
+    "material": "acero",
+    "piezas": [
+      { "id": "camara", "acabado": "pintura", "hueco": 0.01, "forma": { "kind": "cylinder", "radius": 0.17, "height": 0.42, "sides": 14 }, "color": [200, 160, 30], "liso": true },
+      { "id": "tobera", "acabado": "fundicion", "hueco": 0.012, "forma": { "kind": "cylinder", "radius": 0.14, "height": 0.34, "sides": 14, "taper": 1.7 }, "en": [0, -0.38, 0], "rot": [180, 0, 0], "color": [70, 64, 60], "liso": true }
+    ],
+    "maquina": { "modelo": "motor_cohete", "pieza": "camara", "empuje": [0, 1, 0],
+      "params": { "empuje_vacio": "4 kN", "isp_vacio": "7400 s", "isp_mar": "6300 s", "pc_nominal": "0.8 MPa", "estrangulamiento": [0.02, 1.05], "t_purga": "0.3 s", "tau_subida": "0.4 s", "tau_bajada": "0.25 s" } },
+    "fabricante": "Orell"
+  },
+  "deposito_tug": {
+    "nombre": "Depósito de propelente",
+    // what is written on it (crates/ship/src/def.rs, LabelDef)
+    "rotulos": [
+      {"texto": "PROPELENTE", "en": [0.3015, 0, 0.0], "normal": [1, 0, 0], "alto": 0.06, "color": [20, 20, 22]},
+      {"texto": "PROPELENTE", "en": [-0.3015, 0, 0.0], "normal": [-1, 0, 0], "alto": 0.06, "color": [20, 20, 22]}
+    ],
+    "material": "aluminio",
+    "piezas": [ { "id": "", "acabado": "pintura", "hueco": 0.005, "forma": { "kind": "cylinder", "radius": 0.3, "height": 1.5, "sides": 14 }, "rot": [90, 0, 0], "color": [214, 214, 208], "liso": true } ],
+    // (as the wing tank: 240 kg of the 356 that fit in it)
+    "contenido": { "sustancia": "propelente", "nivel": "masa", "cabida": "capacidad", "inicial": "masa_inicial" },
+    "maquina": { "modelo": "deposito", "params": { "capacidad": "240 kg", "masa_inicial": "220 kg", "presion": "2.0 MPa", "caudal_max": "3 kg/s" } },
+    "fabricante": "Selk"
+  },
+  "consola_tug": {
+    "nombre": "Consola",
+    "material": "aluminio",
+    "piezas": [
+      { "id": "pie", "acabado": "pintura", "hueco": 0.004, "forma": { "kind": "box", "size": [0.3, 0.86, 0.22] }, "en": [0, 0.43, 0.12], "color": [62, 64, 70] },
+      { "id": "cara", "forma": { "kind": "box", "size": [0.76, 0.05, 0.56] }, "en": [0, 0.95, -0.02], "rot": [-55, 0, 0], "material": "electronica", "color": [46, 48, 52] }
+    ]
+  },
+
+  // ---------------- outside ----------------
+  "radiador_aleta": {
+    "nombre": "Radiador desplegable",
+    "material": "aluminio",
+    "piezas": [ { "id": "", "acabado": "corrugado", "hueco": 0.003, "forma": { "kind": "box", "size": [1.3, 0.04, 4.4] }, "color": [235, 236, 232], "chapa": 0.25 } ],
+    "maquina": { "modelo": "radiador", "params": { "area_plegado": "4 m2", "area_desplegado": "11 m2", "caudal": "0.3 kg/s" } }
+  },
+  "antena": {
+    "nombre": "Antena",
+    "material": "aluminio",
+    "piezas": [
+      { "id": "mastil", "acabado": "cepillado", "forma": { "kind": "cylinder", "radius": 0.035, "height": 1.0, "sides": 8 }, "en": [0, 0.5, 0], "color": [180, 182, 186], "liso": true },
+      { "id": "plato", "acabado": "pintura", "hueco": 0.004, "forma": { "kind": "cylinder", "radius": 0.32, "height": 0.08, "sides": 16, "taper": 0.3 }, "en": [0, 1.04, 0], "color": [226, 226, 220], "liso": true }
+    ],
+    "maquina": { "modelo": "carga", "pieza": "plato", "params": { "potencia": "120 W" } }
+  }
+}

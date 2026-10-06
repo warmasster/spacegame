@@ -1,0 +1,39 @@
+// Looking round without turning (Alt held): from one's own eyes the head turns and the tool in
+// hand stays on what the body faces; from outside the camera goes round the body, which stays
+// as it is. Run: luna --guion tools/camara/cabeza.jsonc → out/camara/cabeza_*.png
+{
+  "registro": "out/camara/cabeza.log",
+  "naves": ["abejorro"],
+  "pasos": [
+    { "nave": "abejorro" },
+    { "esperar": 2.0 },
+    { "linterna": true },
+    { "hud": true },
+    { "ir": [3.2, -1.65, 3.4] },
+    { "mirar_a": [1.3, -0.6, 2.3] },
+    { "equipo": "soldador" },
+    { "esperar": 1.5 },
+    { "foto": "out/camara/cabeza_de_frente.png" },
+    // the head to the right and to the left: the welder stays where the body aims
+    { "cabeza": [70, -5] },
+    { "esperar": 0.4 },
+    { "foto": "out/camara/cabeza_derecha.png" },
+    { "cabeza": [-80, 10] },
+    { "esperar": 0.4 },
+    { "foto": "out/camara/cabeza_izquierda.png" },
+    { "cabeza": [0, 0] },
+    { "esperar": 0.6 },
+    { "foto": "out/camara/cabeza_suelta.png" },
+    // from outside: the camera round the body, which goes on facing the ship
+    { "tercera": 3.2 },
+    { "esperar": 1.0 },
+    { "foto": "out/camara/cabeza_fuera.png" },
+    { "cabeza": [150, 8] },
+    { "esperar": 0.5 },
+    { "foto": "out/camara/cabeza_fuera_delante.png" },
+    { "cabeza": [0, 0] },
+    { "tercera": 0 },
+    { "equipo": "" },
+    { "esperar": 0.4 }
+  ]
+}

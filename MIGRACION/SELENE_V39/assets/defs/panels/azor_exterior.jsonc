@@ -1,0 +1,16 @@
+// Outside the Azor, on its port side by the cockpit: what whoever walks up to it needs. The
+// seat's platform (to get in) and the bay's doors.
+{
+  "name": "Acceso exterior",
+  "tamano": ["0.24 m", "0.16 m"],
+  "rejilla": [2, 1],
+  "margen": "8 mm",
+  "separacion": "4 mm",
+  "grupos": [ { "id": "acceso", "titulo": "ACCESO", "celda": [0, 0], "ocupa": [2, 1] } ],
+  "mandos": [
+    { "id": "plataforma", "kind": "pulsador", "grupo": "acceso", "rotulo": "ASIENTO", "modo": "momentaneo", "color": "amarillo", "luz": "plataforma.pos > 0.02", "tamano": [32, 32],
+      "nombre": "Plataforma del asiento", "ayuda": "Baja el asiento por la panza de la nave hasta casi el suelo (o lo sube). Bájalo, siéntate (E) y súbelo desde dentro con ASIENTO, en la repisa de tu derecha." },
+    { "id": "compuertas", "kind": "pulsador", "grupo": "acceso", "rotulo": "BAHÍA", "modo": "momentaneo", "color": "amarillo", "luz": "rampa.abierta > 0.02", "tamano": [32, 32],
+      "nombre": "Compuertas de la bahía", "ayuda": "Abre o cierra la rampa y la visera de popa, por donde se entra a la bahía de utilidades." }
+  ]
+}

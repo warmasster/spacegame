@@ -1,0 +1,39 @@
+// The Cachalote's hold as a grid: the lines of its bays, the rules in metres down its sides and
+// across its ends, the names of its columns and rows, and the crane console's reading of where
+// the hook is in those figures.
+// Run: luna --guion tools/camara/rejilla.jsonc → out/camara/rejilla_*.png
+{
+  "registro": "out/camara/rejilla.log",
+  "naves": ["cachalote"],
+  "pasos": [
+    { "nave": "cachalote" },
+    { "esperar": 3.0 },
+    { "linterna": true },
+    // from over the ramp's end looking forward, and straight down on its aft end
+    { "camara": { "en": [0, 3.3, -22.4], "mira": [0, 0.0, -13.0], "fov": 80 } },
+    { "foto": "out/camara/rejilla_bodega.png" },
+    { "camara": { "en": [0.01, 3.6, -19.2], "mira": [0, 0.0, -19.0], "fov": 100 } },
+    { "foto": "out/camara/rejilla_planta.png" },
+    // a corner of it close up: the rule's ticks, its figures, a row's number
+    { "camara": { "en": [3.3, 1.5, -20.6], "mira": [2.2, 0.0, -17.6], "fov": 60 } },
+    { "foto": "out/camara/rejilla_regla.png" },
+    { "camara": { "en": [1.2, 1.3, -21.6], "mira": [0.8, 0.0, -20.3], "fov": 70 } },
+    { "foto": "out/camara/rejilla_esquina.png" },
+    // from the console: what whoever works the crane sees
+    { "camara": { "en": [0, 1.75, -5.7], "mira": [0, 0.2, -9.5], "fov": 80 } },
+    { "foto": "out/camara/rejilla_desde_consola.png" },
+    // the hook over bay C4, then between two bays: what the console reads
+    { "ajustar": { "mando": "grua/puente", "valor": 0.3871 } },
+    { "ajustar": { "mando": "grua/carro", "valor": 0.275 } },
+    { "esperar": 16.0 },
+    { "volcar": ["grua.largo", "grua.banda", "grua.columna", "grua.fila", "grua.centrada"] },
+    { "camara": { "en": [0.12, 1.42, -5.82], "mira": [0.1, 1.03, -6.3], "fov": 50 } },
+    { "foto": "out/camara/rejilla_consola.png" },
+    { "camara": { "panel": "grua", "distancia": 0.62 } },
+    { "foto": "out/camara/rejilla_panel.png" },
+    { "ajustar": { "mando": "grua/carro", "valor": 0.4 } },
+    { "esperar": 5.0 },
+    { "volcar": ["grua.largo", "grua.banda", "grua.columna", "grua.fila", "grua.centrada"] },
+    { "foto": "out/camara/rejilla_panel_entre.png" }
+  ]
+}

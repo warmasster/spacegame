@@ -1,0 +1,50 @@
+// Centre pedestal of the Alcotán, between the seats: throttle, nacelle tilt, engines, flight modes.
+{
+  "name": "Pedestal",
+  "tamano": ["0.36 m", "0.92 m"],
+  "rejilla": [4, 12],
+  "margen": "10 mm",
+  "separacion": "4 mm",
+  "grupos": [
+    { "id": "potencia", "titulo": "POTENCIA", "celda": [0, 0], "ocupa": [4, 4] },
+    { "id": "motores", "titulo": "MOTORES", "celda": [0, 4], "ocupa": [4, 4] },
+    { "id": "modos", "titulo": "VUELO", "celda": [0, 8], "ocupa": [4, 4] }
+  ],
+  "mandos": [
+    { "id": "acelerador", "kind": "palanca", "grupo": "potencia", "rango": [0.0, 1.05], "unidad": "%", "rotulo": "ACELER.",
+      "retenes": [ { "en": 0.0, "nombre": "CORTE" }, { "en": 0.35, "nombre": "MÍN" }, { "en": 1.0, "nombre": "100" } ],
+      "compuerta": { "en": 1.0, "levantar": true }, "friccion": 0.8, "bind": { "senal": "vuelo.acelerador" },
+      "nombre": "Acelerador", "ayuda": "Empuje de los dos motores. Pasar del 100 % (sobrepotencia) pide levantar la palanca (Mayús)." },
+    { "id": "gondolas", "kind": "palanca", "grupo": "potencia", "rango": [0.0, 1.0], "rotulo": "GÓNDOLAS",
+      "retenes": [ { "en": 0.0, "nombre": "VTOL" }, { "en": 0.5, "nombre": "45°" }, { "en": 1.0, "nombre": "CRUCERO" } ],
+      "bind": { "senal": "gondolas.orden" }, "color": [40, 80, 160],
+      "nombre": "Inclinación de las góndolas", "ayuda": "VTOL: los motores empujan hacia arriba. CRUCERO: hacia delante. Los mueven dos husillos eléctricos (circuito GÓNDOLAS)." },
+
+    { "id": "tapa_arm_izq", "kind": "tapa", "grupo": "motores", "protege": ["arm_izq"] },
+    { "id": "arm_izq", "kind": "interruptor", "grupo": "motores", "posiciones": ["SEGURO", "ARMADO"], "rotulo": "ARM IZQ",
+      "bind": { "senal": "motor_izq.armado" }, "nombre": "Armado motor izquierdo", "ayuda": "Da corriente al encendido y abre las válvulas del motor. Bajo tapa." },
+    { "id": "arr_izq", "kind": "interruptor", "grupo": "motores", "posiciones": ["PARO", "MARCHA", "ARRANQUE"], "muelle": { "ARRANQUE": "MARCHA" },
+      "rotulo": "MOT IZQ", "bind": { "senal": "motor_izq.arranque" }, "nombre": "Arranque motor izquierdo",
+      "ayuda": "Lleva a ARRANQUE (vuelve solo a MARCHA): purga, ignición y subida. PARO lo apaga. Necesita armado, energía y presión de alimentación." },
+    { "id": "tapa_arm_der", "kind": "tapa", "grupo": "motores", "protege": ["arm_der"] },
+    { "id": "arm_der", "kind": "interruptor", "grupo": "motores", "posiciones": ["SEGURO", "ARMADO"], "rotulo": "ARM DER",
+      "bind": { "senal": "motor_der.armado" }, "nombre": "Armado motor derecho" },
+    { "id": "arr_der", "kind": "interruptor", "grupo": "motores", "posiciones": ["PARO", "MARCHA", "ARRANQUE"], "muelle": { "ARRANQUE": "MARCHA" },
+      "rotulo": "MOT DER", "bind": { "senal": "motor_der.arranque" }, "nombre": "Arranque motor derecho" },
+    { "id": "lamp_izq", "kind": "lampara", "grupo": "motores", "requiere": { "energia": "1 W" },
+      "reglas": [ { "si": "gondola_izq.estado == 6", "color": "rojo", "parpadeo": 2.0 }, { "si": "gondola_izq.encendido", "color": "verde" }, { "si": "gondola_izq.estado > 0", "color": "ambar" } ] },
+    { "id": "lamp_der", "kind": "lampara", "grupo": "motores", "requiere": { "energia": "1 W" },
+      "reglas": [ { "si": "gondola_der.estado == 6", "color": "rojo", "parpadeo": 2.0 }, { "si": "gondola_der.encendido", "color": "verde" }, { "si": "gondola_der.estado > 0", "color": "ambar" } ] },
+
+    { "id": "ordenador", "kind": "interruptor", "grupo": "modos", "rotulo": "ORDEN.", "bind": { "senal": "ordenador.encender" }, "defecto": 1,
+      "nombre": "Ordenador de vuelo", "ayuda": "Sin él no hay estabilizador ni mantenimiento: vuelo directo." },
+    { "id": "rcs", "kind": "interruptor", "grupo": "modos", "rotulo": "RCS", "bind": { "senal": "rcs.maestro" }, "defecto": 1,
+      "nombre": "Maestro RCS", "ayuda": "Calefactores y válvulas de las 16 toberas de control." },
+    { "id": "sas", "kind": "interruptor", "grupo": "modos", "rotulo": "ESTAB.", "bind": { "senal": "vuelo.sas" }, "defecto": 1,
+      "nombre": "Estabilizador", "ayuda": "Frena los giros al soltar la palanca de mando." },
+    { "id": "mantener", "kind": "interruptor", "grupo": "modos", "rotulo": "MANTENER", "bind": { "senal": "vuelo.mantener" },
+      "nombre": "Mantener", "ayuda": "El ordenador sostiene la nave contra la gravedad del cuerpo y anula la deriva: la traslación pide velocidad." },
+    { "id": "lamp_modo", "kind": "lampara", "grupo": "modos", "requiere": { "energia": "1 W" },
+      "reglas": [ { "si": "vuelo.modo == 0", "color": "rojo" }, { "si": "vuelo.modo == 3", "color": "cian" }, { "si": "vuelo.modo >= 1", "color": "verde" } ] }
+  ]
+}

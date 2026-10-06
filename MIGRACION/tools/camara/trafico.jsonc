@@ -1,0 +1,27 @@
+// The traffic: two thousand ships going from field to field round the site and a few in orbit.
+// Seen from over the site, toward the home field and across the sky; the numbers go to the log
+// and a recording of what it costs to out/rendimiento/trafico.json.
+// Run: luna --guion tools/camara/trafico.jsonc → out/camara/trafico_*.png
+{
+  "registro": "out/camara/trafico.log",
+  "pasos": [
+    { "nave": "alcotan" },
+    { "esperar": 3.0 },
+    // the home field (450 m east, 420 m north of the site) from the site, 40 m up
+    { "camara_sitio": { "en": [0, 0, 40], "mira": [450, 420, 60], "fov": 60 } },
+    "medir",
+    { "foto": "out/camara/trafico_campo.png" },
+    // over the field, looking down at its pads
+    { "camara_sitio": { "en": [150, 150, 320], "mira": [450, 420, 0], "fov": 70 } },
+    { "foto": "out/camara/trafico_alto.png" },
+    // from the ground at the site, the sky to the north-east
+    { "camara_sitio": { "en": [0, 0, 2], "mira": [800, 800, 700], "fov": 80 } },
+    { "foto": "out/camara/trafico_cielo.png" },
+    { "perfil": "out/rendimiento/trafico.json" },
+    { "esperar": 20.0 },
+    "fin_perfil",
+    "medir",
+    { "camara_sitio": { "en": [-300, -300, 500], "mira": [450, 420, 150], "fov": 75 } },
+    { "foto": "out/camara/trafico_despues.png" }
+  ]
+}

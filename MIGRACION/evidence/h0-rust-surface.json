@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "milestone": "H0",
+  "scope": "scalar CPU natural-surface microbenchmark; NOT frame time",
+  "runtime": "Rust 1.98.1 release",
+  "seed": 1969,
+  "pointsPerBatch": 1000,
+  "batches": 430,
+  "warmupSeconds": 0.3,
+  "elapsedSeconds": 2.004027,
+  "batchMs": {"mean":4.6603662790697635,"p99":6.4097,"max":6.7787999999999995},
+  "usPerSample": 4.6603662790697635,
+  "checksum": 1691449.8018104706,
+  "gpuMs": null,
+  "frameMs": null
+}

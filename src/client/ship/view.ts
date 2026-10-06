@@ -1,3 +1,5 @@
+import { MountView } from '../fx/mountView';
+import type { MountAim } from '../../shared/items';
 import * as THREE from 'three';
 import type { CSM } from 'three/addons/csm/CSM.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
@@ -18,6 +20,7 @@ import { glassMaterial, LampMaterial, litMaterial, panelMaterial, sharpText } fr
 import { machineModel, propModel, type Slot } from './models';
 import { ReasonHold } from '../../shared/ship/hold';
 import { ShipScreens, type ShipAnimState } from './screens';
+import { ShipCameraScreens } from './cameraScreens';
 import { lights } from '../render/lightPool';
 import { origin } from '../render/origin';
 
@@ -33,6 +36,19 @@ const INTERIOR_REACH = 40;
 const DRUM_RATE = 1.6;
 /** Beyond this, not its small exterior details either (pipes, chrome, lamp housings, rams, shutters): the silhouette stays. */
 const DETAIL_REACH = 250;
+/**
+ * Beyond this, the whole ship is one mesh (one draw): its outside as it looked, baked with each
+ * material's colour (bakeFar). Rebaked when its moving parts change (gear, ramp, doors), at most
+ * FAR_BAKES per frame among all ships and once every FAR_REBAKE_S per ship.
+ */
+const FAR_REACH = 300;
+const FAR_BAKES = 1;
+const FAR_REBAKE_S = 2;
+let farFrame = NaN;
+let farBaked = 0;
+let farMaterial: THREE.MeshStandardMaterial | null = null;
+/** Baked far meshes, shared by every ship of a kind in the same state (kind:state); never disposed. */
+const farBakes = new Map<string, THREE.BufferGeometry>();
 /** Decor materials that make the silhouette (kept at any distance); the rest is detail. */
 const SILHOUETTE = new Set(['paint', 'paintDark', 'hull', 'under']);
 /** Meshes smaller than this (bounding radius, m) cast no sun shadow. */
@@ -60,9 +76,12 @@ const blink = (time: number, hz: number, duty = 0.5) => (time * hz) % 1 < duty;
  * props, consoles with animated controls and backlit labels, displays, doors, ramp, shutters,
  * gear, and every lamp (one draw call).
  */
+const _aim: MountAim = { yaw: 0, pitch: 0 };
+
 export class ShipView {
   readonly root = new THREE.Group();
   readonly screens: ShipScreens;
+  readonly cameraScreens: ShipCameraScreens;
   /** Per-panel heat after a blast (0..1, decays). */
   readonly heat: Float32Array;
   readonly mats: Record<string, THREE.Material>;
@@ -176,11 +195,21 @@ export class ShipView {
   /** Small exterior details: hidden from further away still (LOD). */
   private detail: THREE.Object3D[] = [];
   private detailed = true;
+  /** Far LOD: the baked mesh, whether it is showing, what the root's children showed before, what it was baked from. */
+  private far: THREE.Mesh | null = null;
+  private farOn = false;
+  private farSaved: Array<[THREE.Object3D, boolean]> = [];
+  private farKey = NaN;
+  private farAge = 0;
   /** The merged furniture and machines of each room (compartment index), for portal culling. */
   private roomMeshes = new Map<number, THREE.Object3D[]>();
   private roomsCulled = false;
   /** Machine groups that animate (their transforms change). */
   private animated = new Set<THREE.Object3D>();
+  /** Weapon mounts as drawn (same order as `def.mounts`). */
+  readonly mounts: MountView[] = [];
+  /** A gunner on this client: where they aim each mount now (drawn instead of the replicated angles). */
+  readonly mountLead: Array<MountAim | null> = [];
   /** Ship-space bounding sphere (culling of the instanced parts, interior LOD). */
   readonly bounds = new THREE.Sphere();
 
@@ -276,6 +305,8 @@ export class ShipView {
     this.parts = this.buildControlParts();
     this.screens = new ShipScreens(sim, surfaces);
     for (const m of this.screens.meshes) this.root.add(m);
+    this.cameraScreens = new ShipCameraScreens(sim);
+    for (const screen of this.cameraScreens.items) this.root.add(screen.display.root);
     this.buildDoors();
     if (def.ramp) {
       this.buildRamp();
@@ -347,6 +378,7 @@ export class ShipView {
     // the interior goes when the camera is far outside; control parts, screens
     for (const m of Object.values(this.parts)) this.interior.push(m);
     for (const m of this.screens.meshes) this.interior.push(m);
+    for (const screen of this.cameraScreens.items) this.interior.push(screen.display.root);
     // and further out the small exterior details
     this.detail.push(this.shield);
     if (this.pistons) this.detail.push(this.pistons.barrel, this.pistons.rod);
@@ -362,6 +394,154 @@ export class ShipView {
    * the root only updates its world matrix when the ship moved: a parked ship costs the scene
    * graph nothing. Doors, hatches, the ramp, the gear, the exhausts and animated machines stay live.
    */
+  /** Far LOD: one baked mesh instead of the ship's parts (FAR_REACH). */
+  private farLod(far: boolean, dt: number, time: number, anim: ShipAnimState) {
+    if (far) {
+      this.farAge += dt;
+      let key = this.sim.landed ? 1 : 0;
+      let k = 2;
+      for (const m in anim.movers) key += Math.round((anim.movers[m] ?? 0) * 4) * (k += 7);
+      if (key !== this.farKey && (!this.far || this.farAge > FAR_REBAKE_S)) {
+        const shared = farBakes.get(`${this.sim.def.id}:${key}`);
+        if (shared) this.showFar(shared, key);
+        else {
+          if (time !== farFrame) {
+            farFrame = time;
+            farBaked = 0;
+          }
+          if (farBaked < FAR_BAKES) {
+            farBaked++;
+            this.bakeFar(key);
+          }
+        }
+      }
+    }
+    const on = far && !!this.far;
+    if (on === this.farOn) return;
+    this.farOn = on;
+    if (on) {
+      this.farSaved.length = 0;
+      for (const c of this.root.children) {
+        if (c === this.far || c === this.exhaust.group) continue;
+        this.farSaved.push([c, c.visible]);
+        c.visible = false;
+        // hidden: its matrices wait (the scene graph skips it)
+        c.matrixWorldAutoUpdate = false;
+      }
+    } else
+      for (const [c, v] of this.farSaved) {
+        c.visible = v;
+        c.matrixWorldAutoUpdate = true;
+        c.updateMatrixWorld(true);
+      }
+    this.far!.visible = on;
+  }
+
+  private showFar(geometry: THREE.BufferGeometry, key: number) {
+    this.farKey = key;
+    this.farAge = 0;
+    farMaterial ??= new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.65, metalness: 0.3 });
+    if (this.far) this.far.geometry = geometry;
+    else {
+      this.far = new THREE.Mesh(geometry, farMaterial);
+      this.far.name = 'far';
+      this.far.visible = false;
+      this.far.castShadow = false;
+      this.root.add(this.far);
+      this.far.updateMatrixWorld(true);
+    }
+  }
+
+  /** The outside as it shows now (what is visible past DETAIL_REACH), merged into one coloured mesh in ship space. */
+  private bakeFar(key: number) {
+    this.farKey = key;
+    this.farAge = 0;
+    const inv = new THREE.Matrix4().copy(this.root.matrixWorld).invert();
+    const m4 = new THREE.Matrix4();
+    const im = new THREE.Matrix4();
+    const geos: THREE.BufferGeometry[] = [];
+    const colour = new THREE.Color();
+    const add = (mesh: THREE.Mesh, at: THREE.Matrix4) => {
+      const src = mesh.geometry;
+      const pos = src.attributes.position;
+      if (!pos) return;
+      const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      const shown = (mt: THREE.Material | undefined) => !!mt && mt.visible && !(mt.transparent && (mt as THREE.MeshBasicMaterial).map);
+      if (!mats.some(shown)) return;
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', pos.clone());
+      const n = pos.count;
+      const idx = src.index ? src.index.clone() : new THREE.BufferAttribute(Uint32Array.from({ length: n }, (_, i) => i), 1);
+      const ia = idx.array;
+      const col = new Float32Array(n * 3);
+      const paint = (mt: THREE.Material | undefined, start: number, count: number) => {
+        const c = (mt as THREE.MeshStandardMaterial | undefined)?.color;
+        if (c) colour.copy(c);
+        else colour.setRGB(0.5, 0.5, 0.5);
+        if (start === 0 && count >= ia.length) {
+          for (let v = 0; v < n; v++) (col[v * 3] = colour.r), (col[v * 3 + 1] = colour.g), (col[v * 3 + 2] = colour.b);
+          return;
+        }
+        for (let i = start, end = Math.min(ia.length, start + count); i < end; i++) {
+          const v = ia[i];
+          col[v * 3] = colour.r;
+          col[v * 3 + 1] = colour.g;
+          col[v * 3 + 2] = colour.b;
+        }
+      };
+      if (Array.isArray(mesh.material) && src.groups.length) {
+        // hidden or see-through groups drop out of the index
+        const keep: number[] = [];
+        for (const gr of src.groups) {
+          const mt = mats[gr.materialIndex ?? 0];
+          if (!shown(mt)) continue;
+          paint(mt, gr.start, gr.count);
+          for (let i = gr.start, end = Math.min(ia.length, gr.start + gr.count); i < end; i++) keep.push(ia[i]);
+        }
+        g.setIndex(keep);
+      } else {
+        paint(mats[0], 0, idx.count);
+        g.setIndex(idx);
+      }
+      g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+      if (src.attributes.normal) g.setAttribute('normal', src.attributes.normal.clone());
+      else g.computeVertexNormals();
+      g.applyMatrix4(at);
+      geos.push(g);
+    };
+    const walk = (o: THREE.Object3D) => {
+      if (!o.visible) return;
+      const mesh = o as THREE.Mesh;
+      if (mesh.isMesh) {
+        m4.multiplyMatrices(inv, mesh.matrixWorld);
+        const inst = mesh as unknown as THREE.InstancedMesh;
+        if (inst.isInstancedMesh) {
+          for (let i = 0; i < Math.min(inst.count, 64); i++) {
+            inst.getMatrixAt(i, im);
+            add(mesh, im.premultiply(m4));
+          }
+        } else add(mesh, m4);
+      }
+      for (const c of o.children) walk(c);
+    };
+    // what the root's children show now (or showed before the far mesh took over)
+    const shows = new Map(this.farOn ? this.farSaved : this.root.children.map((c) => [c, c.visible] as [THREE.Object3D, boolean]));
+    this.root.updateMatrixWorld(true);
+    for (const c of this.root.children) {
+      if (c === this.far || c === this.exhaust.group || !shows.get(c)) continue;
+      const was = c.visible;
+      c.visible = true;
+      walk(c);
+      c.visible = was;
+    }
+    const merged = geos.length ? mergeGeometries(geos) : null;
+    for (const g of geos) g.dispose();
+    if (!merged) return;
+    merged.computeBoundingSphere();
+    farBakes.set(`${this.sim.def.id}:${key}`, merged);
+    this.showFar(merged, key);
+  }
+
   private freezeStatic() {
     const live = new Set<THREE.Object3D>([this.gear.group, this.exhaust.group, this.ramp, ...this.animated]);
     for (const [a, b] of this.doorLeaves.values()) live.add(a).add(b);
@@ -714,6 +894,16 @@ export class ShipView {
       model.animate?.(this.sim.mover(live));
       if (model.animate) this.animated.add(model.group);
       shadows(model.group, part.zone);
+    }
+    // weapon mounts: the head that turns on its machine (client/fx/mountView.ts)
+    const mountMat = (slot: Slot): THREE.Material => (slot === 'body' ? this.mats.machine : slot === 'trim' ? this.mats.frame : (shared[slot] ?? this.mats.dark));
+    for (const m of def.mounts) {
+      const v = new MountView(m, mountMat);
+      this.root.add(v.group);
+      this.animated.add(v.group);
+      shadows(v.group, null);
+      this.mounts.push(v);
+      this.mountLead.push(null);
     }
     for (const prop of def.props) {
       const model = propModel(prop, (slot) => shared[slot] ?? (slot === 'body' ? this.mats.console : this.mats.dark));
@@ -1243,8 +1433,11 @@ export class ShipView {
       // the shutters show themselves again only when they are down
       if (detailed) this.shield.visible = this.lastShield > 0.005;
     }
+    this.farLod(dist > this.bounds.radius + FAR_REACH, dt, time, anim);
     this.gear.update(feet);
     this.exhaust.update(dt, anim);
+    const mounts = sim.mounts;
+    if (mounts) for (let i = 0; i < this.mounts.length; i++) this.mounts[i].update(dt, this.mountLead[i] ?? mounts.current(sim.st, i, _aim), !!this.mountLead[i]);
     if (sim.version !== this.consolesVer) {
       this.consolesVer = sim.version;
       this.rebuildConsoles();
@@ -1511,6 +1704,10 @@ export class ShipView {
       setInteriorLight(_v.copy(ls.pos).applyMatrix4(M), _col, intensity, _center, this.root.quaternion, zb.half);
     }
 
+  }
+
+  /** Instruments read the current camera after the camera rig has followed the rendered ship. */
+  updateScreens(time: number, anim: ShipAnimState, eye: THREE.Vector3) {
     this.screens.update(time, anim, this.hostHidden, eye);
   }
 
@@ -1530,6 +1727,9 @@ export class ShipView {
       for (const o of list) o.visible = on;
     }
   }
+
+  /** Reused current list (including rebuilt consoles). Read it; do not keep or mutate it. */
+  captureInteriors(): readonly THREE.Object3D[] { return this.interior; }
 
   /**
    * A machine material made from scratch (a `clone()` loses the cascaded-shadow and cabin-light

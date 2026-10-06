@@ -7,7 +7,10 @@ import type { TerrainMod } from './space/terrainMods/types.js';
 
 export type { TerrainMod } from './space/terrainMods/types.js';
 
-export const PROTOCOL_VERSION = 13;
+// Version 17: loose objects (and every replicated kind after them) come and go by interest
+// (`spawn` / `gone`, docs/RED.md). Version 16: states, shots and crates carry the time of the step
+// they belong to (`t`: docs/MOVIMIENTO.md). Old clients must reconnect/reload.
+export const PROTOCOL_VERSION = 17;
 
 /** Suit stripe colour / crew role. 0 = commander (red stripes), 1 = crew (plain), ... */
 export type SuitVariant = number;
@@ -69,6 +72,8 @@ export interface CrateWire {
   w: Vec3;
   /** Player simulating it (0 = nobody: it lies still where it is). */
   owner: number;
+  /** Time of the step this state belongs to (ms, server clock; the owner's step clock). */
+  t?: number;
 }
 
 /**
@@ -82,6 +87,23 @@ export interface CrateSpec {
   paint: 'orange' | 'grey';
 }
 
+/** Kinds of replicated things (docs/RED.md): each has its own ids and its own spawn shape. */
+export type EntityKind = 'obj' | 'npc';
+
+/** Someone of the world with a body (an NPC: docs/MUNDO.md §11): who, and its state now. */
+export interface NpcWire {
+  id: number;
+  name: string;
+  /** Suit (as a player's variant). */
+  variant: number;
+  /** Time of the step its state belongs to (ms, server clock). */
+  t: number;
+  s: PlayerState;
+}
+
+/** A thing coming into a player's interest, whole, as it is now. */
+export type EntityWire = ({ k: 'obj' } & CrateWire & CrateSpec) | ({ k: 'npc' } & NpcWire);
+
 export interface PlayerInfo {
   id: number;
   name: string;
@@ -90,15 +112,20 @@ export interface PlayerInfo {
 
 export type ClientMessage =
   | { type: 'hello'; version: number; name: string; seed?: number }
-  | { type: 'state'; s: PlayerState }
+  /** Our astronaut's state and the time of the step it belongs to (ms, server clock: our step clock). */
+  | { type: 'state'; t: number; s: PlayerState }
   | { type: 'ping'; t: number }
   /**
    * A shot of weapon `w` (catalog id; it fires its projectile): origin, direction, `v` the
    * launcher's velocity (carried by the projectile). In the world, or with `fr` (a ship's id) all
    * three in that ship's space, `v` relative to it: fired aboard, it flies with the ship wherever
-   * each client has it.
+   * each client has it. `m`: fired by that weapon mount of the ship `fr` (index in its `mounts`),
+   * from the seat that works it; `w` is then the mount's weapon. `t`: the time of the step it left
+   * the muzzle (ms, server clock): whoever receives it later flies it forward to the present.
    */
-  | { type: 'fire'; w: string; o: Vec3; d: Vec3; v?: Vec3; fr?: number }
+  | { type: 'fire'; w: string; o: Vec3; d: Vec3; v?: Vec3; fr?: number; m?: number; t?: number }
+  /** The gunner's aim for a weapon mount of a ship (index in its `mounts`): head angles, ~15 Hz while they change. */
+  | { type: 'aim'; ship: number; m: number; y: number; p: number }
   /** Shooter-reported impact of its projectile of kind `k` (world, or with `fr` in that ship's space). */
   | { type: 'hit'; k: string; p: Vec3; fr?: number }
   /** Operate a ship control (index into the ship definition's controls); dir = wheel step on knobs. */
@@ -109,6 +136,8 @@ export type ClientMessage =
   | { type: 'repairPart'; ship: number; part: number }
   /** Take (on) or leave the helm: the pilot's client flies the ship while it holds it. */
   | { type: 'pilot'; ship: number; on: boolean }
+  /** Its pilot asks for a jump to region `to` (shared/space/jump.ts). */
+  | { type: 'jump'; ship: number; to: number }
   /**
    * The pilot's flight (~30 Hz): pose at server time `t` (the pilot's estimate), ground contact,
    * height above the ground and thruster outputs (order of the ship's thruster list).
@@ -117,7 +146,9 @@ export type ClientMessage =
   /** Ask to simulate a crate (pick it up, push it, a blast near it). */
   | { type: 'crateTake'; id: number }
   /** The owner's crate state; `rest` = it stopped, back to nobody's. */
-  | { type: 'crate'; c: Omit<CrateWire, 'owner'>; rest?: boolean };
+  | { type: 'crate'; c: Omit<CrateWire, 'owner'>; rest?: boolean }
+  /** Test and admin commands (only when the server runs with DEV_TOOLS=1: docs/DIAGNOSTICS.md). */
+  | { type: 'dev'; cmd: string; a?: Record<string, unknown> };
 
 export type Vec3 = [number, number, number];
 
@@ -140,15 +171,24 @@ export type ServerMessage =
       ships: ShipSnapshot[];
       /** Who flies each ship (player id; ships not listed are flown by the server). */
       pilots: Array<[number, number]>;
+      /** The loose objects it knows right away (the rest come by `spawn` as they come into interest). */
       crates: Array<CrateWire & CrateSpec>;
     }
+  /** Things coming into this player's interest (docs/RED.md). */
+  | { type: 'spawn'; e: EntityWire[] }
+  /** Things it can forget: out of its interest, or gone from the world. */
+  | { type: 'gone'; k: EntityKind; ids: number[] }
+  /** States of the NPCs this player knows, each with the time of the step it belongs to. */
+  | { type: 'npcs'; t: number; states: Array<{ id: number; t: number; s: PlayerState }> }
+  /** The answer to a `dev` command (DEV_TOOLS=1 only). */
+  | { type: 'devReply'; cmd: string; data: unknown }
   | { type: 'reject'; reason: string }
   | { type: 'join'; player: PlayerInfo }
   | { type: 'leave'; id: number }
-  /** States relayed by the server, stamped with server receive time (ms). */
+  /** States relayed by the server, each with the time of the step it belongs to (ms, server clock). */
   | { type: 'snapshot'; t: number; states: Array<{ id: number; t: number; s: PlayerState }> }
   | { type: 'pong'; t: number; serverTime: number }
-  | { type: 'fire'; id: number; w: string; o: Vec3; d: Vec3; v?: Vec3; fr?: number }
+  | { type: 'fire'; id: number; w: string; o: Vec3; d: Vec3; v?: Vec3; fr?: number; m?: number; t?: number }
   /**
    * An impact: a projectile of kind `k` (absent: a blast of the ship's own, a tank going up). `mod`
    * is the crater when it went off on the ground (added to its body's surface, in order). `fr` +
@@ -162,12 +202,14 @@ export type ServerMessage =
   | { type: 'shipDenied'; ship: number; ctl: number; reason: string }
   /** Continuous ship state diffs: flat [varIndex, value, …] (see shared/ship/state.ts). */
   | { type: 'shipSt'; ship: number; d: number[] }
-  /** A ship's flight pose at server time `t` (~30 Hz while it moves, 1 Hz asleep). */
+  /** A ship's flight pose at `t`: the time of the step that made it (ms, server clock; ~30 Hz while it moves, 1 Hz asleep). */
   | ({ type: 'shipPose'; ship: number; t: number } & PoseWire)
   /** A ship's whole state again: it just came into this player's interest (switches, panels, state table). */
   | { type: 'shipSync'; snap: ShipSnapshot }
   /** Who flies a ship now (0 = the server). */
   | { type: 'pilot'; ship: number; id: number }
+  /** A ship jumped to region `to` (docs/ESPACIO.md): it is at `p` now, at rest, and everything aboard with it. */
+  | { type: 'jump'; ship: number; to: number; p: Vec3 }
   /** A crate moved (relayed from its owner) or changed hands. */
   | { type: 'crate'; c: CrateWire; rest?: boolean }
   /** Ship system message for the crew's helmet display (SCRAM, breaker tripped…). */

@@ -1,0 +1,9 @@
+// Building parts: slabs, walls, blocks of sintered regolith, windows. Slabs and walls carry cables
+// (an "energia" port): power reaches whatever touches them.
+{
+  "losa":        { "name": "Losa", "shape": { "kind": "box", "size": [6.0, 0.3, 6.0] }, "material": "hormigon", "ports": ["energia", "datos"] },
+  "muro":        { "name": "Muro", "shape": { "kind": "box", "size": [6.0, 3.0, 0.25] }, "material": "hormigon", "ports": ["energia"] },
+  "muro_lado":   { "name": "Muro lateral", "shape": { "kind": "box", "size": [0.25, 3.0, 5.5] }, "material": "hormigon", "ports": ["energia"] },
+  "bloque":      { "name": "Bloque", "shape": { "kind": "box", "size": [1.5, 0.75, 0.75] }, "material": "regolito" },
+  "ventana":     { "name": "Ventana", "shape": { "kind": "box", "size": [1.4, 1.0, 0.06] }, "material": "cristal", "glow": 40, "ports": ["energia"], "module": { "kind": "luz", "params": { "consume": { "energia": 0.05 }, "priority": 0 } } }
+}

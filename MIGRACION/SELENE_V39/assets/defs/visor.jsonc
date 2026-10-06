@@ -1,0 +1,19 @@
+// The helmet's visor: what the picture is seen through from the player's own eyes (from outside,
+// with V, there is no visor in the picture). Read by crates/app/src/visor.rs; it is a few numbers
+// of the tone mapping (crates/render/src/post.rs), no pass of its own.
+{
+  // the welding filter, lowered by hand: the welder's right button (the one that shows the
+  // integrity of what is round) darkens it and, pressed again, clears it. It never darkens by
+  // itself. Clear it lets everything through; dark, `oscuro` of the light, a little green
+  // (`tinte`) — and it presses down what is bright (`rodilla`: light through it is divided by
+  // 1 + rodilla x how bright it is), so the arc and its sparks are seen sharp while what is
+  // being welded is still seen, only a little dimmer (a real one leaves nothing but the arc:
+  // here one has to see the part). It darkens in `oscurece` s and clears in `aclara` s
+  "filtro": { "oscuro": 0.6, "tinte": [0.84, 1.0, 0.8], "rodilla": 2.5, "oscurece": 0.15, "aclara": 0.3 },
+  // breath on the visor: mist from its rim inward that grows with effort and clears. Effort
+  // (0..1) goes toward what one is doing — `andar` walking, `correr` running, `mochila` with the
+  // pack at full push, `salto` more at once for every jump landed — in `sube` s, and comes down
+  // in `baja` s at rest. Mist shows from `desde` of effort, up to `tope`. With the suit's oxygen
+  // under `oxigeno_bajo` (share of a full tank) the breath is heavier: up to `ahogo` more effort
+  "aliento": { "andar": 0.2, "correr": 1.0, "mochila": 0.75, "salto": 0.12, "sube": 9.0, "baja": 16.0, "desde": 0.35, "tope": 0.75, "oxigeno_bajo": 0.25, "ahogo": 0.7 },
+}

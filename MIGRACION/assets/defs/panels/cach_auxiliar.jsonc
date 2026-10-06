@@ -1,0 +1,30 @@
+// Auxiliary panel of the Cachalote's bridge (after wall): the control moment gyros and their
+// unloading, and the dorsal cradle.
+{
+  "name": "Giróscopos y cuna",
+  "tamano": ["0.50 m", "0.30 m"],
+  "rejilla": [10, 5],
+  "margen": "10 mm",
+  "separacion": "5 mm",
+  "grupos": [
+    { "id": "giro", "titulo": "GIRÓSCOPOS", "celda": [0, 0], "ocupa": [6, 5] },
+    { "id": "cuna", "titulo": "CUNA", "celda": [6, 0], "ocupa": [4, 5] }
+  ],
+  "mandos": [
+    { "id": "giro", "kind": "interruptor", "grupo": "giro", "rotulo": "MARCHA", "bind": { "senal": "giro.marcha" }, "defecto": 1,
+      "nombre": "Giróscopos de control", "ayuda": "Sostienen y giran la nave sin propelente, despacio. Tardan diez segundos en coger vueltas; sin corriente se van parando y devuelven al casco lo que guardaban." },
+    { "id": "descarga", "kind": "interruptor", "grupo": "giro", "rotulo": "DESCARGA", "bind": { "senal": "vuelo.descarga" },
+      "nombre": "Descarga de los giróscopos", "ayuda": "Las toberas giran contra los giróscopos mientras estos se vacían." },
+    { "id": "carga_giro", "kind": "aguja", "grupo": "giro", "tamano": [100, 100], "senal": "giroscopo.carga", "escala": ["0 %", "100 %"], "unidad": "%", "rotulo": "MOMENTO",
+      "zonas": { "verde": ["0 %", "60 %"], "ambar": ["60 %", "90 %"], "roja": ["90 %", "100 %"] }, "requiere": { "energia": "1 W" } },
+    { "id": "lamp_sat", "kind": "lampara", "grupo": "giro", "rotulo": "SATUR.", "requiere": { "energia": "1 W" },
+      "reglas": [ { "si": "giroscopo.carga > 0.95", "color": "rojo", "parpadeo": 2.0 }, { "si": "giroscopo.carga > 0.6", "color": "ambar" }, { "si": "giroscopo.on", "color": "verde" } ] },
+
+    { "id": "tapa_cuna", "kind": "tapa", "grupo": "cuna", "protege": ["abrir"] },
+    { "id": "abrir", "kind": "interruptor", "grupo": "cuna", "posiciones": ["ANCLADA", "LIBRE"], "rotulo": "CUNA",
+      "bind": { "senal": "cuna.abrir" }, "nombre": "Cuna del lomo",
+      "ayuda": "Suelta la nave atracada en el lomo (o, de LIBRE a ANCLADA, toma la que se haya posado en la cuna)." },
+    { "id": "lamp_cuna", "kind": "lampara", "grupo": "cuna", "rotulo": "ATRACADA", "requiere": { "energia": "1 W" },
+      "reglas": [ { "si": "cuna.sujeta", "color": "verde" }, { "si": "cuna.abrir", "color": "ambar" } ] }
+  ]
+}

@@ -21,6 +21,8 @@ export class Scheduler {
   private systems: System[] = [];
   /** Smoothed milliseconds per system (per frame, summed over fixed steps). */
   readonly timings = new Map<string, number>();
+  /** Milliseconds per system in the last frame (raw: what a hitch is made of). */
+  readonly lastFrame = new Map<string, number>();
   private frameAcc = new Map<string, number>();
 
   add(s: System) {
@@ -56,6 +58,7 @@ export class Scheduler {
   endFrame() {
     for (const s of this.systems) {
       const ms = this.frameAcc.get(s.name) ?? 0;
+      this.lastFrame.set(s.name, ms);
       this.timings.set(s.name, (this.timings.get(s.name) ?? ms) * 0.9 + ms * 0.1);
     }
     this.frameAcc.clear();

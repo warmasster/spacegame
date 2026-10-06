@@ -1,0 +1,785 @@
+// ALCOTÁN — VTOL service shuttle (crates/ship, docs/NAVES.md). Ship frame: +Y up, nose toward +Z,
+// +X to port (left), metres; the deck is y = 0. Everything is a part: every hull panel, deck plate,
+// bulkhead piece, component piece, every cable, pipe and duct segment and every device's own stub.
+// Networks run through those conduits: cut one and what is beyond it stops.
+{
+  "nombre": "Alcotán",
+  "matricula": "ALC-07",
+  "clase": "Lanzadera de servicio VTOL",
+  "astillero": "Astilleros Orell",
+  "modelo": "Orell AL-7",
+  "descripcion": "Lanzadera de 20 m con góndolas basculantes, bodega con rampa, reactor compacto y tres patas hidráulicas.",
+
+  // ------------------------------------------------------------------ hull
+  "casco": {
+    "material": "panel_casco",
+    "espesor": 0.07,
+    "chapa": 0.85,
+    // outline (outer skin), counter-clockwise seen from the nose, from the keel
+    "perfiles": {
+      "casco": [[0.0, -0.65], [1.35, -0.6], [2.0, -0.2], [2.15, 0.9], [2.0, 2.2], [1.3, 2.85], [0.0, 3.0],
+                [-1.3, 2.85], [-2.0, 2.2], [-2.15, 0.9], [-2.0, -0.2], [-1.35, -0.6]]
+    },
+    "suaves": [0, 3, 6, 9],
+    "estaciones": [
+      { "z": -9.3, "perfil": "casco", "escala": [0.97, 0.96], "compartimento": "bodega", "divisiones": 2 },
+      { "z": -6.6, "perfil": "casco", "escala": [0.99, 0.99], "compartimento": "bodega" },
+      { "z": -5.0, "perfil": "casco", "compartimento": "bodega" },
+      { "z": -3.4, "perfil": "casco", "compartimento": "cabina", "divisiones": 2 },
+      { "z": -0.2, "perfil": "casco", "compartimento": "cabina", "divisiones": 2 },
+      { "z": 2.6, "perfil": "casco", "escala": [0.98, 0.98], "compartimento": "puente" },
+      { "z": 4.2, "perfil": "casco", "escala": [0.9, 0.88], "y": 0.04, "compartimento": "puente" },
+      { "z": 5.6, "perfil": "casco", "escala": [0.76, 0.74], "y": 0.1, "compartimento": "puente" },
+      { "z": 6.9, "perfil": "casco", "escala": [0.58, 0.56], "y": 0.16 },
+      { "z": 8.4, "perfil": "casco", "escala": [0.32, 0.3], "y": 0.3 },
+      { "z": 9.4, "perfil": "casco", "escala": [0.1, 0.08], "y": 0.45 }
+    ],
+    // the belly is under the deck: it bounds no compartment (the deck does)
+    "bajo_suelo": [0, 1, 10, 11],
+    // canopy and cabin windows: (station interval, facet)
+    "ventanas": [
+      [4, 3], [4, 8],
+      [5, 3], [5, 4], [5, 7], [5, 8],
+      [6, 3], [6, 4], [6, 5], [6, 6], [6, 7], [6, 8],
+      [7, 4], [7, 5], [7, 6], [7, 7]
+    ],
+    // gear bays: main legs (interval 2), nose leg (interval 6)
+    "huecos": [[2, 0], [2, 1], [2, 10], [2, 11], [6, 0], [6, 11]],
+    "tapas": [false, true],
+    "interior": [204, 200, 190],
+    "pintura": [
+      { "caras": [0, 1, 10, 11], "color": [58, 60, 64] },
+      { "caras": [2, 9], "color": [64, 66, 72] },
+      { "caras": [3, 8], "tramos": [1, 3], "color": [230, 110, 30] },
+      { "caras": [5, 6], "tramos": [8, 9], "color": [52, 54, 58] }
+    ]
+  },
+  "suelos": [
+    { "id": "suelo_bodega", "desde": [-1.9, -9.3], "hasta": [1.9, -3.4], "divisiones": [3, 5], "material": "panel_suelo", "compartimento": "bodega", "color": [120, 124, 126] },
+    { "id": "suelo_cabina", "desde": [-1.9, -3.4], "hasta": [1.9, 2.6], "divisiones": [3, 5], "material": "panel_suelo", "compartimento": "cabina", "color": [132, 134, 136] },
+    { "id": "suelo_puente", "desde": [-1.65, 2.6], "hasta": [1.65, 4.6], "divisiones": [2, 2], "material": "panel_suelo", "compartimento": "puente", "color": [100, 104, 108] },
+    { "id": "suelo_morro", "desde": [-1.15, 4.6], "hasta": [1.15, 6.85], "divisiones": [2, 2], "material": "panel_suelo", "compartimento": "puente", "color": [100, 104, 108] }
+  ],
+  "mamparos": [
+    { "id": "popa", "z": -9.3, "puerta": [-1.56, 1.56, 2.56], "desde_y": -0.62, "material": "panel_mamparo", "entre": ["bodega", "vacio"], "color": [150, 150, 146] },
+    { "id": "mamparo_bodega", "z": -3.4, "puerta": [-0.5, 0.5, 2.0], "material": "panel_mamparo", "entre": ["bodega", "cabina"] },
+    { "id": "mamparo_puente", "z": 2.6, "puerta": [-0.45, 0.45, 1.95], "material": "panel_mamparo", "entre": ["cabina", "puente"] },
+    { "id": "mamparo_morro", "z": 6.9, "material": "panel_mamparo", "entre": ["puente", "vacio"] }
+  ],
+
+  // ------------------------------------------------------------------ components
+  "componentes": [
+    // ---- flight deck ----
+    // the pilots sit close to the console (their eyes a metre from the main panel), the pedestal
+    // between them and a side console by each; the overhead console hangs under the canopy ahead
+    // of their heads, tilted to face them (crates/ship/tests/asientos.rs holds all this)
+    { "id": "asiento_piloto", "tipo": "asiento", "en": [0.62, 0, 4.71] },
+    { "id": "asiento_copiloto", "tipo": "asiento", "en": [-0.62, 0, 4.71] },
+    { "id": "consola", "tipo": "consola_puente", "en": [0, 0, 5.75] },
+    { "id": "pedestal", "tipo": "pedestal", "en": [0, 0, 5.02] },
+    { "id": "techo_puente", "tipo": "consola_techo", "en": [0, 2.07, 5.32], "rot": [22, 0, 0] },
+    { "id": "lateral_piloto", "forma": { "kind": "box", "size": [0.3, 0.66, 0.7] }, "estilo": "consola_lateral", "en": [1.12, 0.33, 5.0], "material": "aluminio", "color": [62, 64, 70] },
+    { "id": "lateral_copiloto", "forma": { "kind": "box", "size": [0.3, 0.66, 0.7] }, "estilo": "consola_lateral", "en": [-1.12, 0.33, 5.0], "material": "aluminio", "color": [62, 64, 70] },
+    { "id": "rack_avionica", "tipo": "rack", "en": [-1.45, 0, 3.05],
+      "maquina": { "puertos": { "alimentacion": "elec:c_avionica" }, "params": { "siempre": true } } },
+    { "id": "ordenador", "tipo": "ordenador", "en": [0, 0.05, 7.6],
+      "maquina": { "puertos": { "energia": "elec:c_avionica", "datos": "datos:fc" }, "params": { "siempre": false }, "ordenes": { "encender": "ordenador.encender" } } },
+    { "id": "plafon_puente_1", "tipo": "plafon", "en": [0, 2.72, 3.1], "maquina": { "puertos": { "alimentacion": "elec:c_luces_puente" }, "ordenes": { "encender": "luces.puente" } } },
+    { "id": "plafon_puente_2", "tipo": "plafon", "en": [0, 2.6, 3.95], "maquina": { "puertos": { "alimentacion": "elec:c_luces_puente" }, "ordenes": { "encender": "luces.puente" } } },
+    { "id": "emergencia_puente", "tipo": "luz_emergencia", "en": [0.7, 2.62, 3.0], "maquina": { "puertos": { "alimentacion": "elec:c_emerg" }, "ordenes": { "encender": "luces.emergencia" } } },
+    { "id": "foco_izq", "tipo": "foco", "en": [0.45, -0.3, 7.6], "rot": [115, 0, 0], "espejo": true,
+      "maquina": { "puertos": { "alimentacion": "elec:c_luces_ext" }, "ordenes": { "encender": "luces.aterrizaje" } } },
+
+    // ---- cabin ----
+    { "id": "asiento_c1", "tipo": "asiento", "en": [1.39, 0, -2.3], "rot": [0, -90, 0] },
+    { "id": "asiento_c2", "tipo": "asiento", "en": [1.39, 0, -1.5], "rot": [0, -90, 0] },
+    { "id": "asiento_c3", "tipo": "asiento", "en": [-1.39, 0, -2.3], "rot": [0, 90, 0] },
+    { "id": "asiento_c4", "tipo": "asiento", "en": [-1.39, 0, -1.5], "rot": [0, 90, 0] },
+    { "id": "armario_1", "tipo": "armario", "en": [1.62, 0, 1.75] },
+    { "id": "armario_2", "tipo": "armario", "en": [-1.62, 0, 1.75], "rot": [0, 180, 0] },
+    { "id": "plafon_cab", "tipo": "plafon", "en": [0, 2.88, -2.4], "repetir": [3, [0, 0, 2.0]],
+      "maquina": { "puertos": { "alimentacion": "elec:c_luces_cab" }, "ordenes": { "encender": "luces.cabina" } } },
+    { "id": "emergencia_cab", "tipo": "luz_emergencia", "en": [0.8, 2.82, -0.9], "maquina": { "puertos": { "alimentacion": "elec:c_emerg" }, "ordenes": { "encender": "luces.emergencia" } } },
+    { "id": "tira_izq", "tipo": "tira_suelo", "en": [1.86, 0.01, -1.6], "repetir": [2, [0, 0, 1.6]], "espejo": true,
+      "maquina": { "puertos": { "alimentacion": "elec:c_luces_cab" }, "ordenes": { "encender": "luces.suelo" } } },
+    { "id": "ventilador_izq", "tipo": "ventilador", "en": [0.95, 2.58, -2.95], "espejo": true,
+      "maquina": { "puertos": { "motor": "elec:c_soporte", "aire": "aire:plenum" }, "ordenes": { "marcha": "aire.vent" } } },
+    { "id": "depurador", "tipo": "depurador", "en": [0.0, 2.62, -2.95],
+      "maquina": { "puertos": { "energia": "elec:c_soporte", "aire": "aire:plenum" }, "ordenes": { "marcha": "aire.depurador" } } },
+    { "id": "inyector_o2", "tipo": "inyector", "en": [0.45, 2.25, -3.18],
+      "maquina": { "puertos": { "gas": "o2:salida", "aire": "aire:plenum" }, "ordenes": { "marcha": "aire.o2" },
+        "params": { "gas": "o2", "sensor": "cabina.o2", "consigna": "21 kPa", "caudal": "0.006 kg/s", "permiso": "cabina.estanco" } } },
+    { "id": "inyector_n2", "tipo": "inyector", "en": [-0.45, 2.25, -3.18],
+      "maquina": { "puertos": { "gas": "n2:salida", "aire": "aire:plenum" }, "ordenes": { "marcha": "aire.n2" },
+        "params": { "gas": "n2", "sensor": "cabina.p", "consigna_senal": "aire.consigna", "consigna": "70 kPa", "caudal": "0.02 kg/s", "permiso": "cabina.estanco" } } },
+    // repressurising the hold: straight from the bottles into it, while it is sealed (REPRES.)
+    { "id": "repres_o2", "tipo": "inyector", "en": [-1.86, 1.75, -5.3], "rot": [0, 90, 0],
+      "maquina": { "puertos": { "gas": "o2:bodega" }, "ordenes": { "marcha": "bodega.repres" },
+        "params": { "gas": "o2", "sensor": "bodega.o2", "consigna": "21 kPa", "caudal": "0.5 kg/s", "permiso": "bodega.estanco" } } },
+    { "id": "repres_n2", "tipo": "inyector", "en": [-1.86, 1.75, -5.65], "rot": [0, 90, 0],
+      "maquina": { "puertos": { "gas": "n2:bodega" }, "ordenes": { "marcha": "bodega.repres" },
+        "params": { "gas": "n2", "sensor": "bodega.n2", "consigna": "49 kPa", "caudal": "1.1 kg/s", "permiso": "bodega.estanco" } } },
+    { "id": "rejilla_cab_a", "tipo": "rejilla", "en": [-0.55, 2.9, 0.6], "maquina": { "puertos": { "aire": "aire:cab_a" } } },
+    { "id": "rejilla_cab_b", "tipo": "rejilla", "en": [-0.55, 2.9, -1.4], "maquina": { "puertos": { "aire": "aire:cab_b" } } },
+    { "id": "rejilla_puente", "tipo": "rejilla", "en": [-0.55, 2.6, 3.05], "maquina": { "puertos": { "aire": "aire:puente_a" } } },
+    { "id": "rejilla_bod_a", "tipo": "rejilla", "en": [-0.55, 2.86, -7.0], "maquina": { "puertos": { "aire": "aire:bod_a" }, "params": { "compuerta": "bodega.repres" } } },
+    { "id": "rejilla_bod_b", "tipo": "rejilla", "en": [-0.55, 2.86, -4.6], "maquina": { "puertos": { "aire": "aire:bod_b" }, "params": { "compuerta": "bodega.repres" } } },
+    { "id": "baranda_cab", "tipo": "baranda", "en": [1.82, 1.05, -0.4], "espejo": true },
+
+    // ---- hold ----
+    { "id": "reactor", "tipo": "reactor_compacto", "en": [-1.3, 0, -8.35],
+      "maquina": { "puertos": { "calor": "calor1:lazo", "flujo": "refrig1:rx", "control": "elec:c_reactor" },
+        "ordenes": { "marcha": "rx.marcha", "potencia": "rx.potencia", "scram": "rx.scram", "rearme": "rx.rearme" } } },
+    { "id": "conversor", "tipo": "conversor_termico", "en": [-1.5, 0, -7.05],
+      "maquina": { "puertos": { "caliente": "calor1:lazo", "frio": "calor2:lazo", "salida": "alta:salida", "flujo": "refrig1:conv" } } },
+    { "id": "bucle_1", "tipo": "deposito_refrigerante", "en": [-1.65, 0, -6.35], "maquina": { "puertos": { "calor": "calor1:lazo" }, "params": { "t_inicial": "30 °C", "masa": "1.5 kg" } } },
+    { "id": "bomba_1", "tipo": "bomba_refrigerante", "en": [-1.15, 0, -6.35],
+      "maquina": { "puertos": { "motor": "elec:c_refrig", "salida": "refrig1:b1" }, "ordenes": { "marcha": "refrig.b1" } } },
+    { "id": "bucle_2", "tipo": "deposito_refrigerante", "en": [-1.65, 0, -5.65], "maquina": { "puertos": { "calor": "calor2:lazo" }, "params": { "t_inicial": "10 °C" } } },
+    { "id": "bomba_2", "tipo": "bomba_refrigerante", "en": [-1.15, 0, -5.65],
+      "maquina": { "puertos": { "motor": "elec:c_refrig", "salida": "refrig2:b2" }, "ordenes": { "marcha": "refrig.b2" } } },
+    { "id": "bateria_1", "tipo": "bateria", "en": [1.5, 0, -8.6], "maquina": { "puertos": { "bornes": "elec:bat1" }, "params": { "siempre": true } } },
+    // battery 2 and converter B are across the ship from 1 and A: no one hit takes both
+    { "id": "bateria_2", "tipo": "bateria", "en": [-1.55, 0, 0.35], "rot": [0, 90, 0], "maquina": { "puertos": { "bornes": "elec:bat2" }, "params": { "siempre": true, "soc_inicial": 0.8 } } },
+    { "id": "hpu_a", "tipo": "unidad_hidraulica", "en": [1.5, 0, -7.2],
+      "maquina": { "puertos": { "motor": "elec:c_hid_a", "presion": "hid:hpu_a" }, "ordenes": { "marcha": "hid.a" } } },
+    { "id": "hpu_b", "tipo": "unidad_hidraulica", "en": [1.5, 0, -6.5],
+      "maquina": { "puertos": { "motor": "elec:c_hid_b", "presion": "hid:hpu_b" }, "ordenes": { "marcha": "hid.b" } } },
+    { "id": "acumulador", "tipo": "acumulador", "en": [1.8, 0, -5.9], "maquina": { "puertos": { "presion": "hid:acum" } } },
+    { "id": "conv_a", "tipo": "convertidor_cc", "en": [1.7, 0, -5.35], "maquina": { "puertos": { "entrada": "alta:dc_a", "salida": "elec:conv_a" } } },
+    { "id": "conv_b", "tipo": "convertidor_cc", "en": [-1.7, 0, -3.85], "maquina": { "puertos": { "entrada": "alta:dc_b", "salida": "elec:conv_b" } } },
+    { "id": "botella_o2_1", "tipo": "botella", "etiqueta": "O2", "en": [-1.75, 0, -4.9], "color": [235, 235, 232], "maquina": { "puertos": { "salida": "o2:botellas" } } },
+    { "id": "botella_o2_2", "tipo": "botella", "etiqueta": "O2", "en": [-1.75, 0, -4.55], "color": [235, 235, 232], "maquina": { "puertos": { "salida": "o2:botellas" } } },
+    // (a bottle takes what fits in it at 20 MPa: 13 kg of oxygen, 10 of nitrogen. Filling the
+    // hold once takes 33 kg of nitrogen: four bottles of it, three of them a second row inboard)
+    { "id": "botella_n2", "tipo": "botella", "etiqueta": "N2", "en": [-1.75, 0, -4.2], "color": [40, 40, 44], "contenido": { "sustancia": "nitrogeno" }, "maquina": { "puertos": { "salida": "n2:botella" } } },
+    { "id": "botella_n2_2", "tipo": "botella", "etiqueta": "N2", "en": [-1.47, 0, -4.2], "color": [40, 40, 44], "contenido": { "sustancia": "nitrogeno" }, "maquina": { "puertos": { "salida": "n2:botella" } } },
+    { "id": "botella_n2_3", "tipo": "botella", "etiqueta": "N2", "en": [-1.47, 0, -4.55], "color": [40, 40, 44], "contenido": { "sustancia": "nitrogeno" }, "maquina": { "puertos": { "salida": "n2:botella" } } },
+    { "id": "botella_n2_4", "tipo": "botella", "etiqueta": "N2", "en": [-1.47, 0, -4.9], "color": [40, 40, 44], "contenido": { "sustancia": "nitrogeno" }, "maquina": { "puertos": { "salida": "n2:botella" } } },
+    // (its starter on its own circuit, behind the APU breaker: pulled, it does not start)
+    { "id": "apu", "tipo": "apu", "en": [0, 2.12, -8.55],
+      "maquina": { "puertos": { "salida": "elec:gen_apu", "combustible": "prop:apu", "arranque": "elec:c_apu" }, "ordenes": { "marcha": "apu.marcha" } } },
+    { "id": "plafon_bod", "tipo": "plafon", "en": [0, 2.84, -6.6], "repetir": [2, [0, 0, 2.0]],
+      "maquina": { "puertos": { "alimentacion": "elec:c_luces_bod" }, "ordenes": { "encender": "luces.bodega" } } },
+    { "id": "emergencia_bod", "tipo": "luz_emergencia", "en": [0.9, 2.82, -5.6], "maquina": { "puertos": { "alimentacion": "elec:c_emerg" }, "ordenes": { "encender": "luces.emergencia" } } },
+    // air moved on purpose (docs/AIRE.md): the compressor that draws a compartment down into the
+    // tank of recovered air (or into another compartment), and that tank. Its panel is on the
+    // wall over it and the hand valves are in the bulkheads: "trasvase", further down
+    { "id": "compresor_aire", "tipo": "compresor_aire", "en": [1.5, 0, -7.9],
+      "maquina": { "puertos": { "motor": "elec:c_compresor" }, "params": { "lugares": ["deposito_aire", "bodega", "cabina", "puente"] } } },
+    { "id": "deposito_aire", "tipo": "deposito_aire", "en": [1.55, 0, -4.4] },
+    { "id": "foco_bodega_izq", "tipo": "foco", "en": [1.0, 2.5, -7.7], "rot": [-140, 0, 0], "espejo": true,
+      "luz": { "color": [255, 240, 220], "alcance": 16.0, "intensidad": 7.0, "en": [0, 0.09, 0], "lente": 0.1, "dir": [0, 1, 0], "cono": 80.0 },
+      "maquina": { "puertos": { "alimentacion": "elec:c_luces_bod" }, "ordenes": { "encender": "luces.focos_bodega" } } },
+
+    // cargo, lashed down the middle of the hold (a walkway each side, the cabin door clear)
+    // cargo is not of the ship: each piece is held by its clamp ("anclaje") and by nothing else.
+    // Open the clamp (a hand on it, its order `<id>.soltar`), or lose it, and what it held is a
+    // loose body (crates/ship/src/cargo.rs, tests/carga.rs)
+    // The cargo stands a little to port of the middle, against the machinery there, so that the
+    // starboard side is a walkway 0.68 m wide from the cabin door to the ramp (tests/carga.rs)
+    { "id": "anclaje_pale", "tipo": "anclaje_carga", "en": [-0.13, 0, -8.0] },
+    { "id": "anclaje_cajas", "tipo": "anclaje_carga", "en": [-0.13, 0, -6.665] },
+    { "id": "anclaje_agua", "tipo": "anclaje_carga", "en": [-0.13, 0, -5.75] },
+    { "id": "anclaje_prop", "tipo": "anclaje_carga", "en": [-0.13, 0, -5.2] },
+    { "id": "carga_pale", "tipo": "pale_regolito", "en": [-0.13, 0.012, -8.0], "anclaje": "anclaje_pale" },
+    { "id": "carga_caja_1", "tipo": "caja_repuestos", "en": [0.132, 0.012, -6.95], "anclaje": "anclaje_cajas" },
+    { "id": "carga_caja_2", "tipo": "caja_repuestos", "en": [-0.392, 0.012, -6.95], "anclaje": "anclaje_cajas" },
+    { "id": "carga_caja_3", "tipo": "caja_repuestos", "en": [0.132, 0.012, -6.38], "anclaje": "anclaje_cajas" },
+    { "id": "carga_caja_4", "tipo": "caja_repuestos", "en": [-0.23, 0.525, -6.9], "rot": [0, 14, 0], "anclaje": "anclaje_cajas" },
+    { "id": "carga_agua_1", "tipo": "bidon_agua", "en": [-0.47, 0.012, -5.75], "anclaje": "anclaje_agua" },
+    { "id": "carga_agua_2", "tipo": "bidon_agua", "en": [0.08, 0.012, -5.75], "anclaje": "anclaje_agua" },
+    { "id": "carga_prop", "tipo": "bidon_combustible", "en": [-0.13, 0.012, -5.2], "anclaje": "anclaje_prop" },
+
+    // doors and the ramp are closures ("cierres" below)
+
+    // ---- wings, nacelles, tanks ----
+    { "id": "ala_izq", "forma": { "kind": "box", "size": [2.5, 0.16, 2.4] }, "estilo": "ala", "en": [3.3, 1.0, -2.6], "material": "panel_casco", "color": [222, 222, 216], "chapa": 0.8, "espejo": true },
+    { "id": "borde_ala_izq", "forma": { "kind": "box", "size": [2.5, 0.12, 0.25] }, "estilo": "borde_ala", "en": [3.3, 1.0, -1.3], "material": "panel_casco", "color": [230, 110, 30], "espejo": true },
+    { "id": "pilon_izq", "forma": { "kind": "box", "size": [0.45, 0.3, 1.1] }, "estilo": "pilon", "en": [4.45, 1.0, -2.5], "material": "aluminio", "color": [64, 66, 72], "espejo": true },
+    { "id": "gondola_izq", "tipo": "gondola", "en": [5.05, 1.0, -2.5], "articulacion": "gondola_izq", "espejo": true,
+      "maquina": { "puertos": { "energia": "elec:c_motores", "propelente": "prop:alim_izq" }, "ordenes": { "armado": "motor_izq.armado", "arranque": "motor_izq.arranque" } } },
+    { "id": "deposito_izq", "tipo": "deposito_ala", "en": [3.1, 0.6, -2.6], "espejo": true,
+      "maquina": { "puertos": { "salida": "prop:t_izq" } } },
+    { "id": "aleta_izq", "forma": { "kind": "wedge", "size": [0.1, 1.2, 1.6] }, "estilo": "aleta", "en": [1.15, 3.4, -8.3], "rot": [0, 0, -28], "material": "panel_casco", "color": [52, 54, 58], "espejo": true },
+    { "id": "lomo", "forma": { "kind": "box", "size": [0.32, 0.14, 7.0] }, "estilo": "lomo", "en": [0, 3.05, -3.1], "material": "panel_casco", "color": [64, 66, 72], "chapa": 0.4 },
+    { "id": "radiador_izq", "tipo": "radiador_aleta", "en": [0.8, 3.0, -5.3], "articulacion": "rad_izq", "espejo": true,
+      "maquina": { "puertos": { "calor": "calor2:lazo", "flujo": "refrig2:rad_izq" }, "params": { "despliegue": "rad_izq.pos" } } },
+    { "id": "antena", "tipo": "antena", "en": [-0.5, 2.25, 1.0], "articulacion": "mastil",
+      "maquina": { "puertos": { "alimentacion": "elec:c_antena" }, "params": { "siempre": true } } },
+
+    // ---- landing gear ----
+    // each leg (its tube and its foot) slides in its housing on a gas spring ("amort_*" below):
+    // out in flight, three quarters in standing
+    { "id": "tren_izq_pata", "forma": { "kind": "cylinder", "radius": 0.085, "height": 1.0, "sides": 10 }, "estilo": "tren_pata", "en": [2.0, -1.29, -4.2], "material": "acero", "color": [190, 192, 196], "articulacion": "amort_izq", "espejo": true },
+    { "id": "tren_izq_pie", "forma": { "kind": "box", "size": [0.36, 0.07, 0.52] }, "estilo": "tren_pie", "en": [2.0, -1.825, -4.2], "material": "acero", "color": [40, 40, 44], "articulacion": "amort_izq", "espejo": true },
+    { "id": "tren_izq_amort", "forma": { "kind": "cylinder", "radius": 0.11, "height": 0.35, "sides": 10 }, "estilo": "tren_amort", "en": [2.0, -0.78, -4.2], "material": "acero", "color": [60, 62, 66], "articulacion": "tren_izq", "espejo": true },
+    { "id": "tren_morro_pata", "forma": { "kind": "cylinder", "radius": 0.075, "height": 1.08, "sides": 10 }, "estilo": "tren_pata", "en": [0, -1.18, 5.0], "material": "acero", "color": [190, 192, 196], "articulacion": "amort_morro" },
+    { "id": "tren_morro_pie", "forma": { "kind": "box", "size": [0.3, 0.07, 0.42] }, "estilo": "tren_pie", "en": [0, -1.825, 5.0], "material": "acero", "color": [40, 40, 44], "articulacion": "amort_morro" },
+
+    // ---- outside lights ----
+    { "id": "nav_izq", "tipo": "luz_nav", "en": [4.45, 1.2, -1.7], "maquina": { "puertos": { "alimentacion": "elec:c_luces_ext" }, "ordenes": { "encender": "luces.nav" } } },
+    { "id": "nav_der", "tipo": "luz_nav", "en": [-4.45, 1.2, -1.7],
+      "luz": { "color": [40, 255, 90], "alcance": 6.0, "intensidad": 1.6, "en": [0, 0.05, 0], "lente": 0.06, "dir": [0, 1, 0] },
+      "maquina": { "puertos": { "alimentacion": "elec:c_luces_ext" }, "ordenes": { "encender": "luces.nav" } } },
+    { "id": "estrobo_izq", "tipo": "estroboscopio", "en": [4.45, 1.18, -3.5], "espejo": true,
+      "maquina": { "puertos": { "alimentacion": "elec:c_luces_ext" }, "ordenes": { "encender": "luces.estrobos" } } },
+    { "id": "baliza_sup", "tipo": "baliza", "en": [0, 3.07, 1.0], "maquina": { "puertos": { "alimentacion": "elec:c_luces_ext" }, "ordenes": { "encender": "luces.baliza" } } },
+    { "id": "baliza_inf", "tipo": "baliza", "en": [0, -0.7, -1.0], "rot": [180, 0, 0], "maquina": { "puertos": { "alimentacion": "elec:c_luces_ext" }, "ordenes": { "encender": "luces.baliza" } } },
+
+    // ---- RCS: four quads, sixteen nozzles (each its own machine and stub) ----
+    { "id": "rcs_proa_izq", "tipo": "bloque_rcs", "en": [1.4, 1.45, 6.2], "espejo": true },
+    { "id": "rcs_proa_izq_arriba", "tipo": "tobera_rcs", "en": [1.4, 1.62, 6.2], "espejo": true, "maquina": { "puertos": { "propelente": "prop:rcs_proa_izq", "energia": "elec:c_rcs" }, "ordenes": { "maestro": "rcs.maestro" } } },
+    { "id": "rcs_proa_izq_abajo", "tipo": "tobera_rcs", "en": [1.4, 1.28, 6.2], "rot": [180, 0, 0], "espejo": true, "maquina": { "puertos": { "propelente": "prop:rcs_proa_izq", "energia": "elec:c_rcs" }, "ordenes": { "maestro": "rcs.maestro" } } },
+    { "id": "rcs_proa_izq_fuera", "tipo": "tobera_rcs", "en": [1.57, 1.45, 6.2], "rot": [0, 0, -90], "espejo": true, "maquina": { "puertos": { "propelente": "prop:rcs_proa_izq", "energia": "elec:c_rcs" }, "ordenes": { "maestro": "rcs.maestro" } } },
+    { "id": "rcs_proa_izq_proa", "tipo": "tobera_rcs", "en": [1.4, 1.45, 6.37], "rot": [90, 0, 0], "espejo": true, "maquina": { "puertos": { "propelente": "prop:rcs_proa_izq", "energia": "elec:c_rcs" }, "ordenes": { "maestro": "rcs.maestro" } } },
+    { "id": "rcs_popa_izq", "tipo": "bloque_rcs", "en": [2.12, 1.55, -8.9], "espejo": true },
+    { "id": "rcs_popa_izq_arriba", "tipo": "tobera_rcs", "en": [2.12, 1.72, -8.9], "espejo": true, "maquina": { "puertos": { "propelente": "prop:rcs_popa_izq", "energia": "elec:c_rcs" }, "ordenes": { "maestro": "rcs.maestro" } } },
+    { "id": "rcs_popa_izq_abajo", "tipo": "tobera_rcs", "en": [2.12, 1.38, -8.9], "rot": [180, 0, 0], "espejo": true, "maquina": { "puertos": { "propelente": "prop:rcs_popa_izq", "energia": "elec:c_rcs" }, "ordenes": { "maestro": "rcs.maestro" } } },
+    { "id": "rcs_popa_izq_fuera", "tipo": "tobera_rcs", "en": [2.29, 1.55, -8.9], "rot": [0, 0, -90], "espejo": true, "maquina": { "puertos": { "propelente": "prop:rcs_popa_izq", "energia": "elec:c_rcs" }, "ordenes": { "maestro": "rcs.maestro" } } },
+    { "id": "rcs_popa_izq_popa", "tipo": "tobera_rcs", "en": [2.12, 1.55, -9.07], "rot": [-90, 0, 0], "espejo": true, "maquina": { "puertos": { "propelente": "prop:rcs_popa_izq", "energia": "elec:c_rcs" }, "ordenes": { "maestro": "rcs.maestro" } } }
+  ],
+
+
+  // ------------------------------------------------------------------ closures
+  // Everything that shuts an opening, made one way (crates/ship/src/closures.rs): the leaf takes
+  // the opening's outline with an overlap, a seal goes round it, latches pull it shut the last
+  // few degrees and hold it. Closed at 0, open at its limit: <id>.abierta, <id>.cerrada.
+  "cierres": [
+    { "id": "rampa", "nombre": "Rampa", "abertura": { "tipo": "mamparo", "mamparo": "popa", "lado": -1 },
+      "mueve": { "tipo": "bisagra", "borde": "abajo", "angulo": 124 },
+      "hoja": { "espesor": 0.1, "material": "panel_suelo", "color": [222, 222, 216], "interior": [150, 153, 152], "suelo": true, "chapa": 0.8, "franja": [230, 190, 30] },
+      "abierta": true, "entre": ["bodega", "vacio"], "orden": "rampa.orden", "amortiguamiento": 900 },
+    { "id": "puerta_bodega", "nombre": "Puerta de la bodega", "abertura": { "tipo": "mamparo", "mamparo": "mamparo_bodega", "lado": 1 },
+      "mueve": { "tipo": "corredera", "hacia": [1, 0, 0], "hojas": 2 },
+      "hoja": { "espesor": 0.05, "color": [190, 120, 40], "chapa": 0.5 }, "entre": ["bodega", "cabina"], "orden": "puerta_bodega.orden" },
+    { "id": "puerta_puente", "nombre": "Puerta del puente", "abertura": { "tipo": "mamparo", "mamparo": "mamparo_puente", "lado": -1 },
+      "mueve": { "tipo": "corredera", "hacia": [1, 0, 0], "hojas": 2 },
+      "hoja": { "espesor": 0.05, "color": [110, 120, 130], "chapa": 0.5 }, "entre": ["cabina", "puente"], "orden": "puerta_puente.orden" }
+  ],
+
+
+  // ------------------------------------------------------------------ decals
+  // Posters, signs, logos and plates of the atlas (tools/texturas/calcas.py): where, facing which
+  // way, how wide. Each goes (and breaks) with the part under it.
+  "calcas": [
+    // cabin side of the hold bulkhead
+    { "imagen": "poster_flota", "en": [1.62, 1.45, -3.367], "normal": [0, 0, 1], "ancho": 0.4 },
+    { "imagen": "poster_traje", "en": [-1.62, 1.45, -3.367], "normal": [0, 0, 1], "ancho": 0.4 },
+    { "imagen": "rotulo_bodega", "en": [0, 2.25, -3.367], "normal": [0, 0, 1], "ancho": 0.8 },
+    { "imagen": "senal_presion", "en": [0, 2.47, -3.367], "normal": [0, 0, 1], "ancho": 0.7 },
+    // hold side
+    { "imagen": "poster_carga", "en": [1.6, 1.45, -3.433], "normal": [0, 0, -1], "ancho": 0.4 },
+    { "imagen": "poster_oxigeno", "en": [-1.6, 1.45, -3.433], "normal": [0, 0, -1], "ancho": 0.4 },
+    { "imagen": "rotulo_cabina", "en": [0, 2.25, -3.433], "normal": [0, 0, -1], "ancho": 0.8 },
+    { "imagen": "franjas", "en": [0, 2.69, -9.267], "normal": [0, 0, 1], "ancho": 2.0 },
+    { "imagen": "senal_carga", "en": [-0.13, 0.0, -7.0], "normal": [0, 1, 0], "arriba": [0, 0, 1], "ancho": 1.2 },
+    { "imagen": "senal_oxigeno", "en": [-1.6, 1.85, -3.433], "normal": [0, 0, -1], "ancho": 0.36 },
+    // cabin side of the bridge bulkhead, and the bridge side
+    { "imagen": "rotulo_puente", "en": [0, 2.2, 2.567], "normal": [0, 0, -1], "ancho": 0.8 },
+    { "imagen": "poster_luna", "en": [1.62, 1.45, 2.567], "normal": [0, 0, -1], "ancho": 0.4 },
+    { "imagen": "poster_orell", "en": [-1.62, 1.45, 2.567], "normal": [0, 0, -1], "ancho": 0.4 },
+    { "imagen": "senal_salida", "en": [0, 2.15, 2.633], "normal": [0, 0, 1], "ancho": 0.5, "brillo": 1.2 },
+    // machinery
+    { "imagen": "senal_radiacion", "en": [-0.79, 0.9, -8.35], "normal": [1, 0, 0], "ancho": 0.32 },
+    { "imagen": "senal_tension", "en": [1.147, 0.62, -8.6], "normal": [-1, 0, 0], "ancho": 0.25 },
+    { "imagen": "senal_tension", "en": [1.93, 2.05, -2.95], "normal": [-0.9934, -0.1146, 0], "arriba": [-0.1146, 0.9934, 0], "ancho": 0.22 },
+    { "imagen": "logo_hokuto", "en": [-1.93, 2.05, -2.95], "normal": [0.9934, -0.1146, 0], "arriba": [0.1146, 0.9934, 0], "ancho": 0.5 },
+    { "imagen": "senal_extintor", "en": [1.382, 1.5, 1.75], "normal": [-1, 0, 0], "ancho": 0.22 },
+    { "imagen": "placa_nave", "en": [-1.382, 1.6, 1.75], "normal": [1, 0, 0], "ancho": 0.3 },
+    // outside: registration, the yard's logo, the wings, the ramp
+    { "imagen": "matricula", "en": [2.069, 1.6, -1.8], "normal": [0.9934, 0.1146, 0], "arriba": [-0.1146, 0.9934, 0], "ancho": 1.5 },
+    { "imagen": "matricula", "en": [-2.069, 1.6, -1.8], "normal": [-0.9934, 0.1146, 0], "arriba": [0.1146, 0.9934, 0], "ancho": 1.5 },
+    { "imagen": "logo_orell", "en": [2.059, 1.6, -5.8], "normal": [0.9934, 0.1146, 0], "arriba": [-0.1146, 0.9934, 0], "ancho": 1.2 },
+    { "imagen": "logo_orell", "en": [-2.059, 1.6, -5.8], "normal": [-0.9934, 0.1146, 0], "arriba": [0.1146, 0.9934, 0], "ancho": 1.2 },
+    { "imagen": "senal_no_pisar", "en": [3.6, 1.08, -2.5], "normal": [0, 1, 0], "arriba": [0, 0, 1], "ancho": 0.9 },
+    { "imagen": "senal_no_pisar", "en": [-3.6, 1.08, -2.5], "normal": [0, 1, 0], "arriba": [0, 0, 1], "ancho": 0.9 },
+    { "imagen": "matricula", "en": [0, 1.4, -9.437], "normal": [0, 0, -1], "ancho": 1.4, "pieza": "rampa.hoja" }
+  ],
+
+  // ------------------------------------------------------------------ labels
+  // Stencils on the hull (crates/ship/src/def.rs, LabelDef). What is written on a machine, a
+  // drum, a bottle is its kind's (assets/defs/components).
+  "rotulos": [
+    {"texto": "▲ RESCATE ▲", "en": [2.105, 0.6, 1.2], "normal": [0.991, -0.135, 0], "arriba": [0.135, 0.991, 0], "alto": 0.09, "color": [243, 179, 46]},
+    {"texto": "CORTAR AQUÍ EN EMERGENCIA", "en": [2.086, 0.46, 1.2], "normal": [0.991, -0.135, 0], "arriba": [0.135, 0.991, 0], "alto": 0.034, "color": [243, 179, 46]},
+    {"texto": "BODEGA DE CARGA · MÁX 6 000 KG", "en": [2.1, 0.56, -7.6], "normal": [0.991, -0.135, 0], "arriba": [0.135, 0.991, 0], "alto": 0.055, "color": [230, 232, 226]},
+    {"texto": "▲ RESCATE ▲", "en": [-2.105, 0.6, 1.2], "normal": [-0.991, -0.135, 0], "arriba": [-0.135, 0.991, 0], "alto": 0.09, "color": [243, 179, 46]},
+    {"texto": "CORTAR AQUÍ EN EMERGENCIA", "en": [-2.086, 0.46, 1.2], "normal": [-0.991, -0.135, 0], "arriba": [-0.135, 0.991, 0], "alto": 0.034, "color": [243, 179, 46]},
+    {"texto": "BODEGA DE CARGA · MÁX 6 000 KG", "en": [-2.1, 0.56, -7.6], "normal": [-0.991, -0.135, 0], "arriba": [-0.135, 0.991, 0], "alto": 0.055, "color": [230, 232, 226]}
+  ],
+
+  // ------------------------------------------------------------------ joints
+  "articulaciones": {
+    "gondola_izq": { "tipo": "bisagra", "eje": [1, 0, 0], "pivote": [5.05, 1.0, -2.5], "limites": [-90, 0], "inicial": -90, "nombre": "Góndola izquierda", "amortiguamiento": 3000 },
+    "gondola_der": { "tipo": "bisagra", "eje": [1, 0, 0], "pivote": [-5.05, 1.0, -2.5], "limites": [-90, 0], "inicial": -90, "nombre": "Góndola derecha", "amortiguamiento": 3000 },
+    "rad_izq": { "tipo": "bisagra", "eje": [0, 0, 1], "pivote": [0.14, 3.0, -5.3], "limites": [0, 70], "nombre": "Radiador izquierdo" },
+    "rad_der": { "tipo": "bisagra", "eje": [0, 0, -1], "pivote": [-0.14, 3.0, -5.3], "limites": [0, 70], "nombre": "Radiador derecho" },
+    "mastil": { "tipo": "corredera", "eje": [0, 1, 0], "limites": [0, 0.75], "nombre": "Mástil de la antena" },
+    "tren_izq": { "tipo": "bisagra", "eje": [0, 0, 1], "pivote": [2.0, -0.55, -4.2], "limites": [-90, 0], "inicial": 0, "nombre": "Pata izquierda", "amortiguamiento": 1500 },
+    "tren_der": { "tipo": "bisagra", "eje": [0, 0, 1], "pivote": [-2.0, -0.55, -4.2], "limites": [0, 90], "inicial": 0, "nombre": "Pata derecha", "amortiguamiento": 1500 },
+    "tren_morro": { "tipo": "bisagra", "eje": [1, 0, 0], "pivote": [0, -0.4, 5.0], "limites": [0, 90], "inicial": 0, "nombre": "Pata de morro", "amortiguamiento": 1200 },
+    // the struts: sprung slides, each on its leg's hinge (crates/ship/src/def.rs, SpringDef)
+    "amort_izq": { "tipo": "corredera", "eje": [0, 1, 0], "limites": [0, 0.32], "padre": "tren_izq", "nombre": "Amortiguador izquierdo", "muelle": {} },
+    "amort_der": { "tipo": "corredera", "eje": [0, 1, 0], "limites": [0, 0.32], "padre": "tren_der", "nombre": "Amortiguador derecho", "muelle": {} },
+    "amort_morro": { "tipo": "corredera", "eje": [0, 1, 0], "limites": [0, 0.32], "padre": "tren_morro", "nombre": "Amortiguador de morro", "muelle": {} }
+  },
+
+  // ------------------------------------------------------------------ actuators
+  "actuadores": {
+    "act_rampa_izq": {
+      "articulacion": "rampa", "nombre": "Cabrestante de la rampa (izq.)", "fabricante": "Kestrel", "modelo": "Cabrestante CW-3",
+      "accionamiento": { "tipo": "electrico", "velocidad_vacio": "3000 rpm", "par_bloqueo": "5 N*m" },
+      "transmision": { "tipo": "cable", "radio": "0.09 m", "anclaje_fijo": [1.4, 2.45, -8.7], "anclaje_movil": [1.4, 2.45, -9.38], "reduccion": 50 },
+      "control": { "orden": "rampa.orden", "frenado": 0.05 },
+      "redes": { "motor": "elec:c_rampa" }
+    },
+    "act_rampa_der": {
+      "articulacion": "rampa", "nombre": "Cabrestante de la rampa (der.)", "fabricante": "Kestrel", "modelo": "Cabrestante CW-3",
+      "accionamiento": { "tipo": "electrico", "velocidad_vacio": "3000 rpm", "par_bloqueo": "5 N*m" },
+      "transmision": { "tipo": "cable", "radio": "0.09 m", "anclaje_fijo": [-1.4, 2.45, -8.7], "anclaje_movil": [-1.4, 2.45, -9.38], "reduccion": 50 },
+      "control": { "orden": "rampa.orden", "frenado": 0.05 },
+      "redes": { "motor": "elec:c_rampa" }
+    },
+    "act_puerta_bodega": {
+      "articulacion": "puerta_bodega", "nombre": "Motor de puerta (bodega)",
+      "accionamiento": { "tipo": "electrico", "velocidad_vacio": "3000 rpm", "par_bloqueo": "0.6 N*m" },
+      "transmision": { "tipo": "reductor", "reduccion": 1000, "autobloqueo": true },
+      "control": { "orden": "puerta_bodega.orden" }, "redes": { "motor": "elec:c_puertas" }
+    },
+    "act_puerta_bodega_b": {
+      "articulacion": "puerta_bodega_b", "nombre": "Motor de puerta (bodega, 2)",
+      "accionamiento": { "tipo": "electrico", "velocidad_vacio": "3000 rpm", "par_bloqueo": "0.6 N*m" },
+      "transmision": { "tipo": "reductor", "reduccion": 1000, "autobloqueo": true },
+      "control": { "orden": "puerta_bodega.orden" }, "redes": { "motor": "elec:c_puertas" }
+    },
+    "act_puerta_puente": {
+      "articulacion": "puerta_puente", "nombre": "Motor de puerta (puente)",
+      "accionamiento": { "tipo": "electrico", "velocidad_vacio": "3000 rpm", "par_bloqueo": "0.6 N*m" },
+      "transmision": { "tipo": "reductor", "reduccion": 1000, "autobloqueo": true },
+      "control": { "orden": "puerta_puente.orden" }, "redes": { "motor": "elec:c_puertas" }
+    },
+    "act_puerta_puente_b": {
+      "articulacion": "puerta_puente_b", "nombre": "Motor de puerta (puente, 2)",
+      "accionamiento": { "tipo": "electrico", "velocidad_vacio": "3000 rpm", "par_bloqueo": "0.6 N*m" },
+      "transmision": { "tipo": "reductor", "reduccion": 1000, "autobloqueo": true },
+      "control": { "orden": "puerta_puente.orden" }, "redes": { "motor": "elec:c_puertas" }
+    },
+    "act_gondola_izq": {
+      "articulacion": "gondola_izq", "nombre": "Husillo de la góndola izquierda", "fabricante": "Orell", "modelo": "Husillo HB-12",
+      "accionamiento": { "tipo": "electrico", "velocidad_vacio": "3000 rpm", "par_bloqueo": "8 N*m" },
+      "transmision": { "tipo": "reductor", "reduccion": 600, "autobloqueo": true },
+      "control": { "modo": "posicion", "orden": "gondolas.orden" }, "redes": { "motor": "elec:c_gondolas" }
+    },
+    "act_gondola_der": {
+      "articulacion": "gondola_der", "nombre": "Husillo de la góndola derecha", "fabricante": "Orell", "modelo": "Husillo HB-12",
+      "accionamiento": { "tipo": "electrico", "velocidad_vacio": "3000 rpm", "par_bloqueo": "8 N*m" },
+      "transmision": { "tipo": "reductor", "reduccion": 600, "autobloqueo": true },
+      "control": { "modo": "posicion", "orden": "gondolas.orden" }, "redes": { "motor": "elec:c_gondolas" }
+    },
+    "act_rad_izq": {
+      "articulacion": "rad_izq", "nombre": "Motor del radiador izquierdo",
+      "accionamiento": { "tipo": "electrico", "velocidad_vacio": "3000 rpm", "par_bloqueo": "2 N*m" },
+      "transmision": { "tipo": "reductor", "reduccion": 1200, "autobloqueo": true },
+      "control": { "orden": "rad.orden" }, "redes": { "motor": "elec:c_radiadores" }
+    },
+    "act_rad_der": {
+      "articulacion": "rad_der", "nombre": "Motor del radiador derecho",
+      "accionamiento": { "tipo": "electrico", "velocidad_vacio": "3000 rpm", "par_bloqueo": "2 N*m" },
+      "transmision": { "tipo": "reductor", "reduccion": 1200, "autobloqueo": true },
+      "control": { "orden": "rad.orden" }, "redes": { "motor": "elec:c_radiadores" }
+    },
+    "act_mastil": {
+      "articulacion": "mastil", "nombre": "Mástil telescópico",
+      "accionamiento": { "tipo": "electrico", "velocidad_vacio": "3000 rpm", "par_bloqueo": "0.5 N*m" },
+      "transmision": { "tipo": "husillo", "paso": "3 mm", "eficiencia": 0.3 },
+      "control": { "orden": "antena.orden" }, "redes": { "motor": "elec:c_antena" }
+    },
+    "act_tren_izq": {
+      "articulacion": "tren_izq", "nombre": "Cilindro del tren izquierdo", "fabricante": "Kestrel", "modelo": "Cilindro LG-50", "vida": 8000,
+      "accionamiento": { "tipo": "hidraulico", "diametro": "50 mm", "vastago": "25 mm", "caudal_valvula": "14 L/min" },
+      "transmision": { "tipo": "biela", "anclaje_fijo": [1.15, -0.25, -4.2], "anclaje_movil": [2.0, -0.95, -4.2] },
+      "control": { "orden": "tren.orden" },
+      "bloqueos": [ { "en": "fin", "liberacion": "hidraulico", "nombre": "Blocaje abajo" }, { "en": "inicio", "liberacion": "hidraulico", "nombre": "Blocaje arriba" } ],
+      "redes": { "fluido": "hid:tren_izq", "valvula": "elec:c_tren" }
+    },
+    "act_tren_der": {
+      "articulacion": "tren_der", "nombre": "Cilindro del tren derecho", "fabricante": "Kestrel", "modelo": "Cilindro LG-50", "vida": 8000,
+      "accionamiento": { "tipo": "hidraulico", "diametro": "50 mm", "vastago": "25 mm", "caudal_valvula": "14 L/min" },
+      "transmision": { "tipo": "biela", "anclaje_fijo": [-1.15, -0.25, -4.2], "anclaje_movil": [-2.0, -0.95, -4.2] },
+      "control": { "orden": "tren.orden", "invertir": true },
+      "bloqueos": [ { "en": "inicio", "liberacion": "hidraulico", "nombre": "Blocaje abajo" }, { "en": "fin", "liberacion": "hidraulico", "nombre": "Blocaje arriba" } ],
+      "redes": { "fluido": "hid:tren_der", "valvula": "elec:c_tren" }
+    },
+    "act_tren_morro": {
+      "articulacion": "tren_morro", "nombre": "Cilindro del tren de morro", "fabricante": "Kestrel", "modelo": "Cilindro LG-40", "vida": 8000,
+      "accionamiento": { "tipo": "hidraulico", "diametro": "40 mm", "vastago": "20 mm", "caudal_valvula": "10 L/min" },
+      "transmision": { "tipo": "biela", "anclaje_fijo": [0, -0.15, 3.9], "anclaje_movil": [0, -0.9, 5.0] },
+      "control": { "orden": "tren.orden", "invertir": true },
+      "bloqueos": [ { "en": "inicio", "liberacion": "hidraulico", "nombre": "Blocaje abajo" }, { "en": "fin", "liberacion": "hidraulico", "nombre": "Blocaje arriba" } ],
+      "redes": { "fluido": "hid:tren_morro", "valvula": "elec:c_tren" }
+    }
+  },
+
+  // ------------------------------------------------------------------ networks
+  "redes": {
+    // 28 V: two batteries and the APU and converters feed the battery bar (hold); contactors feed
+    // buses A, B and essential (cabin breaker panel); every breaker feeds its circuit junction
+    "elec": {
+      "medio": "electrico", "nominal": "28 V", "conducto": "cable",
+      "nodos": {
+        "bat1": [1.5, 0.6, -8.6], "bat2": [-1.55, 0.6, 0.35], "gen_apu": [0.45, 2.75, -8.55], "conv_a": [1.7, 0.56, -5.35], "conv_b": [-1.7, 0.56, -3.85],
+        "bat1_k": [1.86, 1.2, -7.75], "bat2_k": [1.86, 1.2, -7.7], "apu_k": [1.86, 1.25, -7.65], "conv_a_k": [1.86, 1.25, -7.6], "conv_b_k": [1.86, 1.25, -7.55],
+        "barra": [1.86, 1.15, -7.6],
+        "alim_a": [1.86, 1.05, -7.5], "alim_b": [1.86, 1.0, -7.5], "alim_e": [1.86, 0.95, -7.5],
+        "bus_a": [1.96, 1.8, -3.15], "bus_b": [1.96, 1.8, -2.75], "bus_ess": [1.96, 1.1, -2.95],
+        "b_luces_cab": [1.96, 1.75, -3.2], "b_luces_bod": [1.96, 1.7, -3.2], "b_puertas": [1.96, 1.65, -3.2], "b_rampa": [1.96, 1.6, -3.2],
+        "b_hid_a": [1.96, 1.55, -3.2], "b_soporte": [1.96, 1.5, -3.2], "b_refrig": [1.96, 1.45, -3.2], "b_compresor": [1.96, 1.4, -3.2],
+        "b_luces_puente": [1.96, 1.75, -2.7], "b_luces_ext": [1.96, 1.7, -2.7], "b_hid_b": [1.96, 1.65, -2.7], "b_gondolas": [1.96, 1.6, -2.7],
+        "b_tren": [1.96, 1.55, -2.7], "b_motores": [1.96, 1.5, -2.7], "b_rcs": [1.96, 1.45, -2.7], "b_reactor": [1.96, 1.4, -2.7],
+        "b_radiadores": [1.96, 1.35, -2.7], "b_antena": [1.96, 1.3, -2.7], "b_apu": [1.96, 1.25, -2.7],
+        "b_emerg": [1.96, 1.1, -3.1], "b_avionica": [1.96, 1.05, -2.95], "b_pantallas": [1.96, 1.0, -2.8],
+        "c_luces_cab": [0.3, 2.9, -0.4], "c_luces_bod": [0.3, 2.86, -5.6], "c_luces_puente": [0.3, 2.66, 3.4], "c_luces_ext": [0.35, 2.92, -1.5],
+        "c_emerg": [0.6, 2.86, -0.9], "c_avionica": [0.5, 0.3, 5.3], "c_pantallas": [0.4, 0.5, 5.2],
+        "c_hid_a": [1.6, 1.0, -7.2], "c_hid_b": [1.6, 1.0, -6.5], "c_soporte": [0.3, 2.78, -2.7], "c_puertas": [1.2, 2.5, -0.5],
+        "c_rampa": [1.4, 2.6, -8.8], "c_gondolas": [1.9, 1.3, -3.7], "c_tren": [0.6, -0.3, -4.2], "c_motores": [1.9, 1.5, -3.85],
+        "c_rcs": [0.2, 2.9, 1.0], "c_refrig": [-1.45, 1.1, -6.0], "c_reactor": [-1.6, 2.25, -7.6], "c_radiadores": [0.2, 2.9, -5.3],
+        "c_antena": [-0.4, 2.9, 0.9], "c_apu": [0.4, 2.85, -8.0], "c_compresor": [1.6, 1.0, -8.0]
+      },
+      "tramos": [
+        // sources to the bar (thick cables)
+        { "de": "bat1", "a": "bat1_k", "tipo": "cable_grueso" },
+        { "de": "bat2", "a": "bat2_k", "tipo": "cable_grueso" },
+        { "de": "gen_apu", "a": "apu_k", "tipo": "cable_grueso" },
+        { "de": "conv_a", "a": "conv_a_k", "tipo": "cable_grueso" },
+        { "de": "conv_b", "a": "conv_b_k", "tipo": "cable_grueso" },
+        // feeders from the hold to the cabin breaker panel, along the port wall tray
+        { "de": "alim_a", "a": "bus_a", "tipo": "mazo" },
+        { "de": "alim_b", "a": "bus_b", "tipo": "mazo" },
+        { "de": "alim_e", "a": "bus_ess", "tipo": "mazo" },
+        // circuits from their breakers
+        { "de": "b_luces_cab", "a": "c_luces_cab" },
+        { "de": "b_luces_bod", "a": "c_luces_bod" },
+        { "de": "b_puertas", "a": "c_puertas" },
+        { "de": "b_rampa", "a": "c_rampa" },
+        { "de": "b_hid_a", "a": "c_hid_a", "tipo": "cable_grueso" },
+        { "de": "b_soporte", "a": "c_soporte" },
+        { "de": "b_refrig", "a": "c_refrig", "tipo": "cable_grueso" },
+        { "de": "b_luces_puente", "a": "c_luces_puente" },
+        { "de": "b_luces_ext", "a": "c_luces_ext" },
+        { "de": "b_hid_b", "a": "c_hid_b", "tipo": "cable_grueso" },
+        { "de": "b_gondolas", "a": "c_gondolas", "tipo": "cable_grueso" },
+        { "de": "b_tren", "a": "c_tren" },
+        { "de": "b_motores", "a": "c_motores" },
+        { "de": "b_rcs", "a": "c_rcs" },
+        { "de": "b_reactor", "a": "c_reactor" },
+        { "de": "b_radiadores", "a": "c_radiadores" },
+        { "de": "b_antena", "a": "c_antena" },
+        { "de": "b_apu", "a": "c_apu" },
+        { "de": "b_emerg", "a": "c_emerg" },
+        { "de": "b_avionica", "a": "c_avionica" },
+        { "de": "b_pantallas", "a": "c_pantallas" },
+        { "de": "b_compresor", "a": "c_compresor", "tipo": "cable_grueso" }
+      ],
+      "interruptores": [
+        { "id": "ct.bat1", "de": "bat1_k", "a": "barra" },
+        { "id": "ct.bat2", "de": "bat2_k", "a": "barra" },
+        { "id": "ct.apu", "de": "apu_k", "a": "barra" },
+        { "id": "ct.conv_a", "de": "conv_a_k", "a": "barra" },
+        { "id": "ct.conv_b", "de": "conv_b_k", "a": "barra" },
+        { "id": "ct.bus_a", "de": "barra", "a": "alim_a" },
+        { "id": "ct.bus_b", "de": "barra", "a": "alim_b" },
+        { "id": "ct.ess", "de": "barra", "a": "alim_e" },
+        { "id": "brk.luces_cab", "de": "bus_a", "a": "b_luces_cab", "medir": true, "pieza": "disyuntores.caja" },
+        { "id": "brk.luces_bod", "de": "bus_a", "a": "b_luces_bod", "medir": true, "pieza": "disyuntores.caja" },
+        { "id": "brk.puertas", "de": "bus_a", "a": "b_puertas", "medir": true, "pieza": "disyuntores.caja" },
+        { "id": "brk.rampa", "de": "bus_a", "a": "b_rampa", "medir": true, "pieza": "disyuntores.caja" },
+        { "id": "brk.hid_a", "de": "bus_a", "a": "b_hid_a", "medir": true, "pieza": "disyuntores.caja" },
+        { "id": "brk.soporte", "de": "bus_a", "a": "b_soporte", "medir": true, "pieza": "disyuntores.caja" },
+        { "id": "brk.refrig", "de": "bus_a", "a": "b_refrig", "medir": true, "pieza": "disyuntores.caja" },
+        { "id": "brk.compresor", "de": "bus_a", "a": "b_compresor", "medir": true, "pieza": "disyuntores.caja" },
+        { "id": "brk.luces_puente", "de": "bus_b", "a": "b_luces_puente", "medir": true, "pieza": "disyuntores.caja" },
+        { "id": "brk.luces_ext", "de": "bus_b", "a": "b_luces_ext", "medir": true, "pieza": "disyuntores.caja" },
+        { "id": "brk.hid_b", "de": "bus_b", "a": "b_hid_b", "medir": true, "pieza": "disyuntores.caja" },
+        { "id": "brk.gondolas", "de": "bus_b", "a": "b_gondolas", "medir": true, "pieza": "disyuntores.caja" },
+        { "id": "brk.tren", "de": "bus_b", "a": "b_tren", "medir": true, "pieza": "disyuntores.caja" },
+        { "id": "brk.motores", "de": "bus_b", "a": "b_motores", "medir": true, "pieza": "disyuntores.caja" },
+        { "id": "brk.rcs", "de": "bus_b", "a": "b_rcs", "medir": true, "pieza": "disyuntores.caja" },
+        { "id": "brk.reactor", "de": "bus_b", "a": "b_reactor", "medir": true, "pieza": "disyuntores.caja" },
+        { "id": "brk.radiadores", "de": "bus_b", "a": "b_radiadores", "medir": true, "pieza": "disyuntores.caja" },
+        { "id": "brk.antena", "de": "bus_b", "a": "b_antena", "medir": true, "pieza": "disyuntores.caja" },
+        { "id": "brk.apu", "de": "bus_b", "a": "b_apu", "medir": true, "pieza": "disyuntores.caja" },
+        { "id": "brk.emergencia", "de": "bus_ess", "a": "b_emerg", "medir": true, "pieza": "disyuntores.caja" },
+        { "id": "brk.avionica", "de": "bus_ess", "a": "b_avionica", "medir": true, "pieza": "disyuntores.caja" },
+        { "id": "brk.pantallas", "de": "bus_ess", "a": "b_pantallas", "medir": true, "pieza": "disyuntores.caja" }
+      ]
+    },
+    // 120 V from the reactor's thermoelectric converter to the two DC-DC converters
+    "alta": {
+      "medio": "electrico", "nominal": "120 V", "conducto": "cable_grueso", "color": [150, 40, 40],
+      "nodos": { "salida": [-1.5, 0.95, -7.05], "dc_a": [1.7, 0.75, -5.35], "dc_b": [-1.7, 0.75, -3.85] },
+      // each converter on its own run from the reactor's
+      "tramos": [
+        { "de": "salida", "a": "dc_a" },
+        { "de": "salida", "a": "dc_b" }
+      ]
+    },
+    "datos": {
+      "medio": "datos", "conducto": "datos",
+      "nodos": { "fc": [0, 0.4, 7.6], "puente": [0.6, 0.3, 5.3], "lateral": [1.12, 0.6, 4.4] },
+      "tramos": [ { "de": "fc", "a": "puente" }, { "de": "puente", "a": "lateral" } ]
+    },
+    // hydraulics: two pumps and an accumulator on one manifold under the deck
+    "hid": {
+      "medio": "hidraulico", "nominal": "21 MPa", "conducto": "tubo_alta", "fuga": "0.0004 m3/s",
+      "nodos": { "hpu_a": [1.5, 0.75, -7.2], "hpu_b": [1.5, 0.75, -6.5], "acum": [1.8, 0.62, -5.9], "colector": [1.2, -0.3, -5.9], "morro_v": [1.0, -0.3, -5.9],
+                 "tren_izq": [1.3, -0.35, -4.2], "tren_der": [-1.3, -0.35, -4.2], "tren_morro": [0, -0.3, 4.4] },
+      "tramos": [
+        { "de": "hpu_a", "a": "colector" },
+        { "de": "hpu_b", "a": "colector" },
+        { "de": "acum", "a": "colector" },
+        { "de": "colector", "a": "tren_izq" },
+        { "de": "colector", "a": "tren_der" },
+        { "de": "morro_v", "a": "tren_morro" }
+      ],
+      "interruptores": [ { "id": "hv.morro", "de": "colector", "a": "morro_v" } ]
+    },
+    // propellant: wing tanks, valves, cross-feed, engines, APU, RCS quads
+    "prop": {
+      "medio": "propelente", "nominal": "2.4 MPa", "conducto": "tubo", "fuga": "3 kg/s",
+      "nodos": { "t_izq": [3.1, 1.03, -2.6], "t_der": [-3.1, 1.03, -2.6], "t_izq_k": [2.2, 1.05, -3.7], "t_der_k": [-2.2, 1.05, -3.7],
+                 "m_izq": [2.15, 1.05, -3.7], "m_der": [-2.15, 1.05, -3.7], "alim_izq": [4.5, 1.0, -2.5], "alim_der": [-4.5, 1.0, -2.5],
+                 "cruce_i": [0.5, -0.3, -4.5], "cruce_d": [-0.5, -0.3, -4.5], "apu_k": [2.1, 1.0, -4.6], "apu": [0.4, 2.62, -8.55],
+                 "rcs_k": [-2.1, 1.0, -4.6], "rcs_m": [0, 2.95, -2.0], "rcs_proa_izq": [1.3, 1.45, 6.1], "rcs_proa_der": [-1.3, 1.45, 6.1],
+                 "rcs_popa_izq": [2.05, 1.55, -8.8], "rcs_popa_der": [-2.05, 1.55, -8.8] },
+      "tramos": [
+        { "de": "t_izq", "a": "t_izq_k" }, { "de": "t_der", "a": "t_der_k" },
+        { "de": "m_izq", "a": "alim_izq" },
+        { "de": "m_der", "a": "alim_der" },
+        { "de": "m_izq", "a": "cruce_i" },
+        { "de": "m_der", "a": "cruce_d" },
+        { "de": "apu_k", "a": "apu" },
+        { "de": "rcs_k", "a": "rcs_m" },
+        { "de": "rcs_m", "a": "rcs_proa_izq" },
+        { "de": "rcs_m", "a": "rcs_proa_der" },
+        { "de": "rcs_m", "a": "rcs_popa_izq" },
+        { "de": "rcs_m", "a": "rcs_popa_der" }
+      ],
+      "interruptores": [
+        { "id": "pv.izq", "de": "t_izq_k", "a": "m_izq" },
+        { "id": "pv.der", "de": "t_der_k", "a": "m_der" },
+        { "id": "pv.cruce", "de": "cruce_i", "a": "cruce_d" },
+        { "id": "pv.apu", "de": "m_izq", "a": "apu_k" },
+        { "id": "pv.rcs", "de": "m_der", "a": "rcs_k" }
+      ]
+    },
+    // reactor primary loop (coolant flow) and its heat; secondary loop to the radiators
+    "refrig1": {
+      "medio": "refrigerante", "nominal": "300 kPa", "conducto": "tubo_grueso", "color": [60, 110, 200], "fuga": "1 kg/s",
+      "nodos": { "b1": [-1.15, 0.34, -6.35], "rx": [-1.3, 1.72, -8.35], "conv": [-1.5, 0.92, -7.05] },
+      "tramos": [ { "de": "b1", "a": "rx" }, { "de": "b1", "a": "conv" } ]
+    },
+    "refrig2": {
+      "medio": "refrigerante", "nominal": "300 kPa", "conducto": "tubo_grueso", "color": [60, 150, 200], "fuga": "1 kg/s",
+      "nodos": { "b2": [-1.15, 0.34, -5.65], "rad_izq": [0.14, 2.97, -5.3], "rad_der": [-0.14, 2.97, -5.3] },
+      "tramos": [
+        { "de": "b2", "a": "rad_der" },
+        { "de": "rad_der", "a": "rad_izq" }
+      ]
+    },
+    "calor1": { "medio": "termico", "conducto": "tubo", "nodos": { "lazo": [-1.6, 1.25, -7.4] } },
+    "calor2": { "medio": "termico", "conducto": "tubo", "nodos": { "lazo": [-1.6, 1.25, -5.9] } },
+    // ventilation: fans into the plenum, ducts along the ceiling, vents in every room
+    "aire": {
+      "medio": "aire", "nominal": "350 Pa", "conducto": "conducto",
+      "nodos": { "plenum": [-0.55, 2.72, -3.0], "cab_b": [-0.55, 2.76, -1.4], "cab_a": [-0.55, 2.76, 0.6], "proa": [-0.55, 2.62, 2.4],
+                 "puente_a": [-0.55, 2.48, 3.05], "bod_b": [-0.55, 2.76, -4.6], "bod_a": [-0.55, 2.76, -7.0] },
+      "tramos": [
+        { "de": "plenum", "a": "cab_b" }, { "de": "cab_b", "a": "cab_a" }, { "de": "cab_a", "a": "proa" }, { "de": "proa", "a": "puente_a" },
+        { "de": "plenum", "a": "bod_b" }, { "de": "bod_b", "a": "bod_a" }
+      ]
+    },
+    "o2": {
+      "medio": "gas", "nominal": "800 kPa", "conducto": "tubo", "color": [235, 235, 232], "fuga": "0.05 kg/s",
+      "nodos": { "botellas": [-1.75, 1.3, -4.7], "salida": [0.45, 2.38, -3.18], "bodega": [-1.75, 1.75, -5.3] },
+      "tramos": [ { "de": "botellas", "a": "salida" }, { "de": "botellas", "a": "bodega" } ]
+    },
+    "n2": {
+      "medio": "gas", "nominal": "800 kPa", "conducto": "tubo", "color": [40, 40, 44], "fuga": "0.05 kg/s",
+      "nodos": { "botella": [-1.75, 1.3, -4.2], "salida": [-0.45, 2.38, -3.18], "bodega": [-1.75, 1.75, -5.65] },
+      "tramos": [ { "de": "botella", "a": "salida" }, { "de": "botella", "a": "bodega" } ]
+    }
+  },
+
+  // ------------------------------------------------------------------ compartments
+  "compartimentos": [
+    // each with its own panel (atmosphere, pressure, its doors, lights, hull, power: `rooms`)
+    { "id": "puente", "nombre": "Puente", "cajas": [[[-1.7, 0, 2.6], [1.7, 2.6, 6.9]]], "volumen": 20, "presion": "70 kPa",
+      "panel": { "en": [1.1, 1.45, 2.712], "normal": [0, 0, 1], "energia": "elec:c_soporte" },
+      "represurizar": { "o2": "o2", "n2": "n2" } },
+    { "id": "cabina", "nombre": "Cabina", "cajas": [[[-2.0, 0, -3.4], [2.0, 2.95, 2.6]]], "volumen": 60, "presion": "70 kPa",
+      "panel": { "en": [-0.98, 1.45, 2.488], "normal": [0, 0, -1], "energia": "elec:c_soporte" },
+      "represurizar": { "o2": "o2", "n2": "n2" } },
+    { "id": "bodega", "nombre": "Bodega", "cajas": [[[-2.0, 0, -9.3], [2.0, 2.95, -3.4]]], "volumen": 58,
+      "aberturas": [ { "senal": "bodega.venteo", "area": 0.09 } ],
+      "panel": { "en": [1.938, 1.45, -4.45], "normal": [-1, 0, 0], "energia": "elec:c_soporte" } }
+  ],
+
+  // ------------------------------------------------------------------ panels
+  "paneles": [
+    { "id": "principal", "panel": "alc_principal", "pieza": "consola.cara", "en": [0, 0.935, 5.71], "normal": [0, 0.6, -0.8], "energia": "elec:c_pantallas",
+      "prefijo": { "emp_max": "55", "emp_min": "15", "emp_nom": "48", "emp_rojo": "50" } },
+    { "id": "pedestal", "panel": "alc_pedestal", "pieza": "pedestal.cara", "en": [0, 0.662, 5.02], "normal": [0, 1, 0], "arriba": [0, 0, 1], "energia": "elec:c_pantallas" },
+    { "id": "techo", "panel": "alc_techo", "pieza": "techo_puente", "en": [0, 2.0218, 5.3005], "normal": [0, -0.9272, -0.3746], "arriba": [0, 0.3746, -0.9272], "energia": "elec:c_pantallas" },
+    { "id": "lateral", "panel": "alc_lateral", "pieza": "lateral_piloto", "en": [1.12, 0.662, 5.0], "normal": [0, 1, 0], "arriba": [0, 0, 1], "datos": "datos:lateral" },
+    { "id": "combustible", "panel": "alc_combustible", "pieza": "lateral_copiloto", "en": [-1.12, 0.662, 5.0], "normal": [0, 1, 0], "arriba": [0, 0, 1], "energia": "elec:c_pantallas" },
+    // (without the breakers of circuits it does not have: a crane, momentum wheels)
+    { "id": "disyuntores", "panel": "alc_disyuntores", "sin": ["grua", "giro"], "en": [1.938, 1.45, -2.95], "normal": [-1, 0, 0], "energia": "elec:c_pantallas" },
+    { "id": "soporte", "panel": "alc_soporte", "en": [-1.938, 1.45, -2.95], "normal": [1, 0, 0], "energia": "elec:c_soporte" },
+    // the electrical balance (generation, consumption, batteries): the generic "energia" panel,
+    // on the cabin's port wall forward of the seats
+    { "id": "energia", "panel": "energia", "en": [1.938, 1.5, -0.6], "normal": [-1, 0, 0], "energia": "elec:c_pantallas" },
+    { "id": "reactor", "panel": "alc_reactor", "en": [-1.938, 1.55, -7.3], "normal": [1, 0, 0], "energia": "elec:c_reactor" },
+    { "id": "rampa_bodega", "panel": "alc_rampa", "en": [1.908, 1.35, -8.85], "normal": [-1, 0, 0], "prefijo": { "aqui": "rampa_bodega" }, "energia": "elec:c_rampa" },
+    { "id": "rampa_ext", "panel": "alc_rampa", "sin": ["focos"], "en": [1.78, 0.95, -9.462], "normal": [0, 0, -1], "prefijo": { "aqui": "rampa_ext" }, "energia": "elec:c_rampa" },
+    { "id": "puerta_bodega_h", "panel": "alc_puerta", "en": [-1.2, 1.3, -3.512], "normal": [0, 0, -1], "prefijo": { "aqui": "puerta_bodega_h", "puerta": "puerta_bodega" }, "energia": "elec:c_puertas" },
+    { "id": "puerta_bodega_c", "panel": "alc_puerta", "en": [1.2, 1.3, -3.288], "normal": [0, 0, 1], "prefijo": { "aqui": "puerta_bodega_c", "puerta": "puerta_bodega" }, "energia": "elec:c_puertas" },
+    { "id": "puerta_puente_c", "panel": "alc_puerta", "en": [1.1, 1.3, 2.488], "normal": [0, 0, -1], "prefijo": { "aqui": "puerta_puente_c", "puerta": "puerta_puente" }, "energia": "elec:c_puertas" },
+    { "id": "puerta_puente_p", "panel": "alc_puerta", "en": [-1.1, 1.3, 2.712], "normal": [0, 0, 1], "prefijo": { "aqui": "puerta_puente_p", "puerta": "puerta_puente" }, "energia": "elec:c_puertas" }
+  ],
+
+  // ------------------------------------------------------------------ seats
+  // where one gets off a seat when its own way out is taken: the bridge's floor astern of the
+  // pilots, the aisle between the cabin's seats
+  "bajadas": [
+    { "id": "puente", "en": [0, 0, 3.5], "zona": [1.8, 1.2] },
+    { "id": "cabina", "en": [0, 0, -1.9], "zona": [0.6, 2.4] }
+  ],
+  "asientos": [
+    { "id": "piloto", "nombre": "Asiento del piloto", "pieza": "asiento_piloto.cojin", "ojos": [0.62, 1.35, 4.82], "rumbo": 0, "salida": [0.0, 0.0, 3.6],
+      "paneles": ["principal", "pedestal", "techo", "lateral"],
+      "mandos": [
+        { "tecla": "W", "mando": "lateral/palanca", "eje": 0, "valor": 1.0, "ayuda": "Palanca de mando: cabeceo (morro abajo y arriba)" },
+        { "tecla": "S", "mando": "lateral/palanca", "eje": 0, "valor": -1.0, "ayuda": "Palanca de mando: cabeceo (morro abajo y arriba)" },
+        { "tecla": "E", "mando": "lateral/palanca", "eje": 1, "valor": 1.0, "ayuda": "Palanca de mando: alabeo (inclinarse a un lado y a otro)" },
+        { "tecla": "Q", "mando": "lateral/palanca", "eje": 1, "valor": -1.0, "ayuda": "Palanca de mando: alabeo (inclinarse a un lado y a otro)" },
+        { "tecla": "A", "mando": "lateral/guinada", "eje": 0, "valor": 1.0, "ayuda": "Guiñada (girar el morro a izquierda y derecha)" },
+        { "tecla": "D", "mando": "lateral/guinada", "eje": 0, "valor": -1.0, "ayuda": "Guiñada (girar el morro a izquierda y derecha)" },
+        { "tecla": "R", "mando": "lateral/vertical", "eje": 0, "valor": 1.0, "ayuda": "Subir y bajar con los propulsores de maniobra" },
+        { "tecla": "F", "mando": "lateral/vertical", "eje": 0, "valor": -1.0, "ayuda": "Subir y bajar con los propulsores de maniobra" },
+        { "tecla": "I", "mando": "lateral/traslacion", "eje": 0, "valor": 1.0, "ayuda": "Traslación adelante y atrás (propulsores de maniobra)" },
+        { "tecla": "K", "mando": "lateral/traslacion", "eje": 0, "valor": -1.0, "ayuda": "Traslación adelante y atrás (propulsores de maniobra)" },
+        { "tecla": "J", "mando": "lateral/traslacion", "eje": 1, "valor": 1.0, "ayuda": "Traslación a los lados (propulsores de maniobra)" },
+        { "tecla": "L", "mando": "lateral/traslacion", "eje": 1, "valor": -1.0, "ayuda": "Traslación a los lados (propulsores de maniobra)" },
+        { "tecla": "Mayús", "mando": "pedestal/acelerador", "accion": "subir", "ayuda": "Acelerador de los motores: más" },
+        { "tecla": "Ctrl", "mando": "pedestal/acelerador", "accion": "bajar", "ayuda": "Acelerador de los motores: menos" },
+        { "tecla": "X", "mando": "pedestal/acelerador", "accion": "cero", "ayuda": "Acelerador de los motores: a cero" }
+      ] },
+    { "id": "copiloto", "nombre": "Asiento del copiloto", "pieza": "asiento_copiloto.cojin", "ojos": [-0.62, 1.35, 4.82], "rumbo": 0, "salida": [0.0, 0.0, 3.6],
+      "paneles": ["principal", "pedestal", "techo", "combustible"] },
+    { "id": "cabina_1", "nombre": "Asiento de cabina", "pieza": "asiento_c1.cojin", "ojos": [1.28, 1.35, -2.3], "rumbo": -90, "salida": [0.4, 0.0, -2.3] },
+    { "id": "cabina_2", "nombre": "Asiento de cabina", "pieza": "asiento_c2.cojin", "ojos": [1.28, 1.35, -1.5], "rumbo": -90, "salida": [0.4, 0.0, -1.5] },
+    { "id": "cabina_3", "nombre": "Asiento de cabina", "pieza": "asiento_c3.cojin", "ojos": [-1.28, 1.35, -2.3], "rumbo": 90, "salida": [-0.4, 0.0, -2.3] },
+    { "id": "cabina_4", "nombre": "Asiento de cabina", "pieza": "asiento_c4.cojin", "ojos": [-1.28, 1.35, -1.5], "rumbo": 90, "salida": [-0.4, 0.0, -1.5] }
+  ],
+
+  // ------------------------------------------------------------------ logic
+  "senales": { "aire.consigna": "70 kPa" },
+  "derivadas": {
+    "rampa.orden": "!toggle(rampa_bodega.rampa || rampa_ext.rampa)",
+    "puerta_bodega.orden": "toggle(puerta_bodega_h.boton || puerta_bodega_c.boton)",
+    "puerta_puente.orden": "toggle(puerta_puente_c.boton || puerta_puente_p.boton)",
+    "puerta_bodega.dp": "abs(cabina.p - bodega.p)",
+    // the hold's vent and make-up gas from the life support panel too (its own panel adds its side)
+    "bodega.venteo": "bodega.venteo_soporte || rampa_bodega.venteo || rampa_ext.venteo",
+    "bodega.repres": "bodega.repres_soporte",
+    "puerta_puente.dp": "abs(puente.p - cabina.p)",
+    "luces.emergencia": "elec.bus_a < 22 V && elec.bus_ess > 18 V",
+    "luces.focos_bodega": "rampa_bodega.focos",
+    "tren.verde_i": "act_tren_izq.bloqueado && tren_izq.pos > 0.95",
+    "tren.verde_d": "act_tren_der.bloqueado && tren_der.pos < 0.05",
+    "tren.verde_m": "act_tren_morro.bloqueado && tren_morro.pos < 0.05",
+    "alarma.tren": "for(tren.orden && !(tren.verde_i && tren.verde_d && tren.verde_m), 20 s) || (!tren.orden && nave.altura < 15 m && nave.vs < -1 m/s)",
+    "alarma.disyuntor": "!(brk.luces_cab && brk.luces_bod && brk.puertas && brk.rampa && brk.hid_a && brk.soporte && brk.refrig && brk.compresor && brk.luces_puente && brk.luces_ext && brk.hid_b && brk.gondolas && brk.tren && brk.motores && brk.rcs && brk.reactor && brk.radiadores && brk.antena && brk.apu && brk.emergencia && brk.avionica && brk.pantallas)",
+    "alarma.algo": "elec.bus_a < 22 V || elec.bus_b < 22 V || ((hid.a || hid.b) && hid.colector < 12 MPa) || alarma.tren || alarma.disyuntor || reactor.estado == 3 || cabina.p < 60 kPa || gondola_izq.estado == 6 || gondola_der.estado == 6 || deposito_izq.fuga > 0.05 || deposito_der.fuga > 0.05",
+    "alarma.general": "latch(edge(alarma.algo), panel.reconocer)",
+    // what it sounds with: `sonido.<id>` is the level of loop <id> (assets/defs/sounds.jsonc) for
+    // whoever is aboard. The master alarm, while there is something to feed its horn
+    "sonido.alarma": "alarma.general && elec.bus_ess > 18 V",
+    // its own gravity works while there is something to feed its plates
+    "abordo.gravedad": "elec.bus_ess > 18 V"
+  },
+  // the priority of every circuit (BAJA / NORMAL / ALTA), on the hold's port wall by the hydraulics
+  "prioridades": { "en": [1.938, 1.55, -6.1], "normal": [-1, 0, 0], "energia": "elec:c_soporte" },
+  // ------------------------------------------------------------------ air moved on purpose
+  // (crates/ship/src/airworks.rs, docs/AIRE.md)
+  "trasvase": {
+    // hand valves through the walls: a wheel and a gauge of the pressure across on each side
+    // that is a compartment ("normal": the way from the first of "entre" to the second). Between
+    // hold and cabin, between cabin and bridge, and out of the hold by the ramp for the last of
+    // its air, which the compressor does not reach
+    // ("paso": what they pass wide open, as the bore of an orifice. More than their bodies
+    // could: so that two rooms are level in a quarter of a minute — docs/TIEMPOS.md)
+    "valvulas": [
+      { "id": "vi_bodega", "entre": ["bodega", "cabina"], "en": [-1.5, 0.93, -3.4], "normal": [0, 0, 1], "paso": "150 mm" },
+      { "id": "vi_puente", "entre": ["cabina", "puente"], "en": [1.5, 0.93, 2.6], "normal": [0, 0, 1], "paso": "150 mm" },
+      { "id": "vv_bodega", "entre": ["bodega", "vacio"], "en": [1.72, 1.5, -9.3], "normal": [0, 0, -1], "paso": "170 mm" }
+    ],
+    // the compressor's panel, made from what its manifold reaches: on the hold's port wall, over it
+    "compresores": [
+      { "id": "compresor_aire", "panel": { "en": [1.938, 1.55, -7.9], "normal": [-1, 0, 0], "energia": "elec:c_soporte" } }
+    ]
+  },
+  "enclavamientos": [
+    { "mando": "principal/tren", "hacia": 0, "si": "nave.altura < 2 m", "motivo": "Peso sobre el tren" },
+    { "mando": "rampa_bodega/rampa", "si": "bodega.p > 3 kPa && rampa.cerrada > 0.5", "motivo": "Bodega presurizada: ventéala antes (panel de soporte vital)" },
+    { "mando": "rampa_ext/rampa", "si": "bodega.p > 3 kPa && rampa.cerrada > 0.5", "motivo": "Bodega presurizada" },
+    { "mando": "puerta_bodega_h/abrir", "si": "puerta_bodega.dp > 5 kPa && puerta_bodega.cerrada > 0.5", "motivo": "Diferencia de presión con la cabina" },
+    { "mando": "puerta_bodega_c/abrir", "si": "puerta_bodega.dp > 5 kPa && puerta_bodega.cerrada > 0.5", "motivo": "Diferencia de presión con la bodega" },
+    { "mando": "puerta_puente_c/abrir", "si": "puerta_puente.dp > 5 kPa && puerta_puente.cerrada > 0.5", "motivo": "Diferencia de presión con el puente" },
+    { "mando": "puerta_puente_p/abrir", "si": "puerta_puente.dp > 5 kPa && puerta_puente.cerrada > 0.5", "motivo": "Diferencia de presión con la cabina" }
+  ],
+  // What it keeps whatever one conduit is lost (a piece of trunk, an outlet, a duct): every run
+  // goes two ways round the rooms, every junction sits between two pieces of trunk, and the
+  // sources are spread (battery 1 and converter A aft to port, battery 2 in the cabin and converter
+  // B forward to starboard, the APU aft overhead). `tests/fallo_unico.rs` cuts each in turn.
+  "esenciales": {
+    "Un bus principal con tensión": "elec.bus_a > 20 V || elec.bus_b > 20 V",
+    "Bus esencial": "elec.bus_ess > 20 V",
+    "Aviónica": "elec.c_avionica > 20 V",
+    "Pantallas e indicadores": "elec.c_pantallas > 20 V",
+    "Luces de emergencia": "elec.c_emerg > 20 V",
+    "Soporte vital": "elec.c_soporte > 20 V",
+    "Bombas de refrigerante del reactor": "elec.c_refrig > 20 V",
+    "Control del reactor": "elec.c_reactor > 20 V",
+    "Puertas": "elec.c_puertas > 20 V",
+    "Una bomba hidráulica": "elec.c_hid_a > 20 V || elec.c_hid_b > 20 V",
+    "Una batería en la barra": "bateria_1.soc > 0.05 && elec.bat1 > 20 V || bateria_2.soc > 0.05 && elec.bat2 > 20 V"
+  },
+  "alarmas": {
+    "Bus A sin tensión": "elec.bus_a < 20 V",
+    "Bus B sin tensión": "elec.bus_b < 20 V",
+    "Presión hidráulica baja": "(hid.a || hid.b) && hid.colector < 10 MPa",
+    "SCRAM del reactor": "reactor.estado == 3",
+    "Reactor limitado por temperatura: da menos de lo pedido (despliega los radiadores o baja la potencia)": "reactor.limitado",
+    "Descompresión en la cabina": "cabina.fuga > 2 kPa",
+    "Descompresión en el puente": "puente.fuga > 2 kPa",
+    "Fuga de propelente": "deposito_izq.fuga > 0.05 || deposito_der.fuga > 0.05",
+    "Motor izquierdo: fallo": "gondola_izq.estado == 6",
+    "Motor derecho: fallo": "gondola_der.estado == 6",
+    "Tren sin blocar": "alarma.tren"
+  },
+
+  // Gravity aboard: what whoever it carries weighs (standing on it or in its rooms), toward its
+  // decks, wherever it is and however it flies: 1.62 m/s² while the essential bus is fed
+  // ("abordo.gravedad" below), coming on and going over 2 s. With the ship dead one weighs
+  // aboard what is left of the world's pull (nothing in free fall)
+  "gravedad": { "g": 1.62, "senal": "abordo.gravedad", "tiempo": 2.0 },
+  "vuelo": {
+    "cabeceo": "vuelo.cabeceo", "alabeo": "vuelo.alabeo", "guinada": "vuelo.guinada",
+    "traslacion": ["vuelo.tx", "vuelo.ty", "vuelo.tz"], "acelerador": "vuelo.acelerador",
+    "estabilizador": "vuelo.sas", "mantener": "vuelo.mantener",
+    "giro": [30, 35, 40], "ganancia": 2.5,
+    "rcs": ["rcs_*"], "motores": ["gondola_izq", "gondola_der"], "ordenador": "ordenador"
+  }
+}

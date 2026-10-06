@@ -1,0 +1,33 @@
+// Air between compartments: the hand valve by a bulkhead door with its gauge, the recovery
+// compressor and its tank in the hold, the compressor's panel, the vent valve by the ramp.
+// Run: luna --guion tools/camara/aire.jsonc → out/camara/aire_*.png
+{
+  "registro": "out/camara/aire.log",
+  "naves": ["alcotan"],
+  "pasos": [
+    { "nave": "alcotan" },
+    { "esperar": 3.0 },
+    { "linterna": true },
+    // the equalisation valve on the hold's side of the hold-cabin bulkhead
+    { "camara": { "en": [-0.9, 1.25, -4.6], "mira": [-1.5, 0.93, -3.45], "fov": 55 } },
+    { "foto": "out/camara/aire_valvula_mamparo.png" },
+    { "camara": { "panel": "vi_bodega_a", "distancia": 0.55 } },
+    { "foto": "out/camara/aire_valvula_placa.png" },
+    // the compressor and its panel on the hold's port wall, the tank further forward
+    { "camara": { "en": [-0.6, 1.5, -6.4], "mira": [1.6, 0.7, -7.6], "fov": 65 } },
+    { "foto": "out/camara/aire_compresor.png" },
+    { "camara": { "panel": "panel_compresor_aire", "distancia": 0.7 } },
+    { "foto": "out/camara/aire_panel_compresor.png" },
+    { "camara": { "en": [-0.4, 1.3, -5.6], "mira": [1.6, 0.4, -4.4], "fov": 60 } },
+    { "foto": "out/camara/aire_deposito.png" },
+    // the vent valve by the ramp, inside
+    { "camara": { "panel": "vv_bodega_a", "distancia": 0.6 } },
+    { "foto": "out/camara/aire_venteo.png" },
+    // the valve half open: what its gauge and the hold's panel say
+    { "ajustar": { "mando": "vi_bodega_a/volante", "valor": 0.5 } },
+    { "esperar": 2.0 },
+    { "volcar": ["vi_bodega.*", "compresor_aire.estado", "deposito_aire.p", "bodega.p", "cabina.p"] },
+    { "ajustar": { "mando": "vi_bodega_a/volante", "valor": 0.0 } },
+    { "esperar": 0.5 }
+  ]
+}

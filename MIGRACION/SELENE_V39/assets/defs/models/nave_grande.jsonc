@@ -1,0 +1,74 @@
+// nave grande: a heavy carrier, about 62 m. Same fields as nave_pequena.jsonc (cone [r_back,
+// r_front, len]; rot [90, 0, 0] lays a cylinder nose forward). Fine detail is shader plating.
+{
+  "name": "nave grande",
+  "kind": "hull",
+  "seed": 1592590530,
+  // finest first: on-screen radius (px) it is drawn from, greeble budget, round-shape detail
+  "lods": [
+    { "min_px": 150.0, "budget": 10000, "segments": 0.7, "min_segments": 8, "greeble": 0.7, "bevel": true, "pipes": true },
+    { "min_px": 40.0, "budget": 2000, "segments": 0.28, "min_segments": 8, "greeble": 1.6 },
+    { "min_px": 1.2, "budget": 300, "segments": 0.14, "min_segments": 5 },
+  ],
+  "greebles": { "dark": "oscuro", "metal": "metal", "dark_below": 0.2, "metal_below": 0.3, "pipe_chance": 0.2, "attempts": 12000 },
+  // emissive parts drawn as sprites from afar: engines (big) and beacons
+  "glows": {
+    "min_emissive": 200,
+    "engine_size": 0.4,
+    "engine": { "scale": 1.2, "intensity": 40.0 },
+    "beacon": { "scale": 1.8, "intensity": 18.0 },
+  },
+  "parts": [
+    // hull, nose with its band and tip, hull rings, aft bulkhead
+    {"cyl": [6.5, 38.0], "at": [0, 10.0, 0], "rot": [90, 0, 0], "mat": "casco", "hull": true},
+    {"cone": [6.5, 2.2, 13.0], "at": [0, 10.0, 25.5], "rot": [90, 0, 0], "mat": "casco", "hull": true},
+    {"cone": [6.58, 6.08, 1.5], "at": [0, 10.0, 19.75], "rot": [90, 0, 0], "mat": "naranja", "lod_max": 1},
+    {"ball": 2.2, "at": [0, 10.0, 32.0], "mat": "grafito"},
+    {"cyl": [6.6, 0.6], "at": [0, 10.0, 12.0], "rot": [90, 0, 0], "mat": "grafito", "lod_max": 1},
+    {"cyl": [6.6, 0.6], "at": [0, 10.0, 0.0], "rot": [90, 0, 0], "mat": "grafito", "lod_max": 1},
+    {"cyl": [6.6, 0.6], "at": [0, 10.0, -12.0], "rot": [90, 0, 0], "mat": "grafito", "lod_max": 1},
+    {"cyl": [6.6, 1.0], "at": [0, 10.0, -19.5], "rot": [90, 0, 0], "mat": "grafito"},
+    // bridge: block, front and side windows (rows of 0.5 m), radar, mast and beacon
+    {"box": [9.0, 3.6, 12.0], "at": [0, 17.6, 11.0], "mat": "casco2", "hull": true},
+    {"box": [9.1, 0.6, 12.1], "at": [0, 16.4, 11.0], "mat": "naranja", "lod_max": 1},
+    {"box": [8.0, 0.5, 0.2], "at": [0, 18.25, 17.0], "mat": "ventanas", "lod_max": 1},
+    {"dome": 1.8, "at": [2.5, 19.4, 8.0], "mat": "casco", "lod_max": 1},
+    {"cyl": [0.15, 7.0], "at": [-2.5, 22.9, 9.0], "mat": "metal", "lod_max": 1},
+    {"box": [0.4, 0.4, 0.4], "at": [-2.5, 26.6, 9.0], "mat": "blanco", "lod_max": 1},
+    { "mirror": [
+      // hull windows, two decks
+      {"box": [0.2, 0.5, 26.0], "at": [6.45, 10.25, 2.0], "mat": "ventanas", "lod_max": 1},
+      {"box": [0.2, 0.5, 26.0], "at": [6.34, 11.25, 2.0], "mat": "ventanas", "lod_max": 1},
+      {"box": [0.2, 0.5, 9.0], "at": [4.5, 18.25, 11.5], "mat": "ventanas", "lod_max": 1},
+      // side pod on two pylons, its stripe, sloped front and fin
+      {"box": [4.2, 5.4, 26.0], "at": [9.4, 8.6, -2.0], "mat": "casco2", "hull": true},
+      {"box": [4.3, 0.7, 26.1], "at": [9.4, 10.2, -2.0], "mat": "naranja"},
+      {"wedge": [4.2, 5.4, 3.0], "at": [9.4, 8.6, 12.5], "mat": "casco2"},
+      {"box": [2.2, 1.6, 4.0], "at": [7.0, 9.5, -10.0], "mat": "grafito", "lod_max": 1},
+      {"box": [2.2, 1.6, 4.0], "at": [7.0, 9.5, 6.0], "mat": "grafito", "lod_max": 1},
+      {"wedge": [0.8, 7.0, 9.0], "at": [11.0, 14.6, -14.0], "mat": "casco"},
+      // solar wing on its boom, nav light at the tip
+      {"cyl": [0.2, 1.2], "at": [12.0, 11.0, 2.0], "rot": [0, 0, 90], "mat": "metal", "lod_max": 1},
+      {"box": [10.0, 0.16, 6.0], "at": [17.4, 11.0, 2.0], "mat": "solar"},
+      {"box": [0.35, 0.35, 0.35], "at": [22.6, 11.0, 2.0], "mat": "verde", "mirror_mat": "rojo", "lod_max": 1},
+      // propellant spheres under the hull
+      {"ball": 2.0, "at": [5.6, 4.6, -10.0], "mat": "oro", "lod_max": 1},
+      {"ball": 2.0, "at": [5.6, 4.6, -3.0], "mat": "oro", "lod_max": 1},
+      {"ball": 2.0, "at": [5.6, 4.6, 4.0], "mat": "oro", "lod_max": 1},
+      // engines, two each side: nacelle, bell, flame
+      {"cyl": [2.3, 5.0], "at": [3.2, 7.0, -21.5], "rot": [90, 0, 0], "mat": "casco2", "hull": true},
+      {"cone": [2.7, 1.9, 3.4], "at": [3.2, 7.0, -25.7], "rot": [90, 0, 0], "mat": "oscuro"},
+      {"cyl": [2.35, 0.08], "at": [3.2, 7.0, -27.45], "rot": [90, 0, 0], "mat": "motor", "lod_max": 1},
+      {"cyl": [2.3, 5.0], "at": [3.2, 13.0, -21.5], "rot": [90, 0, 0], "mat": "casco2", "hull": true},
+      {"cone": [2.7, 1.9, 3.4], "at": [3.2, 13.0, -25.7], "rot": [90, 0, 0], "mat": "oscuro"},
+      {"cyl": [2.35, 0.08], "at": [3.2, 13.0, -27.45], "rot": [90, 0, 0], "mat": "motor", "lod_max": 1},
+      // RCS on the nose
+      {"box": [0.7, 0.7, 0.7], "at": [5.55, 10.0, 22.0], "mat": "oscuro", "lod_max": 1},
+      // legs and pads
+      {"box": [0.9, 6.5, 0.9], "at": [10.0, 3.25, -14.0], "rot": [0, 0, 14.3], "mat": "oscuro"},
+      {"cyl": [1.6, 0.4], "at": [10.8, 0.2, -14.0], "mat": "grafito", "lod_max": 1},
+      {"box": [0.9, 6.5, 0.9], "at": [10.0, 3.25, 10.0], "rot": [0, 0, 14.3], "mat": "oscuro"},
+      {"cyl": [1.6, 0.4], "at": [10.8, 0.2, 10.0], "mat": "grafito", "lod_max": 1},
+    ] },
+  ],
+}

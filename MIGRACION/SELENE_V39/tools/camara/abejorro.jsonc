@@ -1,0 +1,18 @@
+// The Abejorro, the one-seat cargo tug: outside, from its seat, its console, its magnet.
+// Run: luna --guion tools/camara/abejorro.jsonc → out/camara/abejorro_*.png
+{
+  "registro": "out/camara/abejorro.log",
+  "pasos": [
+    { "nave": "abejorro" },
+    { "esperar": 6.0 },
+    { "camara": { "en": [5.5, 1.2, 6.0], "mira": [0, -0.2, 0.2], "fov": 55 } },
+    { "foto": "out/camara/abejorro_fuera.png" },
+    { "camara": { "en": [-4.5, -0.6, -5.5], "mira": [0, -0.3, 0], "fov": 55 } },
+    { "foto": "out/camara/abejorro_popa.png" },
+    { "camara": { "en": [0, 1.21, 0.97], "mira": [0, 0.95, 1.9], "fov": 85 } },
+    { "foto": "out/camara/abejorro_asiento.png" },
+    { "camara": { "panel": "consola", "distancia": 0.62, "fov": 62 } },
+    { "foto": "out/camara/abejorro_consola.png" },
+    { "volcar": ["elec.bus", "giroscopo.*", "iman.*", "vuelo.modo"] }
+  ]
+}

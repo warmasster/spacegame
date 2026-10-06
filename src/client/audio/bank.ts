@@ -27,6 +27,11 @@ export interface SoundSpec {
   range?: number;
   /** Random pitch spread of one-shots (±fraction). */
   jitter?: number;
+  /**
+   * How much of it goes into the structure it is on (0..1): an engine or a blast shakes the whole
+   * hull, a fan or a hum barely does, a speaker not at all. Default 0.3.
+   */
+  body?: number;
 }
 
 const specs = new Map<string, SoundSpec>();
@@ -50,6 +55,7 @@ export interface SoundParams {
   ref: number;
   range: number;
   jitter: number;
+  body: number;
   loop: boolean;
 }
 
@@ -59,15 +65,16 @@ export function soundParams(id: string): SoundParams {
   let p = params.get(id);
   if (p) return p;
   let spec = specs.get(id);
-  let ref: number | undefined, range: number | undefined, jitter: number | undefined, loop: boolean | undefined;
+  let ref: number | undefined, range: number | undefined, jitter: number | undefined, body: number | undefined, loop: boolean | undefined;
   for (let hops = 0; spec && hops < 5; hops++) {
     ref ??= spec.ref;
     range ??= spec.range;
     jitter ??= spec.jitter;
+    body ??= spec.body;
     loop ??= spec.loop;
     spec = spec.like ? specs.get(spec.like) : undefined;
   }
-  p = { ref: ref ?? 1, range: range ?? 60, jitter: jitter ?? (loop ? 0 : 0.04), loop: !!loop };
+  p = { ref: ref ?? 1, range: range ?? 60, jitter: jitter ?? (loop ? 0 : 0.04), body: body ?? 0.3, loop: !!loop };
   params.set(id, p);
   return p;
 }

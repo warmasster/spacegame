@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { bodyAt } from '../../shared/space/body';
-import { launch, LOST, stepBallistic, WORLD_FRAME, type Ballistic, type BallisticEnv, type Contact } from '../../shared/frames';
+import { launch, localAt, LOST, stepBallistic, WORLD_FRAME, type Ballistic, type BallisticEnv, type Contact } from '../../shared/frames';
 import { projectileById, type ProjectileDef } from '../../shared/items';
 import { dirToWorld, pointVelocity, toWorld } from '../../shared/ship/flight';
 import type { V3 } from '../../shared/ship/geom';
@@ -13,6 +13,8 @@ import { sfx, type Loop } from '../audio/engine';
 import type { Place } from '../audio/medium';
 
 interface Flying {
+  /** Stable number (diagnostics: client/diag/motionProbe.ts). */
+  id: number;
   b: Ballistic;
   def: ProjectileDef;
   look: ProjectileLook;
@@ -33,6 +35,8 @@ const _vw = new THREE.Vector3();
 const _back = new THREE.Vector3();
 const _Z = new THREE.Vector3(0, 0, 1);
 const _q = new THREE.Vector3();
+const _sweepA: V3 = [0, 0, 0];
+const _sweepB: V3 = [0, 0, 0];
 
 /**
  * Projectiles in flight, of every kind of the projectile catalog (shared/items/projectiles.ts):
@@ -59,6 +63,11 @@ export class Projectiles {
   placeAt: ((p: readonly number[], out: Place) => Place) | null = null;
   /** What they fly through here (the crew is filled in every step). */
   private env: BallisticEnv & { crew: Array<{ id: number; p: V3 }> };
+  private nextId = 1;
+  /** Told when one changes frame (leaves a ship through a door, flies into one): diagnostics. */
+  onFrame: ((id: number, kind: string, from: number, to: number) => void) | null = null;
+  /** Length of a fixed step (s): a shot heard late is flown forward in these. */
+  step = 1 / 60;
 
   constructor(
     private ground: (p: readonly number[]) => number,
@@ -77,46 +86,82 @@ export class Projectiles {
         return out;
       },
       sweepHost: (host, a, b) => this.frames.ship(host.id)?.localHit(a, b) ?? null,
-      sweepWorld: (a, b) => this.sweepShips(a, b),
+      sweepWorld: (a, b, start, end) => this.sweepShips(a, b, start, end),
       groundAlt: (p) => this.ground(p),
       crew: [],
     };
   }
 
   /** Every hull along a world segment: the first one it meets. */
-  private sweepShips(a: V3, b: V3): Contact | null {
+  private sweepShips(a: V3, b: V3, start: number, end: number): Contact | null {
     const len = Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
+    let best: Contact | null = null;
+    let bestT = Infinity;
     for (const ship of this.ships()) {
       // nowhere near its hull (its whole bounds, wings and all): no ray
       const c = ship.sim.pose.p;
       const bd = ship.sim.def.bounds;
       const r = Math.hypot(Math.max(-bd.min[0], bd.max[0]), Math.max(-bd.min[1], bd.max[1]), Math.max(-bd.min[2], bd.max[2]));
-      if (Math.hypot(c[0] - a[0], c[1] - a[1], c[2] - a[2]) > r + len + 1) continue;
-      const h = ship.segmentHit(a, b);
-      if (h) return { p: h.p, fr: ship.id, l: h.l };
+      const travel = Math.hypot(c[0] - ship.prev.p[0], c[1] - ship.prev.p[1], c[2] - ship.prev.p[2]);
+      if (Math.hypot(c[0] - a[0], c[1] - a[1], c[2] - a[2]) > r + len + travel + 1) continue;
+      localAt(ship, a, start, _sweepA);
+      localAt(ship, b, end, _sweepB);
+      const l = ship.localHit(_sweepA, _sweepB);
+      if (!l) continue;
+      const dx = _sweepB[0] - _sweepA[0], dy = _sweepB[1] - _sweepA[1], dz = _sweepB[2] - _sweepA[2];
+      const dd = dx * dx + dy * dy + dz * dz;
+      const t = dd > 1e-12 ? ((l[0] - _sweepA[0]) * dx + (l[1] - _sweepA[1]) * dy + (l[2] - _sweepA[2]) * dz) / dd : 0;
+      if (t < bestT) {
+        bestT = t;
+        best = { p: [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t], fr: ship.id, l };
+      }
     }
-    return null;
+    return best;
   }
 
   /**
    * A projectile of kind `kind` leaves a launcher. `fr`: a ship's id — `o`, `d` and `v` in its
    * space, `v` the launcher's velocity relative to it — or WORLD_FRAME: the world (`v` its world
    * velocity; `prev`, where the muzzle was the step before, so the shooter sees it leave as drawn).
+   * `ahead` (s): it left that long ago (someone else's shot, heard a network trip later) — it is
+   * flown forward to the present, where the shooter is drawn too (shared/net/replica.ts), instead
+   * of starting a trip behind them (80 m at 1.6 km/s).
    */
-  spawn(owner: number, kind: string, fr: number, o: V3, d: V3, v?: V3, prev?: V3) {
+  spawn(owner: number, kind: string, fr: number, o: V3, d: V3, v?: V3, prev?: V3, ahead = 0) {
     const def = projectileById(kind);
     const look = def && PROJECTILE_LOOKS[def.look];
     // a kind or a ship this client doesn't have: nowhere to put it
     if (!def || !look || (fr !== WORLD_FRAME && !this.frames.ship(fr))) return;
     const mesh = this.spare.get(def.look)?.pop() ?? look.mesh();
     this.group.add(mesh);
-    const f: Flying = { b: launch(owner, kind, fr, o, d, def.speed, v, prev), def, look, mesh, sound: def.sounds?.flight ? sfx.loop(def.sounds.flight) : null };
+    const f: Flying = { id: this.nextId++, b: launch(owner, kind, fr, o, d, def.speed, v, prev), def, look, mesh, sound: def.sounds?.flight ? sfx.loop(def.sounds.flight) : null };
     this.list.push(f);
+    if (ahead > 0 && !this.catchUp(f, Math.min(ahead, def.life, 0.5))) return;
     this.place(f, this.alpha);
     // the flash at the muzzle as drawn, moving with what launched it
     const nose = this.noseWorld(f, _dir);
     const carry = this.velWorld(f, _vw).addScaledVector(nose, -def.speed);
     look.launch?.(this.particles, mesh.position, nose, carry);
+  }
+
+  /**
+   * Fly a shot forward `s` seconds in fixed steps (it left that long ago). False when it stopped on
+   * the way (the server's impact brings the effect) — it is gone.
+   */
+  private catchUp(f: Flying, s: number): boolean {
+    for (let t = 0; t < s - 1e-6; t += this.step) {
+      const r = stepBallistic(f.b, f.def, Math.min(this.step, s - t), this.env);
+      if (r) {
+        this.remove(this.list.indexOf(f));
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /** Every projectile as drawn this frame (world): its number and where (diagnostics). */
+  forEachDrawn(fn: (id: number, p: THREE.Vector3) => void) {
+    for (const f of this.list) fn(f.id, f.mesh.position);
   }
 
   /**
@@ -129,7 +174,9 @@ export class Projectiles {
     this.env.crew = crew;
     for (let i = this.list.length - 1; i >= 0; i--) {
       const f = this.list[i];
+      const was = f.b.fr;
       const r = stepBallistic(f.b, f.def, dt, this.env);
+      if (f.b.fr !== was) this.onFrame?.(f.id, f.b.kind, was, f.b.fr);
       if (r === LOST) {
         this.remove(i);
         continue;
@@ -184,7 +231,7 @@ export class Projectiles {
         color: [4, 2.6, 1.2],
         life: 0.05 + Math.random() * 0.2,
         size: 0.02 + Math.random() * 0.02,
-        gravity: 1.62,
+        gravity: 1,
       });
     }
     this.flashUp(at, 0.2, 12);

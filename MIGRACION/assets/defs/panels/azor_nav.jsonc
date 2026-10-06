@@ -1,0 +1,14 @@
+// The drum of the Azor, face 1: NAVEGACIÓN. The navigation autopilot and what the pilot sets of
+// the flight computer (both generic sections of secciones.jsonc).
+{
+  "name": "Navegación",
+  "tamano": ["0.56 m", "0.27 m"],
+  "rejilla": [10, 3],
+  "margen": "7 mm",
+  "separacion": "4 mm",
+  "grupos": [
+    { "id": "nav", "seccion": "piloto_nav", "celda": [0, 0], "ocupa": [6, 3] },
+    { "id": "fcs", "seccion": "ordenador_vuelo", "celda": [6, 0], "ocupa": [4, 3] }
+  ],
+  "mandos": []
+}

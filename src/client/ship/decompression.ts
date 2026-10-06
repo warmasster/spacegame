@@ -272,11 +272,11 @@ export class AirFlow {
     const n = new THREE.Vector3(p.n[0], p.n[1], p.n[2]).transformDirection(M);
     for (let k = 0; k < 4; k++) {
       const g = 0.4 + rnd() * 0.2;
-      this.particles.emit('dust', { carry: ship.render.v, pos: at, vel: n.clone().multiplyScalar(0.5 + rnd() * 2).add(new THREE.Vector3().randomDirection().multiplyScalar(0.6)), color: [g, g, g], life: 0.2 + rnd() * 0.4, size: 0.02 + rnd() * 0.05, gravity: 1.62 });
+      this.particles.emit('dust', { carry: ship.render.v, pos: at, vel: n.clone().multiplyScalar(0.5 + rnd() * 2).add(new THREE.Vector3().randomDirection().multiplyScalar(0.6)), color: [g, g, g], life: 0.2 + rnd() * 0.4, size: 0.02 + rnd() * 0.05, gravity: 1 });
     }
     if (rnd() < 0.35) {
       for (let k = 0; k < 3; k++) {
-        this.particles.emit('glow', { carry: ship.render.v, pos: at, vel: new THREE.Vector3().randomDirection().multiplyScalar(1 + rnd() * 2), color: [4, 2.2, 0.7], life: 0.1 + rnd() * 0.25, size: 0.015, gravity: 1.62 });
+        this.particles.emit('glow', { carry: ship.render.v, pos: at, vel: new THREE.Vector3().randomDirection().multiplyScalar(1 + rnd() * 2), color: [4, 2.2, 0.7], life: 0.1 + rnd() * 0.25, size: 0.015, gravity: 1 });
       }
     }
   }

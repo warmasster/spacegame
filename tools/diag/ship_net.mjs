@@ -48,7 +48,7 @@ const run = async (ms, pages, minFrames = 0) => {
   }
 };
 
-const P = progress('red', 6);
+const P = progress('red', 8);
 const A = await joinGame('netA');
 P.step('cliente A dentro');
 const B = await joinGame('netB');
@@ -120,14 +120,98 @@ const aimed = await A.evaluate(() => {
 });
 const hp0 = await B.evaluate((i) => window.game.ships[0].sim.hp[i], hit.index);
 await A.evaluate(() => window.game.debug.input.setKey('Mouse0', true));
-await run(2500, [A, B], 60);
-const welding = await B.evaluate(() => [...window.game.debug.remotes.values()].some((r) => r.welding));
+// Observe while the repair is active. On a slow software renderer the panel can already be
+// completely repaired by the end of a 60-frame run, so its final welding flag should be false.
+let welding = false;
+for (let k = 0; k < 7; k++) {
+  await run(400, [A, B], 8);
+  welding ||= await B.evaluate(() => [...window.game.debug.remotes.values()].some((r) => r.welding));
+}
 await A.evaluate(() => window.game.debug.input.setKey('Mouse0', false));
 await run(500, [A, B]);
 const hp1 = await B.evaluate((i) => window.game.ships[0].sim.hp[i], hit.index);
 P.step('soldadura por red');
 check('A welds, B sees the panel repaired', hp1 > hp0 + 15, `${aimed} · hp ${hp0.toFixed(1)} → ${hp1.toFixed(1)}`);
 check('B sees A welding (sparks on its side)', welding);
+
+// Equipment identity must survive the binary state path, including for the remote rig.
+const remoteTool = await B.evaluate(() => [...window.game.remotes.values()][0]?.astronaut.equipped);
+check('B sees A holding the welder from the catalog', remoteTool === 'welder', remoteTool);
+
+// --- A mans a mount: server slews it and spends rounds; B receives both ---------------------------
+await A.evaluate(() => {
+  const g = window.game, ship = g.ships[0];
+  g.teleport(ship.world([0.72, 0.05, -6.8]));
+  g.sitDown(ship, 1);
+  // Camera stations aim with the mouse, independently of the astronaut's head angle.
+  g.gunnery.command(ship, ship.sim.def.mounts[0].id, 'aim');
+  g.input.addLook(-0.55 / g.input.sensitivity, -0.25 / g.input.sensitivity);
+});
+await run(500, [A, B]);
+const turretReason = await A.evaluate(() => window.game.ships[0].sim.sw.turret === 1 ? null : window.game.shipControl('ck.over/turret'));
+await run(1400, [A, B], 50);
+const aim = await B.evaluate(() => {
+  const s = window.game.ships[0], m = s.sim.mounts.list[0];
+  return { yaw: s.sim.st[m.iYaw], ready: s.sim.st[m.iReady], ammo: s.sim.st[m.iAmmo] };
+});
+check('server slews the powered mount, B sees its aim', !turretReason && aim.ready === 1 && Math.abs(aim.yaw - 0.55) < 0.1, { ...aim, reason: turretReason });
+const launched = await A.evaluate(() => {
+  const g = window.game;
+  g.input.locked = true;
+  window.dispatchEvent(new MouseEvent('mousedown', { button: 0 }));
+  g.step(1, 1 / 30, false);
+  window.dispatchEvent(new MouseEvent('mouseup', { button: 0 }));
+  return g.projectiles.list.some(f => f.b.kind === 'minimissile');
+});
+await run(400, [A, B]);
+const mountShot = await B.evaluate(() => {
+  const g = window.game, s = g.ships[0], m = s.sim.mounts.list[0];
+  return { ammo: s.sim.st[m.iAmmo], missile: g.projectiles.list.some(f => f.b.kind === 'minimissile') };
+});
+check('gunner click is accepted by server, replicated missile and ammo', launched && mountShot.missile && mountShot.ammo < aim.ammo, mountShot);
+P.step('torreta por red');
+
+// --- A fires at the ground through normal input; both clients receive the same surface edit -------
+const groundBefore = await B.evaluate(async () => {
+  const { bodyAt } = await import('/src/shared/space/body.ts');
+  const g = window.game;
+  return g.surfaces(bodyAt(g.welcome.spawn)).mods.dynamic;
+});
+for (let shot = 0; shot < 3; shot++) {
+  await A.evaluate(shot => {
+    const g = window.game, spawn = g.welcome.spawn;
+    const x = spawn[0] + 35 + shot * 12, z = spawn[2] + 25;
+    g.teleport(g.camera.position.clone().set(x, g.groundY(x, z) + 0.05, z));
+    g.ctl.yaw = 0;
+    g.ctl.pitch = -0.8;
+    g.me.equip('launcher');
+    g.me.setArmed(true);
+    g.step(20, 1 / 30, false);
+    g.input.locked = true;
+    window.dispatchEvent(new MouseEvent('mousedown', { button: 0 }));
+    g.step(1, 1 / 30, false);
+    window.dispatchEvent(new MouseEvent('mouseup', { button: 0 }));
+  }, shot);
+  await run(800, [A, B], 40);
+}
+const groundOf = p => p.evaluate(async () => {
+  const { bodyAt } = await import('/src/shared/space/body.ts');
+  const g = window.game, s = g.surfaces(bodyAt(g.welcome.spawn));
+  const mods = s.mods.dynamic;
+  const mod = mods.at(-1);
+  return { count: mods.length, mods, height: mod ? s.height(mod.center) : null };
+});
+const ga = await groundOf(A), gb = await groundOf(B);
+// The previously fired minimissile can reach the surface during this phase too. It creates its
+// own smaller crater; count the three rocket-sized edits rather than all projectile impacts.
+const rocketEdits = ga.mods.slice(groundBefore.length).filter(m => Math.abs(m.radius - 2.4) < 1e-6);
+check('three separate rocket impacts create separate identical craters for A and B', rocketEdits.length === 3 && JSON.stringify(ga.mods.slice(0, groundBefore.length)) === JSON.stringify(groundBefore) && JSON.stringify(ga) === JSON.stringify(gb), { before: groundBefore.length, rocketEdits: rocketEdits.length, A: ga, B: gb });
+// A late joiner receives the authority's persisted edits, rather than local-only effects.
+await B.close();
+const C = await joinGame('netLate');
+const gc = await groundOf(C);
+check('late joiner receives the same persisted crater', JSON.stringify(gc) === JSON.stringify(ga), gc);
+P.step('cráter por red y al entrar');
 
 P.step('fin');
 writeFileSync(join(OUT, 'ship_net_report.txt'), report.join('\n') + '\n');

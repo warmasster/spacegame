@@ -4,7 +4,8 @@ import { networkInterfaces } from 'node:os';
 import { extname, join, normalize, resolve } from 'node:path';
 import { createGzip } from 'node:zlib';
 import { WebSocketServer } from 'ws';
-import { DEFAULT_PORT, MAX_PLAYERS } from '../shared/constants.js';
+import { DEFAULT_PORT, MAX_PLAYERS, WORLD_SEED } from '../shared/constants.js';
+import { launchWorld } from '../sim/host/node/launch.js';
 import { Room } from './room.js';
 
 const dev = process.argv.includes('--dev');
@@ -85,6 +86,33 @@ server.on('upgrade', (req, socket, head) => {
   wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
 });
 setInterval(() => room.heartbeat(), 10_000);
+
+// The world simulation (docs/MUNDO.md): its own thread, saved in data/world (WORLD_DIR; "none":
+// this session doesn't save). The game doesn't wait for it, and goes on without it if it fails.
+const worldDir = process.env.WORLD_DIR === 'none' ? null : resolve(root, process.env.WORLD_DIR ?? 'data/world');
+const world = launchWorld({ dir: worldDir, config: { seed: WORLD_SEED }, log }).then(
+  (w) => {
+    const s = w.sim.status!;
+    log(`Mundo: ${s.date} · ${s.entities} entidades · ${s.records} registros · ${w.dir ?? 'sin guardar'}`);
+    room.attachWorld(w.sim);
+    return w;
+  },
+  (e: Error) => {
+    log(`Mundo: no arranca (${e.message}); el servidor sigue sin él`);
+    return null;
+  },
+);
+let closing = false;
+const shutdown = async () => {
+  if (closing) process.exit(1); // a second Ctrl+C: now
+  closing = true;
+  const w = await world;
+  await room.flushWorld();
+  const saved = await w?.stop().catch((e: Error) => (log(`Mundo: no se guardó (${e.message})`), null));
+  if (saved) log(`Mundo guardado (${Math.round(saved.bytes / 1024)} KB)`);
+  process.exit(0);
+};
+for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) process.on(sig, shutdown);
 
 server.listen(port, () => {
   const addrs = Object.values(networkInterfaces())

@@ -13,6 +13,13 @@ import { partsOf, type AlertDef, type ShipModule, type SoundCue, type SystemFact
 /** Spin-up / spin-down rate of the field (fraction per second). */
 const RAMP = 0.4;
 
+/**
+ * What the field makes the deck weigh (m/s², straight down the deck): the crew's familiar lunar
+ * weight, the same over any body or in deep space. A design value of the compensator, not the
+ * gravity of wherever the ship is.
+ */
+export const DECK_GRAVITY = 1.62;
+
 export class InertialCompensator implements ShipModule {
   readonly id = 'grav';
   readonly iK: number;

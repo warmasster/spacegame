@@ -1,0 +1,233 @@
+// What a warship carries (docs/COMBATE.md): its sensors and what it radiates, its weapons and
+// decoys, its one power pack, its brain, and the pieces of a fighter's cockpit. Each is a kind
+// like any other: any ship may mount them, and a ship that mounts a sensor or a weapon has a
+// tactical system by that alone (crates/ship/src/tactical.rs).
+//
+// A machine's "eje" is the way it looks or fires, in its piece's frame.
+{
+  // ------------------------------------------------------------------ power, brain
+  // One sealed unit: reactor, coolant loop, converter and radiator manifold at once
+  // (crates/machines/src/models/powerpack.rs). It gives 28 V straight to the buses; "despliegue"
+  // (where it is mounted) names the signal that says how far out its radiators are
+  "reactor_unificado": {
+    "nombre": "Grupo de energía RU-40",
+    "rotulos": [
+      {"texto": "RU-40", "en": [0.0, 1.02, 0.423], "normal": [0, 0, 1], "alto": 0.1, "color": [230, 232, 226], "radio": 0.423},
+      {"texto": "PELIGRO · RADIACIÓN", "en": [0.0, 0.8, 0.423], "normal": [0, 0, 1], "alto": 0.036, "color": [244, 200, 48], "radio": 0.423},
+      {"texto": "REFRIGERACIÓN INTEGRADA · NO ABRIR", "en": [0.0, 0.3, 0.423], "normal": [0, 0, 1], "alto": 0.026, "color": [230, 232, 226], "radio": 0.423},
+      {"texto": "RU-40", "en": [0.0, 1.02, -0.423], "normal": [0, 0, -1], "alto": 0.1, "color": [230, 232, 226], "radio": 0.423},
+      {"texto": "PELIGRO · RADIACIÓN", "en": [0.0, 0.8, -0.423], "normal": [0, 0, -1], "alto": 0.036, "color": [244, 200, 48], "radio": 0.423}
+    ],
+    "material": "acero",
+    "piezas": [
+      { "id": "vasija", "acabado": "pintura", "hueco": 0.03, "forma": { "kind": "cylinder", "radius": 0.42, "height": 1.2, "sides": 16 }, "en": [0, 0.68, 0], "color": [52, 58, 66], "liso": true, "chapa": 0.3 },
+      { "id": "base", "acabado": "fundicion", "hueco": 0.02, "forma": { "kind": "box", "size": [0.96, 0.08, 0.96] }, "en": [0, 0.04, 0], "color": [40, 42, 46] },
+      { "id": "colector", "acabado": "cepillado", "hueco": 0.01, "forma": { "kind": "cylinder", "radius": 0.3, "height": 0.22, "sides": 16 }, "en": [0, 1.39, 0], "color": [150, 152, 158], "liso": true }
+    ],
+    "maquina": { "modelo": "reactor_unificado", "pieza": "vasija",
+      "params": { "potencia": "42 kW", "rendimiento": 0.3, "arranque": "6 s", "capacidad": "40 kJ/K", "area_radiador": "3.6 m2", "replegado": 0.25, "t_max": "1150 K", "t_rearme": "900 K" } },
+    "fabricante": "Kestrel"
+  },
+  // The ship's one computer: flight, sensors and weapons all hang from it
+  "nucleo_computo": {
+    "nombre": "Núcleo de cómputo «Cerebro»",
+    "rotulos": [
+      {"texto": "CEREBRO · NC-7", "en": [0, 0.92, 0.211], "normal": [0, 0, 1], "alto": 0.04, "color": [120, 220, 255]},
+      {"texto": "NO DESCONECTAR EN VUELO", "en": [0, 0.84, 0.211], "normal": [0, 0, 1], "alto": 0.02, "color": [244, 200, 48]}
+    ],
+    "material": "electronica",
+    "piezas": [
+      { "id": "", "hueco": 0.004, "forma": { "kind": "box", "size": [0.5, 1.0, 0.42] }, "en": [0, 0.5, 0], "color": [34, 38, 46], "chapa": 0.2 },
+      { "id": "disipador", "acabado": "corrugado", "hueco": 0.003, "forma": { "kind": "box", "size": [0.44, 0.9, 0.05] }, "en": [0, 0.5, -0.235], "material": "aluminio", "color": [120, 124, 130] }
+    ],
+    "maquina": { "modelo": "ordenador", "params": { "potencia": "450 W", "arranque": "2.5 s" } },
+    "fabricante": "Vanta"
+  },
+
+  // ------------------------------------------------------------------ engines, tanks
+  "gondola_caza": {
+    "nombre": "Góndola vectorial",
+    "rotulos": [
+      {"texto": "KESTREL K-90", "en": [0.403, 0, 0.29], "normal": [1, 0, 0], "arriba": [0, 0, 1], "alto": 0.055, "color": [200, 204, 208], "radio": 0.403},
+      {"texto": "PELIGRO · CHORRO", "en": [0.403, 0, -0.29], "normal": [1, 0, 0], "arriba": [0, 0, 1], "alto": 0.05, "color": [196, 40, 30], "radio": 0.403},
+      {"texto": "KESTREL K-90", "en": [-0.403, 0, 0.29], "normal": [-1, 0, 0], "arriba": [0, 0, 1], "alto": 0.055, "color": [200, 204, 208], "radio": 0.403},
+      {"texto": "PELIGRO · CHORRO", "en": [-0.403, 0, -0.29], "normal": [-1, 0, 0], "arriba": [0, 0, 1], "alto": 0.05, "color": [196, 40, 30], "radio": 0.403}
+    ],
+    "material": "aluminio",
+    "piezas": [
+      { "id": "carcasa", "acabado": "pintura", "hueco": 0.012, "forma": { "kind": "cylinder", "radius": 0.4, "height": 1.9, "sides": 16 }, "rot": [90, 0, 0], "color": [84, 92, 100], "liso": true, "chapa": 0.6 },
+      { "id": "admision", "acabado": "cepillado", "hueco": 0.01, "forma": { "kind": "cylinder", "radius": 0.43, "height": 0.2, "sides": 16, "taper": 0.8 }, "en": [0, 0, 1.03], "rot": [90, 0, 0], "color": [44, 46, 50], "liso": true },
+      { "id": "tobera", "acabado": "fundicion", "hueco": 0.02, "forma": { "kind": "cylinder", "radius": 0.3, "height": 0.55, "sides": 16, "taper": 1.3 }, "en": [0, 0, -1.2], "rot": [-90, 0, 0], "material": "acero", "color": [62, 58, 56], "liso": true }
+    ],
+    "maquina": { "modelo": "motor_cohete", "pieza": "carcasa", "empuje": [0, 1, 0],
+      "params": { "empuje_vacio": "90 kN", "isp_vacio": "8000 s", "isp_mar": "6800 s", "pc_nominal": "1.4 MPa", "estrangulamiento": [0.005, 1.05], "t_purga": "0.3 s", "tau_subida": "0.5 s", "tau_bajada": "0.3 s" } },
+    "fabricante": "Kestrel"
+  },
+  // a tank faired into the wing root
+  "deposito_caza": {
+    "nombre": "Depósito conforme",
+    "rotulos": [
+      {"texto": "PROPELENTE", "en": [0.3415, 0, 0.2], "normal": [1, 0, 0], "arriba": [0, 0, 1], "alto": 0.06, "color": [200, 204, 208]},
+      {"texto": "PROPELENTE", "en": [-0.3415, 0, 0.2], "normal": [-1, 0, 0], "arriba": [0, 0, 1], "alto": 0.06, "color": [200, 204, 208]}
+    ],
+    "material": "aluminio",
+    "piezas": [
+      { "id": "cuerpo", "acabado": "pintura", "hueco": 0.005, "forma": { "kind": "cylinder", "radius": 0.34, "height": 2.2, "sides": 14 }, "rot": [90, 0, 0], "color": [78, 88, 100], "liso": true, "chapa": 0.6 },
+      { "id": "proa", "acabado": "pintura", "hueco": 0.005, "forma": { "kind": "cylinder", "radius": 0.34, "height": 0.55, "sides": 14, "taper": 0.25 }, "en": [0, 0, 1.375], "rot": [90, 0, 0], "color": [78, 88, 100], "liso": true },
+      { "id": "popa", "acabado": "pintura", "hueco": 0.005, "forma": { "kind": "cylinder", "radius": 0.34, "height": 0.4, "sides": 14, "taper": 0.35 }, "en": [0, 0, -1.3], "rot": [-90, 0, 0], "color": [38, 40, 44], "liso": true }
+    ],
+    // (700 kg of the 800 or so that fit to the brim: seven minutes of both engines at full push)
+    "contenido": { "sustancia": "propelente", "piezas": ["cuerpo", "proa", "popa"], "nivel": "masa", "cabida": "capacidad", "inicial": "masa_inicial" },
+    "maquina": { "modelo": "deposito", "params": { "capacidad": "700 kg", "masa_inicial": "650 kg", "presion": "2.4 MPa", "caudal_max": "12 kg/s" } },
+    "fabricante": "Selk"
+  },
+  // a radiator that lies on the spine and stands up to shed heat: only a surface (the power
+  // pack reads how far out it is)
+  "radiador_caza": {
+    "nombre": "Radiador dorsal",
+    "material": "aluminio",
+    "piezas": [ { "id": "", "acabado": "corrugado", "hueco": 0.003, "forma": { "kind": "box", "size": [0.66, 0.035, 1.7] }, "color": [214, 218, 220], "chapa": 0.25 } ]
+  },
+
+  // ------------------------------------------------------------------ sensors
+  "radar_morro": {
+    "nombre": "Radar de barrido electrónico RM-9",
+    "material": "electronica",
+    "piezas": [
+      { "id": "", "hueco": 0.004, "forma": { "kind": "cylinder", "radius": 0.24, "height": 0.09, "sides": 16 }, "rot": [90, 0, 0], "color": [196, 190, 170], "liso": true },
+      { "id": "trasera", "acabado": "pintura", "hueco": 0.004, "forma": { "kind": "box", "size": [0.3, 0.3, 0.3] }, "en": [0, 0, -0.2], "material": "aluminio", "color": [52, 54, 60] }
+    ],
+    // "alcance": how far it finds a square metre at full power; "escalas": its range scales (the
+    // one chosen is how far its screen reaches and how much it radiates); "sector": half its
+    // field (deg)
+    "maquina": { "modelo": "radar", "eje": [0, 1, 0],
+      "params": { "alcance": "80 km", "sector": 60, "escalas": [5000.0, 20000.0, 40000.0, 80000.0], "potencia": "4.5 kW", "espera": "160 W", "calentamiento": "1.5 s" } },
+    "fabricante": "Vanta"
+  },
+  // looks for heat ahead without radiating: "alcance" against a megawatt (an engine at full
+  // push is some ninety)
+  "irst_bola": {
+    "nombre": "Buscador infrarrojo IR-3",
+    "material": "electronica",
+    "piezas": [
+      { "id": "", "acabado": "pintura", "forma": { "kind": "cylinder", "radius": 0.085, "height": 0.1, "sides": 12 }, "en": [0, 0.05, 0], "color": [40, 42, 46], "liso": true },
+      { "id": "optica", "forma": { "kind": "cylinder", "radius": 0.07, "height": 0.09, "sides": 12, "taper": 0.6 }, "en": [0, 0.14, 0], "material": "cristal", "color": [60, 30, 90], "liso": true }
+    ],
+    "maquina": { "modelo": "irst", "eje": [0, 0, 1], "params": { "alcance": "8 km", "sector": 75, "potencia": "90 W", "calentamiento": "1 s" } },
+    "fabricante": "Vanta"
+  },
+  // hears the radars that sweep the ship: "escucha" is how far it hears a radar like the RM-9
+  // at full power in its beam
+  "alertador_radar": {
+    "nombre": "Alertador de radar AR-2",
+    "material": "electronica",
+    "piezas": [
+      { "id": "", "acabado": "pintura", "forma": { "kind": "box", "size": [0.05, 0.16, 0.3] }, "en": [0, 0.08, 0], "color": [40, 42, 46] }
+    ],
+    "maquina": { "modelo": "alertador", "params": { "escucha": "260 km", "potencia": "70 W", "calentamiento": "0.5 s" } },
+    "fabricante": "Vanta"
+  },
+  "transpondedor": {
+    "nombre": "Transpondedor",
+    "material": "electronica",
+    "piezas": [ { "id": "", "hueco": 0.004, "forma": { "kind": "box", "size": [0.3, 0.14, 0.24] }, "en": [0, 0.07, 0], "color": [44, 46, 52] } ],
+    "maquina": { "modelo": "transpondedor", "params": { "potencia": "40 W", "calentamiento": "0.5 s" } },
+    "fabricante": "Vanta"
+  },
+  // noise against the radars that look at the ship: it shortens their reach, and it is a beacon
+  // for every warner
+  "perturbador": {
+    "nombre": "Perturbador PE-4",
+    "rotulos": [ {"texto": "PE-4 · NO ACERCARSE EMITIENDO", "en": [0.151, -0.02, 0], "normal": [1, 0, 0], "arriba": [0, 0, 1], "alto": 0.022, "color": [244, 200, 48]} ],
+    "material": "electronica",
+    "piezas": [ { "id": "", "acabado": "pintura", "hueco": 0.004, "forma": { "kind": "box", "size": [0.3, 0.16, 0.9] }, "en": [0, -0.08, 0], "color": [44, 46, 50] } ],
+    "maquina": { "modelo": "perturbador", "params": { "potencia": "2.4 kW", "espera": "50 W", "calentamiento": "1 s" } },
+    "fabricante": "Vanta"
+  },
+
+  // ------------------------------------------------------------------ weapons
+  // a rotary cannon in its fairing: what it fires is a shot of shots.jsonc
+  "canon_rotativo": {
+    "nombre": "Cañón rotativo de 20 mm",
+    "rotulos": [
+      {"texto": "CAÑÓN · PELIGRO", "en": [0.131, 0.02, -0.2], "normal": [1, 0, 0], "arriba": [0, 1, 0], "alto": 0.04, "color": [196, 40, 30]},
+      {"texto": "CAÑÓN · PELIGRO", "en": [-0.131, 0.02, -0.2], "normal": [-1, 0, 0], "arriba": [0, 1, 0], "alto": 0.04, "color": [196, 40, 30]}
+    ],
+    "material": "acero",
+    "piezas": [
+      { "id": "carenado", "acabado": "pintura", "hueco": 0.006, "forma": { "kind": "box", "size": [0.26, 0.3, 1.5] }, "material": "aluminio", "color": [78, 84, 92], "chapa": 0.5 },
+      { "id": "canon", "acabado": "fundicion", "hueco": 0.02, "forma": { "kind": "cylinder", "radius": 0.055, "height": 1.0, "sides": 10 }, "en": [0, -0.02, 1.2], "rot": [90, 0, 0], "color": [30, 30, 32], "liso": true },
+      { "id": "tambor", "acabado": "pintura", "hueco": 0.004, "forma": { "kind": "cylinder", "radius": 0.17, "height": 0.24, "sides": 12 }, "en": [0, 0.0, -0.9], "rot": [0, 0, 90], "color": [60, 64, 70], "liso": true }
+    ],
+    "maquina": { "modelo": "arma", "pieza": "canon", "eje": [0, 1, 0],
+      "params": { "municion": "canon_20", "grupo": "CAÑÓN", "cadencia": 40.0, "cargador": 600, "giro": "0.25 s", "potencia": "1.2 kW", "espera": "20 W",
+                  "calienta": 2.2, "enfria": "6 s", "t_max": "900 K", "t_listo": "640 K", "alcance": "3.5 km" } },
+    "fabricante": "Kestrel"
+  },
+  // a box of launch tubes under a wing: what it fires (a guided missile of guiados.jsonc), how
+  // many and its group are said where it is mounted
+  "lanzador_misiles": {
+    "nombre": "Lanzador de misiles",
+    "material": "aluminio",
+    "piezas": [
+      { "id": "", "acabado": "pintura", "hueco": 0.006, "forma": { "kind": "box", "size": [0.34, 0.28, 1.3] }, "color": [70, 76, 84], "chapa": 0.5 }
+    ],
+    "maquina": { "modelo": "arma", "eje": [0, 0, 1],
+      "params": { "municion": "dardo", "clase": "guiado", "modo": "uno", "cadencia": 1.5, "cargador": 3, "potencia": "300 W", "espera": "10 W" } },
+    "fabricante": "Kestrel"
+  },
+  // a dispenser of decoys flush in the hull: what it lets go (a decoy of senuelos.jsonc) is
+  // said where it is mounted
+  "lanzasenuelos": {
+    "nombre": "Dispensador de señuelos",
+    "material": "aluminio",
+    "piezas": [
+      { "id": "", "acabado": "pintura", "hueco": 0.004, "forma": { "kind": "box", "size": [0.3, 0.14, 0.42] }, "color": [60, 64, 70] }
+    ],
+    "maquina": { "modelo": "arma", "eje": [0, 1, 0],
+      "params": { "municion": "nube", "clase": "senuelo", "grupo": "SEÑUELOS", "modo": "uno", "cadencia": 4.0, "cargador": 24, "potencia": "120 W", "espera": "5 W" } },
+    "fabricante": "Kestrel"
+  },
+
+  // ------------------------------------------------------------------ a fighter's cockpit
+  "consola_caza": {
+    "nombre": "Consola de vuelo",
+    "material": "aluminio",
+    "piezas": [
+      { "id": "cuerpo", "acabado": "pintura", "hueco": 0.004, "forma": { "kind": "box", "size": [1.2, 0.72, 0.44] }, "en": [0, 0.36, 0.14], "color": [62, 68, 76], "chapa": 0.5 },
+      { "id": "cara", "forma": { "kind": "box", "size": [1.28, 0.05, 0.7] }, "en": [0, 0.92, -0.02], "rot": [-53, 0, 0], "material": "electronica", "color": [30, 32, 36] },
+      { "id": "visera", "acabado": "plastico", "forma": { "kind": "box", "size": [1.24, 0.04, 0.26] }, "en": [0, 1.2, 0.17], "rot": [12, 0, 0], "color": [24, 26, 30] }
+    ],
+    // (a flood under the lip of the glare shield: it is hidden from the eyes by the lip itself)
+    "maquina": { "modelo": "luz", "pieza": "visera", "params": { "potencia": "8 W" } },
+    "luz": { "color": [255, 236, 208], "alcance": 2.0, "intensidad": 3.2, "en": [0, 1.185, 0.07] }
+  },
+  // a drum of three faces, each a panel, that turns to bring one to the pilot: mounted on a
+  // hinge along its axis (its own joint) between the two ends of its cradle
+  "tambor_paneles": {
+    "nombre": "Tambor de paneles",
+    "material": "aluminio",
+    "piezas": [ { "id": "", "forma": { "kind": "cylinder", "radius": 0.17, "height": 0.6, "sides": 3 }, "rot": [90, -40, 0], "material": "electronica", "color": [30, 32, 36] } ]
+  },
+  "soporte_tambor": {
+    "nombre": "Cuna del tambor",
+    "material": "aluminio",
+    "piezas": [
+      { "id": "proa", "acabado": "pintura", "forma": { "kind": "box", "size": [0.12, 0.2, 0.03] }, "en": [0, -0.01, 0.325], "color": [40, 44, 50] },
+      { "id": "popa", "acabado": "pintura", "forma": { "kind": "box", "size": [0.12, 0.2, 0.03] }, "en": [0, -0.01, -0.325], "color": [40, 44, 50] },
+      { "id": "brazo_proa", "acabado": "pintura", "forma": { "kind": "box", "size": [0.3, 0.05, 0.03] }, "en": [0.21, 0.0, 0.325], "color": [40, 44, 50] },
+      { "id": "brazo_popa", "acabado": "pintura", "forma": { "kind": "box", "size": [0.3, 0.05, 0.03] }, "en": [0.21, 0.0, -0.325], "color": [40, 44, 50] },
+      { "id": "motor", "acabado": "pintura", "forma": { "kind": "cylinder", "radius": 0.05, "height": 0.09, "sides": 10 }, "en": [0, 0, -0.385], "rot": [90, 0, 0], "color": [58, 62, 68], "liso": true }
+    ]
+  },
+  // a shelf on the cockpit's sill with a face tilted to the pilot (the right one: its face looks
+  // to port and up)
+  "repisa_caza": {
+    "nombre": "Repisa de sistemas",
+    "material": "aluminio",
+    "piezas": [
+      { "id": "cara", "forma": { "kind": "box", "size": [0.3, 0.03, 0.66] }, "rot": [0, 0, -50], "material": "electronica", "color": [30, 32, 36] },
+      { "id": "pie", "acabado": "pintura", "forma": { "kind": "box", "size": [0.1, 0.3, 0.5] }, "en": [-0.115, -0.2, 0], "color": [40, 44, 50] }
+    ]
+  }
+}

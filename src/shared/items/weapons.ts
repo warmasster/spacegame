@@ -1,7 +1,9 @@
-// Weapon and tool catalog: what the crew carries. Every entry is equipable (number keys in catalog
-// order, holstered on the suit's pack when put away) and does one thing with the trigger: fire a
-// projectile of the projectile catalog, or work on a ship (the welder). The server checks shots
-// against these numbers; the client adds how each one looks and is held (client/fx/weapons.ts).
+// Weapon and tool catalog: what the crew carries and what is bolted to things. A hand-held entry is
+// equipable (number keys in catalog order, holstered on the suit's pack when put away); a mounted
+// one (`mounted`) is fired by a mount (shared/items/mounts.ts: a turret, a fixed gun) on a
+// ship, a base, anything. Each does one thing with the trigger: fire a projectile of the projectile
+// catalog, or work on a ship (the welder). The server checks shots against these numbers; the
+// client adds how a hand-held one looks and is held (client/fx/weapons.ts).
 
 import { PROJECTILES } from './projectiles.js';
 
@@ -16,6 +18,8 @@ export interface WeaponDef {
   id: string;
   name: string;
   action: WeaponAction;
+  /** Fired only by a mount (shared/items/mounts.ts), never carried: no number key, no look in the hands. */
+  mounted?: boolean;
   /** Seconds between shots. */
   cooldown: number;
   /** Momentum given to the shooter per shot (N·s): body, arm and camera recoil. */
@@ -26,7 +30,7 @@ export interface WeaponDef {
   sounds?: { fire?: string };
 }
 
-/** In catalog order: the number keys pick them (1, 2, 3…). */
+/** Hand-held ones in catalog order: the number keys pick them (1, 2, 3…). */
 export const WEAPON_LIST: WeaponDef[] = [];
 export const WEAPON_DEFS: Record<string, WeaponDef> = {};
 
@@ -37,7 +41,7 @@ export function defineWeapon(def: WeaponDef): WeaponDef {
   if (WEAPON_DEFS[def.id]) throw new Error(`weapon "${def.id}" defined twice`);
   if (def.action.kind === 'fire' && !PROJECTILES[def.action.projectile]) throw new Error(`weapon "${def.id}": unknown projectile "${def.action.projectile}"`);
   WEAPON_DEFS[def.id] = def;
-  WEAPON_LIST.push(def);
+  if (!def.mounted) WEAPON_LIST.push(def);
   return def;
 }
 
@@ -74,4 +78,16 @@ defineWeapon({
   recoil: 7,
   hud: { ready: 'FUSIL LISTO' },
   sounds: { fire: 'rifle.fire' },
+});
+
+// the tube of a mini-missile turret (shared/items/mounts.ts): only a mount fires it
+defineWeapon({
+  id: 'minimissile.tube',
+  name: 'Tubo de minimisiles',
+  mounted: true,
+  action: { kind: 'fire', projectile: 'minimissile' },
+  cooldown: 0.45,
+  recoil: 0,
+  hud: { ready: 'MINIMISIL LISTO' },
+  sounds: { fire: 'turret.fire' },
 });

@@ -1,0 +1,25 @@
+// Materials parts are made of (see core/src/structure/catalog.rs).
+// density kg/m³; toughness: energy that wrecks a cubic metre (J/m³), so hit points = toughness x
+// volume; brittleness 0 ductile (tears into few big pieces) .. 1 brittle (shatters, chips);
+// color sRGB, rough / metal 0-255; fracture: how it breaks ("particulas", the default: the part
+// vanishes into its break effect; "planos" cuts it into rigid pieces, which is costly);
+// breaks: effect (explosions/<id>) where one of its parts breaks, scaled by the part's size.
+{
+  "acero":     { "name": "Acero", "density": 7850, "toughness": 4.0e6, "brittleness": 0.15, "color": [150, 152, 158], "rough": 110, "metal": 220, "breaks": "rotura_metal", "acabado": "cepillado" },
+  "aluminio":  { "name": "Aluminio", "density": 2700, "toughness": 2.5e6, "brittleness": 0.25, "color": [196, 198, 204], "rough": 90, "metal": 230, "breaks": "rotura_metal", "acabado": "cepillado" },
+  "cristal":   { "name": "Cristal", "density": 2500, "toughness": 4.0e5, "brittleness": 0.95, "color": [110, 150, 180], "rough": 15, "metal": 0, "breaks": "rotura_cristal", "glass": true },
+  "hormigon":  { "name": "Hormigón lunar", "density": 2400, "toughness": 1.2e6, "brittleness": 0.7, "color": [150, 146, 138], "rough": 230, "breaks": "rotura_piedra", "acabado": "hormigon" },
+  "regolito":  { "name": "Regolito sinterizado", "density": 2000, "toughness": 6.0e5, "brittleness": 0.8, "color": [128, 124, 118], "rough": 240, "breaks": "rotura_piedra", "acabado": "hormigon" },
+  // armour: ceramic tiles on a metal backing, bolted over what must not be lost. Three and a
+  // half times as much to wreck as the same steel, at a third of its weight
+  "blindaje":  { "name": "Blindaje compuesto", "density": 2700, "toughness": 1.4e7, "brittleness": 0.35, "color": [58, 62, 68], "rough": 170, "metal": 40, "breaks": "rotura_metal", "acabado": "pintura" },
+  "compuesto": { "name": "Compuesto", "density": 1600, "toughness": 3.0e6, "brittleness": 0.4, "color": [222, 222, 214], "rough": 150, "breaks": "rotura_piedra", "acabado": "plastico" },
+  // sandwich panels of ships (honeycomb between skins): light, tough enough, metal outside
+  "panel_casco":   { "name": "Panel de casco", "density": 260, "toughness": 1.6e6, "brittleness": 0.3, "color": [222, 222, 216], "rough": 100, "metal": 0, "breaks": "rotura_metal", "acabado": "pintura" },
+  "panel_suelo":   { "name": "Placa de suelo", "density": 420, "toughness": 2.0e6, "brittleness": 0.25, "color": [118, 122, 124], "rough": 205, "metal": 0, "breaks": "rotura_metal", "acabado": "lagrimado" },
+  "panel_mamparo": { "name": "Mamparo", "density": 300, "toughness": 1.4e6, "brittleness": 0.3, "color": [176, 176, 170], "rough": 150, "metal": 0, "breaks": "rotura_metal", "acabado": "pintura" },
+  "cableado":      { "name": "Cableado", "density": 1500, "toughness": 1.5e6, "brittleness": 0.2, "color": [40, 40, 44], "rough": 170, "metal": 20, "breaks": "rotura_metal", "acabado": "trenzado" },
+  "electronica":   { "name": "Electrónica", "density": 900, "toughness": 1.0e6, "brittleness": 0.5, "color": [50, 54, 60], "rough": 150, "metal": 80, "breaks": "rotura_metal", "acabado": "plastico" },
+  "goma":          { "name": "Goma", "density": 1200, "toughness": 2.0e6, "brittleness": 0.05, "color": [28, 28, 30], "rough": 230, "metal": 0, "breaks": "rotura_metal", "acabado": "goma" },
+  "silicio":   { "name": "Célula solar", "density": 2330, "toughness": 3.0e5, "brittleness": 0.9, "color": [38, 50, 92], "rough": 35, "metal": 60, "breaks": "rotura_cristal", "acabado": "carbono" }
+}

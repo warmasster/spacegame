@@ -1,0 +1,51 @@
+// The gantry crane of the Cachalote's hold, on its console in the middle of the hold: where the bridge, the trolley and
+// the hoist should go (each lever stays where it is left; the crane follows at its own pace),
+// and its magnet.
+{
+  "name": "Puente grúa",
+  "tamano": ["0.72 m", "0.52 m"],
+  "rejilla": [10, 8],
+  "margen": "10 mm",
+  "separacion": "5 mm",
+  "grupos": [
+    { "id": "ejes", "titulo": "POSICIÓN", "celda": [0, 0], "ocupa": [5, 8] },
+    { "id": "lectura", "titulo": "GANCHO", "celda": [5, 0], "ocupa": [5, 3] },
+    { "id": "iman", "titulo": "IMÁN", "celda": [5, 3], "ocupa": [5, 5] }
+  ],
+  "mandos": [
+    // where the hook is, in the figures painted on the hold's deck: the bay under it (column and
+    // row of the grid), metres from the ramp's sill and to port of the centreline
+    { "id": "lectura", "kind": "mfd", "grupo": "lectura", "tamano": [250, 92], "botones": 1, "requiere": { "energia": "6 W" },
+      "nombre": "Posición del gancho", "ayuda": "Dónde está el gancho, en las medidas pintadas en el suelo de la bodega: la bahía que tiene debajo (columna A, B o C y fila 1 a 8), los metros desde el umbral de la rampa y los metros a babor del centro (negativo: a estribor). CENTRADO: está sobre el anclaje de esa bahía. CARGA: los kilos que cuelgan del imán; EXCESO: ha dejado algo debajo porque con ello pasaría de su carga nominal.",
+      "paginas": [
+        { "titulo": "GANCHO", "lineas": [
+          "BAHIA {grua.columna|A|B|C}{grua.fila:0}  {grua.centrada|. . .|CENTRADO}",
+          "LARGO {grua.largo:1} m",
+          "BABOR {grua.banda:2} m",
+          "CARGA {grua_iman.masa:0} kg  {grua_iman.sobrecarga|. . .|EXCESO}" ] }
+      ] },
+
+    { "id": "puente", "kind": "palanca", "grupo": "ejes", "rango": [0.0, 1.0], "rotulo": "PUENTE", "friccion": 0.9,
+      "retenes": [ { "en": 0.0, "nombre": "POPA" }, { "en": 1.0, "nombre": "PROA" } ], "bind": { "senal": "grua.puente" },
+      "nombre": "Puente de la grúa", "ayuda": "A lo largo de la bodega, de la rampa hacia la cabina. La grúa va a donde dejes la palanca, a su paso: de punta a punta de la bodega en diez segundos." },
+    { "id": "carro", "kind": "palanca", "grupo": "ejes", "rango": [0.0, 1.0], "rotulo": "CARRO", "friccion": 0.9, "defecto": 0.5,
+      "retenes": [ { "en": 0.0, "nombre": "ESTR." }, { "en": 0.5, "nombre": "CENTRO" }, { "en": 1.0, "nombre": "BABOR" } ], "bind": { "senal": "grua.carro" },
+      "nombre": "Carro", "ayuda": "A lo ancho de la bodega." },
+    { "id": "gancho", "kind": "palanca", "grupo": "ejes", "rango": [0.0, 1.0], "rotulo": "IZADO", "friccion": 0.9,
+      "retenes": [ { "en": 0.0, "nombre": "ARRIBA" }, { "en": 1.0, "nombre": "ABAJO" } ], "bind": { "senal": "grua.gancho" },
+      "nombre": "Izado", "ayuda": "Baja el imán hasta la carga: se para solo al tocarla (lámpara TOPE). Arriba del todo, la carga pasa por encima de todo lo demás." },
+
+    { "id": "tapa_iman", "kind": "tapa", "grupo": "iman", "protege": ["agarre"] },
+    { "id": "agarre", "kind": "interruptor", "grupo": "iman", "posiciones": ["SUELTA", "AGARRA"], "rotulo": "IMÁN",
+      "bind": { "senal": "grua.agarrar" }, "nombre": "Imán de la grúa",
+      "ayuda": "Imán electropermanente: baja sobre la carga y agarra todo lo que tenga bajo su cara y contra ella (dos bidones juntos, los dos), empezando por lo más centrado y sin pasar de su carga nominal: lo que la pasaría lo deja y lo dice (EXCESO en la pantalla). Sujetar no gasta; cada cambio pide un pulso del condensador. Sin corriente ni agarra ni suelta. Si la carga sigue en su anclaje del suelo (lámpara ANCLADA) no se la lleva: suelta antes ese anclaje, con E sobre su palanca roja." },
+    { "id": "lamp_iman", "kind": "lampara", "grupo": "iman", "rotulo": "SUJETA", "requiere": { "energia": "1 W" },
+      "reglas": [ { "si": "grua_iman.sujeta", "color": "verde" }, { "si": "grua_iman.anclada", "color": "rojo" }, { "si": "grua_iman.activo", "color": "ambar" }, { "si": "!grua_iman.listo", "color": "rojo" } ] },
+    { "id": "lamp_anclada", "kind": "lampara", "grupo": "iman", "rotulo": "ANCLADA", "requiere": { "energia": "1 W" },
+      "reglas": [ { "si": "grua_iman.anclada", "color": "rojo" } ] },
+    { "id": "lamp_tope", "kind": "lampara", "grupo": "iman", "rotulo": "TOPE", "requiere": { "energia": "1 W" },
+      "reglas": [ { "si": "grua_gancho.bloqueada || grua_puente.bloqueada || grua_carro.bloqueada", "color": "ambar" } ] },
+    { "id": "cond", "kind": "aguja", "grupo": "iman", "tamano": [100, 100], "senal": "grua_iman.carga", "escala": ["0 %", "100 %"], "unidad": "%", "rotulo": "CONDENS.",
+      "zonas": { "roja": ["0 %", "40 %"] }, "requiere": { "energia": "1 W" } }
+  ]
+}

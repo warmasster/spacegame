@@ -1,0 +1,55 @@
+// Marks on loose ground: what a boot, a landing pad, a crate or a jet leaves on it, and how long
+// it stays. Read by crates/app/src/footprints.rs, drawn by crates/render/src/prints.rs; the
+// ground that takes them is the ground that raises dust (crates/app/src/dust.rs). A new kind of
+// mark is a new entry of "marcas"; who leaves which, and how, is "deja". How each number was
+// chosen: docs/DETALLES.md.
+{
+  // marks kept at once: when another needs a place, the oldest goes (the GPU holds the 4096
+  // nearest the eye)
+  "capacidad": 8192,
+  // the ground of each body, by its id ("*": every other body): "suelto" 0 is hard ground (rock,
+  // ice: no dust, no marks), 1 regolith
+  "suelos": {
+    "*": { "suelto": 1.0 },
+  },
+  // the kinds of mark:
+  //   forma        "bota" (a sole with its tread), "disco", "caja", "barrido" (swept, not pressed)
+  //   tamano       width and length (m) of a boot's; the others are as big as what left them
+  //   hondo        how deep it is pressed (m)
+  //   suelo, borde the light of its floor and of the rim thrown up round it (x the ground's)
+  //   borde_alto   how high the rim stands (m); borde_ancho: how wide (share of its half-width)
+  //   barras       its tread: bars along it; barras_hondo: how deep (share of "hondo")
+  //   dura         seconds it lasts, the last fifth of them fading (0: until its place is needed)
+  //   ver          seen whole within so many metres, gone at so many
+  //   relieve      its slopes drawn so much steeper than they are; grano: how ragged its edge is
+  "marcas": {
+    // an EVA boot: 14 x 33 cm, pressed 2 cm (Aldrin's on Apollo 11: about 2.5 cm), nine bars
+    "bota": { "forma": "bota", "tamano": [0.14, 0.33], "hondo": 0.02, "suelo": 0.87, "borde": 1.06, "borde_alto": 0.005, "borde_ancho": 0.16, "barras": 9, "barras_hondo": 0.5, "dura": 1800, "ver": [30, 50], "relieve": 1.3, "grano": 0.6 },
+    // a landing pad: the regolith under it packed, a rim pushed out round it
+    "pata": { "forma": "disco", "hondo": 0.035, "suelo": 0.84, "borde": 1.07, "borde_alto": 0.012, "borde_ancho": 0.1, "dura": 3600, "ver": [140, 240], "relieve": 1.2, "grano": 0.5 },
+    // what is set down or dragged: a crate, a pallet; a drum stood on end
+    "bulto": { "forma": "caja", "hondo": 0.014, "suelo": 0.88, "borde": 1.05, "borde_alto": 0.006, "borde_ancho": 0.1, "dura": 2400, "ver": [60, 100], "relieve": 1.2, "grano": 0.6 },
+    "bulto_redondo": { "forma": "disco", "hondo": 0.014, "suelo": 0.88, "borde": 1.05, "borde_alto": 0.006, "borde_ancho": 0.1, "dura": 2400, "ver": [60, 100], "relieve": 1.2, "grano": 0.6 },
+    // under a jet: the fine dust blown off, the ground left smoother and lighter (the blast zones
+    // round the Apollo landers are 8 % lighter than the ground round them), a shallow bowl
+    "barrido": { "forma": "barrido", "hondo": 0.01, "suelo": 1.09, "dura": 1200, "ver": [180, 320], "relieve": 1.0, "grano": 0.0 },
+  },
+  // who leaves which
+  "deja": {
+    // a boot set down (dust.rs `Dust::step`): its print `adelante` m ahead of where the foot is
+    // said to be (its ankle); pressed harder for every m/s over `andar` and for a landing;
+    // `junta`: set down this near its own last print (m), it takes its place
+    "pisada": { "marca": "bota", "adelante": 0.07, "andar": 1.8, "al_correr": 0.12, "al_caer": 0.3, "junta": 0.07 },
+    // a sprung leg standing on the ground: pressed as the root of what it carries over `carga`
+    // N; another print once it has moved `paso` of its size (a ship that slides leaves a row)
+    "pata": { "marca": "pata", "carga": 15000, "paso": 0.5 },
+    // what lies loose on the ground no bigger than `radio_max` m nor lighter than `masa_min` kg,
+    // going no faster than `velocidad_max` m/s: its dent where it is set down, a row of them
+    // where it is dragged; pressed as the root of its weight on its sole over `presion` Pa
+    "bulto": { "marca": "bulto", "redondo": "bulto_redondo", "radio_max": 3.5, "masa_min": 15, "velocidad_max": 2.0, "presion": 2500, "paso": 0.5 },
+    // a jet that strikes the ground harder than `desde` (0..1, as dust.rs measures it): a
+    // patch `radio` m across for every root of a kN, swept in `tiempo` s of full strike;
+    // within `junta` of a patch's radius it sweeps that one more
+    "chorro": { "marca": "barrido", "radio": 0.6, "desde": 0.12, "tiempo": 0.8, "junta": 0.6 },
+  },
+}

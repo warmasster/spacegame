@@ -1,0 +1,52 @@
+// The Moon: data from MOON / SUN / MOON_SURFACE captured by the H0 source manifest.
+{
+  "name": "Luna",
+  "center": [0.0, -1737400.0, 0.0],
+  "radius": 1737400.0,
+  "gravity": 1.62,
+  // how far its pull reaches: whole (falling with the square of the distance) up to 20 km over
+  // the datum, then smoothly down to nothing at 30 km. Past that the Moon pulls nothing: no
+  // weight, no ground, no way up. Far short of the real thing on purpose
+  "reach": { "to": 30000.0, "band": 10000.0 },
+  // where its axis points: its north pole. North on its ground is the way toward it
+  "north": [0.0, 0.0, -1.0],
+  "seed": 1969,
+  // the ground is levelled to height 0 at the pole the spawn stands on
+  "level_at": [0.0, 1.0, 0.0],
+  "horizon_depth": 4500.0,
+  "surface": {
+    "kind": "procedural",
+    "seed": 7331,
+    "datum": 0.0,
+    "relief": { "amp": 700.0, "wavelength": 60000.0, "count": 15, "gain": 0.46, "lacunarity": 2.2 },
+    "highland_amp": 1600.0,
+    "highland_wavelength": 900000.0,
+    "mountains": { "amp": 2200.0, "wavelength": 18000.0, "count": 3, "gain": 0.42, "lacunarity": 2.1 },
+    "mare_depth": 1300.0,
+    "mare_wavelength": 1300000.0,
+    "mare_from": 0.12,
+    "mare_to": 0.32,
+    "mare_smooth": 0.6,
+    "complex_from": 7000.0,
+    "albedo_high": 1.12,
+    "albedo_mare": 0.68,
+    // irregular rims and central peaks (0 = the TS craters exactly)
+    "crater_detail": 1.0,
+    // largest first: cell (m), probability, share kept in maria, radius range (of the cell), and
+    // "depth" (default 1): up close the real regolith shows clods and pebbles, not tiny pits
+    "craters": [
+      { "cell": 240000.0, "p": 0.12, "mare": 0.3, "r_min": 0.12, "r_max": 0.36 },
+      { "cell": 80000.0, "p": 0.16, "mare": 0.3, "r_min": 0.12, "r_max": 0.38 },
+      { "cell": 26000.0, "p": 0.2, "mare": 0.35, "r_min": 0.12, "r_max": 0.4 },
+      { "cell": 9000.0, "p": 0.22, "mare": 0.4, "r_min": 0.12, "r_max": 0.4 },
+      { "cell": 3000.0, "p": 0.24, "mare": 0.5, "r_min": 0.12, "r_max": 0.4 },
+      { "cell": 1000.0, "p": 0.26, "mare": 0.6, "r_min": 0.12, "r_max": 0.4 },
+      { "cell": 340.0, "p": 0.28, "mare": 0.7, "r_min": 0.12, "r_max": 0.4 },
+      { "cell": 115.0, "p": 0.32, "mare": 0.85, "r_min": 0.12, "r_max": 0.4 },
+      { "cell": 40.0, "p": 0.4, "mare": 0.95, "r_min": 0.12, "r_max": 0.4, "depth": 0.7 },
+      { "cell": 14.0, "p": 0.48, "mare": 1.0, "r_min": 0.12, "r_max": 0.42, "depth": 0.35 },
+      { "cell": 5.0, "p": 0.5, "mare": 1.0, "r_min": 0.12, "r_max": 0.4, "depth": 0.12 },
+      { "cell": 2.0, "p": 0.38, "mare": 1.0, "r_min": 0.1, "r_max": 0.36, "depth": 0.0 },
+    ],
+  },
+}

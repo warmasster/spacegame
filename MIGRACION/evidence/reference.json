@@ -1,0 +1,27 @@
+{
+  "scope": "TS natural surface with/without home offset, excludes modifiers",
+  "points": 28800,
+  "noiseCases": 512,
+  "gpuGate": "pending: 1000 f64 truth samples saved",
+  "machine": {
+    "cpu": "Intel(R) Core(TM) i5-14400F",
+    "threads": 16,
+    "os": "win32",
+    "arch": "x64",
+    "node": "v24.19.0"
+  },
+  "asset": {
+    "bytes": 3446868,
+    "meshes": 21,
+    "primitives": 24,
+    "nodes": 44,
+    "materials": 21,
+    "skins": [
+      {
+        "joints": 22
+      }
+    ],
+    "animations": [],
+    "triangles": 89532
+  }
+}

@@ -1,5 +1,4 @@
 import RAPIER from '@dimforge/rapier3d-compat';
-import { MOON } from '../../shared/constants';
 import { toLocal, toWorld, type ShipPose } from '../../shared/ship/flight';
 import { qConj, qMul, type V3 } from '../../shared/ship/geom';
 import { surfaceOf } from '../../shared/space/body';
@@ -54,7 +53,8 @@ export class Physics {
     private pool: TerrainWorkerPool,
     private seed: number,
   ) {
-    this.world = new RAPIER.World({ x: 0, y: -MOON.gravity, z: 0 });
+    // its gravity is the bubble's, set before every step (the body it is laid on)
+    this.world = new RAPIER.World({ x: 0, y: 0, z: 0 });
   }
 
   get rapier() {

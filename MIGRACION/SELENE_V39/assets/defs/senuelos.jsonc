@@ -1,0 +1,16 @@
+// Decoys (crates/core/src/guided.rs, docs/COMBATE.md): what a ship's dispenser lets go
+// ("municion" of an "arma" of class "senuelo"). rcs (m²) and heat (W): what it shines with at its
+// brightest, to a radar and in the infrared; florece (s): how long it takes to open; dura (s):
+// how long it takes to die away after; salida (m/s): how fast it leaves the dispenser; look, rate,
+// size, life: the particle style it is seen as, puffs a second, their size (m) and life (s).
+//
+// In space nothing brakes them: a decoy keeps the speed of the ship that let it go and what its
+// dispenser gave it, so it goes on beside the ship until the ship turns or burns away from it.
+// That is how they are used: let them go, then leave them.
+{
+  // chaff: a cloud of dipoles cut to the wavelength. It opens in half a second into something
+  // that reflects like a freighter, and thins as it goes on opening
+  "nube":    { "name": "Nube de dipolos", "rcs": 90.0, "heat": 0.0, "florece": 0.5, "dura": 9.0, "salida": 35.0, "look": "chaff", "rate": 14.0, "size": 2.2, "life": 5.0 },
+  // a flare: hotter than an engine for a few seconds
+  "bengala": { "name": "Bengala", "rcs": 0.02, "heat": 3.0e8, "florece": 0.25, "dura": 5.0, "salida": 45.0, "look": "bengala", "rate": 30.0, "size": 0.9, "life": 0.35 }
+}

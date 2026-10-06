@@ -1,0 +1,30 @@
+// Multiplayer, the first of two players (the host: it owns the ships nobody flies). It walks up
+// and down by the Abejorro so that the other sees it, then reads the Alcotán's ramp: the other
+// opens it from its own copy. Started with: luna --servidor 127.0.0.1:47611 --nombre Ana
+// --guion tools/camara/multi_a.jsonc (the other: multi_b.jsonc; see docs/MULTIJUGADOR.md)
+{
+  "registro": "out/camara/multi_a.log",
+  "pasos": [
+    { "nave": "abejorro" },
+    { "esperar": 2.0 },
+    { "linterna": true },
+    { "ir": [6.0, -1.65, 2.0] },
+    { "mirar": [200, 0] },
+    { "esperar": 14.0 },
+    { "andar": [1, 0] },
+    { "esperar": 3.0 },
+    { "andar": [-1, 0] },
+    { "esperar": 3.0 },
+    { "andar": [1, 0] },
+    { "esperar": 3.0 },
+    { "andar": [0, 0] },
+    // what the other did to the Alcotán: its ramp's control, and the ramp itself
+    { "nave": "alcotan" },
+    { "esperar": 6.0 },
+    { "volcar": ["rampa.*"] },
+    { "hud": true },
+    { "camara": { "en": [9, 3, -16], "mira": [0, 1, -8], "fov": 60 } },
+    { "foto": "out/camara/multi_a_rampa.png" },
+    { "esperar": 6.0 }
+  ]
+}

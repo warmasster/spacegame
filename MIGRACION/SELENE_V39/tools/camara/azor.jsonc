@@ -1,0 +1,60 @@
+// The Azor, the one-seat fighter: outside from four sides, its cockpit from the seat, its drum
+// of panels on each face, the seat's platform down, the bay's two doors open.
+// Run: luna --guion tools/camara/azor.jsonc → out/camara/azor_*.png
+{
+  "registro": "out/camara/azor.log",
+  "naves": ["azor"],
+  "pasos": [
+    { "nave": "azor" },
+    { "esperar": 5.0 },
+    { "camara": { "en": [8.5, 1.6, 9.5], "mira": [0, 0.3, 0.2], "fov": 50 } },
+    { "foto": "out/camara/azor_proa.png" },
+    { "camara": { "en": [10.5, 0.6, -2.0], "mira": [0, 0.5, -0.5], "fov": 50 } },
+    { "foto": "out/camara/azor_costado.png" },
+    { "camara": { "en": [-7.5, 2.4, -9.5], "mira": [0, 0.4, -1.5], "fov": 50 } },
+    { "foto": "out/camara/azor_popa.png" },
+    { "camara": { "en": [-6.0, 13.0, -9.0], "mira": [0, 0.3, -0.4], "fov": 50 } },
+    { "foto": "out/camara/azor_arriba.png" },
+    // (the sunlit side)
+    { "camara": { "en": [-9.0, 2.0, 8.5], "mira": [0, 0.3, 0.0], "fov": 50 } },
+    { "foto": "out/camara/azor_sol.png" },
+    { "camara": { "en": [-5.2, 0.2, 5.6], "mira": [0, 0.5, 1.0], "fov": 55 } },
+    { "foto": "out/camara/azor_morro.png" },
+    { "camara": { "en": [-10.5, 0.9, -1.2], "mira": [0, 0.4, -0.6], "fov": 50 } },
+    { "foto": "out/camara/azor_babor.png" },
+    // the cockpit, from the seat: on batteries and dark, then with its light
+    { "camara": { "en": [0, 1.35, 0.96], "mira": [0, 1.0, 1.9], "fov": 90 } },
+    { "foto": "out/camara/azor_asiento_oscuro.png" },
+    { "ajustar": { "mando": "sistemas/l_cabina", "valor": 1 } },
+    { "esperar": 0.5 },
+    { "foto": "out/camara/azor_asiento.png" },
+    { "camara": { "panel": "principal", "distancia": 0.95, "fov": 62 } },
+    { "foto": "out/camara/azor_principal.png" },
+    { "camara": { "en": [0, 1.35, 0.96], "mira": [0.72, 1.0, 1.25], "fov": 70 } },
+    { "foto": "out/camara/azor_tambor_nav.png" },
+    { "ajustar": { "mando": "gases/cara", "valor": 1 } },
+    { "esperar": 2.5 },
+    { "foto": "out/camara/azor_tambor_combate.png" },
+    { "ajustar": { "mando": "gases/cara", "valor": 2 } },
+    { "esperar": 2.5 },
+    { "foto": "out/camara/azor_tambor_sensores.png" },
+    { "camara": { "en": [0, 1.35, 0.96], "mira": [-0.78, 1.0, 1.25], "fov": 70 } },
+    { "foto": "out/camara/azor_sistemas.png" },
+    // the seat's platform down
+    { "pulsar": "exterior/plataforma" },
+    { "esperar": 5.0 },
+    { "camara": { "en": [5.5, -0.9, 4.5], "mira": [0, -0.6, 0.9], "fov": 50 } },
+    { "foto": "out/camara/azor_plataforma.png" },
+    { "camara": { "en": [-5.0, -0.7, 5.0], "mira": [0, -0.5, 0.9], "fov": 50 } },
+    { "foto": "out/camara/azor_plataforma_sol.png" },
+    // the bay's doors open
+    { "pulsar": "exterior/compuertas" },
+    { "esperar": 9.0 },
+    { "camara": { "en": [-4.5, 0.6, -10.5], "mira": [0, 0.4, -4.0], "fov": 50 } },
+    { "foto": "out/camara/azor_bahia_abierta.png" },
+    { "camara": { "en": [0.2, 1.5, -4.9], "mira": [0, 1.0, -1.5], "fov": 85 } },
+    { "linterna": true },
+    { "foto": "out/camara/azor_bahia.png" },
+    { "volcar": ["elec.*", "reactor.*", "plataforma.*", "rampa.*", "visera.*", "rampa_ext.*", "tambor.*", "nave.masa", "nave.centrado", "pata_*.pos", "amort_*.carga"] }
+  ]
+}

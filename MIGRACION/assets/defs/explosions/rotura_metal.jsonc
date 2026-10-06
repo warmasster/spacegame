@@ -1,0 +1,8 @@
+// A metal part tearing: sparks and a puff of dust (scaled by the part's size).
+{
+  "name": "Metal desgarrado",
+  "emitters": [
+    { "style": "chispas", "count": 30, "speed": [3.0, 16.0], "cone": 180.0, "size": [0.015, 0.04], "life": [0.4, 1.4], "spread": 0.6 },
+    { "style": "polvo", "count": 8, "speed": [0.5, 2.5], "cone": 180.0, "size": [0.15, 0.35], "life": [1.0, 2.5], "spread": 0.6 }
+  ]
+}

@@ -10,5 +10,6 @@ export default defineConfig({
   },
   worker: { format: 'es' },
   // `npm run share` (Cloudflare quick tunnel): a new random subdomain every time
-  server: { allowedHosts: ['.trycloudflare.com'] },
+  // data/: the world's saves (docs/MUNDO.md), written by the server while it runs
+  server: { allowedHosts: ['.trycloudflare.com'], watch: { ignored: ['**/data/**'] } },
 });

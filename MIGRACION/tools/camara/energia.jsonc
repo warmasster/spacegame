@@ -1,0 +1,29 @@
+// The ship's electrical balance: the generic "energia" panel in the Alcotán's cabin, on
+// batteries and with the reactor started and warm; the reactor's panel (its groups' titles).
+// Run: luna --guion tools/camara/energia.jsonc → out/camara/energia_*.png
+{
+  "registro": "out/camara/energia.log",
+  "naves": ["alcotan"],
+  "pasos": [
+    { "nave": "alcotan" },
+    { "esperar": 3.0 },
+    { "linterna": true },
+    { "camara": { "en": [0.6, 1.6, -0.2], "mira": [1.93, 1.5, -0.6], "fov": 55 } },
+    { "foto": "out/camara/energia_cabina.png" },
+    { "camara": { "panel": "energia", "distancia": 0.5 } },
+    { "foto": "out/camara/energia_baterias.png" },
+    { "camara": { "panel": "reactor", "distancia": 0.95 } },
+    { "foto": "out/camara/energia_reactor_parado.png" },
+    // the reactor started: three and a half minutes on, what the balance says
+    { "pulsar": "reactor/tapa_marcha" },
+    { "esperar": 0.5 },
+    { "pulsar": "reactor/marcha" },
+    { "esperar": 210.0 },
+    { "volcar": ["energia.*", "reactor.estado", "reactor.limitado", "reactor.t_comb", "conversor.p"] },
+    { "foto": "out/camara/energia_reactor_en_marcha.png" },
+    { "camara": { "panel": "energia", "distancia": 0.5 } },
+    { "foto": "out/camara/energia_con_reactor.png" },
+    { "camara": { "panel": "techo", "distancia": 0.9 } },
+    { "foto": "out/camara/energia_techo.png" }
+  ]
+}

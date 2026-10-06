@@ -1,0 +1,21 @@
+// Ajustes del servidor de Selene. Se leen al arrancar: después de cambiar algo, para el servidor
+// («salir») y vuelve a arrancarlo. Si borras este fichero se usan estos mismos valores.
+// Es JSON con comentarios; las comas finales están permitidas.
+{
+  // Puerto UDP en el que escucha. Es el que hay que abrir en el cortafuegos y en el router
+  // para que entren jugadores de fuera (ver LEEME.txt). También: SeleneServidor.exe --puerto 47600
+  "puerto": 47600,
+
+  // Nombre del servidor: se le enseña a quien entra. También: --nombre "La Base"
+  "nombre": "Servidor de Selene",
+
+  // Jugadores a la vez (de 1 a 64). Al que no cabe se le dice que está lleno.
+  "max_jugadores": 16,
+
+  // Veces por segundo que se reparten las posiciones de jugadores y naves (de 5 a 60).
+  // Más es más fino y gasta más red; 20 es lo normal.
+  "tasa": 20,
+
+  // Segundos sin noticias de un jugador para darlo por caído (de 2 a 300).
+  "espera": 10,
+}

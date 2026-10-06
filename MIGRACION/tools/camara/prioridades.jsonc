@@ -1,0 +1,12 @@
+// The panel of circuit priorities (hold, port wall). Run: luna --guion tools/camara/prioridades.jsonc
+{
+  "registro": "out/camara/prioridades.log",
+  "pasos": [
+    { "nave": "alcotan" },
+    { "esperar": 2.0 },
+    { "camara": { "panel": "prioridades", "distancia": 1.2 } },
+    { "foto": "out/camara/prioridades.png" },
+    { "camara": { "panel": "sala_puente", "distancia": 1.0 } },
+    { "foto": "out/camara/sala_puente.png" }
+  ]
+}

@@ -1,0 +1,17 @@
+// The ship editor (F6) driven by a script: a light duplicated into the hold, a beacon left without
+// its cable, the ship rebuilt in its place, and a picture. Run: luna --guion tools/camara/editor.jsonc
+{
+  "registro": "out/camara/editor.log",
+  "pasos": [
+    { "nave": "alcotan" },
+    { "esperar": 2.0 },
+    { "camara": { "en": [0, 1.6, -3.9], "mira": [0, 2.2, -9.0], "fov": 75 } },
+    { "foto": "out/camara/editor_antes.png" },
+    { "editar": { "op": "duplicar", "id": "foco_bodega_izq", "nuevo": "foco_bodega_extra", "en": [0.0, 2.5, -5.2] } },
+    { "editar": { "op": "girar", "id": "foco_bodega_extra", "rot": [-110, 0, 0] } },
+    { "editar": { "op": "cableado", "id": "baliza_sup", "valor": false } },
+    "aplicar_edicion",
+    { "esperar": 1.5 },
+    { "foto": "out/camara/editor_despues.png" }
+  ]
+}

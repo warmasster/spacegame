@@ -1,14 +1,15 @@
 import * as THREE from 'three';
 import { MAX_PLAYERS, CLIENT_SEND_RATE, SUIT_STRIPES, SUN } from '../shared/constants';
-import { StateFlags, type PlayerInfo, type TerrainMod, type Vec3 } from '../shared/protocol';
+import { StateFlags, type EntityKind, type EntityWire, type PlayerInfo, type TerrainMod, type Vec3 } from '../shared/protocol';
 import { REPAIR_RATE, shipBlast, ShipSim, SYSTEMS_HZ, type ShipSnapshot } from '../shared/ship/sim';
 import { crewStep } from '../shared/ship/crew';
 import { FLIGHT_IDLE, MASS, PILOT_KEYS, copyPose, flightReadout, helmSeat, pointVelocity, toWorld, type FlightCommand, type FlightEnv, type Lump } from '../shared/ship/flight';
 import { WORLD_FRAME, type Crate } from '../shared/ship/crates';
 import { startCrates, startShips } from '../shared/ship/spawn';
-import { blastCrater } from '../shared/space/terrainMods';
 import { SITES, siteDir } from '../shared/space/sites';
 import { siteGround, spawnPoint, START_SITE } from '../shared/space/world';
+import { physicalRegions, regionAt } from '../shared/space/galaxy';
+import { arrivalPoint, jumpRefusal, nextRegion } from '../shared/space/jump';
 import { DRAG } from '../shared/ship/airflow';
 import type { PoseWire } from '../shared/protocol';
 import type { V3 } from '../shared/ship/geom';
@@ -27,6 +28,11 @@ import { altitudeOf, BODIES, bodyAt, bodyById, frameAt, heightAboveGround, inSha
 import type { SurfaceGround } from '../shared/space/tangent';
 import { litMaterial } from './ship/materials';
 import { ShipClient } from './ship/ship';
+import { Gunnery } from './ship/gunnery';
+import { ConsoleCommands } from './ship/commands';
+import { ShipCameraFeeds, shipCameraSources } from './ship/cameraScreens';
+import { PipSystem } from './render/pip';
+import { WorldCapture } from './render/worldCapture';
 import { Particles } from './fx/particles';
 import { Projectiles } from './fx/projectiles';
 import { JointDiagnostics, JointGizmos } from './player/jointDiag';
@@ -34,8 +40,11 @@ import { Scheduler } from '../engine/systems';
 import { FixedLoop } from '../engine/loop';
 import { Debris } from '../engine/debris';
 import { DebugOverlay } from '../engine/debug';
+import { StepClock } from '../shared/time/stepClock';
+import { carryPoint, clearOfHull, type PoseTrack } from '../shared/frames';
+import { MotionProbe, type MotionSubject } from './diag/motionProbe';
 import { WEAPON_ORDER, WEAPONS, type WeaponDef } from './fx/weapons';
-import { objectOf, projectileById, projectileOf } from '../shared/items';
+import { objectOf, projectileById, projectileOf, terrainImpact, weaponById } from '../shared/items';
 import type { Impact } from './fx/projectiles';
 import { NetClient, type Welcome } from './net/netClient';
 import { RemotePlayer } from './net/remotePlayer';
@@ -53,6 +62,9 @@ import { TerrainWorkerPool } from './world/workerPool';
 import { sfx } from './audio/engine';
 import { AudioDirector, type EarState } from './audio/director';
 import { CrewSounds } from './audio/crewSounds';
+import { SpikeLog } from '../engine/spikes';
+import { TERRAIN_SHADOW_RANGE } from './world/terrainGrid';
+import { ShadowCull } from './render/shadowCull';
 
 export interface GameOptions {
   canvas: HTMLCanvasElement;
@@ -69,9 +81,14 @@ const SUN_AZ = SUN.az;
 const SUN_EL = SUN.el;
 const EARTH_AZ = 228;
 const EARTH_EL = 52;
+/** HUD tag keys of the world's people (clear of players' ids and the pointed control's −1). */
+const NPC_TAG = -1_000_000;
+/** Their name shows closer than this (m). */
+const NPC_TAG_M = 14;
 const SUN_ECLIPTIC_LONGITUDE = 150;
 
 /** Top-level client: world, local astronaut, remote crew, network, HUD, frame loop. */
+const _gunDir = new THREE.Vector3();
 export class Game {
   private scene = new THREE.Scene();
   private camera = new THREE.PerspectiveCamera(72, 1, 0.05, 60000);
@@ -83,12 +100,16 @@ export class Game {
   private grounds: Array<{ body: CelestialBody; terrain: SphereTerrain; rocks: RockField }> = [];
   private physics!: Physics;
   private lighting!: Lighting;
+  /** Leaves out of the shadow pass the casters whose shadow lands nowhere in view (render/shadowCull.ts). */
+  private shadowCull: ShadowCull | null = null;
   private sky!: Sky;
   private asset!: AstronautAsset;
   me!: Astronaut;
   private ctl!: PlayerController;
   private rig!: CameraRig;
   private remotes = new Map<number, RemotePlayer>();
+  /** The world's people near us, with a body (docs/MUNDO.md §11): drawn like other astronauts. */
+  private npcs = new Map<number, RemotePlayer>();
   private welcome!: Welcome;
   private pool!: TerrainWorkerPool;
   private clock = new THREE.Timer();
@@ -110,6 +131,14 @@ export class Game {
   /** Automation: sample joints every frame even with the panel closed. */
   jointsRecording = false;
   private loop = new FixedLoop(1 / 60);
+  /**
+   * Time of each fixed step's state (ms, server clock): exactly one step apart, kept on the
+   * server's clock by slewing (shared/time/stepClock.ts). Everything we send is stamped with it and
+   * everything others simulate is drawn at it (docs/MOVIMIENTO.md).
+   */
+  readonly stepClock = new StepClock(1000 / 60);
+  /** Motion probe (F7): jumps of what is drawn, frame by frame (client/diag/motionProbe.ts). */
+  motion!: MotionProbe;
   private debris!: Debris;
   private diag!: DebugOverlay;
   private pendingHits: Impact[] = [];
@@ -121,6 +150,26 @@ export class Game {
   private fireQueued = false;
   /** The trigger went to the tool in hand (not to a control or a crate): an automatic weapon keeps firing while it is held. */
   private triggerHeld = false;
+  /** The weapon mounts of the seat we sit in, if it is a gunner's (client/ship/gunnery.ts). */
+  private gunnery = new Gunnery({
+    aim: (ship, m, y, p) => {
+      if (this.offline) this.shipAuthority.get(ship.id)?.mounts?.aim(m, y, p);
+      else this.net.sendAim(ship.id, m, y, p);
+    },
+    fire: (ship, m, w, o, d) => this.fireMount(ship, m, w, o, d),
+    refused: reason => { sfx.ui('ui.deny'); this.hud.toast(reason); },
+    pick: (eye, dir, out) => this.pickSight(eye, dir, out),
+    focus: (ship, mount, on) => {
+      const screen = ship.view.cameraScreens.items.find(s => s.def.camera?.source.ref === mount);
+      this.rig.focus = on ? screen?.display.surface ?? null : null;
+      if (on) this.rig.fpZoom = 1;
+    },
+  });
+  private consoleCommands = new ConsoleCommands<ShipClient>();
+  private cameraFeeds: ShipCameraFeeds[] = [];
+  private pip!: PipSystem;
+  private sightRay = new THREE.Raycaster();
+  private sightObjects: THREE.Object3D[] = [];
   private nozzles: [THREE.Vector3, THREE.Vector3] = [new THREE.Vector3(), new THREE.Vector3()];
   /** Ships in the world (client mirrors of the server's). `game.ships` from the console. */
   ships: ShipClient[] = [];
@@ -177,7 +226,7 @@ export class Game {
       state: (id, t, s) => this.remotes.get(id)?.push(t, s),
       disconnect: (reason) => this.hud?.toast(reason),
       // our own shot left the tube when we fired it (tryFire): the echo is not another rocket
-      fire: (id, w, o, d, v, fr) => id !== this.welcome.id && this.onFire(id, w, o, d, v, fr),
+      fire: (id, w, o, d, v, fr, m, t) => id !== this.welcome.id && this.onFire(id, w, o, d, v, fr, undefined, m, t),
       explode: (id, p, mod, aboard, k) => this.onExplode(id, p, mod, undefined, aboard, k),
       health: (id, hp, by, dead) => this.onHealth(id, hp, by, dead),
       respawn: (id, spawn) => this.onRespawn(id, spawn),
@@ -187,7 +236,13 @@ export class Game {
       shipSync: (snap) => this.ships.find((s) => s.id === snap.id)?.sync(snap),
       shipPose: (ship, t, pose) => this.onShipPose(ship, t, pose),
       pilot: (ship, id) => this.onPilot(ship, id),
-      crate: (c, rest) => this.crates?.receive(c, rest, this.net.serverNow()),
+      jump: (ship, to, p) => this.onJump(ship, to, p),
+      crate: (c, rest) => this.crates?.receive(c, rest),
+      spawn: (list) => this.onSpawn(list),
+      npcs: (states) => {
+        for (const s of states) this.npcs.get(s.id)?.push(s.t, s.s);
+      },
+      gone: (k, ids) => this.onGone(k, ids),
       say: (_ship, text) => this.hud?.toast(text),
       vitals: (o2) => (this.suitO2 = o2),
     });
@@ -206,6 +261,8 @@ export class Game {
     this.welcome = this.offline
       ? { type: 'welcome', id: 1, variant: 0, players: [], spawn: spawnPoint(0, offline), worldSeed: seed, serverTime: 0, mods: [], health: [], ships: this.offlineShips(offline), pilots: [], crates: this.offlineCrates(offline) }
       : await this.net.connect(this.opts.name, undefined, this.opts.worldSeed);
+    // the step clock starts on the server's clock (after this it only slews toward it)
+    this.stepClock.sync(this.net.serverNow());
 
     onProgress('Preparando la superficie…');
     const renderer = this.pipeline.renderer;
@@ -216,7 +273,7 @@ export class Game {
     this.pool = new TerrainWorkerPool();
     this.physics = await Physics.create(this.pool, this.welcome.worldSeed);
     // the outside's Rapier world is a bubble that follows the player (frames/bubble.ts), laid at the spawn
-    this.bubble = new Bubble(this.surfaces);
+    this.bubble = new Bubble(this.surfaces, this.loop.step);
     this.bubble.follow(spawnW, [0, 0, 0]);
     this.physics.attach(this.bubble);
     this.frames = new Frames(this.physics, () => this.ships, this.bubble);
@@ -224,6 +281,12 @@ export class Game {
     const sunDir = dirFromAzEl(SUN_AZ, SUN_EL);
     const earthDir = dirFromAzEl(EARTH_AZ, EARTH_EL);
     this.lighting = new Lighting(this.scene, this.camera, renderer, sunDir, earthDir, this.opts.quality);
+    // only casters whose shadow can land in the view go into the cascades (?noshcull: all of them)
+    if (!new URLSearchParams(location.search).has('noshcull')) {
+      this.shadowCull = new ShadowCull(this.scene, this.camera, () => this.lighting.csm.lightDirection);
+      // each caster only into the cascades it shadows (?nocascull: into all of them, as three does)
+      if (!new URLSearchParams(location.search).has('nocascull')) this.shadowCull.useCascades(this.lighting.csm);
+    }
     const csm = this.lighting.csm;
 
     const stars = new Float32Array(await (await fetch('/assets/sky/stars.bin')).arrayBuffer());
@@ -234,16 +297,24 @@ export class Game {
     // every body's ground: its terrain and its boulders, anywhere on it (world/sphereTerrain.ts, world/rocks.ts)
     const aniso = Math.min(8, renderer.capabilities.getMaxAnisotropy());
     const rockMat = RockField.material(loader, csm);
-    for (const body of Object.values(BODIES)) {
-      if (!body.surface) continue;
+    // a body's ground is made the first time the camera is in its star system (space/galaxy.ts):
+    // Sol's now, another system's when a jump gets there
+    this.makeGround = (body) => {
+      if (!body.surface || this.grounds.some((g) => g.body === body)) return;
       const terrain = new SphereTerrain(this.pool, body, this.welcome.worldSeed, loader, sunDir, csm, aniso);
-      if (this.opts.quality === 'low') terrain.setBakedFade(75, 125);
+      if (this.opts.quality === 'low') {
+        // its one cascade reaches 90 m: baked ground shadows take over before that, and ground
+        // further out casts into nothing
+        terrain.setBakedFade(50, 80);
+        terrain.setShadowRange(TERRAIN_SHADOW_RANGE.low);
+      }
       const rocks = new RockField(this.pool, body, this.welcome.worldSeed, rockMat);
       terrain.group.userData.cat = 'terreno';
       rocks.group.userData.cat = 'rocas';
       origin.root.add(terrain.group, rocks.group);
       this.grounds.push({ body, terrain, rocks });
-    }
+    };
+    for (const body of Object.values(BODIES)) if (regionAt(body.center).index === 0) this.makeGround(body);
 
     onProgress('Cargando traje EVA…');
     this.asset = await AstronautAsset.load('/assets/astronaut.glb', csm);
@@ -281,7 +352,7 @@ export class Game {
       if (s) s.pilot = id;
     }
     const link = this.offline ? null : { take: (id: number) => this.net.sendCrateTake(id), send: (c: Parameters<NetClient['sendCrate']>[0], rest: boolean) => this.net.sendCrate(c, rest) };
-    this.crates = new Crates(this.physics.rapier, this.frames, () => this.ships, this.groundAlt, link, () => this.welcome.id, csm);
+    this.crates = new Crates(this.physics.rapier, this.frames, () => this.ships, this.groundAlt, link, () => this.welcome.id, csm, () => this.stepClock.t);
     this.crates.load(this.welcome.crates ?? []);
     this.air = new AirFlow(this.frames, () => this.ships, this.particles);
     this.scene.add(this.crates.group);
@@ -293,8 +364,22 @@ export class Game {
       sit: (ship, index) => this.sitDown(ship, index),
     });
     this.diag = new DebugOverlay(this.opts.ui, this.scene);
-    this.audio = new AudioDirector(this.camera, () => this.ships, this.groundAlt);
+    this.motion = new MotionProbe(this.opts.ui);
+    this.motion.info = () => this.motionInfo();
+    this.crates.events.frame = (c, from, to, why) => this.motion.event(`caja ${c.id}`, `${frameName(from)} → ${frameName(to)} (${why})`);
+    this.projectiles.onFrame = (id, kind, from, to) => this.motion.event(`${kind} ${id}`, `${frameName(from)} → ${frameName(to)}`);
+    this.audio = new AudioDirector(this.camera, this.groundAlt);
     this.projectiles.placeAt = (p, out) => this.audio.placeAt(p, out);
+    this.consoleCommands.register('gunnery', (ship, command) => this.gunnery.command(ship, command.target, command.action));
+    this.pip = new PipSystem(this.pipeline.renderer, this.scene, new WorldCapture(this.camera, this.sky, this.grounds, this.ships));
+    const providers = shipCameraSources();
+    for (const ship of this.ships) {
+      this.cameraFeeds.push(new ShipCameraFeeds(ship, this.gunnery, providers));
+      this.sightObjects.push(ship.view.root);
+      for (const screen of ship.view.cameraScreens.items) this.pip.add(screen.display);
+    }
+    for (const ground of this.grounds) this.sightObjects.push(ground.terrain.group);
+    this.pipeline.beforeRender = () => this.pip.renderPending();
     this.me.onStep = (_foot, k) => this.audio.me.step(this.underfoot(), k);
     this.me.onLand = (v) => this.audio.me.land(this.underfoot(), v);
     this.registerSystems();
@@ -304,6 +389,9 @@ export class Game {
     this.jointPanel = document.createElement('pre');
     this.jointPanel.className = 'debug-overlay joints-panel hidden';
     this.opts.ui.appendChild(this.jointPanel);
+    window.addEventListener('keydown', (e) => {
+      if (e.code === 'KeyJ' && this.input.locked) this.askJump();
+    });
     window.addEventListener('keydown', (e) => {
       if (e.code !== 'F6') return;
       e.preventDefault();
@@ -398,12 +486,14 @@ export class Game {
       phase: 'fixed',
       order: 8,
       update: (h) => {
+        // the time this step's state will belong to (what we send is stamped with it, what others
+        // simulate is drawn at it)
+        this.stepClock.step();
         if (this.offline) this.offlineSystems(h);
+        // the frames move first (the bubble, the ships); the bodies in them catch up in 'physics'
         this.bubble.step(h);
         this.flyShips(h);
-        // the physics bubble stays round the player (and everything in it is carried when it moves)
-        this.followBubble();
-        this.crates.beforeStep(h, this.net.serverNow());
+        this.crates.beforeStep(h);
       },
     });
     S.add({
@@ -457,12 +547,33 @@ export class Game {
       },
     });
     S.add({
+      name: 'frames',
+      phase: 'fixed',
+      order: 35,
+      // The physics bubble stays round the player, re-laid only here: at the end of the step's
+      // motion, when the frames and every body in them are at the same time. Everything in it is
+      // carried with both of its steps, so nothing drawn jumps (docs/MOVIMIENTO.md).
+      update: () => this.followBubble(),
+    });
+    S.add({
       name: 'ships',
       phase: 'fixed',
       order: 30,
       update: (h) => {
         for (const ship of this.ships) ship.fixed(h);
       },
+    });
+    S.add({
+      name: 'gunnery',
+      phase: 'fixed',
+      order: 39,
+      update: (h) => this.gunnery.fixed(h),
+    });
+    S.add({
+      name: 'station-controls',
+      phase: 'fixed',
+      order: 39,
+      update: () => { if (!this.dead && this.input.locked) this.gunnery.keys(this.input, performance.now() / 1000); },
     });
     S.add({
       name: 'projectiles',
@@ -477,6 +588,12 @@ export class Game {
       },
     });
     // --- per rendered frame (after the camera is placed) ---
+    S.add({
+      name: 'gunnery-aim',
+      phase: 'frame',
+      order: 38,
+      update: () => this.gunnery.frame(performance.now() / 1000, this.camera.position, this.camera.getWorldDirection(_gunDir)),
+    });
     S.add({
       name: 'interaction',
       phase: 'frame',
@@ -496,6 +613,24 @@ export class Game {
         });
         this.hud.setPrompt(prompt ?? this.objectPrompt());
         this.welding = this.interaction.repairing;
+      },
+    });
+    S.add({
+      name: 'flight-displays',
+      phase: 'frame',
+      order: 85,
+      update: () => {
+        this.camera.getWorldPosition(_eye);
+        for (const ship of this.ships) ship.frameScreens(_eye);
+      },
+    });
+    S.add({
+      name: 'sky',
+      phase: 'frame',
+      order: 90,
+      update: () => {
+        this.sky.update(this.camera, (performance.now() - this.startTime) / 1000 + 36000);
+        this.watchRegion();
       },
     });
     S.add({
@@ -564,6 +699,15 @@ export class Game {
       phase: 'frame',
       order: 95,
       update: (dt) => this.audioFrame(dt),
+    });
+    S.add({
+      name: 'camera-feeds',
+      phase: 'frame',
+      order: 96,
+      update: () => {
+        for (const feed of this.cameraFeeds) feed.frame();
+        this.pip.request(performance.now() / 1000, this.camera);
+      },
     });
   }
 
@@ -640,7 +784,7 @@ export class Game {
       const h = ship.pick(from, dir, 3.5);
       if (!h || h.kind !== 'panel') continue;
       for (let k = 0; k < 4; k++) {
-        this.particles.emit('glow', { pos: h.point, vel: new THREE.Vector3().randomDirection().multiplyScalar(0.6 + Math.random() * 2).addScaledVector(h.normal, 1), carry: ship.render.v, color: [2.4, 3, 4.5], life: 0.1 + Math.random() * 0.3, size: 0.015, gravity: 1.62 });
+        this.particles.emit('glow', { pos: h.point, vel: new THREE.Vector3().randomDirection().multiplyScalar(0.6 + Math.random() * 2).addScaledVector(h.normal, 1), carry: ship.render.v, color: [2.4, 3, 4.5], life: 0.1 + Math.random() * 0.3, size: 0.015, gravity: 1 });
       }
       return;
     }
@@ -662,6 +806,7 @@ export class Game {
     this.ctl.teleport(at);
     this.prevPos.copy(at);
     this.ctl.yaw = pose.yaw;
+    if (this.gunnery.take(ship, index)) this.hud.toast('ARTILLERO · consola delante · G apuntar · T disparar');
     if (this.atHelm()) {
       this.hud.toast(PILOT_KEYS);
       if (this.offline) this.onPilot(ship.id, this.welcome.id);
@@ -675,6 +820,7 @@ export class Game {
     const ship = this.seat.ship;
     const pose = ship.seatPose(this.seat.index);
     ship.sounds.playAt('seat.buckle', pose.pos, 0.8, 1.1);
+    this.gunnery.leave();
     this.seat = null;
     this.ctl.seat = null;
     this.ctl.teleport(new THREE.Vector3(pose.exit[0], pose.exit[1] + 0.03, pose.exit[2]));
@@ -692,6 +838,57 @@ export class Game {
     if (this.offline) return true;
     for (const id of this.remotes.keys()) if (id < this.welcome.id) return false;
     return true;
+  }
+
+  /** The star system the camera is in (space/galaxy.ts): the sky follows it, its ground is made, arriving is announced. */
+  private region = 0;
+  /** Makes a body's ground (its terrain and boulders) if it has none yet. */
+  private makeGround: ((b: CelestialBody) => void) | null = null;
+  private watchRegion() {
+    const c = origin.toWorld(_v3.copy(this.camera.position));
+    const r = regionAt([c.x, c.y, c.z]);
+    if (r.index === this.region) return;
+    this.region = r.index;
+    this.sky.setHome(r.index === 0);
+    for (const b of Object.values(BODIES)) if (regionAt(b.center).index === r.index) this.makeGround?.(b);
+    this.hud?.toast(`Sistema ${r.system.name} · estrella ${r.system.star.cls}`);
+  }
+
+  /** J at the helm: jump to the next system (the server decides; offline, here). */
+  private askJump() {
+    const s = this.seat;
+    if (!s || !this.atHelm()) return;
+    const ship = s.ship;
+    const pose = (this.shipAuthority.get(ship.id) ?? ship.sim).pose;
+    const to = nextRegion(pose.p);
+    const why = jumpRefusal(pose.p, ship.sim.landed, to.index);
+    if (why) return this.hud.toast(`Salto: ${why}`);
+    if (this.offline) this.onJump(ship.id, to.index, arrivalPoint(to));
+    else this.net.sendJump(ship.id, to.index);
+  }
+
+  /**
+   * A ship jumped (shared/space/jump.ts): it is at `p`, at rest, and everything aboard with it (their
+   * places are the ship's space). We fly it: our flight goes on from there. The rest: its stream
+   * starts again there. Nothing is drawn between the two systems.
+   */
+  private onJump(id: number, to: number, p: Vec3) {
+    const ship = this.ships.find((s) => s.id === id);
+    if (!ship) return;
+    for (const pose of [this.shipAuthority.get(id)?.pose, ship.sim.pose]) {
+      if (!pose) continue;
+      for (let i = 0; i < 3; i++) {
+        pose.p[i] = p[i];
+        pose.v[i] = 0;
+        pose.w[i] = 0;
+      }
+    }
+    this.shipAuthority.get(id)?.flight.wake();
+    ship.sim.flight.wake();
+    ship.playback.clear();
+    ship.beginStep();
+    ship.rebase();
+    if (this.seat?.ship === ship || this.ctl.frame === id) this.hud.toast(`Salto a ${physicalRegions()[to]?.system.name ?? '?'}`);
   }
 
   /** Sitting in the seat that flies the ship. */
@@ -728,6 +925,7 @@ export class Game {
 
   /** The helmet's tool bar: what is in hand and whether it is ready (its catalog's words). */
   private toolReadout(): HudData['tool'] {
+    if (this.gunnery.active) return this.gunnery.readout();
     const w = this.inHand();
     if (!w) return null;
     if (w.action.kind !== 'fire') return { label: this.welding ? (w.hud.busy ?? w.hud.ready) : w.hud.ready, value: 1, state: 'fuel' };
@@ -803,6 +1001,9 @@ export class Game {
       (this.shipAuthority.get(id) ?? ship.sim).flight.resume();
       ship.playback.clear();
     }
+    // we flew it until now: our last pose is where the stream starts (no freeze until the first
+    // pose arrives, no jump back to where the network had it)
+    if (was === me && pilot !== me && !this.shipAuthority.has(id)) ship.playback.seed(this.stepClock.t, ship.sim.pose, ship.sim.landed, ship.sim.onPad);
     if (pilot !== me && this.seat?.ship === ship && this.atHelm() && pilot !== 0) this.hud.toast('Otro tripulante lleva los mandos');
   }
 
@@ -870,13 +1071,19 @@ export class Game {
     return { p, v: [fv[0] + dv[0], fv[1] + dv[1], fv[2] + dv[2]] };
   }
 
-  /** Keep the physics bubble round the player; carry everything in it when it is re-laid. */
+  /**
+   * Keep the physics bubble round the player; carry everything in it when it is re-laid — its
+   * state now and what is drawn of the step before (at the end of a step: every body in the bubble
+   * at the same time as the bubble; see the 'frames' system).
+   */
   private followBubble(force?: { p: V3; v: V3 }) {
     const m = force ?? this.playerMotion();
+    const mode = this.bubble.mode;
     if (!this.bubble.follow(m.p, m.v)) return;
     const frames = this.frames;
     const b = this.bubble;
     const ctl = this.ctl;
+    this.motion?.event('burbuja', `${mode}→${b.mode} v ${Math.round(Math.hypot(b.pose.v[0], b.pose.v[1], b.pose.v[2]))} m/s`);
     if (ctl.frame === WORLD_FRAME) {
       const n = frames.rebase([ctl.position.x, ctl.position.y, ctl.position.z], [ctl.velocity.x, ctl.velocity.y, ctl.velocity.z]);
       const yaw = carryYaw(b.from.q, b.pose.q, ctl.yaw);
@@ -885,7 +1092,15 @@ export class Game {
       ctl.moveTo(WORLD_FRAME, this.physics.world, new THREE.Vector3(...n.p), new THREE.Vector3(...n.v), yaw);
       ctl.seat = was;
       ctl.gravity.copy(b.gravity);
-      this.prevPos.copy(ctl.position);
+      // the step before, with the bubble's poses of the step before: drawn unbroken
+      _pp[0] = this.prevPos.x;
+      _pp[1] = this.prevPos.y;
+      _pp[2] = this.prevPos.z;
+      if (force) this.prevPos.copy(ctl.position);
+      else {
+        frames.rebasePrev(_pp);
+        this.prevPos.set(_pp[0], _pp[1], _pp[2]);
+      }
     }
     this.crates.rebase();
     const carry = (p: V3, v: V3, q: [number, number, number, number]) => frames.rebase(p, v, q);
@@ -896,8 +1111,9 @@ export class Game {
       const t = new THREE.Vector3(w[0], w[1], w[2]).applyQuaternion(new THREE.Quaternion(wq[0], wq[1], wq[2], wq[3])).applyQuaternion(new THREE.Quaternion(nq[0], nq[1], nq[2], nq[3]).invert());
       return [t.x, t.y, t.z];
     };
-    this.debris.rebase(carry, turnW);
-    this.scrap.rebase(carry, turnW);
+    const track = (t: PoseTrack) => frames.rebaseTrack(t);
+    this.debris.rebase(carry, turnW, track);
+    this.scrap.rebase(carry, turnW, track);
     this.physics.rebase(b.from, b.pose);
     for (const ship of this.ships) ship.rebase();
   }
@@ -954,6 +1170,7 @@ export class Game {
     const me = this.welcome.id;
     const cmd = this.pilotCommand();
     const env = this.flightEnv;
+    const focus = this.myWorld(this.focusAt);
     for (const ship of this.ships) {
       ship.beginStep();
       // the ground of the body it flies round
@@ -975,19 +1192,21 @@ export class Game {
         env.extra = this.aboard(ship.id);
         ship.sim.flight.step(h, mine ? cmd : FLIGHT_IDLE, env);
       } else {
-        const r = ship.playback.step(h, this.net.serverNow(), ship.sim.pose);
+        // drawn in the present like everything we simulate (net/posePlayback.ts)
+        const r = ship.playback.step(this.stepClock.t, ship.sim.pose);
         if (r) {
           ship.sim.landed = r.landed;
           ship.sim.onPad = r.pad;
         }
       }
-      ship.posed(h);
+      ship.posed(h, focus);
     }
     // report the ships we fly (~30 Hz)
     this.flightAcc += h;
     if (this.offline || this.flightAcc < 1 / 30) return;
     this.flightAcc = 0;
-    const t = this.net.serverNow();
+    // the time of the step this pose belongs to, not of the frame that happened to run it
+    const t = this.stepClock.t;
     for (const ship of this.ships) {
       if (ship.pilot !== me) continue;
       const s = ship.sim;
@@ -1046,7 +1265,8 @@ export class Game {
       let above: number | null = null;
       for (const ship of this.ships) {
         const l = ship.sim.toLocal(p);
-        if (Math.hypot(l[0], l[2]) > 40) continue;
+        // well clear of its outside (its own bounds, whatever the ship's size): nothing to ask
+        if (clearOfHull(ship.sim.def, l)) continue;
         const inside = ship.inside([l[0], l[1] + 1, l[2]]);
         // on the hull outside: only once clear of the ground (no flip-flop where the stairs meet it)
         above ??= this.groundAlt(p);
@@ -1082,6 +1302,7 @@ export class Game {
     const p = ctl.position;
     const v = ctl.velocity;
     const next = this.frames.transfer(from, to, [p.x, p.y, p.z], [v.x, v.y, v.z]);
+    const at: V3 = [next.p[0], next.p[1], next.p[2]];
     const yaw = carryYaw(this.frames.quat(from), this.frames.quat(to), ctl.yaw);
     // the view keeps its old tilt and eases into the new frame's (no sudden lurch)
     this.easeTilt(this.frames.quat(from, true), ctl.yaw, this.frames.quat(to, true), yaw);
@@ -1091,11 +1312,20 @@ export class Game {
       const alt = this.groundAlt(this.frames.toWorld(WORLD_FRAME, next.p));
       if (alt < 0.03) next.p[1] += 0.03 - alt;
     }
+    // the step before goes with the frames' poses of the step before: the view does not jump
+    const a = this.frames.pair(from);
+    const b = this.frames.pair(to);
+    _pp[0] = this.prevPos.x;
+    _pp[1] = this.prevPos.y;
+    _pp[2] = this.prevPos.z;
+    carryPoint(a?.prev ?? null, b?.prev ?? null, _pp);
     ctl.moveTo(to, this.frames.world(to), new THREE.Vector3(...next.p), new THREE.Vector3(...next.v), yaw);
     ctl.gravity.copy(this.frames.gravity(to));
     if (to === WORLD_FRAME) ctl.unstick();
-    this.prevPos.copy(ctl.position);
+    // whatever lifted it clear of the ground or a hull lifts the step before alike
+    this.prevPos.set(_pp[0] + ctl.position.x - at[0], _pp[1] + ctl.position.y - at[1], _pp[2] + ctl.position.z - at[2]);
     this.offShip = 0;
+    this.motion?.event('tú', `${frameName(from)} → ${frameName(to)}`);
     const held = this.crates.hold;
     if (held && held.crate.fr !== to) {
       this.crates.moveTo(held.crate, to);
@@ -1104,6 +1334,8 @@ export class Game {
   }
 
   /** Feet of the astronaut in the world (this fixed step). */
+  private readonly focusAt = new THREE.Vector3();
+
   private myWorld(out = new THREE.Vector3()) {
     const w = this.frames.toWorld(this.ctl.frame, [this.ctl.position.x, this.ctl.position.y, this.ctl.position.z]);
     return out.set(w[0], w[1], w[2]);
@@ -1145,8 +1377,13 @@ export class Game {
   private operate(ship: ShipClient, ctl: number, dir = 0) {
     // the click is ours right away (a refusal buzzes when the authority answers)
     ship.sounds.control(ctl);
-    if (this.offline) return this.localInteract(ship.id, ctl, dir);
     const c = ship.sim.def.controls[ctl];
+    if (c?.command) {
+      const reason = ship.sim.blocked(c, dir) ?? this.consoleCommands.execute(ship, c.command);
+      if (reason) { ship.sounds.control(ctl, true); this.hud.toast(reason); }
+      return;
+    }
+    if (this.offline) return this.localInteract(ship.id, ctl, dir);
     if (c?.kind === 'bezel' && !ship.sim.blocked(c, dir)) ship.apply({ [c.key]: ship.sim.next(c, dir) });
     this.net.sendInteract(ship.id, ctl, dir);
   }
@@ -1199,13 +1436,7 @@ export class Game {
   /** Automation (offline): a rocket blast at a world point, as if the server confirmed it. */
   blast(p: THREE.Vector3) {
     const v: Vec3 = [round(p.x, 2), round(p.y, 2), round(p.z, 2)];
-    this.onExplode(this.welcome.id, v, this.craterAt(v));
-  }
-
-  /** The crater a blast here digs (offline: we are our own server): anywhere on the ground, on any body. */
-  private craterAt(p: Vec3): TerrainMod | undefined {
-    const b = bodyAt(p);
-    return this.surfaces(b) && this.groundAlt(p) < 1.2 ? blastCrater(b.def.id, b.center, p, 2.4) : undefined;
+    this.onExplode(this.welcome.id, v, terrainImpact(projectileById('rocket')!.impact.terrain, v, this.surfaces));
   }
 
   /** Automation: put the astronaut at a world point (on the ground; it boards by itself if it is aboard). */
@@ -1311,6 +1542,25 @@ export class Game {
   dispose() {
     this.running = false;
     this.net.close();
+    for (const feed of this.cameraFeeds) feed.dispose();
+    this.pip?.dispose();
+    this.pipeline.beforeRender = null;
+  }
+
+  /** Lock acquisition is an event: raycast only the physical scene, excluding screen surfaces. */
+  private pickSight(eye: THREE.Vector3, dir: THREE.Vector3, out: THREE.Vector3): boolean {
+    this.sightRay.set(origin.toRender(_sight.copy(eye)), dir);
+    this.sightRay.near = 0.15;
+    this.sightRay.far = 3000;
+    const hits = this.sightRay.intersectObjects(this.sightObjects, true);
+    for (const hit of hits) {
+      let screen = false;
+      for (let object: THREE.Object3D | null = hit.object; object; object = object.parent) if (object.userData.cameraDisplay) { screen = true; break; }
+      if (screen) continue;
+      origin.toWorld(out.copy(hit.point));
+      return true;
+    }
+    return false;
   }
 
   /** Automation hook (tests / screenshots). */
@@ -1377,11 +1627,27 @@ export class Game {
    * A shot of weapon `w` (anyone's: its projectile flies on every client). `fr`: fired aboard that
    * ship (`o`, `d`, `v` in its space); `prev`: our own shot, the muzzle the step before (world).
    */
-  private onFire(id: number, w: string, o: Vec3, d: Vec3, v?: Vec3, fr?: number, prev?: V3) {
+  /**
+   * A shot leaves (ours now, or someone else's). `t`: the time of the shooter's step it left at —
+   * someone else's is heard a network trip later and is flown forward to our present, where the
+   * shooter and the ship it left are drawn (net/replica.ts).
+   */
+  private onFire(id: number, w: string, o: Vec3, d: Vec3, v?: Vec3, fr?: number, prev?: V3, m?: number, t?: number) {
+    const ahead = t !== undefined && Number.isFinite(this.stepClock.t) ? Math.max(0, (this.stepClock.t - t) / 1000) : 0;
+    if (m !== undefined) {
+      // a weapon mount of a ship: it leaves its muzzle there, heard from the mount through the ship
+      const mounted = weaponById(w);
+      const kind = projectileOf(mounted);
+      const ship = fr !== undefined ? this.frames.ship(fr) : undefined;
+      if (!mounted?.mounted || !kind || !ship) return;
+      this.projectiles?.spawn(id, kind.id, ship.id, o, d, v, undefined, ahead);
+      if (mounted.sounds?.fire) ship.sounds.playAt(mounted.sounds.fire, o);
+      return;
+    }
     const weapon = WEAPONS[w];
     const kind = projectileOf(weapon);
     if (!weapon || !kind) return;
-    this.projectiles?.spawn(id, kind.id, fr ?? WORLD_FRAME, o, d, v, prev);
+    this.projectiles?.spawn(id, kind.id, fr ?? WORLD_FRAME, o, d, v, prev, ahead);
     this.remotes.get(id)?.astronaut.applyRecoil(weapon.recoil);
     // the shot on the shooter's shoulder: ours through the suit, theirs through what carries it
     const crew = id === this.welcome.id ? this.audio?.me : this.remotes.get(id)?.sounds;
@@ -1414,9 +1680,10 @@ export class Game {
     let carry: THREE.Vector3 | undefined;
     if (host && aboard) carry = new THREE.Vector3(...pointVelocity(host.sim.pose, aboard.l));
     else {
+      // against the outside of a ship (anywhere within its own bounds): the cloud moves with it
       for (const s of this.ships) {
-        const sp = s.sim.pose.p;
-        if (Math.hypot(sp[0] - p[0], sp[1] - p[1], sp[2] - p[2]) < 40) carry = new THREE.Vector3(...s.sim.pose.v);
+        const l = s.sim.toLocal(p);
+        if (!clearOfHull(s.sim.def, l)) carry = new THREE.Vector3(...pointVelocity(s.sim.pose, l));
       }
     }
     this.projectiles.impact(id, def?.id, at, carry);
@@ -1504,6 +1771,26 @@ export class Game {
     }
   }
 
+  /** A shot of a ship's weapon mount (the gunner's: client/ship/gunnery.ts), ship space. Offline we are its authority. */
+  private fireMount(ship: ShipClient, m: number, w: string, o: V3, d: V3): boolean {
+    if (this.dead) return false;
+    const mounts = ship.sim.mounts;
+    if (!mounts) return false;
+    if (this.offline) {
+      const authority = this.shipAuthority.get(ship.id);
+      if (!authority?.mounts || authority.mounts.tryFire(authority.st, m, performance.now() / 1000) < 0) return false;
+      // Predict from the same authority that ticks and reloads; the next tick must not undo a shot.
+      ship.sim.st.set(authority.st);
+      ship.sim.version++;
+    }
+    const r3 = (a: readonly number[], k: number): Vec3 => [round(a[0], k), round(a[1], k), round(a[2], k)];
+    const lo = r3(o, 3);
+    const ld = r3(d, 4);
+    if (!this.offline) this.net.sendFire(w, lo, ld, undefined, ship.id, m, this.stepClock.t);
+    this.onFire(this.welcome.id, w, lo, ld, undefined, ship.id, undefined, m);
+    return true;
+  }
+
   /** The trigger of the weapon in hand, if it fires something (its rate from the catalog). */
   private tryFire() {
     const now = performance.now() / 1000;
@@ -1542,7 +1829,7 @@ export class Game {
       v = Math.hypot(mv[0], mv[1], mv[2]) > 0.05 ? r3(mv, 3) : undefined;
     }
     // ours leaves now, from the muzzle as drawn (online, the server's echo is skipped)
-    if (!this.offline) this.net.sendFire(weapon.id, o, d, v, shipFr);
+    if (!this.offline) this.net.sendFire(weapon.id, o, d, v, shipFr, undefined, this.stepClock.t);
     this.onFire(this.welcome.id, weapon.id, o, d, v, shipFr, prev);
     // recoil kick
     // momentum conservation on a ~180 kg suited astronaut, plus the body/arm springs
@@ -1562,6 +1849,44 @@ export class Game {
     }
   }
 
+  /** Things that came into our interest (docs/RED.md), by kind. */
+  private onSpawn(list: EntityWire[]) {
+    for (const e of list) {
+      if (e.k === 'obj') this.crates?.spawn(e);
+      else if (e.k === 'npc') this.addNpc(e);
+    }
+  }
+
+  /** Things we can forget, by kind. */
+  private onGone(k: EntityKind, ids: number[]) {
+    if (k === 'obj') for (const id of ids) this.crates?.forget(id);
+    else if (k === 'npc') for (const id of ids) this.removeNpc(id);
+  }
+
+  /** Someone of the world came near (docs/MUNDO.md §11): drawn like any other astronaut. */
+  private addNpc(e: Extract<EntityWire, { k: 'npc' }>) {
+    if (!this.asset) return;
+    let n = this.npcs.get(e.id);
+    if (!n) {
+      n = new RemotePlayer({ id: e.id, name: e.name, variant: e.variant }, this.asset);
+      this.npcs.set(e.id, n);
+      const s = (n.sounds = new CrewSounds(false));
+      const body = n;
+      n.astronaut.onStep = (_foot, k) => s.step(body.frame !== WORLD_FRAME ? 'deck' : (bodyAt(body.position.toArray()).def.ground ?? 'regolith'), k);
+      origin.root.add(n.astronaut.root);
+      n.astronaut.root.userData.cat = 'personas';
+    }
+    n.push(e.t, e.s);
+  }
+
+  private removeNpc(id: number) {
+    const n = this.npcs.get(id);
+    if (!n) return;
+    this.hud?.removeTag(NPC_TAG - id);
+    n.dispose();
+    this.npcs.delete(id);
+  }
+
   private removeRemote(id: number) {
     const r = this.remotes.get(id);
     if (!r) return;
@@ -1575,14 +1900,74 @@ export class Game {
     this.pipeline.resize(window.innerWidth, window.innerHeight);
   }
 
+  /** What the motion probe watches this frame (client/diag/motionProbe.ts): everything drawn that moves, as drawn. */
+  private *motionSubjects(): Generator<MotionSubject> {
+    const cam = this.camera.position;
+    const near = (p: { x: number; y: number; z: number }) => (p.x - cam.x) ** 2 + (p.y - cam.y) ** 2 + (p.z - cam.z) ** 2 < 600 * 600;
+    const at = (key: string, p: readonly number[]): MotionSubject => ({ key, x: p[0], y: p[1], z: p[2] });
+    for (const ship of this.ships) {
+      const p = ship.render.p;
+      if (near({ x: p[0], y: p[1], z: p[2] })) yield at(`nave ${ship.id}`, p);
+    }
+    for (const c of this.crates.list) {
+      const p = this.crates.worldPose(c).p;
+      if (near({ x: p[0], y: p[1], z: p[2] })) yield at(`caja ${c.id}`, p);
+    }
+    const shots: MotionSubject[] = [];
+    this.projectiles.forEachDrawn((id, p) => {
+      if (near(p)) shots.push({ key: `proyectil ${id}`, x: p.x, y: p.y, z: p.z });
+    });
+    yield* shots;
+    for (const r of this.remotes.values()) if (near(r.position)) yield { key: `astronauta ${r.info.id}`, x: r.position.x, y: r.position.y, z: r.position.z };
+    if (this.rig.mode === 'third') yield { key: 'tú', x: this.me.root.position.x, y: this.me.root.position.y, z: this.me.root.position.z };
+  }
+
+  /** The motion probe's counters: clock, bubble, frames and how the network corrects the others. */
+  private motionInfo(): Record<string, string | number> {
+    const b = this.bubble;
+    const out: Record<string, string | number> = {
+      'pasos / fotograma': `${this.loop.lastSteps} · α ${this.loop.alpha.toFixed(2)}`,
+      'reloj de pasos': `error ${this.stepClock.error.toFixed(1)} ms · saltos ${this.stepClock.jumps}`,
+      burbuja: `${b.mode} · ${Math.round(Math.hypot(b.pose.v[0], b.pose.v[1], b.pose.v[2]))} m/s · v${b.version}`,
+      'tu marco': frameName(this.ctl.frame),
+    };
+    for (const ship of this.ships) {
+      const c = ship.playback.corrections;
+      const speed = Math.round(Math.hypot(ship.sim.pose.v[0], ship.sim.pose.v[1], ship.sim.pose.v[2]));
+      out[`nave ${ship.id}`] = `${speed} m/s · ${ship.pilot === this.welcome.id || this.shipAuthority.has(ship.id) ? 'simulada aquí' : `red: corr. ${c.max.toFixed(2)} m, saltos ${c.snaps}`}`;
+    }
+    for (const r of this.remotes.values()) {
+      const c = r.corrections;
+      out[`astronauta ${r.info.id}`] = `${frameName(r.frame)} · corr. ${c.max.toFixed(2)} m, saltos ${c.snaps}`;
+    }
+    return out;
+  }
+
   private frame = () => {
     if (!this.running) return;
     requestAnimationFrame(this.frame);
+    const t0 = performance.now();
     this.clock.update();
-    const dt = Math.min(this.clock.getDelta(), 1 / 20);
+    const interval = this.clock.getDelta();
+    const dt = Math.min(interval, 1 / 20);
     this.fps += (1 / Math.max(dt, 1e-4) - this.fps) * 0.05;
     this.tick(dt);
+    const cpu = performance.now() - t0;
+    // how the frame went (the display's interval, the CPU's share): the render governor keeps the rate up
+    this.pipeline.frameStats(interval * 1000, cpu);
+    // and the worst of the last seconds, with what took its time (F3)
+    this.spikes.feed(interval * 1000, cpu, this.partsOfFrame);
   };
+
+  /** Hitches (F3): the worst recent frame and its longest systems. */
+  private readonly spikes = new SpikeLog();
+  /** CPU time of the last frame's render call (ms). */
+  private renderMs = 0;
+  private readonly partsOfFrame = () => this.frameParts();
+  private *frameParts(): Generator<[string, number]> {
+    yield* this.systems.lastFrame;
+    yield ['render', this.renderMs];
+  }
 
   /** One simulation + render step (exposed for deterministic automation). */
   tick(dt: number, render = true) {
@@ -1622,12 +2007,17 @@ export class Game {
           sfx.ui('ui.deny');
           this.hud.toast(`${def.name}: no cabe ahí`);
         } else this.audio.me.play(def.sounds?.drop ?? 'crate.drop', null, 0.7);
+      } else if (this.gunnery.active && this.gunnery.aiming) {
+        this.triggerHeld = true;
+        this.gunnery.trigger(performance.now() / 1000, true);
       } else if (!this.interaction.use()) {
         this.triggerHeld = true;
-        this.tryFire();
+        if (this.gunnery.active) this.gunnery.trigger(performance.now() / 1000, true);
+        else this.tryFire();
       }
     }
     if (!input.down('Mouse0')) this.triggerHeld = false;
+    else if (this.triggerHeld && !this.fireQueued && this.gunnery.active) this.gunnery.trigger(performance.now() / 1000);
     else if (this.triggerHeld && !this.fireQueued) {
       const w = this.inHand();
       if (w?.action.kind === 'fire' && w.action.auto) this.tryFire();
@@ -1657,7 +2047,7 @@ export class Game {
     this.rig.zoomHeld = input.down('Mouse2');
     this.input.sensitivity = 0.0022 / this.rig.magnification;
     this.me.setLamps(this.lamps);
-    this.ctl.look(input, this.rig.mode === 'third' && !this.debugOrbit ? this.rig : undefined);
+    if (!this.gunnery.look(input)) this.ctl.look(input, this.rig.mode === 'third' && !this.debugOrbit ? this.rig : undefined);
     if (this.ctl.seat) {
       // seated: turn the head, not the seat
       let d = this.ctl.yaw - this.ctl.seat.yaw;
@@ -1679,11 +2069,13 @@ export class Game {
       if (this.ctl.frame === WORLD_FRAME && !this.physics.readyAt(this.ctl.position.x, this.ctl.position.z)) return;
       this.systems.run('fixed', h);
     });
+    // the last step's state belongs to now minus what is still to be simulated (on the server's clock)
+    if (this.stepClock.sync(this.net.serverNow() - this.loop.alpha * this.loop.step * 1000)) this.motion?.event('reloj', `salto ${Math.round(this.stepClock.error)} ms`);
     this.bubble.frame(this.loop.alpha);
     // debris and crates write their instances in render space from the bubble as drawn
     const bp = this.frames.pose(WORLD_FRAME, true);
-    this.debris.sync(bp, origin);
-    this.scrap.sync(bp, origin);
+    this.debris.sync(bp, origin, this.loop.alpha);
+    this.scrap.sync(bp, origin, this.loop.alpha);
     // safety net: never fall through the ground
     if (this.ctl.frame === WORLD_FRAME && this.bubble.mode !== 'space') {
       const alt = this.groundAlt(this.myWorld().toArray());
@@ -1704,7 +2096,7 @@ export class Game {
         let taken = this.seat?.ship === ship && this.seat.index === i;
         if (!taken) {
           for (const r of this.remotes.values()) {
-            if (r.seated && r.frame === ship.id && r.local.distanceTo(at) < 0.35) {
+            if (!r.dead && r.seated && r.frame === ship.id && r.local.distanceTo(at) < 0.35) {
               taken = true;
               break;
             }
@@ -1716,8 +2108,10 @@ export class Game {
     }
     this.crates.sync(this.loop.alpha);
 
-    // render between the last two sim states: no 60 Hz judder/smear on high refresh screens
-    if (this.prevPos.distanceToSquared(this.ctl.position) > 25) this.prevPos.copy(this.ctl.position);
+    // render between the last two sim states: no 60 Hz judder/smear on high refresh screens. The
+    // step before is carried across every change of frame and re-laying (setFrame, followBubble)
+    // and snapped only by a real jump (a seat, a teleport): no guessing from how far it moved,
+    // which at orbital speed would switch the interpolation off for good.
     this.ctl.renderPosition.lerpVectors(this.prevPos, this.ctl.position, this.loop.alpha);
     const rp = this.ctl.renderPosition;
     const fr = this.ctl.frame;
@@ -1749,9 +2143,10 @@ export class Game {
     this.sendAccum += dt;
     if (this.sendAccum >= 1 / CLIENT_SEND_RATE) {
       this.sendAccum = 0;
-      // frame 0 goes out in the world (every client has its own bubble); ships' frames as they are
+      // frame 0 goes out in the world (every client has its own bubble) — position and velocity,
+      // the bubble's own motion included; ships' frames as they are
       const p = this.ctl.frame === WORLD_FRAME ? this.myWorld() : this.ctl.position;
-      const v = this.ctl.velocity;
+      const v = this.ctl.frame === WORLD_FRAME ? _sv.fromArray(this.playerMotion().v) : this.ctl.velocity;
       this.net.sendState({
         p: [round(p.x, 3), round(p.y, 3), round(p.z, 3)],
         v: [round(v.x, 2), round(v.y, 2), round(v.z, 2)],
@@ -1769,11 +2164,13 @@ export class Game {
           (this.welding ? StateFlags.Welding : 0) |
           (this.ctl.seat ? StateFlags.Seated : 0),
         w: this.me.equipped || undefined,
-      });
+      }, this.stepClock.t);
     }
-    const serverNow = this.net.serverNow();
+    // the others at the time drawn this frame (between the last two steps, like everything else)
+    const drawnT = this.stepClock.renderTime(this.loop.alpha);
     const eyeNow = origin.worldOf(this.camera, _eye);
-    for (const r of this.remotes.values()) r.update(dt, serverNow, this.frames, eyeNow);
+    for (const r of this.remotes.values()) r.update(dt, drawnT, this.frames, eyeNow);
+    for (const n of this.npcs.values()) n.update(dt, drawnT, this.frames, eyeNow);
 
     // --- combat & effects ------------------------------------------------------------------------
     for (const { k, c } of this.pendingHits) {
@@ -1781,7 +2178,7 @@ export class Game {
       // in or against a ship: in its space (the ship is elsewhere on the server and on every client)
       const l: Vec3 | null = c.l ? [round(c.l[0], 3), round(c.l[1], 3), round(c.l[2], 3)] : null;
       // offline: act as our own server (crater, no damage bookkeeping)
-      if (this.offline) this.onExplode(this.welcome.id, p, projectileById(k)?.impact.crater ? this.craterAt(p) : undefined, undefined, l ? { fr: c.fr, l } : undefined, k);
+      if (this.offline) this.onExplode(this.welcome.id, p, terrainImpact(projectileById(k)?.impact.terrain, p, this.surfaces), undefined, l ? { fr: c.fr, l } : undefined, k);
       else if (l) this.net.sendHit(k, l, c.fr);
       else this.net.sendHit(k, p);
     }
@@ -1840,7 +2237,6 @@ export class Game {
     const cb = bodyAt([cp.x, cp.y, cp.z]);
     this.nearGround = this.groundAlt([cp.x, cp.y, cp.z]) < 2500;
     if (this.nearGround) for (const g of this.grounds) if (g.body === cb) g.rocks.update(this.me.root.position);
-    this.sky.update(this.camera, (performance.now() - this.startTime) / 1000 + 36000);
     this.lighting.update();
 
     // --- HUD ---------------------------------------------------------------------------------------
@@ -1867,6 +2263,11 @@ export class Game {
       const head = this.upFrom(r.position, 2.05);
       this.hud.updateTag(r.info.id, r.info.name, head, this.camera, color);
     }
+    // the world's people: their name when close enough to read it
+    for (const n of this.npcs.values()) {
+      if (n.position.distanceTo(me) < NPC_TAG_M) this.hud.updateTag(NPC_TAG - n.info.id, n.info.name, this.upFrom(n.position, 2.05), this.camera, '#d8dde3');
+      else this.hud.removeTag(NPC_TAG - n.info.id);
+    }
     // where the astronaut faces, on the local horizon
     const fwd = this.me.root.getWorldDirection(_fwd).negate();
     this.hud.update({
@@ -1887,11 +2288,13 @@ export class Game {
       fuel: this.ctl.fuel,
       o2: this.suitO2,
       tool: this.toolReadout(),
+      station: this.gunnery.displayStatus(performance.now() / 1000),
       zoom: this.rig.magnification,
       dead: this.dead,
       markers,
     });
 
+    if (this.motion.enabled) this.motion.frame(dt, this.camera.position, this.motionSubjects());
     this.diag.frame(dt * 1000);
     for (const g of this.grounds) g.terrain.material.wireframe = this.diag.wireframe;
     this.diag.setPhysicsLines(this.diag.physicsLines ? this.physics.world.debugRender() : null, this.bubbleMatrix(bp));
@@ -1900,7 +2303,9 @@ export class Game {
     if (this.diag.visible) for (const [n, ms] of this.systems.timings) sysMs[`· ${n} ms`] = ms.toFixed(2);
     this.diag.update(this.pipeline.renderer, !this.diag.visible ? sysMs : {
       ...sysMs,
-      'resolución dinámica': `${Math.round(this.pipeline.resolutionScale * 100)} %`,
+      'calidad automática': this.pipeline.governorState,
+      'pico (5 s)': this.spikes.describe(),
+      'sombras fuera': this.shadowCull ? `${this.shadowCull.culled} de ${this.shadowCull.seen} proyectores · ${this.shadowCull.drawn} en cascadas` : 'todas (?noshcull)',
       'sim steps/frame': this.loop.lastSteps,
       'terrain jobs': this.pool.busy,
       'rigid bodies': this.physics.world.bodies.len(),
@@ -1910,13 +2315,21 @@ export class Game {
       grounded: this.ctl.grounded ? 'sí' : 'no',
       'rtt ms': Math.round(this.net.rtt),
       audio: audioStats(),
+      'PiP capturas': this.pip.captures,
     });
-    if (render) this.pipeline.render(dt);
+    if (render) {
+      const r0 = performance.now();
+      this.shadowCull?.before();
+      this.pipeline.render(dt);
+      this.shadowCull?.after();
+      this.renderMs = performance.now() - r0;
+    }
     if (this.loop.lastSteps > 0) input.endFrame();
   }
 }
 
 const _jetVel = new THREE.Vector3();
+const _sight = new THREE.Vector3();
 const _fb = new THREE.Vector3();
 // audio scratch (audioFrame)
 const _aBack = new THREE.Vector3();
@@ -2004,3 +2417,8 @@ function celestialMatrix(sunDir: THREE.Vector3, sunLongitudeDeg: number) {
   const eqToEcl = new THREE.Matrix3().set(1, 0, 0, 0, c, s, 0, -s, c);
   return eclToLocal.multiply(eqToEcl);
 }
+
+/** A frame's name for the diagnostics. */
+const frameName = (fr: number) => (fr === WORLD_FRAME ? 'mundo' : `nave ${fr}`);
+const _pp: V3 = [0, 0, 0];
+const _sv = new THREE.Vector3();

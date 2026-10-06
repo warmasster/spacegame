@@ -109,43 +109,9 @@ export interface AlertDef {
   on(st: Float64Array, sw: Record<string, number>): boolean;
 }
 
-/**
- * How a machine sounds: declared by its module like its alerts, played by the client
- * (client/audio/shipSounds.ts) from where it is on the ship — through the air of its compartment,
- * the structure and the ground — for any ship, from the replicated state. The simulation never
- * reads it. `sound` names an entry of the client's bank (client/audio/sounds/); a part can give
- * the role its own voice (`PartDef.sounds[role]`, from its catalog component). Read only
- * replicated variables: a negative quantum never reaches the clients.
- */
-export interface SoundCue {
-  /** Bank id (the default voice of this role). */
-  sound: string;
-  /** Role of the sound on its part ('run', 'start'…): `part.sounds[role]` replaces `sound`. */
-  role?: string;
-  /** The machine it comes from: its place and compartment, its size (bigger sounds deeper) and its health (a wreck is silent). */
-  part?: PartDef;
-  /** Ship-space point (default: the part's centre, else the ship's centre). A function for one that moves: fill `out` and return it. */
-  at?: V3 | ((st: Float64Array, sw: Record<string, number>, out: V3) => V3);
-  /** Compartment it sounds in (default: the part's zone; null = outside the hull). */
-  zone?: string | null;
-  /** Continuous (a loop): how loud now, 0..1 (0 = silent). */
-  level?: (st: Float64Array, sw: Record<string, number>) => number;
-  /** Continuous: playback rate (1 = as made): spool, rpm, flow. */
-  pitch?: (st: Float64Array, sw: Record<string, number>) => number;
-  /** One-shot: plays each time this turns true (never on the first look). */
-  on?: (st: Float64Array, sw: Record<string, number>) => boolean;
-  /** Loudness scale (default 1). */
-  gain?: number;
-  /**
-   * Continuous, from motion: a value whose change makes the sound (a travel, a level). The loop
-   * plays while it changes, as loud as its speed ÷ `rate` (change per second at full level).
-   */
-  motion?: { value: (st: Float64Array, sw: Record<string, number>) => number; rate: number };
-  /** Carried by the hull only (a machine bolted inside a wall): no air path. */
-  structural?: boolean;
-  /** A default any other cue of the same part and role replaces (switched loads' generic hum). */
-  generic?: boolean;
-}
+/** How a machine sounds (declared by its module, played by the client): see shared/sound.ts. */
+export type { SoundCue, SoundSource } from '../../sound.js';
+import type { SoundCue } from '../../sound.js';
 
 /** The hull as a tick sees it (ShipSim owns the panel integrity). */
 export interface HullView {

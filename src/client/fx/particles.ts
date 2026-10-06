@@ -1,11 +1,12 @@
 import * as THREE from 'three';
-import { bodyAt, tangentFrame } from '../../shared/space/body';
+import { bodyAt, gravityAt, tangentFrame } from '../../shared/space/body';
 import { origin } from '../render/origin';
 
 /**
  * Minimal GPU-light particle pool: one Points draw call per blend mode, CPU simulation.
- * In vacuum there is no drag or smoke: dust flies on clean ballistic arcs and falls under
- * lunar gravity, fire is a brief flash. That alone reads as "Moon".
+ * In vacuum there is no drag or smoke: dust flies on clean ballistic arcs and falls under the
+ * gravity of the body it is on (whatever body: `gravity` is a share of the local pull), fire is a
+ * brief flash. That alone reads as "Moon" on the Moon.
  *
  * Particles live in a small local space of their own: centred on the render origin (float32 holds
  * them to the micrometre wherever that is) and turned to the body's tangent frame there, so "up"
@@ -48,6 +49,7 @@ export interface Emit {
   color: [number, number, number];
   life: number;
   size: number;
+  /** How much of the local gravity pulls it (1: falls like anything else there; 0/absent: none). */
   gravity?: number;
   /** How far below `pos` (m, along the local vertical) the particle settles (dust). */
   floor?: number;
@@ -64,6 +66,8 @@ export class Particles {
   private mats: THREE.ShaderMaterial[] = [];
   /** World → particle space: the rotation's inverse (the group's orientation is the rotation). */
   private inv = new THREE.Quaternion();
+  /** The body's pull where particle space is (m/s², along its −y): taken again whenever it moves. */
+  private g = 0;
   constructor(pixelRatio: number) {
     this.pools = {
       glow: this.makePool(1500, THREE.AdditiveBlending, pixelRatio, true),
@@ -82,7 +86,10 @@ export class Particles {
   private relay(dx = 0, dy = 0, dz = 0) {
     const O = [origin.x, origin.y, origin.z];
     const oldRot = this.group.quaternion.clone();
-    tangentFrame(bodyAt(O), O, _q);
+    const body = bodyAt(O);
+    tangentFrame(body, O, _q);
+    const gw = gravityAt(body, O, [0, 0, 0]);
+    this.g = Math.hypot(gw[0], gw[1], gw[2]);
     this.group.quaternion.set(_q[0], _q[1], _q[2], _q[3]);
     this.group.updateMatrix();
     this.group.updateMatrixWorld(true);
@@ -206,7 +213,7 @@ export class Particles {
     p.col[j + 2] = e.color[2];
     p.life[i] = p.maxLife[i] = e.life;
     p.size[i] = e.size;
-    p.grav[i] = e.gravity ?? 0;
+    p.grav[i] = (e.gravity ?? 0) * this.g;
     p.floor[i] = e.floor !== undefined ? lp.y - e.floor : -1e9;
     if (p.slot[i] < 0) {
       p.slot[i] = p.nAlive;
@@ -239,13 +246,13 @@ export class Particles {
     for (let i = 0; i < 90 * scale; i++) {
       v.randomDirection().multiplyScalar(3 + rnd() * rnd() * 22);
       v.y = Math.abs(v.y) * 0.9 + 0.5;
-      this.emitLocal('glow', at, v.add(cv), fx(0.1 + rnd() * rnd() * 0.9, 0.05 + rnd() * 0.12, [4, 1.6 + rnd() * 1.4, 0.4], 1.62));
+      this.emitLocal('glow', at, v.add(cv), fx(0.1 + rnd() * rnd() * 0.9, 0.05 + rnd() * 0.12, [4, 1.6 + rnd() * 1.4, 0.4], 1));
     }
     // glowing hot fragments that arc far and cool down
     for (let i = 0; i < 12 * scale; i++) {
       const a = rnd() * Math.PI * 2;
       v.set(Math.cos(a), 0.6 + rnd() * 1.2, Math.sin(a)).multiplyScalar(5 + rnd() * 9);
-      this.emitLocal('glow', at, v.add(cv), fx(1.5 + rnd() * 2, 0.07, [2.2, 0.9, 0.3], 1.62));
+      this.emitLocal('glow', at, v.add(cv), fx(1.5 + rnd() * 2, 0.07, [2.2, 0.9, 0.3], 1));
     }
     // ejecta rays
     const rays = 7 + Math.floor(rnd() * 7);
@@ -277,7 +284,7 @@ export class Particles {
       p.copy(at).add(new THREE.Vector3(Math.cos(a), 0, Math.sin(a)).multiplyScalar(rnd() * 1.2));
       const g = 0.11 + rnd() * 0.14 + (rnd() < 0.08 ? 0.12 : 0); // some fresher, brighter grains
       const clump = rnd() < 0.05;
-      this.emitLocal('dust', p, v, fx(3.5 + rnd() * 6, clump ? 0.18 + rnd() * 0.25 : 0.03 + rnd() * rnd() * 0.16, [g, g * 0.99, g * 0.96], 1.62, below + (rnd() - 0.5) * 0.4));
+      this.emitLocal('dust', p, v, fx(3.5 + rnd() * 6, clump ? 0.18 + rnd() * 0.25 : 0.03 + rnd() * rnd() * 0.16, [g, g * 0.99, g * 0.96], 1, below + (rnd() - 0.5) * 0.4));
     }
   }
 

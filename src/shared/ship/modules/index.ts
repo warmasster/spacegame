@@ -17,15 +17,16 @@ import { propellantSystem } from './propellant.js';
 import { reactorSystem } from './reactor.js';
 import { solarSystem } from './solar.js';
 import { storesSystem } from './stores.js';
+import { weaponsSystem } from './weapons.js';
 
 /**
  * Machines that only draw power and can be damaged (their loads are `LoadDef`s) until someone
- * writes their mechanics: the radar, the turret… Moving a type from here to its own module is how
+ * writes their mechanics: the radar, the loader… Moving a type from here to its own module is how
  * it comes alive.
  */
 const equipmentSystem: SystemFactory = {
   id: 'equipment',
-  parts: ['radar', 'antenna', 'turret', 'loader'],
+  parts: ['radar', 'antenna', 'loader'],
   make: () => [],
 };
 
@@ -48,5 +49,6 @@ export const SYSTEM_FACTORIES: SystemFactory[] = [
   autopilotSystem,
   gravSystem,
   storesSystem,
+  weaponsSystem,
   equipmentSystem,
 ];

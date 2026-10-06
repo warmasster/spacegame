@@ -1,0 +1,4 @@
+# The house style: long lines, whatever fits kept on one (this is what the crates are written
+# in; without this file `cargo fmt` rewraps everything to 100 columns).
+max_width = 255
+use_small_heuristics = "Max"

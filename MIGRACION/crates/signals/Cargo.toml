@@ -1,0 +1,17 @@
+[package]
+name = "lunar-signals"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+# std only: units, the signal store and derived expressions. No render, input or physics.
+# `serde`: quantities with units straight from the data files (`Q`).
+[dependencies]
+serde = { workspace = true, optional = true }
+
+[features]
+serde = ["dep:serde"]
+
+[lints]
+workspace = true

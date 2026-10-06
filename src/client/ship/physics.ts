@@ -254,7 +254,7 @@ export class ShipPhysics {
 
   /** Follow the animated parts (fixed step). */
   update(anim: ShipAnimState, rampPhi: number, feet: V3[]) {
-    this.outer.update(anim, rampPhi, feet);
+    if (this.outer.body.isEnabled()) this.outer.update(anim, rampPhi, feet);
     this.inner.update(anim, rampPhi, feet);
   }
 
@@ -263,10 +263,20 @@ export class ShipPhysics {
    * there, pushing what it meets. Still (parked, or hovering dead still), it is a fixed body:
    * Rapier's character controller catches on a kinematic body's colliders where they meet the
    * ground (the foot of the stairs, the lip of the ramp) and the astronaut could not walk on or
-   * off without jumping.
+   * off without jumping. Not `active` (far from the player: nothing there to touch it), the body
+   * leaves the lunar world's broad phase, and comes back where the ship is then (no sweep).
    */
-  follow(pose: ShipPose) {
+  follow(pose: ShipPose, active = true) {
     const b = this.outer.body;
+    if (!active) {
+      if (b.isEnabled()) b.setEnabled(false);
+      return;
+    }
+    if (!b.isEnabled()) {
+      b.setEnabled(true);
+      this.teleport(pose);
+      return;
+    }
     const t = b.translation();
     const r = b.rotation();
     const still =

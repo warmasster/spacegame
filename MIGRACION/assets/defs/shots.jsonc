@@ -1,0 +1,24 @@
+// Projectiles fired where the player aims (key). energy (J) and area (cross-section, m²) say how
+// far one cuts through structures; range (m); impact: effect where it lands (explosions/<id>), or
+// charge: the explosive it carries ({ "tnt": kg, "casing": kg }), whose blast is made from it;
+// speed (m/s): it flies and falls (none: it strikes at once); look: how it is drawn in flight;
+// menu: changed in play from the menu (Esc), charge up to max_tnt kg, speed up to max_speed.
+// rate: automatic, rounds per second while the key is held; spread: scatter round the aim (mrad).
+{
+  // light machine gun: 7.62 mm, ~3.5 kJ a round, 12 a second while M is held
+  "metralleta": { "name": "Metralleta", "key": "Q", "energy": 3.5e3, "area": 4.6e-5, "range": 1500.0, "speed": 830.0, "rate": 12.0, "spread": 2.5,
+                  "look": { "style": "trazadora", "size": 0.025 }, "impact": "impacto_ligero" },
+  "bala":      { "name": "Bala", "key": "O", "energy": 2.0e5, "area": 0.002, "range": 2000.0, "speed": 900.0, "look": { "style": "trazadora", "size": 0.05 }, "impact": "impacto" },
+  // thrown: they fly on their arc, are seen in flight and go off where they land
+  "granada":   { "name": "Granada", "key": "B", "energy": 2.0e3, "area": 0.01, "range": 5000.0, "speed": 22.0, "look": { "style": "carga", "size": 0.06 }, "impact": "granada" },
+  "bomba":     { "name": "Bomba", "key": "N", "energy": 1.0e4, "area": 0.1, "range": 20000.0, "speed": 60.0, "look": { "style": "carga", "size": 0.3 }, "impact": "bomba" },
+  // configurable from the menu, up to a small atomic bomb (15 kt, Hiroshima's)
+  "personalizado": { "name": "Personalizado", "key": "P", "energy": 1.0e5, "area": 0.05, "range": 200000.0, "speed": 120.0, "look": { "style": "carga", "size": 0.4 }, "charge": { "tnt": 100.0, "casing": 20.0 }, "menu": { "max_tnt": 1.5e7, "max_speed": 3000.0 } },
+  // the launcher's rocket (the suit's tool, `gear.jsonc`): 1.6 kg of charge, 150 m/s
+  "cohete":    { "name": "Cohete", "energy": 6.0e4, "area": 0.006, "range": 2500.0, "speed": 150.0, "look": { "style": "cohete", "size": 0.16 }, "charge": { "tnt": 1.6, "casing": 2.5 } },
+  // a ship's rotary cannon (components/combate.jsonc: canon_rotativo): 20 mm, 100 g at 1050 m/s.
+  // It has no key: a mounted gun fires it, at its own rate, with the speed of the ship besides
+  "canon_20":  { "name": "Cañón de 20 mm", "energy": 5.5e4, "area": 3.1e-4, "range": 4000.0, "speed": 1050.0, "spread": 1.2,
+                 "look": { "style": "trazadora", "size": 0.05 }, "impact": "impacto" },
+  "proyectil": { "name": "Proyectil pesado", "key": "H", "energy": 4.0e6, "area": 0.03, "range": 3000.0, "speed": 420.0, "look": { "style": "trazadora", "size": 0.12 }, "charge": { "tnt": 0.4, "casing": 3.0 } }
+}

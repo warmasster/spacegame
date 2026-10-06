@@ -1,0 +1,94 @@
+// Cargo: what a hold carries. Components like any other (pieces, a name). A ship places it with
+// "anclaje": the clamp that holds it; let go, it is a loose body like any other
+// (crates/ship/src/cargo.rs).
+//
+// "contenido": what it holds (crates/ship/src/contents.rs): "sustancia" (an id of
+// assets/defs/sustancias.jsonc), "capacidad" (at most: "170 L", "600 kg"; without it, what
+// fits), "lleno" (the share of that as built: 1 if absent) and "piezas" (the pieces that hold
+// it, each its share by its room; the first if absent). What is declared must fit inside those
+// pieces: their shape less their walls ("hueco"). A component placed may say its own
+// ("contenido": { "lleno": 0.5 }: a half-empty drum). Nothing else about it is typed here:
+// - it weighs: an empty one what its shells weigh ("hueco" x material), a full one that plus
+//   what it holds, and less as it is used up;
+// - its labels write it: {sustancia} ("AGUA") and {capacidad} ("170 L");
+// - a scanner reads it: "170 L de agua", or as "recurso" tells it ({cantidad}, {capacidad},
+//   {sustancia});
+// - what it does when it is destroyed is the substance's ("estalla" there), by what it held.
+// "estalla" on a piece is still what that piece lets go of whatever it holds (J, the reach in
+// m, the explosion shown). Masses and where they come from: docs/CARGA.md.
+{
+  "caja_repuestos": {
+    "nombre": "Caja de repuestos",
+    // what is written on it (crates/ship/src/def.rs, LabelDef)
+    "rotulos": [
+      {"texto": "{sustancia}", "en": [0.146, 0.335, 0.2615], "normal": [0, 0, 1], "alto": 0.03, "color": [230, 232, 226]},
+      {"texto": "N/S {serie}", "en": [0.146, 0.285, 0.2615], "normal": [0, 0, 1], "alto": 0.018, "color": [230, 232, 226]},
+      {"texto": "{sustancia}", "en": [-0.146, 0.335, -0.2615], "normal": [0, 0, -1], "alto": 0.03, "color": [230, 232, 226]},
+      {"texto": "N/S {serie}", "en": [-0.146, 0.285, -0.2615], "normal": [0, 0, -1], "alto": 0.018, "color": [230, 232, 226]}
+    ],
+    // a transport case of 118 L: 14 kg empty, 54 with its 40 kg of spares
+    "contenido": { "sustancia": "repuestos", "capacidad": "40 kg" },
+    "material": "compuesto",
+    "piezas": [
+      { "id": "", "acabado": "plastico", "hueco": 0.004, "forma": { "kind": "box", "size": [0.52, 0.46, 0.52] }, "en": [0, 0.23, 0], "color": [86, 96, 70], "chapa": 0.5 },
+      { "id": "tapa", "acabado": "plastico", "hueco": 0.003, "forma": { "kind": "box", "size": [0.54, 0.05, 0.54] }, "en": [0, 0.485, 0], "color": [60, 68, 50] },
+      { "id": "cincha", "acabado": "tela", "material": "goma", "hueco": 0.001, "forma": { "kind": "box", "size": [0.06, 0.53, 0.545] }, "en": [0, 0.265, 0], "color": [214, 150, 30] }
+    ]
+  },
+  "bidon_agua": {
+    "nombre": "Bidón de agua",
+    // what is written on it (crates/ship/src/def.rs, LabelDef)
+    "rotulos": [
+      {"texto": "{sustancia}", "en": [0, 0.47, 0.252], "normal": [0, 0, 1], "alto": 0.085, "color": [230, 232, 226], "radio": 0.252},
+      {"texto": "POTABLE · {capacidad}", "en": [0, 0.375, 0.252], "normal": [0, 0, 1], "alto": 0.03, "color": [230, 232, 226], "radio": 0.252},
+      {"texto": "{sustancia}", "en": [0, 0.47, -0.252], "normal": [0, 0, -1], "alto": 0.085, "color": [230, 232, 226], "radio": 0.252},
+      {"texto": "POTABLE · {capacidad}", "en": [0, 0.375, -0.252], "normal": [0, 0, -1], "alto": 0.03, "color": [230, 232, 226], "radio": 0.252}
+    ],
+    // a plastic drum of 0.52 m by 0.86 m: 183 L outside, 175 L inside its 4 mm walls, 170 L as
+    // it is filled (a real "200 L" drum is 0.57 m across and holds 218 L to the brim). 12 kg
+    // empty, 182 kg full
+    "contenido": { "sustancia": "agua", "capacidad": "170 L" },
+    "material": "compuesto",
+    "piezas": [
+      { "id": "", "acabado": "plastico", "hueco": 0.004, "forma": { "kind": "cylinder", "radius": 0.26, "height": 0.86, "sides": 14 }, "en": [0, 0.43, 0], "color": [38, 86, 150], "liso": true },
+      { "id": "aro", "acabado": "plastico", "hueco": 0.0005, "forma": { "kind": "cylinder", "radius": 0.275, "height": 0.05, "sides": 14 }, "en": [0, 0.6, 0], "color": [26, 60, 110], "liso": true },
+      { "id": "tapon", "acabado": "plastico", "forma": { "kind": "cylinder", "radius": 0.05, "height": 0.04, "sides": 8 }, "en": [0.13, 0.88, 0], "color": [230, 230, 224] }
+    ]
+  },
+  "bidon_combustible": {
+    "nombre": "Bidón de propelente",
+    // what is written on it (crates/ship/src/def.rs, LabelDef)
+    "rotulos": [
+      {"texto": "{sustancia}", "en": [0, 0.475, 0.252], "normal": [0, 0, 1], "alto": 0.058, "color": [244, 200, 48], "radio": 0.252},
+      {"texto": "INFLAMABLE · {capacidad}", "en": [0, 0.385, 0.252], "normal": [0, 0, 1], "alto": 0.028, "color": [244, 200, 48], "radio": 0.252},
+      {"texto": "{sustancia}", "en": [0, 0.475, -0.252], "normal": [0, 0, -1], "alto": 0.058, "color": [244, 200, 48], "radio": 0.252},
+      {"texto": "INFLAMABLE · {capacidad}", "en": [0, 0.385, -0.252], "normal": [0, 0, -1], "alto": 0.028, "color": [244, 200, 48], "radio": 0.252}
+    ],
+    // a steel drum of the same size, 1.2 mm thick (a real one is 0.9 to 1.2): 21 kg empty, 170 kg
+    // with its 170 L (149 kg) of propellant. What it does when it is destroyed is the
+    // propellant's, by what it holds: nothing, empty
+    "contenido": { "sustancia": "propelente", "capacidad": "170 L" },
+    "material": "acero",
+    "piezas": [
+      { "id": "", "acabado": "pintura", "hueco": 0.0012, "forma": { "kind": "cylinder", "radius": 0.26, "height": 0.86, "sides": 14 }, "en": [0, 0.43, 0], "color": [170, 44, 34], "liso": true },
+      { "id": "aro", "acabado": "pintura", "hueco": 0.0005, "forma": { "kind": "cylinder", "radius": 0.272, "height": 0.04, "sides": 14 }, "en": [0, 0.3, 0], "color": [120, 30, 24], "liso": true },
+      { "id": "tapon", "acabado": "cepillado", "forma": { "kind": "cylinder", "radius": 0.045, "height": 0.04, "sides": 8 }, "en": [0.13, 0.88, 0], "color": [180, 182, 186] }
+    ]
+  },
+  "pale_regolito": {
+    "nombre": "Palé de regolito",
+    // three layers of sacks (354 L between them: 600 kg of regolith packed down) on a plastic
+    // pallet: 40 kg empty, 640 kg loaded
+    "recurso": "{cantidad} de {sustancia} en sacos",
+    "contenido": { "sustancia": "regolito", "capacidad": "600 kg", "piezas": ["sacos_1", "sacos_2", "sacos_3"] },
+    "material": "compuesto",
+    "piezas": [
+      { "id": "", "acabado": "plastico", "hueco": 0.006, "forma": { "kind": "box", "size": [1.0, 0.12, 0.8] }, "en": [0, 0.06, 0], "color": [96, 78, 52] },
+      { "id": "sacos_1", "acabado": "tela", "material": "regolito", "hueco": 0.0015, "forma": { "kind": "box", "size": [0.94, 0.2, 0.74] }, "en": [0, 0.22, 0], "color": [150, 146, 136] },
+      { "id": "sacos_2", "acabado": "tela", "material": "regolito", "hueco": 0.0015, "forma": { "kind": "box", "size": [0.9, 0.2, 0.7] }, "en": [0, 0.42, 0], "color": [138, 134, 126] },
+      { "id": "sacos_3", "acabado": "tela", "material": "regolito", "hueco": 0.0015, "forma": { "kind": "box", "size": [0.84, 0.18, 0.64] }, "en": [0, 0.61, 0], "color": [146, 142, 132] },
+      { "id": "cincha", "acabado": "tela", "material": "goma", "hueco": 0.001, "forma": { "kind": "box", "size": [0.06, 0.72, 0.82] }, "en": [0.2, 0.36, 0], "color": [214, 150, 30] },
+      { "id": "cincha_2", "acabado": "tela", "material": "goma", "hueco": 0.001, "forma": { "kind": "box", "size": [0.06, 0.72, 0.82] }, "en": [-0.2, 0.36, 0], "color": [214, 150, 30] }
+    ]
+  }
+}

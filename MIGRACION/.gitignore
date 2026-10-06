@@ -1,0 +1,12 @@
+/.local/
+/target/
+/out/
+/respaldos/
+/fotos/
+/*.exe
+/V*_jugable/
+/SELENE_V*/
+!/SELENE_V39/
+/SELENE_V39/out/
+/.mcp.json
+**/__pycache__/

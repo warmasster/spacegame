@@ -1,0 +1,38 @@
+// Life support panel of the Alcotán (cabin, starboard wall): air of every compartment, the
+// pressure set point (keypad), venting the hold for the ramp.
+{
+  "name": "Soporte vital",
+  "tamano": ["0.86 m", "0.86 m"],
+  "rejilla": [6, 6],
+  "margen": "12 mm",
+  "separacion": "6 mm",
+  "grupos": [
+    { "id": "cabina", "titulo": "CABINA", "celda": [0, 0], "ocupa": [4, 2] },
+    { "id": "consigna", "titulo": "CONSIGNA", "celda": [4, 0], "ocupa": [2, 4] },
+    { "id": "comp", "titulo": "COMPARTIMENTOS", "celda": [0, 2], "ocupa": [4, 2] },
+    { "id": "bodega", "titulo": "BODEGA", "celda": [0, 4], "ocupa": [6, 2] }
+  ],
+  "mandos": [
+    { "id": "p_cab", "kind": "aguja", "grupo": "cabina", "senal": "cabina.p", "escala": ["0 kPa", "110 kPa"], "unidad": "kPa", "rotulo": "PRESIÓN",
+      "zonas": { "roja": ["0 kPa", "50 kPa"], "verde": ["65 kPa", "102 kPa"] }, "requiere": { "energia": "1 W" } },
+    { "id": "o2_cab", "kind": "aguja", "grupo": "cabina", "senal": "cabina.o2", "escala": ["0 kPa", "30 kPa"], "unidad": "kPa", "rotulo": "O2",
+      "zonas": { "roja": ["0 kPa", "16 kPa"], "verde": ["18 kPa", "24 kPa"] }, "requiere": { "energia": "1 W" } },
+    { "id": "co2_cab", "kind": "aguja", "grupo": "cabina", "senal": "cabina.co2", "escala": ["0 kPa", "3 kPa"], "unidad": "kPa", "rotulo": "CO2",
+      "zonas": { "verde": ["0 kPa", "0.6 kPa"], "roja": ["1 kPa", "3 kPa"] }, "requiere": { "energia": "1 W" } },
+    { "id": "teclado", "kind": "teclado", "grupo": "consigna", "unidad": "kPa", "mascara": "###.#", "defecto": "70 kPa", "bind": { "senal": "aire.consigna" },
+      "requiere": { "energia": "2 W" }, "nombre": "Consigna de presión", "ayuda": "Teclea la presión que mantienen los inyectores de N₂ (kPa) y pulsa ENTER." },
+    { "id": "consigna_v", "kind": "display7", "grupo": "consigna", "senal": "aire.consigna", "unidad": "kPa", "decimales": 1, "digitos": 5, "rotulo": "ACTUAL", "requiere": { "energia": "1 W" } },
+    { "id": "p_puente", "kind": "display7", "grupo": "comp", "senal": "puente.p", "unidad": "kPa", "decimales": 1, "digitos": 5, "rotulo": "PUENTE", "requiere": { "energia": "1 W" } },
+    { "id": "p_bodega", "kind": "display7", "grupo": "comp", "senal": "bodega.p", "unidad": "kPa", "decimales": 1, "digitos": 5, "rotulo": "BODEGA", "requiere": { "energia": "1 W" } },
+    { "id": "t_cab", "kind": "display7", "grupo": "comp", "senal": "cabina.t", "unidad": "°C", "decimales": 1, "digitos": 4, "rotulo": "T CABINA", "requiere": { "energia": "1 W" } },
+    { "id": "lamp_fuga", "kind": "lampara", "grupo": "comp", "rotulo": "FUGA", "requiere": { "energia": "1 W" },
+      "reglas": [ { "si": "cabina.fuga > 1 kPa || puente.fuga > 1 kPa", "color": "rojo", "parpadeo": 3.0 } ] },
+    { "id": "tapa_venteo", "kind": "tapa", "grupo": "bodega", "protege": ["venteo"], "precinto": true },
+    { "id": "venteo", "kind": "interruptor", "grupo": "bodega", "rotulo": "VENTEO", "posiciones": ["CERRADO", "ABIERTO"], "bind": { "senal": "bodega.venteo_soporte" },
+      "nombre": "Venteo de la bodega", "ayuda": "Vacía el aire de la bodega al exterior (para abrir la rampa sin que reviente). Tapa precintada." },
+    { "id": "rep_bodega", "kind": "interruptor", "grupo": "bodega", "rotulo": "REPRES.", "posiciones": ["CERRADA", "ABIERTA"], "bind": { "senal": "bodega.repres_soporte" },
+      "nombre": "Represurizar la bodega", "ayuda": "Abre la rejilla de la bodega al conducto: el aire de la cabina la llena." },
+    { "id": "p_bod", "kind": "aguja", "grupo": "bodega", "senal": "bodega.p", "escala": ["0 kPa", "110 kPa"], "unidad": "kPa", "rotulo": "BODEGA",
+      "zonas": { "verde": ["0 kPa", "3 kPa"] }, "requiere": { "energia": "1 W" } }
+  ]
+}

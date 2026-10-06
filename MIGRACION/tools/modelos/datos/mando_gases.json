@@ -1,0 +1,106 @@
+{
+ "modelo": "mando_gases",
+ "marco": "x a babor, y arriba, z a proa; metros; origen: el centro de la cara de abajo de su base (la que se atornilla)",
+ "triangulos": 5390,
+ "presupuesto": 8000,
+ "caja": [
+  [
+   -0.072,
+   -0.026,
+   -0.27
+  ],
+  [
+   0.072,
+   0.1938,
+   0.1558
+  ]
+ ],
+ "tam": [
+  0.144,
+  0.2198,
+  0.4258
+ ],
+ "piezas": {
+  "cuerpo": {
+   "en": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "triangulos": 2970,
+   "caja": [
+    [
+     -0.045,
+     -0.026,
+     -0.27
+    ],
+    [
+     0.0603,
+     0.0982,
+     0.1558
+    ]
+   ]
+  },
+  "palanca": {
+   "en": [
+    0.0,
+    0.014,
+    0.0
+   ],
+   "triangulos": 2420,
+   "caja": [
+    [
+     -0.072,
+     -0.002,
+     -0.0238
+    ],
+    [
+     0.072,
+     0.1938,
+     0.0238
+    ]
+   ],
+   "eje": [
+    1.0,
+    0.0,
+    0.0
+   ],
+   "giro": 28.0,
+   "desde": -28.0,
+   "nota": "gira sobre +x: -28 atrás (ralentí), +28 a proa (a fondo); construida derecha (0)"
+  }
+ },
+ "puntos": {
+  "agarre": {
+   "en": [
+    0.0,
+    0.17,
+    0.0
+   ],
+   "palma": [
+    0.0,
+    -0.7071,
+    0.7071
+   ],
+   "traves": [
+    1.0,
+    0.0,
+    0.0
+   ],
+   "pieza": "palanca",
+   "mano": "izq",
+   "mango": 0.044,
+   "nota": "mano izquierda sobre la barra, desde atrás y arriba: el brazo de la palanca entre el corazón y el anular"
+  }
+ },
+ "pantallas": {},
+ "luces": {},
+ "asiento": {
+  "en": [
+   0.31,
+   0.65,
+   0.29
+  ],
+  "nota": "sugerido, en el marco del asiento: sobre un soporte ante el reposabrazos izquierdo"
+ }
+}

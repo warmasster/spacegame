@@ -1,0 +1,11 @@
+// A heavy round landing: sparks, dust, a small pit if it hits the ground.
+{
+  "name": "Impacto pesado",
+  "crater": { "radius": 0.6, "depth": 0.2, "rim": 0.3 },
+  "flash": { "color": [1.0, 0.75, 0.45], "intensity": 25.0, "range": 18.0, "duration": 0.25 },
+  "shake": { "amplitude": 0.004, "range": 30.0, "duration": 0.25 },
+  "emitters": [
+    { "style": "chispas", "count": 50, "speed": [6.0, 24.0], "cone": 75.0, "size": [0.02, 0.05], "life": [0.4, 1.4] },
+    { "style": "polvo", "count": 30, "speed": [1.0, 6.0], "cone": 65.0, "size": [0.15, 0.4], "life": [1.5, 3.5] }
+  ]
+}

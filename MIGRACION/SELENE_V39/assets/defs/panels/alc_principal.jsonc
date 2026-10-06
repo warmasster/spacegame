@@ -1,0 +1,129 @@
+// Main flight panel of the Alcotán (on the dash, facing the crew). Annunciator, two multi-function
+// displays (their bezel buttons choose the page), master caution, gear, flight instruments.
+{
+  "name": "Panel principal",
+  "tamano": ["2.30 m", "0.62 m"],
+  "rejilla": [24, 6],
+  "margen": "14 mm",
+  "separacion": "6 mm",
+  "grupos": [
+    { "id": "mfd1", "titulo": "PILOTO", "celda": [0, 0], "ocupa": [6, 6] },
+    { "id": "inst", "titulo": "VUELO", "celda": [6, 0], "ocupa": [5, 6] },
+    { "id": "avisos", "titulo": "AVISOS", "celda": [11, 0], "ocupa": [7, 4] },
+    { "id": "alarma", "celda": [11, 4], "ocupa": [3, 2] },
+    { "id": "tren", "titulo": "TREN", "celda": [14, 4], "ocupa": [4, 2] },
+    { "id": "mfd2", "titulo": "SISTEMAS", "celda": [18, 0], "ocupa": [6, 6] }
+  ],
+  "mandos": [
+    // ---- pilot screen ----
+    { "id": "mfd1", "kind": "mfd", "grupo": "mfd1", "tamano": [420, 290], "pagina": "mfd1.pagina", "requiere": { "energia": "40 W" },
+      "nombre": "Pantalla del piloto", "ayuda": "Pantalla multifunción: los botones del marco eligen la página escrita a su lado.",
+      "paginas": [
+        { "titulo": "VUELO", "boton": "VUELO", "elementos": [
+          { "tipo": "valor", "senal": "nave.altura", "rotulo": "ALTURA", "decimales": 1, "zonas": { "roja": ["0 m", "3 m"] } },
+          { "tipo": "valor", "senal": "nave.vel", "rotulo": "VELOC.", "decimales": 1 },
+          { "tipo": "valor", "senal": "nave.vs", "rotulo": "V/S", "decimales": 2, "zonas": { "roja": ["-100 m/s", "-4 m/s"], "ambar": ["-4 m/s", "-1.5 m/s"], "verde": ["-1.5 m/s", "100 m/s"] } },
+          { "tipo": "valor", "senal": "gondola_izq.pos", "rotulo": "GÓNDOLAS", "decimales": 0 },
+          { "tipo": "grafica", "senal": "nave.altura", "rotulo": "ALTURA", "escala": ["0 m", "200 m"], "ventana": 120, "zonas": { "roja": ["0 m", "3 m"] } },
+          { "tipo": "reloj", "senal": "gondola_izq.empuje", "rotulo": "EMP IZQ", "escala": ["0 kN", "$emp_max kN"], "zonas": { "verde": ["$emp_min kN", "$emp_nom kN"], "roja": ["$emp_rojo kN", "$emp_max kN"] } },
+          { "tipo": "reloj", "senal": "gondola_der.empuje", "rotulo": "EMP DER", "escala": ["0 kN", "$emp_max kN"], "zonas": { "verde": ["$emp_min kN", "$emp_nom kN"], "roja": ["$emp_rojo kN", "$emp_max kN"] } },
+          { "tipo": "texto", "lineas": ["MODO {vuelo.modo|DIRECTO|NORMAL|ESTAB.|MANTENER}"], "ocupa": [2, 1] }
+        ] },
+        { "titulo": "MOTORES", "boton": "MOTOR", "auto": "motores" },
+        { "titulo": "DEPÓSITOS", "boton": "COMB", "auto": "depositos" },
+        { "titulo": "TREN Y RAMPA", "boton": "TREN", "elementos": [
+          { "tipo": "texto", "ocupa": [4, 2], "lineas": [
+            "MORRO {tren_morro.pos:0}  {act_tren_morro.estado|PARADO|MOVIENDO|ATASCO|BLOCADO|AVERIADO}",
+            "IZQ   {tren_izq.pos:0}  {act_tren_izq.estado|PARADO|MOVIENDO|ATASCO|BLOCADO|AVERIADO}",
+            "DER   {tren_der.pos:0}  {act_tren_der.estado|PARADO|MOVIENDO|ATASCO|BLOCADO|AVERIADO}",
+            "RAMPA {rampa.abierta:0}" ] },
+          { "tipo": "barra", "senal": "hid.colector", "rotulo": "HIDRÁULICA", "escala": ["0 MPa", "25 MPa"], "decimales": 1, "ocupa": [2, 1],
+            "zonas": { "roja": ["0 MPa", "10 MPa"], "ambar": ["10 MPa", "14 MPa"], "verde": ["14 MPa", "25 MPa"] } },
+          { "tipo": "valor", "senal": "bodega.p", "rotulo": "BODEGA", "decimales": 1, "zonas": { "verde": ["0 kPa", "3 kPa"], "ambar": ["3 kPa", "200 kPa"] } }
+        ] },
+        { "titulo": "AIRE", "boton": "AIRE", "auto": "aire" },
+        { "titulo": "PUERTAS", "boton": "PUERTA", "auto": "puertas" },
+        // what the ship weighs, its propellant and what that is worth (crates/ship/src/mass.rs)
+        { "titulo": "MASA Y PROPELENTE", "boton": "MASA", "auto": "masa" }
+      ] },
+
+    // ---- flight instruments ----
+    { "id": "alt", "kind": "aguja", "grupo": "inst", "tamano": [118, 118], "senal": "nave.altura", "escala": ["0 m", "200 m"], "unidad": "m", "rotulo": "ALTURA",
+      "zonas": { "roja": ["0 m", "3 m"] }, "inercia": { "frecuencia": 2.0, "amortiguamiento": 0.8 }, "requiere": { "energia": "2 W" } },
+    { "id": "vs", "kind": "aguja", "grupo": "inst", "tamano": [118, 118], "senal": "nave.vs", "escala": ["-10 m/s", "10 m/s"], "unidad": "m/s", "rotulo": "V/S",
+      "zonas": { "roja": ["-10 m/s", "-4 m/s"], "verde": ["-1.5 m/s", "1.5 m/s"] }, "requiere": { "energia": "2 W" } },
+    { "id": "empuje", "kind": "aguja", "grupo": "inst", "tamano": [118, 118], "senal": "gondola_izq.empuje", "escala": ["0 kN", "$emp_max kN"], "unidad": "kN", "rotulo": "EMP IZQ",
+      "zonas": { "verde": ["$emp_min kN", "$emp_nom kN"], "roja": ["$emp_rojo kN", "$emp_max kN"] }, "requiere": { "energia": "2 W" } },
+    { "id": "empuje2", "kind": "aguja", "grupo": "inst", "tamano": [118, 118], "senal": "gondola_der.empuje", "escala": ["0 kN", "$emp_max kN"], "unidad": "kN", "rotulo": "EMP DER",
+      "zonas": { "verde": ["$emp_min kN", "$emp_nom kN"], "roja": ["$emp_rojo kN", "$emp_max kN"] }, "requiere": { "energia": "2 W" } },
+
+    // ---- annunciator ----
+    { "id": "anunciador", "kind": "anunciador", "grupo": "avisos", "columnas": 6, "tamano": [600, 300], "reconocer": "panel.reconocer", "requiere": { "energia": "12 W" },
+      "avisos": [
+        // one or two lines of six letters at most each ("\n" between them): all lettered at one size
+        { "rotulo": "BAT\nBAJA", "si": "bateria_1.soc < 0.2 || bateria_2.soc < 0.2" },
+        { "rotulo": "BUS A", "si": "elec.bus_a < 22 V", "nivel": 2 },
+        { "rotulo": "BUS B", "si": "elec.bus_b < 22 V", "nivel": 2 },
+        { "rotulo": "BUS\nESENC", "si": "elec.bus_ess < 22 V", "nivel": 2 },
+        { "rotulo": "DISYUN", "si": "alarma.disyuntor" },
+        { "rotulo": "APU\nFALLO", "si": "apu.estado == 3" },
+        // low pressure with a pump asked for (pumps off, a ship at rest, is no fault)
+        { "rotulo": "HIDR\nPRES", "si": "(hid.a || hid.b) && hid.colector < 12 MPa", "nivel": 2 },
+        { "rotulo": "HIDR\nNIVEL", "si": "hpu_a.nivel < 0.3 || hpu_b.nivel < 0.3" },
+        { "rotulo": "TREN", "si": "alarma.tren", "nivel": 2 },
+        { "rotulo": "RAMPA", "si": "rampa.abierta > 0.02 && nave.altura > 5 m" },
+        { "rotulo": "PUERTA", "si": "puerta_bodega.abierta > 0.05 || puerta_puente.abierta > 0.05" },
+        { "rotulo": "GOND\nATASCO", "si": "act_gondola_izq.atasco || act_gondola_der.atasco" },
+        { "rotulo": "MOTOR\nIZQ", "si": "gondola_izq.estado == 6 || gondola_izq.t_pared > 1100 K", "nivel": 2 },
+        { "rotulo": "MOTOR\nDER", "si": "gondola_der.estado == 6 || gondola_der.t_pared > 1100 K", "nivel": 2 },
+        { "rotulo": "COMB\nBAJO", "si": "deposito_izq.nivel < 0.15 || deposito_der.nivel < 0.15" },
+        { "rotulo": "FUGA\nCOMB", "si": "deposito_izq.fuga > 0.05 || deposito_der.fuga > 0.05", "nivel": 2 },
+        { "rotulo": "REACT\nTEMP", "si": "reactor.t_comb > 900 K", "nivel": 2 },
+        { "rotulo": "SCRAM", "si": "reactor.estado == 3", "nivel": 2 },
+        { "rotulo": "REFRIG\nTEMP", "si": "bucle_1.t > 700 K || bucle_2.t > 420 K" },
+        { "rotulo": "CABINA\nPRES", "si": "cabina.p < 60 kPa", "nivel": 2 },
+        { "rotulo": "O2\nBAJO", "si": "cabina.o2 < 16 kPa && cabina.p > 5 kPa" },
+        { "rotulo": "CO2\nALTO", "si": "cabina.co2 > 1 kPa || puente.co2 > 1 kPa" },
+        { "rotulo": "FUGA\nAIRE", "si": "cabina.fuga > 1.5 kPa || puente.fuga > 1.5 kPa || bodega.fuga > 1.5 kPa", "nivel": 2 },
+        { "rotulo": "ORDEN\nVUELO", "si": "ordenador.on < 0.5", "nivel": 2 }
+      ] },
+    { "id": "alarma_general", "kind": "pulsador", "grupo": "alarma", "rotulo": "ALARMA · RECONOCER", "modo": "momentaneo", "color": "ambar",
+      "luz": "alarma.general", "bind": { "senal": "panel.reconocer" }, "tamano": [46, 26],
+      "nombre": "Alarma general", "ayuda": "Se enciende con cualquier aviso nuevo. Púlsalo para reconocerlos (dejan de parpadear)." },
+    { "id": "lamp_alarma", "kind": "lampara", "grupo": "alarma", "rotulo": "AVISO", "requiere": { "energia": "1 W" },
+      "reglas": [ { "si": "alarma.general", "color": "ambar", "parpadeo": 2.0 } ] },
+
+    // ---- landing gear ----
+    { "id": "tren", "kind": "interruptor", "grupo": "tren", "posiciones": ["ARRIBA", "ABAJO"], "defecto": 1, "tamano": [26, 44], "color": [230, 230, 226],
+      "bind": { "senal": "tren.orden" }, "nombre": "Palanca del tren",
+      "ayuda": "Sube o baja las tres patas (hidráulica: cilindros con bloqueos arriba y abajo). No sube con peso sobre el tren." },
+    { "id": "verde_m", "kind": "lampara", "grupo": "tren", "rotulo": "MORRO", "requiere": { "energia": "1 W" },
+      "reglas": [ { "si": "tren.verde_m", "color": "verde" }, { "si": "act_tren_morro.estado == 1", "color": "rojo" } ] },
+    { "id": "verde_i", "kind": "lampara", "grupo": "tren", "rotulo": "IZQ", "requiere": { "energia": "1 W" },
+      "reglas": [ { "si": "tren.verde_i", "color": "verde" }, { "si": "act_tren_izq.estado == 1", "color": "rojo" } ] },
+    { "id": "verde_d", "kind": "lampara", "grupo": "tren", "rotulo": "DER", "requiere": { "energia": "1 W" },
+      "reglas": [ { "si": "tren.verde_d", "color": "verde" }, { "si": "act_tren_der.estado == 1", "color": "rojo" } ] },
+
+    // ---- systems screen ----
+    { "id": "mfd2", "kind": "mfd", "grupo": "mfd2", "tamano": [420, 290], "pagina": "mfd2.pagina", "requiere": { "energia": "40 W" },
+      "nombre": "Pantalla de sistemas", "ayuda": "Pantalla multifunción: los botones del marco eligen la página escrita a su lado.",
+      "paginas": [
+        { "titulo": "ENERGÍA", "boton": "ENER", "auto": "energia" },
+        { "titulo": "REACTOR", "boton": "REACT", "elementos": [
+          { "tipo": "reloj", "senal": "reactor.p_termica", "rotulo": "P TÉRM", "escala": ["0 kW", "400 kW"], "zonas": { "verde": ["0 kW", "300 kW"], "roja": ["350 kW", "400 kW"] } },
+          { "tipo": "barra", "senal": "reactor.t_comb", "rotulo": "T COMB", "escala": ["0 °C", "1000 °C"], "decimales": 0,
+            "zonas": { "verde": ["0 °C", "550 °C"], "ambar": ["550 °C", "620 °C"], "roja": ["620 °C", "1000 °C"] } },
+          { "tipo": "barra", "senal": "reactor.barras", "rotulo": "BARRAS", "decimales": 0 },
+          { "tipo": "valor", "senal": "bucle_1.t", "rotulo": "BUCLE 1", "decimales": 0 },
+          { "tipo": "grafica", "senal": "reactor.t_comb", "rotulo": "T COMB", "escala": ["0 °C", "1000 °C"], "ventana": 180,
+            "zonas": { "verde": ["0 °C", "550 °C"], "roja": ["620 °C", "1000 °C"] } },
+          { "tipo": "valor", "senal": "bucle_2.t", "rotulo": "BUCLE 2", "decimales": 0 },
+          { "tipo": "texto", "lineas": ["ESTADO {reactor.estado|PARADO|ARRANCANDO|EN MARCHA|SCRAM}", "N {reactor.n:1}  RAD {radiador_izq.q:1}+{radiador_der.q:1}"], "ocupa": [2, 1] }
+        ] },
+        { "titulo": "AIRE", "boton": "AIRE", "auto": "aire" },
+        { "titulo": "CASCO", "boton": "CASCO", "auto": "casco" },
+        { "titulo": "PUERTAS", "boton": "PUERTA", "auto": "puertas" },
+        { "titulo": "DEPÓSITOS", "boton": "COMB", "auto": "depositos" }
+      ] }
+  ]
+}

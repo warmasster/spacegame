@@ -1,0 +1,65 @@
+// The computer on the suit's wrist (crates/app/src/wrist.rs; docs/MANOS.md): a key raises the
+// forearm that wears it before the visor, the head turns to it, a click taps it with the other
+// index to turn the page. What it shows is written here, page by page.
+{
+  // what it looks like (assets/models/<modelo>.glb, its mesh "cuerpo"; without it, a plain
+  // housing), the point of the rig it sits at (rigs/*.jsonc, "puntos": the middle of a forearm,
+  // on its axis — the model is built round the sleeve) and how the model is turned there
+  // (degrees: nose up, nose to the left, rolled). The model's own frame has z along the forearm
+  // toward the hand and y out through its glass (tools/modelos/datos/ordenador_muneca.json);
+  // the point's has x along the forearm and y out: a quarter turn "nose to the left" between them
+  "modelo": "ordenador_muneca",
+  "punto": "ordenador_muneca",
+  "giro": [0, 90, 0],
+  // whose arm wears it
+  "brazo": "izq",
+  // its screen, in the point's frame (x: along the forearm toward the hand, y: out of the
+  // sleeve, z: the two crossed; m): its middle, its size (along a line, up it), the way a line
+  // runs and the way up it. The model's glass: 94 by 68 mm, 89.5 mm off the forearm's axis (what
+  // is written keeps 3 mm clear of its bezel, which stands proud of it and hides its edge from
+  // the side)
+  "pantalla": { "en": [0.006, 0.0897, 0], "tamano": [0.088, 0.062], "derecha": [1, 0, 0], "arriba": [0, 0, -1] },
+  // raised: where the middle of its SCREEN goes from the eyes (x toward that arm's side, y up,
+  // z ahead; m) and that hand's pose. The elbow goes wherever turns the screen most toward the
+  // eyes (the forearm does not twist: what it wears faces where the arm's own plane does),
+  // unless "codo" says a way; the hand is as its forearm has it.
+  "arriba": { "en": [0.07, -0.20, 0.21], "pose": "reposo" },
+  // the tap that turns the page: the other hand's pose, how long it takes (s), how far off the
+  // screen its finger starts and ends (m)
+  "toque": { "pose": "apuntar", "dura": 0.5, "separa": 0.06 },
+  // the suit: hours of oxygen from full, seconds to fill it in air that can be breathed (over
+  // `aire` kPa), its own pressure (kPa: 4.3 psi, a suit's). The oxygen is a clock for now:
+  // nothing happens when it runs out.
+  "traje": { "oxigeno": 8.0, "recarga": 20.0, "aire": 40.0, "presion": 29.6 },
+  // how often what it shows is read again (s)
+  "refresco": 0.25,
+  // Pages: a title and up to six rows. A row is a label and ONE of:
+  //   "valor": one of the suit's — traje.oxigeno (share), traje.autonomia (s), traje.presion
+  //            (Pa), traje.gas (share of the pack's gas), traje.reloj (s out), exterior.presion
+  //            (Pa), exterior.gravedad (m/s²) — shown in "unidad" ("reloj": h:mm:ss);
+  //   "senal": a signal of the ship one is in or nearest to, in its own unit;
+  //   "cada": "compartimento" with "senal": "{id}.p": a row for each compartment of that ship.
+  // decimales; ambar / rojo: under these (in the unit shown) it shows amber, red ("sobre":
+  // over them); desde: [value (SI), words]: from that value on, those words instead.
+  // "nave": the page is the ship's (its name goes under the title).
+  "paginas": [
+    { "titulo": "TRAJE", "filas": [
+      { "rotulo": "OXÍGENO", "valor": "traje.oxigeno", "unidad": "%", "ambar": 25, "rojo": 10 },
+      { "rotulo": "QUEDAN", "valor": "traje.autonomia", "unidad": "h", "decimales": 1, "ambar": 2, "rojo": 0.8 },
+      { "rotulo": "PRESIÓN", "valor": "traje.presion", "unidad": "kPa", "decimales": 1 },
+      { "rotulo": "MOCHILA", "valor": "traje.gas", "unidad": "%", "ambar": 35, "rojo": 15 },
+      { "rotulo": "EXTERIOR", "valor": "exterior.presion", "unidad": "kPa" },
+      { "rotulo": "TIEMPO", "valor": "traje.reloj", "unidad": "reloj" }
+    ] },
+    { "titulo": "ENERGÍA", "nave": true, "filas": [
+      { "rotulo": "GENERA", "senal": "energia.generacion", "decimales": 1 },
+      { "rotulo": "CONSUMO", "senal": "energia.consumo", "decimales": 1 },
+      { "rotulo": "BALANCE", "senal": "energia.balance", "decimales": 1, "ambar": 0 },
+      { "rotulo": "BATERÍAS", "senal": "energia.carga", "ambar": 30, "rojo": 12 },
+      { "rotulo": "QUEDAN", "senal": "energia.autonomia", "ambar": 20, "rojo": 8, "desde": [599000, "SIN GASTO"] }
+    ] },
+    { "titulo": "AIRE", "nave": true, "filas": [
+      { "cada": "compartimento", "senal": "{id}.p", "ambar": 60, "rojo": 30 }
+    ] }
+  ]
+}

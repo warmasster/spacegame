@@ -1,0 +1,19 @@
+// The suit from astronaut.glb. LOD 0 is the file's mesh; the rest are simplified (quadric edge
+// collapse) to a triangle budget. min_px: smallest on-screen radius (px) the LOD is drawn at (the quality preset's LOD bias
+// scales it): with MEDIA the suit keeps full detail to ~20 m and simplifies noticeably past ~100 m.
+{
+  "name": "astronauta",
+  "kind": "gltf",
+  "path": "astronaut.glb",
+  "lods": [
+    { "min_px": 20.0 },
+    { "min_px": 8.0, "budget": 25000 },
+    { "min_px": 4.0, "budget": 8000 },
+    { "min_px": 1.6, "budget": 2500 },
+    { "min_px": 0.25, "budget": 800 },
+  ],
+  // never in the simplified LODs: nobody sees the helmet's inside from afar
+  "hidden_far": ["HelmetInner"],
+  "tints": { "Patch": [150, 40, 30] },
+  "animation": "caminante",
+}

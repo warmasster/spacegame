@@ -1,0 +1,21 @@
+[package]
+name = "lunar-editor"
+description = "Ship editing: operations on a ship's definition (undo, validate, save) and the MCP server models design ships with"
+edition.workspace = true
+rust-version.workspace = true
+version.workspace = true
+publish.workspace = true
+
+[dependencies]
+lunar-core = { path = "../core" }
+lunar-ship = { path = "../ship" }
+glam.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "lunar-mcp"
+path = "src/bin/lunar-mcp.rs"

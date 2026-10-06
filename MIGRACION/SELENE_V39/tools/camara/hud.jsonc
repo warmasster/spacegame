@@ -1,0 +1,56 @@
+// The HUD and the menu: the suit's jet pack bottom left (off, on and pushing, low on gas), the
+// tools bottom centre, what to fly by bottom right, what is aimed at under the crosshair and its
+// card to the right, notices top right; and the menu's tabs (controls, graphics).
+// Run: luna --guion tools/camara/hud.jsonc → out/camara/hud_*.png
+{
+  "registro": "out/camara/hud.log",
+  "pasos": [
+    { "nave": "alcotan" },
+    { "hud": true },
+    { "esperar": 2.0 },
+    // on foot, hands free, the pack off
+    { "foto": "out/camara/hud_a_pie.png" },
+    // the pack on and pushing, the welder in hand
+    { "mochila": true },
+    { "equipo": "soldador" },
+    { "subir": true },
+    { "esperar": 2.2 },
+    { "mirar": [0, -12] },
+    { "foto": "out/camara/hud_mochila.png" },
+    // the rangefinder's banner, the launcher loading
+    { "equipo": "lanzacohetes" },
+    { "gatillo": true },
+    { "esperar": 0.4 },
+    { "gatillo": false },
+    { "esperar": 0.6 },
+    { "foto": "out/camara/hud_lanzacohetes.png" },
+    // low on gas
+    { "esperar": 36.0 },
+    { "mirar": [0, -35] },
+    { "foto": "out/camara/hud_poco_gas.png" },
+    { "subir": false },
+    { "mochila": false },
+    // a control aimed at: a few words under the crosshair, its card to the right
+    { "equipo": "" },
+    { "apuntar": "principal/alarma_general" },
+    { "camara": { "panel": "principal", "distancia": 0.55, "fov": 60 } },
+    { "foto": "out/camara/hud_mando.png" },
+    { "apuntar": "" },
+    "jugador",
+    { "menu": "controles" },
+    { "esperar": 0.3 },
+    { "foto": "out/camara/hud_menu_controles.png" },
+    { "menu": "graficos" },
+    { "esperar": 0.3 },
+    { "foto": "out/camara/hud_menu_graficos.png" },
+    { "menu": "" },
+    // the tool windows: the catalog, the inspector, the figures
+    { "ventana": "catalogo" },
+    { "foto": "out/camara/hud_catalogo.png" },
+    { "ventana": "inspector" },
+    { "foto": "out/camara/hud_inspector.png" },
+    { "ventana": "cifras" },
+    { "foto": "out/camara/hud_cifras.png" },
+    { "ventana": "" }
+  ]
+}

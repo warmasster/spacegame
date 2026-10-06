@@ -1,0 +1,21 @@
+// Ramp panel of the Alcotán (hold, by the ramp; a copy outside on the hull). The button toggles
+// the ramp (the same order from every panel); the vent empties the hold, which is the airlock.
+{
+  "name": "Rampa",
+  "tamano": ["0.36 m", "0.42 m"],
+  "rejilla": [2, 3],
+  "margen": "8 mm",
+  "separacion": "4 mm",
+  "mandos": [
+    { "id": "rampa", "kind": "pulsador", "rotulo": "RAMPA", "modo": "momentaneo", "color": "amarillo", "luz": "rampa.abierta > 0.02", "tamano": [30, 30],
+      "bind": { "senal": "$aqui.rampa" }, "nombre": "Rampa", "ayuda": "Abre o cierra la rampa (dos cabrestantes eléctricos). No baja con la bodega presurizada." },
+    { "id": "focos", "kind": "interruptor", "rotulo": "FOCOS", "bind": { "senal": "$aqui.focos" }, "nombre": "Focos de la bodega",
+      "ayuda": "Enciende los focos del techo de la bodega (solo desde dentro)." },
+    { "id": "tapa_venteo", "kind": "tapa", "protege": ["venteo"], "precinto": true },
+    { "id": "venteo", "kind": "interruptor", "rotulo": "VENTEO", "posiciones": ["CERRADO", "ABIERTO"], "bind": { "senal": "$aqui.venteo" },
+      "nombre": "Ventear la bodega", "ayuda": "Vacía el aire de la bodega al exterior para poder bajar la rampa (la bodega hace de esclusa)." },
+    { "id": "p", "kind": "display7", "senal": "bodega.p", "unidad": "kPa", "decimales": 1, "digitos": 4, "rotulo": "BODEGA", "requiere": { "energia": "1 W" } },
+    { "id": "lamp", "kind": "lampara", "rotulo": "PRESIÓN", "requiere": { "energia": "1 W" },
+      "reglas": [ { "si": "bodega.p > 3 kPa", "color": "rojo" }, { "si": "bodega.p <= 3 kPa", "color": "verde" } ] }
+  ]
+}

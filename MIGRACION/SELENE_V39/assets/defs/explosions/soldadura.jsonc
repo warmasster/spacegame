@@ -1,0 +1,8 @@
+// A welder's arc on what it mends: a hard blue-white blink and a spray of sparks.
+{
+  "name": "Soldadura",
+  "flash": { "color": [0.75, 0.88, 1.0], "intensity": 2.6, "range": 3.0, "duration": 0.05 },
+  "emitters": [
+    { "style": "chispas", "count": 4, "speed": [1.0, 4.5], "cone": 75.0, "size": [0.005, 0.011], "life": [0.15, 0.5] }
+  ]
+}

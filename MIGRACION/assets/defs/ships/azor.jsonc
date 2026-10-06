@@ -1,0 +1,451 @@
+// AZOR — a one-seat fighter (docs/COMBATE.md). Ship frame: +Y up, nose toward +Z, +X to port,
+// metres; the deck is y = 0. It stands level on three long legs, its belly 1.2 m off the ground.
+//
+// What is its own:
+// - it is flown in a suit, its cockpit and its bay in vacuum (nothing to lose to a hole);
+// - the seat rides a platform that goes down through the belly to the ground and up again with
+//   the pilot on it ("plataforma"): that is the way in;
+// - astern, two doors on their own hydraulic rams — a ramp that lengthens twice as it comes down
+//   and a visor over it —
+//   open on the utility bay, where everything that keeps it alive stands within reach: one
+//   power pack (reactor, cooling and converter in one unit), one computer, two batteries on two
+//   buses, one hydraulic unit;
+// - two vectoring nacelles at its wing tips, momentum wheels, sixteen thrusters;
+// - a radar in its nose, an infrared seeker, a radar warning receiver, a transponder, a jammer;
+//   two rotary cannons, ten missiles of two kinds, decoys (crates/ship/src/tactical.rs);
+// - a drum of three panels turns to bring the pilot the one for what he is doing.
+{
+  "nombre": "Azor",
+  "matricula": "AZR-01",
+  "clase": "Caza monoplaza",
+  "astillero": "Arsenal Kestrel",
+  "modelo": "Kestrel AZ-1",
+  "descripcion": "Caza monoplaza de 11 m: góndolas vectoriales, radar, misiles, cañones y señuelos. El asiento baja por la panza en una plataforma; a popa, dos compuertas dan a la bahía de utilidades.",
+  // a hull shaped and coated against radar: it reflects like something a fifth its size
+  "firma": { "rcs": 2.5 },
+
+  // ------------------------------------------------------------------ hull
+  "casco": {
+    "material": "panel_casco",
+    "espesor": 0.07,
+    "chapa": 0.7,
+    // a faceted outline, counter-clockwise seen from the nose, from the keel: flat belly,
+    // chine, armoured tub, canopy shoulder, flat back
+    "perfiles": {
+      "casco": [[0.0, -0.35], [0.72, -0.33], [1.15, 0.05], [1.25, 0.75], [1.05, 1.55], [0.55, 2.02], [0.0, 2.02],
+                [-0.55, 2.02], [-1.05, 1.55], [-1.25, 0.75], [-1.15, 0.05], [-0.72, -0.33]]
+    },
+    "estaciones": [
+      { "z": -5.2, "perfil": "casco", "escala": [0.82, 0.9], "y": 0.08 },
+      { "z": -3.9, "perfil": "casco", "divisiones": 2 },
+      { "z": -1.2, "perfil": "casco" },
+      { "z": 0.2, "perfil": "casco", "escala": [0.97, 1.0] },
+      { "z": 1.6, "perfil": "casco", "escala": [0.9, 0.97] },
+      { "z": 2.6, "perfil": "casco", "escala": [0.76, 0.6] },
+      { "z": 3.9, "perfil": "casco", "escala": [0.56, 0.46], "y": 0.03 },
+      { "z": 5.1, "perfil": "casco", "escala": [0.32, 0.28], "y": 0.08 },
+      { "z": 6.1, "perfil": "casco", "escala": [0.07, 0.07], "y": 0.13 }
+    ],
+    "bajo_suelo": [0, 1, 10, 11],
+    // the canopy: sides, shoulders and top over the seat, and the windscreen ahead of it
+    "ventanas": [
+      [3, 3], [3, 4], [3, 5], [3, 6], [3, 7], [3, 8],
+      [4, 3], [4, 4], [4, 5], [4, 6], [4, 7], [4, 8]
+    ],
+    // the belly under the seat: its platform goes through it
+    "huecos": [[3, 0], [3, 11]],
+    "tapas": [false, true],
+    "interior": [52, 56, 62],
+    "pintura": [
+      { "caras": [0, 1, 10, 11], "color": [30, 32, 36] },
+      { "caras": [2, 9], "color": [52, 58, 68] },
+      { "caras": [3, 4, 7, 8], "color": [78, 88, 100] },
+      { "caras": [5, 6], "color": [58, 66, 78] },
+      { "caras": [3, 8], "tramos": [0, 0], "color": [188, 46, 32] },
+      { "caras": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11], "tramos": [7, 7], "color": [30, 32, 36] }
+    ]
+  },
+  "suelos": [
+    { "id": "suelo_bahia_popa", "desde": [-0.74, -5.2], "hasta": [0.74, -3.9], "divisiones": [2, 1], "material": "panel_suelo", "color": [70, 74, 78] },
+    { "id": "suelo_bahia", "desde": [-1.04, -3.9], "hasta": [1.04, -1.2], "divisiones": [2, 2], "material": "panel_suelo", "color": [70, 74, 78] },
+    { "id": "suelo_cabina_popa", "desde": [-1.02, -1.2], "hasta": [1.02, 0.22], "divisiones": [2, 1], "material": "panel_suelo", "color": [58, 62, 66] },
+    { "id": "suelo_cabina_izq", "desde": [0.46, 0.22], "hasta": [0.94, 1.58], "divisiones": [1, 1], "material": "panel_suelo", "color": [58, 62, 66] },
+    { "id": "suelo_cabina_der", "desde": [-0.94, 0.22], "hasta": [-0.46, 1.58], "divisiones": [1, 1], "material": "panel_suelo", "color": [58, 62, 66] },
+    { "id": "suelo_cabina_proa", "desde": [-0.78, 1.58], "hasta": [0.78, 2.6], "divisiones": [2, 1], "material": "panel_suelo", "color": [58, 62, 66] }
+  ],
+  "mamparos": [
+    { "id": "mamparo_bahia", "z": -1.2, "material": "panel_mamparo", "color": [60, 64, 70] },
+    { "id": "mamparo_morro", "z": 2.6, "material": "panel_mamparo", "color": [60, 64, 70] }
+  ],
+
+  // ------------------------------------------------------------------ components
+  "componentes": [
+    // ---- the cockpit: the seat on its platform, the console, a side console under each hand,
+    // the drum of panels on the port sill and the systems shelf on the starboard one ----
+    { "id": "asiento", "tipo": "asiento", "en": [0, 0, 0.85], "articulacion": "plataforma" },
+    { "id": "plataforma", "forma": { "kind": "box", "size": [0.88, 0.05, 1.34] }, "estilo": "plataforma_asiento", "en": [0, -0.025, 0.9], "material": "panel_suelo", "color": [70, 74, 78], "articulacion": "plataforma" },
+    { "id": "panza", "forma": { "kind": "box", "size": [1.36, 0.05, 1.38] }, "estilo": "panza", "en": [0, -0.343, 0.9], "material": "panel_casco", "color": [38, 40, 44], "articulacion": "plataforma" },
+    // the two masts it rides on: seen when it is down, the hull at their tops
+    { "id": "mastil_izq", "forma": { "kind": "box", "size": [0.06, 1.62, 0.06] }, "estilo": "mastil", "en": [0.4, 0.49, 0.29], "material": "acero", "color": [150, 152, 158], "articulacion": "plataforma", "espejo": true },
+    { "id": "consola", "tipo": "consola_caza", "en": [0, 0, 1.89], "cableado": false, "maquina": { "puertos": { "alimentacion": "elec:c_luces" }, "ordenes": { "encender": "luces.cabina" } } },
+    { "id": "lateral_izq", "forma": { "kind": "box", "size": [0.3, 0.66, 0.7] }, "estilo": "consola_lateral", "en": [0.62, 0.33, 1.14], "material": "aluminio", "color": [40, 44, 50], "espejo": true },
+    { "id": "tambor", "tipo": "tambor_paneles", "en": [0.72, 0.98, 1.25], "articulacion": "tambor" },
+    { "id": "cuna_tambor", "tipo": "soporte_tambor", "en": [0.72, 0.98, 1.25] },
+    { "id": "repisa", "tipo": "repisa_caza", "en": [-0.7865, 1.0254, 1.25] },
+    { "id": "plafon_cabina", "tipo": "plafon", "en": [0, 1.9, -0.55], "cableado": false, "maquina": { "puertos": { "alimentacion": "elec:c_luces" }, "ordenes": { "encender": "luces.cabina" } } },
+
+    // ---- the utility bay: everything that keeps it alive, within reach from its aisle ----
+    { "id": "reactor", "tipo": "reactor_unificado", "en": [-0.52, 0, -1.85], "cableado": false,
+      "maquina": { "puertos": { "salida": "elec:rx", "control": "elec:c_reactor" }, "ordenes": { "marcha": "rx.marcha", "scram": "rx.scram" }, "params": { "despliegue": "rad.fuera" } } },
+    { "id": "ordenador", "tipo": "nucleo_computo", "en": [0.78, 0, -1.52], "cableado": false,
+      "maquina": { "puertos": { "energia": "elec:c_avionica", "datos": "datos:fc" }, "params": { "siempre": true } } },
+    { "id": "iff", "tipo": "transpondedor", "en": [0.78, 1.0, -1.5], "cableado": false, "maquina": { "puertos": { "alimentacion": "elec:c_avionica" }, "ordenes": { "encender": "iff.encender" } } },
+    // the two batteries across the bay from each other, each on its own bus
+    { "id": "bateria_1", "tipo": "bateria", "en": [0.8, 0, -2.42], "rot": [0, 90, 0], "cableado": false, "maquina": { "puertos": { "bornes": "elec:bat1" }, "params": { "siempre": true, "soc_inicial": 0.9 } } },
+    { "id": "bateria_2", "tipo": "bateria", "en": [-0.8, 0, -3.0], "rot": [0, 90, 0], "cableado": false, "maquina": { "puertos": { "bornes": "elec:bat2" }, "params": { "siempre": true, "soc_inicial": 0.9 } } },
+    { "id": "hpu", "tipo": "unidad_hidraulica", "en": [0.72, 0, -3.3], "rot": [0, 90, 0], "cableado": false,
+      "maquina": { "puertos": { "motor": "elec:c_hid", "presion": "hid:colector" }, "ordenes": { "marcha": "hid.marcha" } } },
+    { "id": "acumulador", "tipo": "acumulador", "en": [0.88, 0, -3.88], "cableado": false, "maquina": { "puertos": { "presion": "hid:colector" } } },
+    { "id": "giroscopo", "tipo": "giroscopo_cmg", "en": [-0.72, 0, -3.72], "cableado": false,
+      "maquina": { "puertos": { "energia": "elec:c_mec" }, "ordenes": { "marcha": "giro.marcha" } } },
+    { "id": "plafon_bahia", "tipo": "plafon", "en": [0, 1.9, -3.8], "repetir": [2, [0, 0, 1.6]], "cableado": false,
+      "maquina": { "puertos": { "alimentacion": "elec:c_luces" }, "ordenes": { "encender": "luces.bahia" } } },
+    // the ramp's second and third lengths: they lie on the ramp's inside and slide out past its
+    // end, one over the other, as the ramp comes down ("rampa_ext", "rampa_ext2" below)
+    { "id": "rampa_larga", "forma": { "kind": "box", "size": [1.4, 1.19, 0.03] }, "estilo": "rampa_larga", "en": [0, 0.625, -5.095], "material": "panel_suelo", "color": [150, 153, 152], "articulacion": "rampa_ext" },
+    { "id": "rampa_larga_2", "forma": { "kind": "box", "size": [1.3, 1.19, 0.03] }, "estilo": "rampa_larga", "en": [0, 0.625, -5.065], "material": "panel_suelo", "color": [150, 153, 152], "articulacion": "rampa_ext2" },
+
+    // ---- weapons (in the order the selector counts their groups: cannon, dardo, lanza) ----
+    { "id": "canon_izq", "tipo": "canon_rotativo", "en": [1.04, 0.16, 2.1], "espejo": true, "cableado": false,
+      "maquina": { "puertos": { "alimentacion": "elec:c_armas" } } },
+    { "id": "dardos_izq", "tipo": "lanzador_misiles", "en": [2.3, 0.24, -1.1], "espejo": true, "cableado": false, "etiqueta": "DARDO",
+      "maquina": { "puertos": { "alimentacion": "elec:c_armas" }, "params": { "municion": "dardo", "grupo": "DARDO", "cargador": 3 } } },
+    { "id": "lanzas_izq", "tipo": "lanzador_misiles", "en": [1.6, 0.24, -1.1], "espejo": true, "cableado": false, "etiqueta": "LANZA",
+      "maquina": { "puertos": { "alimentacion": "elec:c_armas" }, "params": { "municion": "lanza", "grupo": "LANZA", "cargador": 2 } } },
+    { "id": "nubes", "tipo": "lanzasenuelos", "en": [0.75, 1.77, -4.8], "rot": [0, 0, -43], "cableado": false,
+      "maquina": { "puertos": { "alimentacion": "elec:c_armas" }, "params": { "municion": "nube" } } },
+    { "id": "bengalas", "tipo": "lanzasenuelos", "en": [-0.75, 1.77, -4.8], "rot": [0, 0, 43], "cableado": false,
+      "maquina": { "puertos": { "alimentacion": "elec:c_armas" }, "params": { "municion": "bengala" } } },
+
+    // ---- sensors ----
+    { "id": "radar", "tipo": "radar_morro", "en": [0, 0.34, 4.45], "cableado": false,
+      "maquina": { "puertos": { "alimentacion": "elec:c_sensores" }, "ordenes": { "encender": "radar.encender", "emitir": "radar.emitir", "escala": "radar.escala" } } },
+    { "id": "irst", "tipo": "irst_bola", "en": [0.3, 1.13, 3.0], "cableado": false, "maquina": { "puertos": { "alimentacion": "elec:c_sensores" }, "ordenes": { "encender": "irst.encender" } } },
+    { "id": "rwr", "tipo": "alertador_radar", "en": [0, 2.02, -0.6], "cableado": false, "maquina": { "puertos": { "alimentacion": "elec:c_sensores" }, "ordenes": { "encender": "rwr.encender" } } },
+    { "id": "ecm", "tipo": "perturbador", "en": [0, -0.29, -4.55], "cableado": false, "maquina": { "puertos": { "alimentacion": "elec:c_sensores" }, "ordenes": { "encender": "ecm.encender" } } },
+
+    // ---- wings, nacelles, tanks, fins, radiators ----
+    // (the wing sits on the hull's chine; ahead of it a strake runs forward to the canopy, and
+    // astern a stabiliser each side: wedges lying flat, their long edge on the hull)
+    { "id": "ala_izq", "forma": { "kind": "box", "size": [1.5, 0.14, 2.8] }, "estilo": "ala", "en": [1.95, 0.46, -1.5], "material": "panel_casco", "color": [78, 88, 100], "chapa": 0.7, "espejo": true },
+    { "id": "borde_ala_izq", "forma": { "kind": "box", "size": [1.5, 0.1, 0.22] }, "estilo": "borde_ala", "en": [1.95, 0.46, 0.01], "material": "panel_casco", "color": [188, 46, 32], "espejo": true },
+    { "id": "raiz_izq", "forma": { "kind": "wedge", "size": [0.1, 0.9, 2.2] }, "estilo": "aleta", "en": [1.5, 0.46, 1.22], "rot": [0, -5.7, -90], "material": "panel_casco", "color": [78, 88, 100], "espejo": true },
+    { "id": "estab_izq", "forma": { "kind": "wedge", "size": [0.08, 1.1, 1.3] }, "estilo": "aleta", "en": [1.6, 0.46, -4.55], "rot": [0, 0, -90], "material": "panel_casco", "color": [78, 88, 100], "espejo": true },
+    { "id": "gondola_izq", "tipo": "gondola_caza", "en": [3.14, 0.47, -0.585], "articulacion": "vector_izq", "espejo": true, "cableado": false,
+      "maquina": { "puertos": { "energia": "elec:c_motores", "propelente": "prop:colector" }, "ordenes": { "armado": "motores.armado", "arranque": "motores.arranque" } } },
+    { "id": "deposito_izq", "tipo": "deposito_caza", "en": [1.58, 0.88, -0.585], "espejo": true, "cableado": false, "maquina": { "puertos": { "salida": "prop:tanques" } } },
+    { "id": "aleta_izq", "forma": { "kind": "wedge", "size": [0.1, 1.5, 2.0] }, "estilo": "aleta", "en": [0.8, 2.52, -3.95], "rot": [0, 0, -30], "material": "panel_casco", "color": [58, 66, 78], "espejo": true },
+    { "id": "radiador_izq", "tipo": "radiador_caza", "en": [0.43, 2.06, -2.0], "articulacion": "rad_izq", "espejo": true },
+
+    // ---- armour: plates bolted over the pilot's sides and under the bay ----
+    { "id": "blindaje_izq", "forma": { "kind": "box", "size": [0.05, 0.34, 2.3] }, "estilo": "blindaje", "en": [1.135, 0.24, 0.9], "rot": [0, 0, -8], "material": "blindaje", "color": [58, 62, 68], "espejo": true },
+    { "id": "blindaje_vientre", "forma": { "kind": "box", "size": [1.3, 0.04, 2.6] }, "estilo": "blindaje", "en": [0, -0.375, -2.6], "material": "blindaje", "color": [44, 46, 50] },
+
+    // ---- landing gear: three long legs that fold forward against the hull; each slides on a gas
+    // spring ("amort_*" below) ----
+    { "id": "pata_izq_soporte", "forma": { "kind": "cylinder", "radius": 0.1, "height": 0.2, "sides": 10 }, "estilo": "tren_amort", "en": [1.22, 0.02, -2.6], "material": "acero", "color": [60, 62, 66], "espejo": true },
+    { "id": "pata_izq_funda", "forma": { "kind": "cylinder", "radius": 0.09, "height": 0.36, "sides": 10 }, "estilo": "tren_amort", "en": [1.22, -0.2, -2.6], "material": "acero", "color": [60, 62, 66], "articulacion": "pata_izq", "espejo": true },
+    { "id": "pata_izq_tubo", "forma": { "kind": "cylinder", "radius": 0.07, "height": 1.3, "sides": 10 }, "estilo": "tren_pata", "en": [1.22, -1.02, -2.6], "material": "acero", "color": [190, 192, 196], "articulacion": "amort_izq", "espejo": true },
+    { "id": "pata_izq_pie", "forma": { "kind": "box", "size": [0.34, 0.07, 0.44] }, "estilo": "tren_pie", "en": [1.22, -1.705, -2.6], "material": "acero", "color": [40, 40, 44], "articulacion": "amort_izq", "espejo": true },
+    { "id": "pata_morro_funda", "forma": { "kind": "cylinder", "radius": 0.09, "height": 0.3, "sides": 10 }, "estilo": "tren_amort", "en": [0, -0.3, 3.5], "material": "acero", "color": [60, 62, 66], "articulacion": "pata_morro" },
+    { "id": "pata_morro_tubo", "forma": { "kind": "cylinder", "radius": 0.07, "height": 1.2, "sides": 10 }, "estilo": "tren_pata", "en": [0, -1.07, 3.5], "material": "acero", "color": [190, 192, 196], "articulacion": "amort_morro" },
+    { "id": "pata_morro_pie", "forma": { "kind": "box", "size": [0.3, 0.07, 0.42] }, "estilo": "tren_pie", "en": [0, -1.705, 3.5], "material": "acero", "color": [40, 40, 44], "articulacion": "amort_morro" },
+
+    // ---- outside lights ----
+    { "id": "nav_izq", "tipo": "luz_nav", "en": [2.68, 0.6, -0.4], "cableado": false, "maquina": { "puertos": { "alimentacion": "elec:c_luces" }, "ordenes": { "encender": "luces.nav" } } },
+    { "id": "nav_der", "tipo": "luz_nav", "en": [-2.68, 0.6, -0.4], "cableado": false,
+      "luz": { "color": [40, 255, 90], "alcance": 6.0, "intensidad": 1.6, "en": [0, 0.05, 0], "lente": 0.06, "dir": [0, 1, 0] },
+      "maquina": { "puertos": { "alimentacion": "elec:c_luces" }, "ordenes": { "encender": "luces.nav" } } },
+    { "id": "estrobo", "tipo": "estroboscopio", "en": [0, 1.96, -4.4], "cableado": false, "maquina": { "puertos": { "alimentacion": "elec:c_luces" }, "ordenes": { "encender": "luces.nav" } } },
+    { "id": "foco", "tipo": "foco", "en": [0, -0.24, 2.3], "rot": [125, 0, 0], "cableado": false, "maquina": { "puertos": { "alimentacion": "elec:c_luces" }, "ordenes": { "encender": "luces.foco" } } },
+
+    // ---- thrusters: four quads, sixteen nozzles ----
+    { "id": "rcs_proa_izq", "tipo": "bloque_rcs", "en": [0.68, 0.38, 4.3], "espejo": true },
+    { "id": "rcs_proa_izq_arriba", "tipo": "tobera_rcs", "en": [0.68, 0.55, 4.3], "espejo": true, "cableado": false, "maquina": { "puertos": { "propelente": "prop:colector", "energia": "elec:c_motores" }, "ordenes": { "maestro": "rcs.maestro" } } },
+    { "id": "rcs_proa_izq_abajo", "tipo": "tobera_rcs", "en": [0.68, 0.21, 4.3], "rot": [180, 0, 0], "espejo": true, "cableado": false, "maquina": { "puertos": { "propelente": "prop:colector", "energia": "elec:c_motores" }, "ordenes": { "maestro": "rcs.maestro" } } },
+    { "id": "rcs_proa_izq_fuera", "tipo": "tobera_rcs", "en": [0.85, 0.38, 4.3], "rot": [0, 0, -90], "espejo": true, "cableado": false, "maquina": { "puertos": { "propelente": "prop:colector", "energia": "elec:c_motores" }, "ordenes": { "maestro": "rcs.maestro" } } },
+    { "id": "rcs_proa_izq_proa", "tipo": "tobera_rcs", "en": [0.68, 0.38, 4.47], "rot": [90, 0, 0], "espejo": true, "cableado": false, "maquina": { "puertos": { "propelente": "prop:colector", "energia": "elec:c_motores" }, "ordenes": { "maestro": "rcs.maestro" } } },
+    { "id": "rcs_popa_izq", "tipo": "bloque_rcs", "en": [1.13, 1.1, -4.9], "espejo": true },
+    { "id": "rcs_popa_izq_arriba", "tipo": "tobera_rcs", "en": [1.13, 1.27, -4.9], "espejo": true, "cableado": false, "maquina": { "puertos": { "propelente": "prop:colector", "energia": "elec:c_motores" }, "ordenes": { "maestro": "rcs.maestro" } } },
+    { "id": "rcs_popa_izq_abajo", "tipo": "tobera_rcs", "en": [1.13, 0.93, -4.9], "rot": [180, 0, 0], "espejo": true, "cableado": false, "maquina": { "puertos": { "propelente": "prop:colector", "energia": "elec:c_motores" }, "ordenes": { "maestro": "rcs.maestro" } } },
+    { "id": "rcs_popa_izq_fuera", "tipo": "tobera_rcs", "en": [1.3, 1.1, -4.9], "rot": [0, 0, -90], "espejo": true, "cableado": false, "maquina": { "puertos": { "propelente": "prop:colector", "energia": "elec:c_motores" }, "ordenes": { "maestro": "rcs.maestro" } } },
+    { "id": "rcs_popa_izq_popa", "tipo": "tobera_rcs", "en": [1.13, 1.1, -5.07], "rot": [-90, 0, 0], "espejo": true, "cableado": false, "maquina": { "puertos": { "propelente": "prop:colector", "energia": "elec:c_motores" }, "ordenes": { "maestro": "rcs.maestro" } } }
+  ],
+
+  // ------------------------------------------------------------------ closures
+  // The two doors of the bay, astern, each cut to the hull's own outline: the ramp from the deck
+  // up, hinged at the deck; the visor from there to the roof, hinged at the roof. One order
+  // opens both.
+  "cierres": [
+    { "id": "rampa", "nombre": "Rampa de la bahía", "abertura": { "tipo": "casco", "extremo": "popa", "desde_y": 0.0, "hasta_y": 1.25 },
+      "mueve": { "tipo": "bisagra", "borde": "abajo", "angulo": 124 },
+      "hoja": { "espesor": 0.09, "material": "panel_suelo", "color": [64, 72, 82], "interior": [150, 153, 152], "suelo": true, "chapa": 0.6, "franja": [196, 52, 36] },
+      "orden": "rampa.orden", "amortiguamiento": 700 },
+    { "id": "visera", "nombre": "Visera de la bahía", "abertura": { "tipo": "casco", "extremo": "popa", "desde_y": 1.25, "fijo": false },
+      "mueve": { "tipo": "bisagra", "borde": "arriba", "angulo": 82 },
+      "hoja": { "espesor": 0.06, "material": "panel_casco", "color": [64, 72, 82], "interior": [52, 56, 62], "chapa": 0.6 },
+      "orden": "rampa.orden", "amortiguamiento": 300 }
+  ],
+
+  // ------------------------------------------------------------------ labels
+  "rotulos": [
+    {"texto": "{matricula}", "en": [1.146, 1.2, -3.4], "normal": [0.97, 0.243, 0], "arriba": [-0.243, 0.97, 0], "alto": 0.26, "color": [214, 218, 220]},
+    {"texto": "{matricula}", "en": [-1.146, 1.2, -3.4], "normal": [-0.97, 0.243, 0], "arriba": [0.243, 0.97, 0], "alto": 0.26, "color": [214, 218, 220]},
+    {"texto": "ARSENAL KESTREL · AZ-1", "en": [1.0925, 0.2, -4.4], "normal": [0.99, -0.141, 0], "arriba": [0.141, 0.99, 0], "alto": 0.05, "color": [214, 218, 220]},
+    {"texto": "ARSENAL KESTREL · AZ-1", "en": [-1.0925, 0.2, -4.4], "normal": [-0.99, -0.141, 0], "arriba": [-0.141, 0.99, 0], "alto": 0.05, "color": [214, 218, 220]},
+    {"texto": "▼ ASIENTO · NO PASAR DEBAJO", "en": [1.16, 0.2365, 0.9], "normal": [0.99, -0.139, 0], "arriba": [0.139, 0.99, 0], "alto": 0.045, "color": [243, 179, 46]}
+  ],
+
+  // ------------------------------------------------------------------ joints
+  "articulaciones": {
+    "vector_izq": { "tipo": "bisagra", "eje": [1, 0, 0], "pivote": [3.14, 0.47, -0.585], "limites": [-180, 0], "inicial": -90, "nombre": "Góndola izquierda", "amortiguamiento": 1500 },
+    "vector_der": { "tipo": "bisagra", "eje": [1, 0, 0], "pivote": [-3.14, 0.47, -0.585], "limites": [-180, 0], "inicial": -90, "nombre": "Góndola derecha", "amortiguamiento": 1500 },
+    "rad_izq": { "tipo": "bisagra", "eje": [0, 0, 1], "pivote": [0.09, 2.045, -2.0], "limites": [0, 75], "nombre": "Radiador izquierdo" },
+    "rad_der": { "tipo": "bisagra", "eje": [0, 0, -1], "pivote": [-0.09, 2.045, -2.0], "limites": [0, 75], "nombre": "Radiador derecho" },
+    // the seat's platform: down through the belly, as far as the ground lets it
+    "plataforma": { "tipo": "corredera", "eje": [0, -1, 0], "limites": [0, 1.06], "nombre": "Plataforma del asiento", "amortiguamiento": 300 },
+    // the drum of panels: a third of a turn for each face
+    "tambor": { "tipo": "bisagra", "eje": [0, 0, 1], "pivote": [0.72, 0.98, 1.25], "limites": [0, 240], "nombre": "Tambor de paneles", "amortiguamiento": 4 },
+    // the ramp's second and third lengths slide out along it as it comes down (all out by three
+    // quarters of the way): metres for every radian the ramp has turned
+    "rampa_ext": { "tipo": "corredera", "eje": [0, 1, 0], "limites": [0, 1.12], "padre": "rampa", "nombre": "Segundo tramo de la rampa", "sigue": { "de": "rampa", "razon": 0.73 } },
+    "rampa_ext2": { "tipo": "corredera", "eje": [0, 1, 0], "limites": [0, 2.2], "padre": "rampa", "nombre": "Tercer tramo de la rampa", "sigue": { "de": "rampa", "razon": 1.44 } },
+    "pata_izq": { "tipo": "bisagra", "eje": [1, 0, 0], "pivote": [1.22, 0.0, -2.6], "limites": [-90, 0], "inicial": 0, "nombre": "Pata izquierda", "amortiguamiento": 1200 },
+    "pata_der": { "tipo": "bisagra", "eje": [1, 0, 0], "pivote": [-1.22, 0.0, -2.6], "limites": [-90, 0], "inicial": 0, "nombre": "Pata derecha", "amortiguamiento": 1200 },
+    "pata_morro": { "tipo": "bisagra", "eje": [1, 0, 0], "pivote": [0, -0.2, 3.5], "limites": [-90, 0], "inicial": 0, "nombre": "Pata de morro", "amortiguamiento": 1200 },
+    "amort_izq": { "tipo": "corredera", "eje": [0, 1, 0], "limites": [0, 0.25], "padre": "pata_izq", "nombre": "Amortiguador izquierdo", "muelle": {} },
+    "amort_der": { "tipo": "corredera", "eje": [0, 1, 0], "limites": [0, 0.25], "padre": "pata_der", "nombre": "Amortiguador derecho", "muelle": {} },
+    "amort_morro": { "tipo": "corredera", "eje": [0, 1, 0], "limites": [0, 0.25], "padre": "pata_morro", "nombre": "Amortiguador de morro", "muelle": {} }
+  },
+
+  // ------------------------------------------------------------------ actuators
+  "actuadores": {
+    "act_gondola_izq": {
+      "articulacion": "vector_izq", "nombre": "Husillo de la góndola izquierda", "fabricante": "Kestrel", "modelo": "Husillo HV-8",
+      "accionamiento": { "tipo": "electrico", "velocidad_vacio": "3000 rpm", "par_bloqueo": "6 N*m" },
+      "transmision": { "tipo": "reductor", "reduccion": 400, "autobloqueo": true },
+      "control": { "modo": "posicion", "orden": "gondolas.mando" }, "redes": { "motor": "elec:c_mec" }, "cableado": false
+    },
+    "act_gondola_der": {
+      "articulacion": "vector_der", "nombre": "Husillo de la góndola derecha", "fabricante": "Kestrel", "modelo": "Husillo HV-8",
+      "accionamiento": { "tipo": "electrico", "velocidad_vacio": "3000 rpm", "par_bloqueo": "6 N*m" },
+      "transmision": { "tipo": "reductor", "reduccion": 400, "autobloqueo": true },
+      "control": { "modo": "posicion", "orden": "gondolas.mando" }, "redes": { "motor": "elec:c_mec" }, "cableado": false
+    },
+    "act_rad_izq": {
+      "articulacion": "rad_izq", "nombre": "Motor del radiador izquierdo",
+      "accionamiento": { "tipo": "electrico", "velocidad_vacio": "3000 rpm", "par_bloqueo": "2 N*m" },
+      "transmision": { "tipo": "reductor", "reduccion": 1200, "autobloqueo": true },
+      "control": { "orden": "rad.orden" }, "redes": { "motor": "elec:c_mec" }, "cableado": false
+    },
+    "act_rad_der": {
+      "articulacion": "rad_der", "nombre": "Motor del radiador derecho",
+      "accionamiento": { "tipo": "electrico", "velocidad_vacio": "3000 rpm", "par_bloqueo": "2 N*m" },
+      "transmision": { "tipo": "reductor", "reduccion": 1200, "autobloqueo": true },
+      "control": { "orden": "rad.orden" }, "redes": { "motor": "elec:c_mec" }, "cableado": false
+    },
+    "act_plataforma": {
+      "articulacion": "plataforma", "nombre": "Husillo de la plataforma", "fabricante": "Kestrel", "modelo": "Husillo HP-2",
+      "accionamiento": { "tipo": "electrico", "velocidad_vacio": "3000 rpm", "par_bloqueo": "8 N*m" },
+      "transmision": { "tipo": "husillo", "paso": "8 mm", "eficiencia": 0.4 },
+      "control": { "orden": "plataforma.orden" }, "redes": { "motor": "elec:c_mec" }, "cableado": false
+    },
+    "act_tambor": {
+      "articulacion": "tambor", "nombre": "Motor del tambor de paneles",
+      "accionamiento": { "tipo": "electrico", "velocidad_vacio": "3000 rpm", "par_bloqueo": "0.6 N*m" },
+      "transmision": { "tipo": "reductor", "reduccion": 150, "autobloqueo": true },
+      "control": { "modo": "posicion", "orden": "tambor.orden" }, "redes": { "motor": "elec:c_mec" }, "cableado": false
+    },
+    // the two doors of the bay: an electro-hydrostatic ram each — a sealed ram with its own
+    // little pump and motor, fed with current alone, so that the doors open with the ship cold
+    "act_rampa": {
+      "articulacion": "rampa", "nombre": "Cilindro electrohidrostático de la rampa", "fabricante": "Kestrel", "modelo": "EHA RP-90", "vida": 8000,
+      "accionamiento": { "tipo": "electrico", "velocidad_vacio": "3000 rpm", "par_bloqueo": "9 N*m" },
+      "transmision": { "tipo": "biela", "anclaje_fijo": [0.8, 0.75, -4.5], "anclaje_movil": [0.8, 0.6, -5.17], "autobloqueo": true, "paso": "6 mm" },
+      "control": { "orden": "rampa.orden" }, "redes": { "motor": "elec:c_mec" }, "cableado": false
+    },
+    "act_visera": {
+      "articulacion": "visera", "nombre": "Cilindro electrohidrostático de la visera", "fabricante": "Kestrel", "modelo": "EHA VS-34", "vida": 8000,
+      "accionamiento": { "tipo": "electrico", "velocidad_vacio": "3000 rpm", "par_bloqueo": "4 N*m" },
+      "transmision": { "tipo": "biela", "anclaje_fijo": [0.3, 1.8, -4.6], "anclaje_movil": [0.3, 1.4, -5.15], "autobloqueo": true, "paso": "4 mm" },
+      "control": { "orden": "rampa.orden" }, "redes": { "motor": "elec:c_mec" }, "cableado": false
+    },
+    "act_pata_izq": {
+      "articulacion": "pata_izq", "nombre": "Cilindro de la pata izquierda", "fabricante": "Kestrel", "modelo": "Cilindro LG-50", "vida": 8000,
+      "accionamiento": { "tipo": "hidraulico", "diametro": "50 mm", "vastago": "25 mm", "caudal_valvula": "14 L/min" },
+      "transmision": { "tipo": "biela", "anclaje_fijo": [1.22, 0.05, -3.2], "anclaje_movil": [1.22, -0.6, -2.6] },
+      "control": { "orden": "tren.orden" },
+      "bloqueos": [ { "en": "fin", "liberacion": "hidraulico", "nombre": "Blocaje abajo" }, { "en": "inicio", "liberacion": "hidraulico", "nombre": "Blocaje arriba" } ],
+      "redes": { "fluido": "hid:colector", "valvula": "elec:c_mec" }, "cableado": false
+    },
+    "act_pata_der": {
+      "articulacion": "pata_der", "nombre": "Cilindro de la pata derecha", "fabricante": "Kestrel", "modelo": "Cilindro LG-50", "vida": 8000,
+      "accionamiento": { "tipo": "hidraulico", "diametro": "50 mm", "vastago": "25 mm", "caudal_valvula": "14 L/min" },
+      "transmision": { "tipo": "biela", "anclaje_fijo": [-1.22, 0.05, -3.2], "anclaje_movil": [-1.22, -0.6, -2.6] },
+      "control": { "orden": "tren.orden" },
+      "bloqueos": [ { "en": "fin", "liberacion": "hidraulico", "nombre": "Blocaje abajo" }, { "en": "inicio", "liberacion": "hidraulico", "nombre": "Blocaje arriba" } ],
+      "redes": { "fluido": "hid:colector", "valvula": "elec:c_mec" }, "cableado": false
+    },
+    "act_pata_morro": {
+      "articulacion": "pata_morro", "nombre": "Cilindro de la pata de morro", "fabricante": "Kestrel", "modelo": "Cilindro LG-50", "vida": 8000,
+      "accionamiento": { "tipo": "hidraulico", "diametro": "50 mm", "vastago": "25 mm", "caudal_valvula": "14 L/min" },
+      "transmision": { "tipo": "biela", "anclaje_fijo": [0, -0.15, 2.9], "anclaje_movil": [0, -0.8, 3.5] },
+      "control": { "orden": "tren.orden" },
+      "bloqueos": [ { "en": "fin", "liberacion": "hidraulico", "nombre": "Blocaje abajo" }, { "en": "inicio", "liberacion": "hidraulico", "nombre": "Blocaje arriba" } ],
+      "redes": { "fluido": "hid:colector", "valvula": "elec:c_mec" }, "cableado": false
+    }
+  },
+
+  // ------------------------------------------------------------------ networks
+  // (its wiring and its pipes are inside its armour: nothing of them is seen, nor cut alone)
+  "redes": {
+    // 28 V on two buses: battery 1 and bus A to port, battery 2 and bus B to starboard, the
+    // power pack to both, a tie between them, and an essential bar fed from either
+    "elec": {
+      "medio": "electrico", "nominal": "28 V", "conducto": "cable",
+      "nodos": { "bat1": [0.8, 0.6, -2.42], "bat2": [-0.8, 0.6, -3.0], "rx": [-0.52, 1.5, -1.85], "bus_a": [0.9, 1.4, -2.0], "bus_b": [-0.9, 1.4, -2.6], "ess": [0, 1.4, -1.3],
+                 "c_motores": [0, 1.5, -1.3], "c_armas": [-0.9, 1.5, -2.6], "c_sensores": [0.9, 1.5, -2.0], "c_hid": [0.9, 1.3, -3.0],
+                 "c_avionica": [0.3, 1.5, -1.3], "c_luces": [-0.3, 1.5, -1.3], "c_mec": [0, 1.6, -1.3], "c_reactor": [-0.52, 1.6, -1.6] },
+      "interruptores": [
+        { "id": "ct.bat1", "de": "bat1", "a": "bus_a" },
+        { "id": "ct.bat2", "de": "bat2", "a": "bus_b" },
+        { "id": "ct.rx_a", "de": "rx", "a": "bus_a", "senal": "ct.rx" },
+        { "id": "ct.rx_b", "de": "rx", "a": "bus_b", "senal": "ct.rx" },
+        { "id": "ct.enlace", "de": "bus_a", "a": "bus_b" },
+        { "id": "ct.ess_a", "de": "bus_a", "a": "ess", "senal": "ct.ess" },
+        { "id": "ct.ess_b", "de": "bus_b", "a": "ess", "senal": "ct.ess" },
+        // the circuits a pilot may want to cut, each behind its breaker (on the throttle console)
+        { "id": "brk.motores", "de": "ess", "a": "c_motores", "medir": true },
+        { "id": "brk.armas", "de": "bus_b", "a": "c_armas", "medir": true },
+        { "id": "brk.sensores", "de": "bus_a", "a": "c_sensores", "medir": true },
+        { "id": "brk.hid", "de": "bus_a", "a": "c_hid", "medir": true },
+        { "id": "brk.avionica", "de": "ess", "a": "c_avionica", "medir": true },
+        { "id": "brk.luces", "de": "ess", "a": "c_luces", "medir": true },
+        { "id": "brk.mec", "de": "ess", "a": "c_mec", "medir": true },
+        { "id": "brk.reactor", "de": "ess", "a": "c_reactor", "medir": true }
+      ]
+    },
+    "datos": { "medio": "datos", "conducto": "datos", "nodos": { "fc": [0.78, 1.05, -1.52] } },
+    "prop": {
+      "medio": "propelente", "nominal": "2.4 MPa", "conducto": "tubo", "fuga": "2 kg/s",
+      "nodos": { "tanques": [1.3, 0.7, -0.9], "colector": [0, -0.1, -0.9] },
+      "interruptores": [ { "id": "pv.prop", "de": "tanques", "a": "colector" } ]
+    },
+    "hid": {
+      "medio": "hidraulico", "nominal": "21 MPa", "conducto": "tubo_alta", "fuga": "0.0004 m3/s",
+      "nodos": { "colector": [0.72, -0.1, -3.3] }
+    }
+  },
+
+  // ------------------------------------------------------------------ panels, seats
+  "paneles": [
+    { "id": "principal", "panel": "azor_principal", "pieza": "consola.cara", "en": [0, 0.935, 1.85], "normal": [0, 0.6, -0.8], "energia": "elec:c_avionica", "cableado": false },
+    { "id": "mando", "panel": "azor_mando", "pieza": "lateral_der", "en": [-0.62, 0.662, 1.14], "normal": [0, 1, 0], "arriba": [0, 0, 1], "energia": "elec:c_avionica", "cableado": false },
+    { "id": "gases", "panel": "azor_gases", "pieza": "lateral_izq", "en": [0.62, 0.662, 1.14], "normal": [0, 1, 0], "arriba": [0, 0, 1], "energia": "elec:c_avionica", "cableado": false },
+    // the drum's three faces, where each is with the drum at rest (NAVEGACIÓN to the pilot)
+    { "id": "nav", "panel": "azor_nav", "pieza": "tambor", "en": [0.6545, 1.035, 1.25], "normal": [-0.766, 0.643, 0], "arriba": [0.643, 0.766, 0], "energia": "elec:c_avionica", "cableado": false },
+    { "id": "combate", "panel": "azor_combate", "pieza": "tambor", "en": [0.8004, 1.0092, 1.25], "normal": [0.94, 0.342, 0], "arriba": [0.342, -0.94, 0], "energia": "elec:c_avionica", "cableado": false },
+    { "id": "sensores", "panel": "azor_sensores", "pieza": "tambor", "en": [0.7051, 0.8958, 1.25], "normal": [-0.174, -0.985, 0], "arriba": [-0.985, 0.174, 0], "energia": "elec:c_avionica", "cableado": false },
+    { "id": "sistemas", "panel": "azor_sistemas", "pieza": "repisa.cara", "en": [-0.775, 1.035, 1.25], "normal": [0.766, 0.643, 0], "arriba": [-0.643, 0.766, 0], "energia": "elec:c_avionica", "cableado": false },
+    { "id": "bahia", "panel": "azor_bahia", "en": [0.42, 1.3, -1.235], "normal": [0, 0, -1], "energia": "elec:c_avionica", "cableado": false },
+    { "id": "exterior", "panel": "azor_exterior", "en": [1.186, 0.3, -3.45], "normal": [0.99, -0.141, 0], "energia": "elec:c_avionica", "cableado": false }
+  ],
+  // where one gets off the seat with its platform down: the ground on either side of the ship
+  // (with it up, the seat's own exit: the cockpit's floor behind it)
+  "bajadas": [
+    { "id": "suelo_izq", "en": [2.3, -1.5, 1.6], "zona": [0.6, 1.6], "rumbo": 90, "baja": 1.0 },
+    { "id": "suelo_der", "en": [-2.3, -1.5, 1.6], "zona": [0.6, 1.6], "rumbo": -90, "baja": 1.0 }
+  ],
+  "asientos": [
+    { "id": "piloto", "nombre": "Asiento del Azor", "pieza": "asiento.cojin", "ojos": [0, 1.35, 0.96], "rumbo": 0, "salida": [0.0, 0.0, -0.5],
+      "paneles": ["principal", "mando", "gases", "nav", "sistemas"],
+      "mandos": [
+        { "tecla": "W", "mando": "mando/palanca", "eje": 0, "valor": 1.0, "ayuda": "Palanca de mando: cabeceo (morro abajo y arriba)" },
+        { "tecla": "S", "mando": "mando/palanca", "eje": 0, "valor": -1.0, "ayuda": "Palanca de mando: cabeceo (morro abajo y arriba)" },
+        { "tecla": "E", "mando": "mando/palanca", "eje": 1, "valor": 1.0, "ayuda": "Palanca de mando: alabeo (inclinarse a un lado y a otro)" },
+        { "tecla": "Q", "mando": "mando/palanca", "eje": 1, "valor": -1.0, "ayuda": "Palanca de mando: alabeo (inclinarse a un lado y a otro)" },
+        { "tecla": "A", "mando": "mando/guinada", "eje": 0, "valor": 1.0, "ayuda": "Guiñada (girar el morro a izquierda y derecha)" },
+        { "tecla": "D", "mando": "mando/guinada", "eje": 0, "valor": -1.0, "ayuda": "Guiñada (girar el morro a izquierda y derecha)" },
+        { "tecla": "R", "mando": "mando/vertical", "eje": 0, "valor": 1.0, "ayuda": "Subir y bajar con los propulsores de maniobra" },
+        { "tecla": "F", "mando": "mando/vertical", "eje": 0, "valor": -1.0, "ayuda": "Subir y bajar con los propulsores de maniobra" },
+        { "tecla": "I", "mando": "mando/traslacion", "eje": 0, "valor": 1.0, "ayuda": "Traslación adelante y atrás (propulsores de maniobra)" },
+        { "tecla": "K", "mando": "mando/traslacion", "eje": 0, "valor": -1.0, "ayuda": "Traslación adelante y atrás (propulsores de maniobra)" },
+        { "tecla": "J", "mando": "mando/traslacion", "eje": 1, "valor": 1.0, "ayuda": "Traslación a los lados (propulsores de maniobra)" },
+        { "tecla": "L", "mando": "mando/traslacion", "eje": 1, "valor": -1.0, "ayuda": "Traslación a los lados (propulsores de maniobra)" },
+        { "tecla": "Mayús", "mando": "gases/acelerador", "accion": "subir", "ayuda": "Acelerador de los motores: más" },
+        { "tecla": "Ctrl", "mando": "gases/acelerador", "accion": "bajar", "ayuda": "Acelerador de los motores: menos" },
+        { "tecla": "X", "mando": "gases/acelerador", "accion": "cero", "ayuda": "Acelerador de los motores: a cero" },
+        { "tecla": "H", "mando": "mando/gatillo", "accion": "pulsar", "ayuda": "Gatillo: dispara el arma elegida (maestro de armas en ARMADO)" },
+        { "tecla": "M", "mando": "combate/cm_soltar", "accion": "pulsar", "ayuda": "Soltar señuelos (dipolos y bengala)" },
+        { "tecla": "N", "mando": "principal/obj_sig", "accion": "pulsar", "ayuda": "Elegir la traza siguiente" },
+        { "tecla": "U", "mando": "principal/obj_cerca", "accion": "pulsar", "ayuda": "Elegir la traza más cercana" },
+        { "tecla": "B", "mando": "principal/obj_fijar", "accion": "pulsar", "ayuda": "Fijar el radar en la traza elegida (o soltarla)" }
+      ] }
+  ],
+
+  // ------------------------------------------------------------------ logic
+  // (what has no switch of its own stays shut: the power pack's contactors, the essential bar's)
+  "senales": { "ct.rx": 1, "ct.ess": 1 },
+  "derivadas": {
+    // one order for the two doors of the bay, from the cockpit, the bay or outside
+    "rampa.orden": "toggle(sistemas.compuertas || bahia.compuertas || exterior.compuertas)",
+    "plataforma.orden": "toggle(sistemas.plataforma || exterior.plataforma)",
+    "tambor.orden": "tambor.cara / 2",
+    // the nacelles: the flight computer's while it holds or the autopilot flies (it swings them
+    // to where the push is wanted, back too: that is how it brakes with its hull level); else
+    // the pilot's lever, from pushing back (0) through straight up (0.5) to straight ahead (1)
+    "gondolas.mando": "if(vuelo.vector_on, vuelo.vector, gondolas.orden)",
+    "rad.fuera": "(rad_izq.pos + rad_der.pos) / 2",
+    "luces.bahia": "luces.bahia_cabina || luces.bahia_local",
+    "tren.verde_i": "act_pata_izq.bloqueado && pata_izq.pos > 0.95",
+    "tren.verde_d": "act_pata_der.bloqueado && pata_der.pos > 0.95",
+    "tren.verde_m": "act_pata_morro.bloqueado && pata_morro.pos > 0.95",
+    "alarma.tren": "for(tren.orden && !(tren.verde_i && tren.verde_d && tren.verde_m), 20 s) || (!tren.orden && nave.altura < 15 m && nave.vs < -1 m/s)",
+    "alarma.disyuntor": "!(brk.motores && brk.armas && brk.sensores && brk.hid && brk.avionica && brk.luces && brk.mec && brk.reactor)",
+    "alarma.algo": "elec.bus_a < 22 V || elec.bus_b < 22 V || (hid.marcha && hid.colector < 12 MPa) || alarma.tren || alarma.disyuntor || reactor.estado == 3 || gondola_izq.estado == 6 || gondola_der.estado == 6 || rwr.fijado || rwr.misil",
+    "alarma.general": "latch(edge(alarma.algo), panel.reconocer)",
+    "sonido.alarma": "alarma.general && elec.c_avionica > 18 V"
+  },
+  "enclavamientos": [
+    { "mando": "principal/tren", "hacia": 0, "si": "nave.altura < 2 m", "motivo": "Peso sobre el tren" },
+    { "mando": "sistemas/plataforma", "si": "nave.altura > 4 m", "motivo": "En vuelo: la plataforma solo se mueve posado" },
+    { "mando": "exterior/plataforma", "si": "nave.altura > 4 m", "motivo": "En vuelo: la plataforma solo se mueve posado" }
+  ],
+  "alarmas": {
+    "Bus A sin tensión": "elec.bus_a < 20 V",
+    "Bus B sin tensión": "elec.bus_b < 20 V",
+    "Presión hidráulica baja": "hid.marcha && hid.colector < 10 MPa",
+    "Un disyuntor abierto": "alarma.disyuntor",
+    "Grupo de energía parado por un disparo": "reactor.estado == 3",
+    "Grupo de energía limitado por temperatura: da menos de lo pedido (saca los radiadores)": "reactor.limitado",
+    "Motor izquierdo: fallo": "gondola_izq.estado == 6",
+    "Motor derecho: fallo": "gondola_der.estado == 6",
+    "Tren sin blocar": "alarma.tren",
+    "Un radar tiene fijada la nave": "rwr.fijado",
+    "Misil hacia la nave": "rwr.misil",
+    "Giróscopos saturados": "giroscopo.carga > 0.95"
+  },
+
+  // No gravity of its own (a fighter flown in the suit, strapped in): on it one weighs what is left of the
+  // world's pull as it goes (all of it parked, nothing in free fall)
+  "gravedad": { "g": 0.0, "tiempo": 0.0 },
+  "vuelo": {
+    "cabeceo": "vuelo.cabeceo", "alabeo": "vuelo.alabeo", "guinada": "vuelo.guinada",
+    "traslacion": ["vuelo.tx", "vuelo.ty", "vuelo.tz"], "acelerador": "vuelo.acelerador",
+    "estabilizador": "vuelo.sas", "mantener": "vuelo.mantener",
+    "giro": [45, 45, 70], "ganancia": 3.0,
+    "rcs": ["rcs_*"], "motores": ["gondola_izq", "gondola_der"], "ordenador": "ordenador",
+    "ruedas": ["giroscopo"],
+    "perfil": "fcs.perfil", "limite": "fcs.limite"
+  }
+}

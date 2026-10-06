@@ -1,0 +1,18 @@
+// Performance: 20 Alcotán dropped from 12 m, so close they land on each other. The worst there
+// is for contacts: recorded while they fall, pile up and come to rest.
+// Run: luna --guion tools/rendimiento/caida_20.jsonc → out/rendimiento/caida_20.json (+ .log, .png)
+{
+  "naves": ["alcotan"],
+  "registro": "out/rendimiento/caida_20.log",
+  "pasos": [
+    { "nave": "alcotan" },
+    { "esperar": 2.0 },
+    { "camara": { "en": [0, 40, -110], "mira": [0, 5, 0], "fov": 70 } },
+    { "esperar": 1.0 },
+    { "perfil": "out/rendimiento/caida_20.json" },
+    { "flota": { "nave": "alcotan", "cuenta": [4, 5], "paso": 15, "altura": 12, "este": -10, "norte": 24 } },
+    { "esperar": 12.0 },
+    "fin_perfil",
+    { "foto": "out/rendimiento/caida_20.png" }
+  ]
+}

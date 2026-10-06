@@ -28,14 +28,21 @@ alrededor de una Luna esférica y volver, todo en la misma partida.
 Toda la superficie de un cuerpo es **una** función determinista (cliente, workers y servidor ven el
 mismo suelo sin guardarlo ni enviarlo):
 
-- **Relieve global** (`surface.ts`, `BodySurface`): tierras altas, mares, ondulación hasta ~1 m y
-  cráteres a todas las escalas (de 170 km a 2 m). Es un dato por cuerpo (`SurfaceDef`, en
+- **Relieve global** (`surface.ts`, `BodySurface`): tierras altas, mares, cordilleras dispersas,
+  ondulación hasta ~1 m y cráteres a todas las escalas (de 170 km a 2 m). Es un dato por cuerpo (`SurfaceDef`, en
   `BODIES`) y la **semilla del mundo** lo varía entero. El nivel de referencia de cada mundo es el
   suelo natural de su sitio de inicio (`bareSurface`): queda sobre la esfera media, así que la base
   está en el origen del mundo (y = 0) y allí el peso es exactamente la gravedad del cuerpo, sea
   cual sea la semilla; nada depende de ello. Los cráteres procedurales tienen una
   candidata por celda del cubo-esfera (`cubeSphere.ts`); un punto mira las 3×3 celdas de su cara y
   las de la cara vecina cerca de una arista, así que ningún cráter se corta (sin costuras).
+  Las cordilleras son `SurfaceDef.mountains`: ruido de crestas a tres escalas, atenuado en los mares;
+  la colisión y el servidor usan la misma altura y los límites de culling incluyen sus cumbres.
+  El albedo descarta ruido más fino que la celda del LOD para evitar cuadros a distancia.
+  El detalle visual usa `regolith_macro.png` (RGB, generado con `python tools/textures/macro.py`):
+  dos canales de deformación suave de coordenadas y uno de variación entre 20 m y 2,56 km. Se calcula
+  una vez, tiene mipmaps y cuesta una consulta de textura; todos los nodos comparten el mismo periodo.
+  La penumbra de las sombras precalculadas es angular y constante: no oscurece parches por su LOD.
 - **Modificadores de terreno** (`terrainMods/`): datos serializables
   `{ kind, body, center (dirección unitaria), radius, params, yaw?, seed? }`. Cada tipo es una
   función pura (`kinds.ts`, registro `MOD_KINDS`) que recibe la muestra del suelo (altura, albedo,
@@ -55,6 +62,10 @@ mismo suelo sin guardarlo ni enviarlo):
     usado. Sin basura al muestrear; funciona igual en workers, cliente y servidor.
   - Los detalles más pequeños que la resolución de una muestra se omiten (como el relieve
     procedural): un nodo lejano no ve un cráter de 2 m.
+  - `angle.ts` mide separaciones con `atan2(|a×b|, a·b)`, sin arrays temporales. La dirección
+    serializada es redondeada y no tiene longitud exactamente 1: no se puede usar `acos(a·b)`
+    para fusionar cráteres o invalidar nodos. `modTouches` comparte la prueba de alcance entre
+    mallas y rocas, y `TerrainMods.near` usa el mismo ángulo al preparar listas para workers.
 - **Sitios** (`sites.ts`): lugares como datos que emiten modificadores. Un tipo de sitio es una
   entrada en `SITE_KINDS` (hoy `base`: campo aplanado, pistas, puntos de aparición, cajas en el
   suelo; `crater`: un cráter puesto a mano). La posición es una dirección o un punto del marco de
@@ -69,6 +80,14 @@ mismo suelo sin guardarlo ni enviarlo):
 - **Preguntar por el suelo**: `heightAboveGround(cuerpo, p, superficie)` (en el cliente,
   `game.groundAlt`) y la superficie de un cuerpo es `surfaceOf(cuerpo, semilla)` (en el cliente,
   `game.surfaces`).
+
+## El cielo (`client/world/sky.ts`)
+
+El fondo usa direcciones celestes y cubre los 360°, sin depender del origen flotante ni del tamaño
+del terreno. La Vía Láctea tiene mipmaps, polvo oscuro y una variación de color tenue. Los cometas
+lejanos reutilizan un solo cuadrilátero de dos triángulos: aparecen cada varios minutos, se desvanecen
+suavemente y sus colas apuntan en dirección opuesta al Sol. No generan partículas, luces ni mallas
+nuevas por frame; el sistema `sky` los actualiza después de la cámara.
 
 ## El vuelo (`shared/ship/flight`)
 
@@ -227,9 +246,36 @@ Para volver:
 - `welcome` trae la capa dinámica de modificadores de todos los cuerpos (`mods`) y el punto de
   aparición en coordenadas de mundo, ya sobre el suelo; `explode` trae el cráter (`mod`) cuando la
   explosión fue en el suelo, en cualquier cuerpo. Cada cliente lo añade a su superficie en el orden
-  del servidor (la fusión de cráteres repetidos da el mismo resultado en todos). Protocolo 11.
+    del servidor (la fusión de cráteres repetidos da el mismo resultado en todos). Protocolo 15.
 - Un cráter de explosión viaja sin parámetros (los valores por defecto del tipo `crater` son los de
   una explosión): ~100 B en JSON; 4.000 son ~420 KB al entrar.
+
+## Uniones de parches y niveles de detalle
+
+La transición CDLOD debe llevar todos los atributos a la misma superficie gruesa: posición,
+normal, albedo, material y visibilidad solar. Antes la posición sí usaba el padre, pero la normal
+era la del vértice fino par: en una comprobación real del worker el borde coincidía a 0,002 mm y
+su iluminación saltaba casi 12°. Ahora ambas normales se calculan con la misma diferencia
+central sobre la malla del nivel correspondiente, incluida una corona de muestras exterior.
+
+El padre también aporta albedo, material y sombra. En los bordes la marcha cercana hacia el sol
+consulta la superficie compartida: interpolar la malla local con el Jacobiano del centro daba
+un horizonte distinto según el parche. Se amplía la selección e invalidación de modificadores
+para cubrir la corona que necesitan las normales del padre.
+
+Los faldones siguen tapando huecos transitorios de LOD, pero el shader de profundidad los
+descarta: una pared auxiliar de un parche no debe proyectar una línea oscura sobre su vecino.
+La regla vive en `client/world/terrainShader.ts`; desplazamiento de color y profundidad comparten
+la misma fórmula. `terrain.worker.ts` exporta `buildTerrainJob` para medir los buffers reales sin
+navegador. `npm run test:terrain` comprueba bordes de igual/distinto nivel y continuidad de sombras.
+No sustituye una revisión visual de texturas o sombras en GPU.
+
+## Otros sistemas estelares
+
+La galaxia (`shared/space/galaxy.ts`) tiene 2000 sistemas. Los más cercanos al Sol tienen un cuerpo
+en su propia región del mismo espacio del mundo, a 10⁸ km uno de otro: todo lo de arriba (suelo,
+gravedad, vuelo, órbitas) funciona allí igual. Se llega con un salto (**J** a los mandos, en vuelo y a
+más de 20 km del suelo: `shared/space/jump.ts`). Detalle en [`MUNDO.md`](MUNDO.md) §14.
 
 ## Límites de esta versión
 
@@ -239,6 +285,7 @@ Para volver:
   mueva está (`SphereTerrain.setSun`), nada lo llama todavía. El cielo sigue orientado para la
   latitud de la base.
 - Ningún generador procedural de sitios todavía (`SITE_GENERATORS` vacío).
+- En otros sistemas el sol alumbra desde donde el del Sol, y los cuerpos no tienen sitios.
 - No hay aceleración del tiempo: una órbita baja dura ~2 h reales, y BAJAR puede esperar casi eso.
 - BAJAR solo vuelve a la base (no a otros puntos) y no corrige el plano de la órbita: si la órbita
   pasa lejos de la base, la corrección lateral se hace al frenar y cuesta más.

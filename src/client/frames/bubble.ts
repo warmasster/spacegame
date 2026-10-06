@@ -45,8 +45,13 @@ export class Bubble {
   readonly pose: ShipPose = { p: [0, 0, 0], q: [0, 0, 0, 1], v: [0, 0, 0], w: [0, 0, 0] };
   readonly prev: ShipPose = clonePose(this.pose);
   readonly render: ShipPose = clonePose(this.pose);
-  /** The pose it had before the last re-laying (residents are carried from it to `pose`). */
+  /**
+   * The poses it had before the last re-laying, this step and the step before: residents are
+   * carried from `from` to `pose` and their step before from `fromPrev` to `prev`, so what is
+   * drawn between the two steps goes on unbroken (shared/frames/track.ts).
+   */
   readonly from: ShipPose = clonePose(this.pose);
+  readonly fromPrev: ShipPose = clonePose(this.pose);
   /** Axes (world, unit): east, up, south. */
   readonly e: V3 = [1, 0, 0];
   readonly u: V3 = [0, 1, 0];
@@ -57,7 +62,11 @@ export class Bubble {
   version = 0;
   private _g: V3 = [0, 0, 0];
 
-  constructor(private surface: (b: CelestialBody) => BodySurface | null) {}
+  constructor(
+    private surface: (b: CelestialBody) => BodySurface | null,
+    /** Length of a fixed step (s): where a moving bubble was the step before it was laid. */
+    private stepS = 1 / 60,
+  ) {}
 
   /** Start of a fixed step: a moving bubble advances with its velocity; gravity where it is. */
   step(dt: number) {
@@ -77,8 +86,10 @@ export class Bubble {
   }
 
   /**
-   * Keep the bubble round the player: world position `p` and velocity `v` (m/s). Returns true when
-   * it was re-laid — then every resident has to be carried from `from` to `pose`.
+   * Keep the bubble round the player: world position `p` and velocity `v` (m/s) at the end of a
+   * step (everything in the bubble at that same time). Returns true when it was re-laid — then
+   * every resident has to be carried from `from` to `pose`, and its step before from `fromPrev`
+   * to `prev` (`Frames.rebase`, `PoseTrack.carry`).
    */
   follow(p: V3, v: V3): boolean {
     const b = bodyAt(p);
@@ -101,6 +112,7 @@ export class Bubble {
     const mode: BubbleMode = ground ? 'ground' : 'space';
     if (this.version > 0 && mode === this.mode && b === this.body && !this.wandered(p, v)) return false;
     copyPose(this.from, this.pose);
+    copyPose(this.fromPrev, this.prev);
     this.mode = mode;
     this.body = b;
     const pose = this.pose;
@@ -117,8 +129,11 @@ export class Bubble {
       }
     }
     this.updateGravity();
-    // the step's previous pose moves with it (no interpolation across the jump)
+    // the new laying the step before: where it would have been (a moving one, one step back along
+    // its velocity; one on the ground, where it is). The residents' step before goes there, so
+    // the render interpolates across the re-laying like across any other step.
     copyPose(this.prev, pose);
+    for (let i = 0; i < 3; i++) this.prev.p[i] -= pose.v[i] * this.stepS;
     copyPose(this.render, pose);
     this.version++;
     return true;

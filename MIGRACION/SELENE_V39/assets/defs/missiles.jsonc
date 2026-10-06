@@ -1,0 +1,9 @@
+// Long-range missiles (key: fires at the point under the crosshair, at any range it can reach).
+// angle: climb at launch (deg); max_speed: fastest launch the solution may ask (m/s; the Moon's
+// escape speed is 2380); mass (kg): its impact speed adds ½ m v² to the warhead (as TNT for a
+// charge); warhead: explosion where it lands (explosions/<id>), or charge: the explosive it
+// carries ({ "tnt": kg, "casing": kg }), whose blast is made from it; trail: particle style left
+// behind, per second; look: how it is drawn in flight.
+{
+  "misil": { "name": "Misil", "key": "M", "angle": 40.0, "max_speed": 2200.0, "mass": 150.0, "charge": { "tnt": 600.0, "casing": 90.0 }, "trail": "estela", "trail_rate": 40.0, "look": { "style": "cohete", "size": 0.5 } }
+}

@@ -1,0 +1,140 @@
+// Particle styles: how each kind of particle looks and moves (see core/src/particles.rs).
+// albedo: what the sun lights (sRGB, birth -> death); emission: light it gives off (linear HDR);
+// opacity birth -> death; fade_in / fade_out: shares of life; grow: size factor birth -> death;
+// drag (1/s, 0 in vacuum), gravity (share), bounce / slide on ground hits; stretch along the
+// velocity (sizes per m/s); puff: 0 a hard chunk, 1 a soft cloudy ball; on_ground: "bounce"
+// (default: bounce / slide), "skim" (runs along it losing ground_drag per second) or "vanish";
+// glow: a soft round light with no edge (emission x opacity; the bloom makes it shine), seen out to
+// glow_reach of its radii.
+{
+  // the bright heart of a blast: white-hot, then orange, gone in a moment
+  "brillo": {
+    "emission": [[46.0, 30.0, 14.0], [6.0, 2.0, 0.4]],
+    "opacity": [1.0, 0.0], "fade_out": 0.8,
+    "grow": [0.6, 1.1], "gravity": 0.0, "glow": true, "glow_reach": 1800.0
+  },
+  // a round in flight (drawn from core::rounds, not simulated here): a hot streak along its path
+  "trazadora": {
+    "emission": [[30.0, 16.0, 5.0], [30.0, 16.0, 5.0]],
+    "opacity": [1.0, 1.0], "fade_out": 0.0,
+    "gravity": 0.0, "stretch": 0.04, "puff": 0.0
+  },
+  // a thrown charge in flight (grenade, bomb): a small dark metal body with a faint warm light so
+  // it can be followed against the ground
+  "carga": {
+    "albedo": [[0.22, 0.23, 0.24], [0.22, 0.23, 0.24]],
+    "emission": [[1.5, 0.6, 0.15], [1.5, 0.6, 0.15]],
+    "opacity": [1.0, 1.0], "fade_out": 0.0,
+    "gravity": 0.0, "puff": 0.0
+  },
+  // a missile in flight: a bright short body
+  "cohete": {
+    "emission": [[40.0, 26.0, 12.0], [40.0, 26.0, 12.0]],
+    "opacity": [1.0, 1.0], "fade_out": 0.0,
+    "gravity": 0.0, "stretch": 0.004, "puff": 0.0
+  },
+  // the blast's own dust: thick, scorched at first, swells and thins out over the blast point
+  // (it hides the crater being dug)
+  "nucleo": {
+    "albedo": [[0.3, 0.29, 0.27], [0.4, 0.39, 0.37]],
+    "emission": [[0.35, 0.15, 0.05], [0.0, 0.0, 0.0]],
+    "opacity": [0.95, 0.0], "fade_in": 0.02, "fade_out": 0.5,
+    "grow": [0.7, 2.0], "drag": 1.6, "gravity": 0.4, "slide": 0.3, "puff": 1.0
+  },
+  // a low sheet of dust racing out along the ground and settling
+  "falda": {
+    "albedo": [[0.4, 0.39, 0.37], [0.42, 0.41, 0.39]],
+    "opacity": [0.75, 0.0], "fade_in": 0.03, "fade_out": 0.6,
+    "grow": [1.0, 2.2], "gravity": 1.0, "puff": 1.0, "on_ground": "skim", "ground_drag": 0.6
+  },
+  // dust blown out from under a jet (a pack's, an engine's): a thin sheet racing out along the
+  // ground, each puff drawn out along its way; with no air it does not billow, it leaves
+  "chorro_polvo": {
+    "albedo": [[0.78, 0.76, 0.72], [0.62, 0.61, 0.58]],
+    "opacity": [0.5, 0.0], "fade_in": 0.06, "fade_out": 0.75,
+    "grow": [1.0, 3.0], "gravity": 1.0, "puff": 1.0, "stretch": 0.1, "on_ground": "skim", "ground_drag": 0.5
+  },
+  // dust kicked by a boot, or thrown higher by a jet: fine, it flies its arc and falls back
+  // (freshly disturbed dust is brighter than the ground it came from)
+  "polvo_fino": {
+    "albedo": [[0.76, 0.74, 0.7], [0.6, 0.59, 0.56]],
+    "opacity": [0.5, 0.0], "fade_in": 0.05, "fade_out": 0.65,
+    "grow": [1.0, 2.6], "drag": 0.0, "gravity": 1.0, "bounce": 0.0, "slide": 0.1, "puff": 1.0
+  },
+  // regolith thrown up: in vacuum it flies on ballistic arcs and falls back, lit by the sun
+  "polvo": {
+    "albedo": [[0.42, 0.41, 0.39], [0.4, 0.39, 0.37]],
+    "opacity": [0.32, 0.12], "fade_in": 0.03, "fade_out": 0.35,
+    "grow": [1.0, 3.2], "drag": 0.0, "gravity": 1.0, "bounce": 0.0, "slide": 0.15, "puff": 1.0
+  },
+  // hot fragments: streaks that bounce and cool
+  "chispas": {
+    "emission": [[34.0, 18.0, 6.0], [5.0, 1.2, 0.2]],
+    "opacity": [1.0, 0.7], "fade_out": 0.3,
+    "grow": [1.0, 0.6], "gravity": 1.0, "bounce": 0.35, "slide": 0.6, "stretch": 0.07, "puff": 0.0
+  },
+  // glass shards glinting as they fall
+  "vidrio": {
+    "albedo": [[0.78, 0.88, 0.95], [0.7, 0.8, 0.88]],
+    "emission": [[0.15, 0.18, 0.22], [0.0, 0.0, 0.0]],
+    "opacity": [0.95, 0.9], "fade_out": 0.3,
+    "gravity": 1.0, "bounce": 0.3, "slide": 0.5, "stretch": 0.02, "puff": 0.0
+  },
+  // a missile's exhaust: a glowing streak that turns to a thin trail of smoke and stays put
+  "estela": {
+    "albedo": [[0.5, 0.5, 0.5], [0.45, 0.45, 0.45]],
+    "emission": [[14.0, 7.0, 2.5], [0.0, 0.0, 0.0]],
+    "opacity": [0.7, 0.0], "fade_in": 0.02, "fade_out": 0.6,
+    "grow": [0.6, 3.0], "drag": 0.4, "gravity": 0.0, "puff": 1.0
+  },
+  // a decoy's cloud of chaff: thousands of metallised strips catching the sun, a glitter that
+  // opens and thins (nothing brakes it: it keeps the speed it was thrown with)
+  "chaff": {
+    "albedo": [[0.92, 0.94, 0.98], [0.8, 0.82, 0.86]],
+    "emission": [[1.6, 1.7, 1.9], [0.0, 0.0, 0.0]],
+    "opacity": [0.55, 0.0], "fade_in": 0.05, "fade_out": 0.7,
+    "grow": [0.5, 4.5], "drag": 0.0, "gravity": 0.0, "puff": 1.0
+  },
+  // a flare: magnesium burning white, then orange, seen from far
+  "bengala": {
+    "emission": [[60.0, 48.0, 34.0], [10.0, 3.5, 0.8]],
+    "opacity": [1.0, 0.0], "fade_out": 0.5,
+    "grow": [1.0, 0.5], "drag": 0.0, "gravity": 0.0, "glow": true, "glow_reach": 2600.0
+  },
+  // air leaving a breach: water vapour freezing out as it expands, a white cloud that thins away
+  // (in the cabin as it fogs, out of the hole as a plume)
+  "vaho": {
+    "albedo": [[0.86, 0.88, 0.92], [0.78, 0.8, 0.84]],
+    "opacity": [0.38, 0.0], "fade_in": 0.05, "fade_out": 0.6,
+    "grow": [1.0, 2.6], "drag": 0.5, "gravity": 0.0, "puff": 1.0
+  },
+  // gas leaving a nozzle (assets/defs/chorros.jsonc: what a thruster throws as it starts and
+  // stops, cold gas): white, thin, it swells and is gone; nothing brakes it in a vacuum, and on
+  // the ground it runs along it
+  "bocanada": {
+    "albedo": [[0.92, 0.94, 1.0], [0.84, 0.87, 0.94]],
+    "emission": [[0.22, 0.26, 0.34], [0.0, 0.0, 0.0]],
+    "opacity": [0.24, 0.0], "fade_in": 0.08, "fade_out": 0.7,
+    "grow": [1.0, 3.0], "drag": 0.0, "gravity": 0.0, "puff": 1.0, "on_ground": "skim", "ground_drag": 1.5
+  },
+  // ice crystals in the plume catching the light
+  "escarcha": {
+    "albedo": [[0.86, 0.92, 1.0], [0.8, 0.86, 0.95]],
+    "emission": [[0.5, 0.6, 0.8], [0.0, 0.0, 0.0]],
+    "opacity": [0.95, 0.5], "fade_out": 0.4,
+    "gravity": 0.0, "stretch": 0.01, "puff": 0.0
+  },
+  // dust and scraps carried by the air across a room toward the opening
+  "motas": {
+    "albedo": [[0.34, 0.33, 0.32], [0.34, 0.33, 0.32]],
+    "opacity": [0.8, 0.5], "fade_out": 0.3,
+    "gravity": 0.0, "stretch": 0.02, "puff": 0.0
+  },
+  // rock chunks (no explosion uses them: the shader draws a chunk as a lit ball, and balls
+  // bouncing on the ground read as 3D spheres; see docs/OPTIMIZACION.md)
+  "rocas": {
+    "albedo": [[0.26, 0.25, 0.24], [0.26, 0.25, 0.24]],
+    "opacity": [1.0, 1.0], "fade_out": 0.25,
+    "gravity": 1.0, "bounce": 0.25, "slide": 0.4, "puff": 0.0
+  }
+}

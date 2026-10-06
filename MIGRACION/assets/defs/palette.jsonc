@@ -1,0 +1,24 @@
+// Named materials: sRGB albedo, roughness, metalness and emission (0-255).
+// panel: hull plates the shader draws (m; 0 or none = smooth), with seams, a shade per plate and
+// grime; with "windows", the plates of an emissive material are windows, most lit, some dark.
+{
+  "casco":    { "rgb": [200, 201, 196], "rough": 150, "panel": 1.6 },
+  "casco2":   { "rgb": [160, 163, 167], "rough": 120, "metal": 30, "panel": 1.2 },
+  "grafito":  { "rgb": [74, 76, 82], "rough": 120, "metal": 80, "panel": 1.0 },
+  "oscuro":   { "rgb": [48, 50, 54], "rough": 90, "metal": 200, "panel": 0.8 },
+  "metal":    { "rgb": [150, 150, 156], "rough": 70, "metal": 255 },
+  "naranja":  { "rgb": [220, 110, 30], "rough": 140, "panel": 1.4 },
+  "amarillo": { "rgb": [226, 176, 42], "rough": 140, "panel": 1.2 },
+  "azul":     { "rgb": [40, 80, 160], "rough": 110, "panel": 1.4 },
+  "oro":      { "rgb": [210, 160, 60], "rough": 60, "metal": 255 },
+  "radiador": { "rgb": [205, 205, 198], "rough": 110, "metal": 40, "panel": 0.5 },
+  "solar":    { "rgb": [28, 44, 92], "rough": 35, "metal": 120, "panel": 0.8 },
+  "cristal":  { "rgb": [20, 30, 40], "rough": 10, "emissive": 6 },
+  // lights
+  "ventanas": { "rgb": [255, 208, 145], "rough": 60, "emissive": 150, "panel": 1.0, "windows": true },
+  "motor":    { "rgb": [255, 160, 80], "rough": 200, "emissive": 255 },
+  "ion":      { "rgb": [120, 180, 255], "rough": 200, "emissive": 255 },
+  "rojo":     { "rgb": [255, 40, 30], "rough": 200, "emissive": 200 },
+  "verde":    { "rgb": [40, 255, 80], "rough": 200, "emissive": 200 },
+  "blanco":   { "rgb": [255, 250, 235], "rough": 200, "emissive": 220 },
+}

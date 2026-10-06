@@ -1,0 +1,32 @@
+// Multiplayer, the second of two players: it looks at the first (its body walking, its name over
+// it), then sits at the Alcotán's controls (the ship becomes its own) and works the ramp, which
+// the first must see. Started with: luna --servidor 127.0.0.1:47611 --nombre Berto
+// --guion tools/camara/multi_b.jsonc
+{
+  "registro": "out/camara/multi_b.log",
+  "pasos": [
+    { "nave": "abejorro" },
+    { "esperar": 2.0 },
+    { "linterna": true },
+    { "hud": true },
+    // by the Abejorro, a few metres from where the first walks, looking at it
+    { "ir": [10.5, -1.65, 4.0] },
+    { "mirar_a": [6.0, -0.8, 2.0] },
+    { "esperar": 12.0 },
+    { "foto": "out/camara/multi_b_quieto.png" },
+    { "esperar": 3.5 },
+    { "foto": "out/camara/multi_b_andando_1.png" },
+    { "esperar": 0.3 },
+    { "foto": "out/camara/multi_b_andando_2.png" },
+    { "esperar": 3.0 },
+    { "foto": "out/camara/multi_b_andando_3.png" },
+    // at the Alcotán's controls: the ramp worked from its panel
+    { "nave": "alcotan" },
+    { "sentar": "piloto" },
+    { "esperar": 1.0 },
+    { "volcar": ["rampa.*"] },
+    { "pulsar": "rampa_bodega/rampa" },
+    { "esperar": 12.0 },
+    { "volcar": ["rampa.*"] }
+  ]
+}

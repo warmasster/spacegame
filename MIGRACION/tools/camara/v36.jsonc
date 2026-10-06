@@ -1,0 +1,42 @@
+// What V36 changed that is to be seen: the Alcotán's wings beside its cabin (its nacelles under
+// its centre of mass), the "masa" section of its fuel panel, boot prints on the regolith.
+// Run: luna --guion tools/camara/v36.jsonc → out/camara/v36_*.png
+{
+  "registro": "out/camara/v36.log",
+  "naves": ["alcotan", "cachalote"],
+  "pasos": [
+    { "nave": "alcotan" },
+    { "esperar": 2.5 },
+    // the ship from its port side, from above and from under its wing root
+    { "camara": { "en": [24, 5, -1], "mira": [0, 1.5, -1.5], "fov": 45 } },
+    { "foto": "out/camara/v36_alcotan_lado.png" },
+    { "camara": { "en": [14, 16, 12], "mira": [0, 1.0, -1.5], "fov": 45 } },
+    { "foto": "out/camara/v36_alcotan_arriba.png" },
+    { "camara": { "en": [6.5, -0.6, 2.5], "mira": [3.0, 1.0, -3.0], "fov": 55 } },
+    { "linterna": true },
+    { "foto": "out/camara/v36_alcotan_ala_abajo.png" },
+    { "camara": { "en": [8, 3.2, -8], "mira": [3.2, 1.0, -2.6], "fov": 50 } },
+    { "foto": "out/camara/v36_alcotan_ala_popa.png" },
+    // what it weighs, where its pilot looks
+    { "camara": { "panel": "combustible", "distancia": 0.55 } },
+    { "foto": "out/camara/v36_masa.png" },
+    // the freighter's two wings
+    { "nave": "cachalote" },
+    { "esperar": 1.0 },
+    { "camara": { "en": [46, 9, -8], "mira": [0, 2.5, -8], "fov": 45 } },
+    { "foto": "out/camara/v36_cachalote_lado.png" },
+    // boot prints: walking away from the ship and looking back at them
+    { "nave": "alcotan" },
+    { "ir": [7.0, -1.65, 8.0] },
+    { "mirar_a": [7.0, -1.0, 20.0] },
+    { "esperar": 0.8 },
+    { "andar": [1, 0] },
+    { "esperar": 5.0 },
+    { "andar": [0, 0] },
+    { "esperar": 0.6 },
+    { "camara_jugador": { "en": [1.6, 1.9, 1.5], "mira": [0, 0, -3.0], "fov": 55 } },
+    { "foto": "out/camara/v36_huellas.png" },
+    { "camara_jugador": { "en": [0.2, 1.2, -6.0], "mira": [0, 0, -2.0], "fov": 50 } },
+    { "foto": "out/camara/v36_huellas_cerca.png" }
+  ]
+}

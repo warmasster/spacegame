@@ -1,0 +1,43 @@
+// Bare hands and clamps: a crate let go by its clamp, taken by hand (a click held), carried to the
+// walkway and put down; then put back over the clamp and clamped again.
+// Run: luna --guion tools/camara/manos.jsonc → out/camara/manos_*.png
+{
+  "registro": "out/camara/manos.log",
+  "pasos": [
+    { "nave": "alcotan" },
+    { "hud": true },
+    { "linterna": true },
+    { "esperar": 2.0 },
+    { "senal": { "nombre": "anclaje_cajas.soltar", "valor": 1 } },
+    { "esperar": 1.5 },
+    // from the walkway, looking at the crate on top
+    { "camara": { "en": [0.85, 1.6, -5.9], "mira": [-0.2, 0.8, -6.9], "fov": 75 } },
+    { "esperar": 0.3 },
+    { "foto": "out/camara/manos_mira.png" },
+    { "coger": true },
+    { "esperar": 0.5 },
+    { "camara": { "en": [0.85, 1.6, -5.9], "mira": [0.8, 0.9, -7.6], "fov": 75 } },
+    { "esperar": 1.5 },
+    { "foto": "out/camara/manos_lleva.png" },
+    { "camara": { "en": [0.85, 1.6, -5.9], "mira": [0.75, 0.2, -7.5], "fov": 75 } },
+    { "esperar": 1.5 },
+    { "coger": false },
+    { "esperar": 1.5 },
+    { "camara": { "en": [0.85, 1.7, -4.4], "mira": [0.3, 0.2, -7.2], "fov": 75 } },
+    { "foto": "out/camara/manos_dejada.png" },
+    // back over the clamp and clamped again
+    { "camara": { "en": [0.85, 1.6, -5.9], "mira": [0.75, 0.3, -7.5], "fov": 75 } },
+    { "esperar": 0.3 },
+    { "coger": true },
+    { "esperar": 0.3 },
+    { "camara": { "en": [0.85, 1.6, -5.9], "mira": [-0.2, 0.9, -6.7], "fov": 75 } },
+    { "esperar": 2.0 },
+    { "coger": false },
+    { "esperar": 1.5 },
+    { "senal": { "nombre": "anclaje_cajas.soltar", "valor": 0 } },
+    { "esperar": 0.5 },
+    { "volcar": ["anclaje_cajas*"] },
+    { "camara": { "en": [0.9, 1.7, -4.6], "mira": [-0.1, 0.3, -6.8], "fov": 75 } },
+    { "foto": "out/camara/manos_anclada.png" }
+  ]
+}

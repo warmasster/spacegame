@@ -41,7 +41,7 @@ export class DebugOverlay {
 
   constructor(parent: HTMLElement, scene: THREE.Scene) {
     this.el = document.createElement('div');
-    this.el.className = 'debug-overlay hidden';
+    this.el.className = 'debug-overlay diag-panel hidden';
     parent.appendChild(this.el);
     this.lines = new THREE.LineSegments(
       new THREE.BufferGeometry(),
@@ -182,11 +182,13 @@ export class DebugOverlay {
       'heap JS': this.heapLast ? `${(this.heapLast / 1048576).toFixed(0)} MB · basura ~${(this.heapRate / 1048576).toFixed(1)} MB/s` : 'n/d',
       ...stats,
     };
-    let html = '<b>DIAGNÓSTICO</b>';
-    for (const k in rows) html += `<div><span>${k}</span><i>${rows[k]}</i></div>`;
-    html += '<b>DRAWS POR CATEGORÍA (escena / sombras · triángulos)</b>';
-    for (const [cat, d] of cats) html += `<div><span>${cat}</span><i>${d.main} / ${d.shadow} · ${Math.round(d.tris).toLocaleString()}</i></div>`;
-    html += `<small>F4 alambre ${this.wireframe ? 'ON' : 'off'} · F5 colisiones ${this.physicsLines ? 'ON' : 'off'}</small>`;
+    // two columns; a long row takes both
+    const cell = (k: string, v: unknown) => `<div${k.length + String(v).length > 30 ? ' class="wide"' : ''}><span>${k}</span><i>${v}</i></div>`;
+    let html = '<b>DIAGNÓSTICO</b><section>';
+    for (const k in rows) html += cell(k, rows[k]);
+    html += '</section><b>DRAWS POR CATEGORÍA (escena / sombras · triángulos)</b><section>';
+    for (const [cat, d] of cats) html += cell(cat, `${d.main} / ${d.shadow} · ${Math.round(d.tris).toLocaleString()}`);
+    html += `</section><small>F4 alambre ${this.wireframe ? 'ON' : 'off'} · F5 colisiones ${this.physicsLines ? 'ON' : 'off'}</small>`;
     this.el.innerHTML = html;
     for (const d of this.drawn.values()) d.main = d.shadow = d.tris = 0;
   }

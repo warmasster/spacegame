@@ -1,0 +1,37 @@
+// V37: what the helmet's visor does to the picture, from the player's own eyes: the sun visor
+// up and down on sunlit ground and hull, and the welding filter with the arc lit on a damaged
+// plate of the hold (what is being welded must still be seen).
+// Run: luna --guion tools/camara/v37_visor.jsonc → out/camara/v37v_*.png
+{
+  "registro": "out/camara/v37_visor.log",
+  "naves": ["alcotan"],
+  "pasos": [
+    { "nave": "alcotan" },
+    { "esperar": 2.0 },
+    // outside, the sunlit ship ahead
+    { "ir": [9.0, -1.65, -9.0] },
+    { "mirar_a": [0, 1.5, -2.0] },
+    { "esperar": 1.0 },
+    { "foto": "out/camara/v37v_sol.png" },
+    // in the hold, a damaged plate of its wall: the welder aimed at it, then its arc lit
+    { "danar": { "pieza": "casco.1.3", "dano": 0.7 } },
+    { "linterna": true },
+    { "ir": [-0.3, 0.0, -5.3] },
+    { "mirar_a": [2.1, 1.25, -5.25] },
+    { "equipo": "soldador" },
+    { "esperar": 1.2 },
+    { "foto": "out/camara/v37v_soldador_apagado.png" },
+    { "gatillo": true },
+    { "esperar": 0.7 },
+    { "huellas": null },
+    { "foto": "out/camara/v37v_soldador_arco.png" },
+    // its right button: the view of integrity and, with it, the visor's filter
+    { "vista_integridad": true },
+    { "esperar": 0.7 },
+    { "foto": "out/camara/v37v_soldador_filtro.png" },
+    { "vista_integridad": false },
+    { "gatillo": false },
+    { "esperar": 0.8 },
+    { "equipo": "" }
+  ]
+}

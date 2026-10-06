@@ -188,9 +188,9 @@ export class AudioEngine {
     if (!ctx || ctx.state !== 'running' || gain <= 0) return;
     const params = soundParams(id);
     const L = this.listener;
-    if (pl.local && !this.acoustics.toWorld(pl.ship, pl.local, pl.p)) return;
+    if (pl.local && !this.acoustics.toWorld(pl.host, pl.local, pl.p)) return;
     if (pl.own !== 2 && Math.hypot(pl.p[0] - L.p[0], pl.p[1] - L.p[1], pl.p[2] - L.p[2]) > params.range) return;
-    const h = hear(pl, L, this.acoustics, params.ref, this.mode, this.heard);
+    const h = hear(pl, L, this.acoustics, params.ref, params.body, this.mode, this.heard);
     if (h.gain * gain < AUDIBLE) return;
     const got = this.bank!.get(id, this.got);
     if (!got.buffer) return;
@@ -266,7 +266,7 @@ export class AudioEngine {
         this.shots.splice(i, 1);
         continue;
       }
-      if (v.place.local) this.acoustics.toWorld(v.place.ship, v.place.local, v.place.p);
+      if (v.place.local) this.acoustics.toWorld(v.place.host, v.place.local, v.place.p);
       this.drive(v, 1, v.rate, false, false);
     }
     // loops: the ones worth hearing get a voice, the rest let theirs go
@@ -278,10 +278,10 @@ export class AudioEngine {
       let loud = 0;
       if (lvl > 0.001) {
         const pl = l.place;
-        if (pl.local) this.acoustics.toWorld(pl.ship, pl.local, pl.p);
+        if (pl.local) this.acoustics.toWorld(pl.host, pl.local, pl.p);
         const params = soundParams(l.sound);
         if (pl.own === 2 || Math.hypot(pl.p[0] - L.p[0], pl.p[1] - L.p[1], pl.p[2] - L.p[2]) < params.range) {
-          loud = lvl * l.gain * hear(pl, L, this.acoustics, params.ref, this.mode, this.heard).gain;
+          loud = lvl * l.gain * hear(pl, L, this.acoustics, params.ref, params.body, this.mode, this.heard).gain;
         }
       }
       if (loud > AUDIBLE) {
@@ -373,7 +373,7 @@ export class AudioEngine {
     const t = ctx.currentTime;
     const L = this.listener;
     const pl = v.place;
-    const h = heard ? this.heard : hear(pl, L, this.acoustics, v.params.ref, this.mode, this.heard);
+    const h = heard ? this.heard : hear(pl, L, this.acoustics, v.params.ref, v.params.body, this.mode, this.heard);
     const g = h.gain * level * v.base;
     v.loud = g;
     const tau = v.loop ? 0.05 : 0.03;

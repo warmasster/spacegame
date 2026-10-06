@@ -1,0 +1,157 @@
+// Main panel of the Azor (a one-seat fighter): the tactical screen to the left (the radar's
+// picture, the warner's ring, the sight, the weapons, flight), the systems screen to the right,
+// and between them the annunciator, the target buttons and the gear.
+{
+  "name": "Panel principal del Azor",
+  "tamano": ["1.26 m", "0.62 m"],
+  "rejilla": [24, 6],
+  "margen": "12 mm",
+  "separacion": "5 mm",
+  "grupos": [
+    { "id": "mfd1", "titulo": "TÁCTICA", "celda": [0, 0], "ocupa": [8, 6] },
+    { "id": "avisos", "titulo": "AVISOS", "celda": [8, 0], "ocupa": [8, 3] },
+    { "id": "obj", "seccion": "objetivo", "celda": [8, 3], "ocupa": [4, 3] },
+    { "id": "alarma", "celda": [12, 3], "ocupa": [2, 3] },
+    { "id": "tren", "titulo": "TREN", "celda": [14, 3], "ocupa": [2, 3] },
+    { "id": "mfd2", "titulo": "SISTEMAS", "celda": [16, 0], "ocupa": [8, 6] }
+  ],
+  "mandos": [
+    // ---- the tactical screen ----
+    { "id": "mfd1", "kind": "mfd", "grupo": "mfd1", "tamano": [330, 236], "pagina": "mfd1.pagina", "requiere": { "energia": "40 W" },
+      "nombre": "Pantalla táctica", "ayuda": "Los botones del marco eligen la página. RADAR: tú en el centro con el morro arriba y las trazas alrededor (cuadrado ámbar: desconocida; círculo cian: civil; círculo verde: amiga; rombo rojo: hostil; triángulo rojo: misil; un ángulo en el borde: solo se sabe por dónde). La elegida va recuadrada.",
+      "paginas": [
+        { "titulo": "RADAR", "boton": "RADAR", "elementos": [
+          { "tipo": "trazas", "canal": "tac.radar", "ocupa": [3, 3] },
+          { "tipo": "texto", "ocupa": [1, 3], "lineas": [
+            "TRAZAS {tac.contactos:0}",
+            "{tac.fijado|ELEGIDA|FIJADA}",
+            "{tac.obj.iff|DESCON.|AMIGO|CIVIL|HOSTIL}",
+            "D {tac.obj.dist:1}",
+            "C {tac.obj.cierre:0}",
+            "AZ {tac.obj.az:0}",
+            "EL {tac.obj.el:0}",
+            "V {tac.obj.vel:0}" ] }
+        ] },
+        { "titulo": "ALERTADOR", "boton": "ALERT", "elementos": [
+          { "tipo": "trazas", "canal": "tac.rwr", "ocupa": [3, 3] },
+          { "tipo": "texto", "ocupa": [1, 3], "lineas": [
+            "RADARES {rwr.amenazas:0}",
+            "{rwr.fijado|LIBRE|FIJADO}",
+            "{rwr.misil|-|MISIL}",
+            "AZ {rwr.az:0}",
+            "SEÑUELOS {cm.quedan:0}",
+            "{cm.programa|MANUAL|AUTO MISIL|AUTO FIJADO}",
+            "{tac.emite|CALLADO|EMITIENDO}" ] }
+        ] },
+        { "titulo": "MIRA", "boton": "MIRA", "elementos": [
+          { "tipo": "trazas", "canal": "tac.mira", "ocupa": [3, 3] },
+          { "tipo": "texto", "ocupa": [1, 3], "lineas": [
+            "{armas.maestro|SEGURO|ARMADO}",
+            "{armas.grupo|CAÑON|DARDO|LANZA}",
+            "MUN {armas.municion:0}",
+            "{tac.en_tiro|-|EN TIRO}",
+            "ERR {tac.obj.error:1}",
+            "VUELO {tac.obj.vuelo:1}",
+            "D {tac.obj.dist:2}",
+            "{ap.activo|MANUAL|P. NAV|P. COMBATE}" ] }
+        ] },
+        { "titulo": "ARMAS", "boton": "ARMAS", "elementos": [
+          { "tipo": "barra", "senal": "canon_izq.nivel", "rotulo": "CAÑÓN IZQ", "decimales": 0, "ocupa": [2, 1], "zonas": { "roja": ["0 %", "15 %"], "ambar": ["15 %", "35 %"], "verde": ["35 %", "100 %"] } },
+          { "tipo": "barra", "senal": "canon_der.nivel", "rotulo": "CAÑÓN DER", "decimales": 0, "ocupa": [2, 1], "zonas": { "roja": ["0 %", "15 %"], "ambar": ["15 %", "35 %"], "verde": ["35 %", "100 %"] } },
+          { "tipo": "reloj", "senal": "canon_izq.t", "rotulo": "T IZQ", "escala": ["0 °C", "700 °C"], "zonas": { "verde": ["0 °C", "370 °C"], "ambar": ["370 °C", "560 °C"], "roja": ["560 °C", "700 °C"] } },
+          { "tipo": "reloj", "senal": "canon_der.t", "rotulo": "T DER", "escala": ["0 °C", "700 °C"], "zonas": { "verde": ["0 °C", "370 °C"], "ambar": ["370 °C", "560 °C"], "roja": ["560 °C", "700 °C"] } },
+          { "tipo": "texto", "ocupa": [2, 1], "lineas": [
+            "DARDO  {dardos_izq.municion:0} + {dardos_der.municion:0}",
+            "LANZA  {lanzas_izq.municion:0} + {lanzas_der.municion:0}",
+            "NUBES  {nubes.municion:0}   BENGALAS  {bengalas.municion:0}" ] },
+          { "tipo": "texto", "ocupa": [2, 1], "lineas": [
+            "{armas.maestro|SEGURO|ARMADO}  {armas.auto|MANUAL|FUEGO AUTO}",
+            "ELEGIDA  {armas.grupo|CAÑON|DARDO|LANZA}",
+            "LISTAS  {armas.listas:0}" ] }
+        ] },
+        { "titulo": "VUELO", "boton": "VUELO", "elementos": [
+          { "tipo": "valor", "senal": "nave.altura", "rotulo": "ALTURA", "decimales": 1, "zonas": { "roja": ["0 m", "3 m"] } },
+          { "tipo": "valor", "senal": "nave.vel", "rotulo": "VELOC.", "decimales": 1 },
+          { "tipo": "valor", "senal": "nave.vs", "rotulo": "V/S", "decimales": 2, "zonas": { "roja": ["-100 m/s", "-4 m/s"], "ambar": ["-4 m/s", "-1.5 m/s"], "verde": ["-1.5 m/s", "100 m/s"] } },
+          { "tipo": "valor", "senal": "vector_izq.pos", "rotulo": "GÓNDOLAS", "decimales": 0 },
+          { "tipo": "grafica", "senal": "nave.altura", "rotulo": "ALTURA", "escala": ["0 m", "200 m"], "ventana": 120, "zonas": { "roja": ["0 m", "3 m"] } },
+          { "tipo": "reloj", "senal": "gondola_izq.empuje", "rotulo": "EMP IZQ", "escala": ["0 kN", "100 kN"], "zonas": { "verde": ["20 kN", "90 kN"], "roja": ["93 kN", "100 kN"] } },
+          { "tipo": "reloj", "senal": "gondola_der.empuje", "rotulo": "EMP DER", "escala": ["0 kN", "100 kN"], "zonas": { "verde": ["20 kN", "90 kN"], "roja": ["93 kN", "100 kN"] } },
+          { "tipo": "texto", "lineas": ["MODO {vuelo.modo|DIRECTO|NORMAL|ESTAB.|MANTENER}", "{ap.activo|MANUAL|P. NAV|P. COMBATE}"], "ocupa": [2, 1] }
+        ] }
+      ] },
+
+    // ---- annunciator ----
+    { "id": "anunciador", "kind": "anunciador", "grupo": "avisos", "columnas": 6, "tamano": [350, 200], "reconocer": "panel.reconocer", "requiere": { "energia": "10 W" },
+      "avisos": [
+        { "rotulo": "MISIL", "si": "rwr.misil", "nivel": 2 },
+        { "rotulo": "FIJADO", "si": "rwr.fijado", "nivel": 2 },
+        { "rotulo": "RADAR", "si": "rwr.amenazas > 0" },
+        { "rotulo": "BUS A", "si": "elec.bus_a < 22 V", "nivel": 2 },
+        { "rotulo": "BUS B", "si": "elec.bus_b < 22 V", "nivel": 2 },
+        { "rotulo": "BAT\nBAJA", "si": "bateria_1.soc < 0.2 || bateria_2.soc < 0.2" },
+        { "rotulo": "DISYUN", "si": "alarma.disyuntor" },
+        { "rotulo": "REACT\nPARADO", "si": "reactor.estado == 3", "nivel": 2 },
+        { "rotulo": "REACT\nLIMIT", "si": "reactor.limitado" },
+        { "rotulo": "HIDR\nPRES", "si": "hid.marcha && hid.colector < 12 MPa", "nivel": 2 },
+        { "rotulo": "TREN", "si": "alarma.tren", "nivel": 2 },
+        { "rotulo": "COMPUE", "si": "rampa.abierta > 0.02 && nave.altura > 5 m" },
+        { "rotulo": "PLATAF", "si": "plataforma.pos > 0.02 && nave.altura > 5 m", "nivel": 2 },
+        { "rotulo": "MOTOR\nIZQ", "si": "gondola_izq.estado == 6", "nivel": 2 },
+        { "rotulo": "MOTOR\nDER", "si": "gondola_der.estado == 6", "nivel": 2 },
+        { "rotulo": "COMB\nBAJO", "si": "nave.propelente_nivel < 0.15" },
+        { "rotulo": "CAÑON\nCALOR", "si": "canon_izq.caliente || canon_der.caliente" },
+        { "rotulo": "MUNIC\nBAJA", "si": "canon_izq.nivel < 0.15 || canon_der.nivel < 0.15" },
+        { "rotulo": "ORDEN\nVUELO", "si": "ordenador.on < 0.5", "nivel": 2 }
+      ] },
+    { "id": "alarma_general", "kind": "pulsador", "grupo": "alarma", "rotulo": "RECONOCER", "modo": "momentaneo", "color": "ambar",
+      "luz": "alarma.general", "bind": { "senal": "panel.reconocer" }, "tamano": [40, 26],
+      "nombre": "Alarma general", "ayuda": "Se enciende con cualquier aviso nuevo. Púlsalo para reconocerlos (dejan de parpadear)." },
+    { "id": "lamp_alarma", "kind": "lampara", "grupo": "alarma", "rotulo": "AVISO", "requiere": { "energia": "1 W" },
+      "reglas": [ { "si": "alarma.general", "color": "ambar", "parpadeo": 2.0 } ] },
+
+    // ---- landing gear ----
+    { "id": "tren", "kind": "interruptor", "grupo": "tren", "posiciones": ["ARRIBA", "ABAJO"], "defecto": 1, "tamano": [26, 44], "color": [230, 230, 226],
+      "bind": { "senal": "tren.orden" }, "nombre": "Palanca del tren",
+      "ayuda": "Sube o baja las tres patas (hidráulica: cilindros con bloqueos arriba y abajo). No sube con peso sobre el tren." },
+    { "id": "verde_m", "kind": "lampara", "grupo": "tren", "rotulo": "MORRO", "requiere": { "energia": "1 W" },
+      "reglas": [ { "si": "tren.verde_m", "color": "verde" }, { "si": "act_pata_morro.estado == 1", "color": "rojo" } ] },
+    { "id": "verde_i", "kind": "lampara", "grupo": "tren", "rotulo": "IZQ", "requiere": { "energia": "1 W" },
+      "reglas": [ { "si": "tren.verde_i", "color": "verde" }, { "si": "act_pata_izq.estado == 1", "color": "rojo" } ] },
+    { "id": "verde_d", "kind": "lampara", "grupo": "tren", "rotulo": "DER", "requiere": { "energia": "1 W" },
+      "reglas": [ { "si": "tren.verde_d", "color": "verde" }, { "si": "act_pata_der.estado == 1", "color": "rojo" } ] },
+
+    // ---- the systems screen ----
+    { "id": "mfd2", "kind": "mfd", "grupo": "mfd2", "tamano": [330, 236], "pagina": "mfd2.pagina", "requiere": { "energia": "40 W" },
+      "nombre": "Pantalla de sistemas", "ayuda": "Pantalla multifunción: los botones del marco eligen la página escrita a su lado.",
+      "paginas": [
+        { "titulo": "ENERGÍA", "boton": "ENER", "auto": "energia" },
+        { "titulo": "GRUPO DE ENERGÍA", "boton": "REACT", "elementos": [
+          { "tipo": "reloj", "senal": "reactor.p", "rotulo": "DA", "escala": ["0 kW", "45 kW"], "zonas": { "verde": ["0 kW", "42 kW"] } },
+          { "tipo": "reloj", "senal": "reactor.t", "rotulo": "TEMP.", "escala": ["0 °C", "1000 °C"], "zonas": { "verde": ["0 °C", "700 °C"], "ambar": ["700 °C", "870 °C"], "roja": ["870 °C", "1000 °C"] } },
+          { "tipo": "barra", "senal": "reactor.carga", "rotulo": "CARGA", "decimales": 0 },
+          { "tipo": "barra", "senal": "reactor.radiador", "rotulo": "RADIADOR", "decimales": 0 },
+          { "tipo": "grafica", "senal": "reactor.t", "rotulo": "TEMP.", "escala": ["0 °C", "1000 °C"], "ventana": 120, "zonas": { "verde": ["0 °C", "700 °C"], "roja": ["870 °C", "1000 °C"] } },
+          { "tipo": "valor", "senal": "reactor.disponible", "rotulo": "DISPONE", "decimales": 1 },
+          { "tipo": "valor", "senal": "reactor.p_termica", "rotulo": "TÉRMICA", "decimales": 0 },
+          { "tipo": "texto", "ocupa": [2, 1], "lineas": ["{reactor.estado|PARADO|ARRANCANDO|EN LINEA|DISPARADO}  {reactor.limitado|-|LIMITADO}", "{reactor.causa|SIN AVISOS|SETA PULSADA|MUY CALIENTE|DAÑADO}"] }
+        ] },
+        { "titulo": "MOTORES", "boton": "MOTOR", "auto": "motores" },
+        { "titulo": "DEPÓSITOS", "boton": "COMB", "auto": "depositos" },
+        { "titulo": "MASA Y PROPELENTE", "boton": "MASA", "auto": "masa" },
+        { "titulo": "MECANISMOS", "boton": "MECAN", "elementos": [
+          { "tipo": "texto", "ocupa": [4, 2], "lineas": [
+            "TREN MORRO  {pata_morro.pos:0}  {act_pata_morro.estado|PARADO|MOVIENDO|ATASCO|BLOCADO|AVERIADO}",
+            "TREN IZQ    {pata_izq.pos:0}  {act_pata_izq.estado|PARADO|MOVIENDO|ATASCO|BLOCADO|AVERIADO}",
+            "TREN DER    {pata_der.pos:0}  {act_pata_der.estado|PARADO|MOVIENDO|ATASCO|BLOCADO|AVERIADO}",
+            "COMPUERTAS  {rampa.abierta:0} / {visera.abierta:0}",
+            "PLATAFORMA  {plataforma.pos:0}",
+            "RADIADORES  {rad_izq.pos:0} / {rad_der.pos:0}" ] },
+          { "tipo": "barra", "senal": "hid.colector", "rotulo": "HIDRÁULICA", "escala": ["0 MPa", "25 MPa"], "decimales": 1, "ocupa": [2, 1],
+            "zonas": { "roja": ["0 MPa", "10 MPa"], "ambar": ["10 MPa", "14 MPa"], "verde": ["14 MPa", "25 MPa"] } },
+          { "tipo": "valor", "senal": "giroscopo.carga", "rotulo": "GIRÓSC.", "decimales": 0, "zonas": { "ambar": ["60 %", "90 %"], "roja": ["90 %", "100 %"] } },
+          { "tipo": "valor", "senal": "vector_izq.pos", "rotulo": "GÓNDOLAS", "decimales": 0 }
+        ] }
+      ] }
+  ]
+}

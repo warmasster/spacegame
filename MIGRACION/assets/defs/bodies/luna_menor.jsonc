@@ -1,0 +1,44 @@
+// A small, rough moonlet hanging over the spawn's north-west horizon: defined only with data,
+// as proof that bodies scale. You can fly to it (F, then Shift+Alt) and walk on it.
+{
+  "name": "Luna menor",
+  "center": [-48000.0, 45000.0, -132000.0],
+  "radius": 22000.0,
+  "gravity": 0.21,
+  // its pull is whole up to 3.5 km over it and nothing from 6 km on. It hangs across the edge
+  // of the Moon's reach: where both hold, the one that reaches less far (this one) takes over
+  "reach": { "to": 6000.0, "band": 2500.0 },
+  "north": [0.0, 0.0, -1.0],
+  "seed": 4242,
+  "horizon_depth": 1800.0,
+  // it gets a smaller share of the terrain cache
+  "terrain_cache": 0.35,
+  "surface": {
+    "kind": "procedural",
+    "seed": 90210,
+    "datum": 0.0,
+    "relief": { "amp": 420.0, "wavelength": 9000.0, "count": 13, "gain": 0.5, "lacunarity": 2.15 },
+    "highland_amp": 700.0,
+    "highland_wavelength": 30000.0,
+    "mountains": { "amp": 900.0, "wavelength": 5000.0, "count": 3, "gain": 0.45, "lacunarity": 2.1 },
+    "mare_depth": 250.0,
+    "mare_wavelength": 40000.0,
+    "mare_from": 0.2,
+    "mare_to": 0.4,
+    "mare_smooth": 0.3,
+    "complex_from": 3000.0,
+    "albedo_high": 0.95,
+    "albedo_mare": 0.7,
+    "crater_detail": 1.0,
+    "craters": [
+      { "cell": 12000.0, "p": 0.3, "mare": 0.5, "r_min": 0.15, "r_max": 0.4 },
+      { "cell": 4000.0, "p": 0.3, "mare": 0.6, "r_min": 0.12, "r_max": 0.4 },
+      { "cell": 1300.0, "p": 0.32, "mare": 0.7, "r_min": 0.12, "r_max": 0.4 },
+      { "cell": 420.0, "p": 0.34, "mare": 0.8, "r_min": 0.12, "r_max": 0.4 },
+      { "cell": 130.0, "p": 0.38, "mare": 0.9, "r_min": 0.12, "r_max": 0.4 },
+      { "cell": 40.0, "p": 0.42, "mare": 1.0, "r_min": 0.12, "r_max": 0.4 },
+      { "cell": 12.0, "p": 0.46, "mare": 1.0, "r_min": 0.12, "r_max": 0.4, "depth": 0.3 },
+      { "cell": 4.0, "p": 0.4, "mare": 1.0, "r_min": 0.1, "r_max": 0.36, "depth": 0.0 },
+    ],
+  },
+}

@@ -1,0 +1,53 @@
+// What is heard and the dust raised: the suit alone out on the regolith (no air: nothing but
+// what one touches), the pack's jets and the dust under them, coming down, the Abejorro's engines
+// raising their sheet of dust, and then the Alcotán's pilot seat — its cabin's air, its master
+// alarm until it is acknowledged, its switches under the hand.
+// Run: luna --guion tools/camara/sonido.jsonc → out/camara/sonido.log, polvo_*.png
+{
+  "registro": "out/camara/sonido.log",
+  "pasos": [
+    { "nave": "abejorro" },
+    { "esperar": 1.5 },
+    { "nota": "--- a pie, fuera" },
+    "oir",
+    { "mochila": true },
+    { "subir": true },
+    { "mirar": [35, -38] },
+    { "esperar": 1.3 },
+    { "nota": "--- mochila empujando a un metro del suelo" },
+    "oir",
+    { "foto": "out/camara/polvo_mochila.png" },
+    { "subir": false },
+    { "mochila": false },
+    { "esperar": 3.0 },
+    { "nota": "--- de vuelta en el suelo" },
+    "oir",
+    // the Abejorro's engines at idle on the ground
+    { "pulsar": "consola/tapa_arm" },
+    { "pulsar": "consola/arm" },
+    { "pulsar": "consola/arr" },
+    { "pulsar": "consola/arr" },
+    { "esperar": 3.0 },
+    { "ajustar": { "mando": "consola/acelerador", "valor": 0.115 } },
+    { "esperar": 2.5 },
+    { "camara": { "en": [7.5, 1.6, 6.5], "mira": [0, 0.3, 0], "fov": 60 } },
+    { "foto": "out/camara/polvo_motores.png" },
+    "oir",
+    { "volcar": ["motor_proa_izq.empuje", "vuelo.tierra"] },
+    { "ajustar": { "mando": "consola/acelerador", "valor": 0.0 } },
+    // the Alcotán's pilot seat
+    { "nave": "alcotan" },
+    { "sentar": "piloto" },
+    { "esperar": 2.0 },
+    { "nota": "--- sentado en el Alcotán" },
+    { "volcar": ["cabina.p", "puente.p", "alarma.general", "sonido.alarma", "elec.bus_ess", "vuelo.tierra"] },
+    "oir",
+    { "pulsar": "principal/alarma_general" },
+    { "esperar": 0.6 },
+    { "nota": "--- alarma reconocida" },
+    { "volcar": ["alarma.general", "sonido.alarma"] },
+    "oir",
+    { "sentar": "" },
+    "jugador"
+  ]
+}

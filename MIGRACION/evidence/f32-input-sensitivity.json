@@ -1,0 +1,6 @@
+{
+  "scope": "Only input quantization then renormalization; height still evaluated by TS f64; not a GPU test",
+  "points": 1000,
+  "maxHeightErrorMeters": 0.10651985464755853,
+  "overOneCentimeter": 97
+}

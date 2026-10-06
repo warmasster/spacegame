@@ -1,0 +1,16 @@
+// The star system: the sun, the planet painted in the sky, and the bodies you can stand on
+// (each one is bodies/<id>.jsonc). Add a body: write its file and list its id here.
+{
+  "name": "Tierra-Luna",
+  "sun": {
+    // degrees in the world frame: azimuth from -Z (north at the spawn) toward +X, elevation over XZ
+    "azimuth": 98.0,
+    "elevation": 16.0,
+    "color": [1.0, 0.97, 0.92],
+    "intensity": 3.2,
+    "shadow_sweep": 4.0,
+  },
+  // the Earth: only a disc in the sky
+  "backdrop": { "dir": [-0.28, 0.52, -0.806], "angular_radius": 0.95 },
+  "bodies": ["luna", "luna_menor"],
+}

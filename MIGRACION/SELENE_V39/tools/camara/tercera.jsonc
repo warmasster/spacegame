@@ -1,0 +1,71 @@
+// The view from outside (V): on foot behind the shoulder, the tool in hand, seated round the
+// ship; and where one gets off the Abejorro (its step), seen from outside.
+// Run: luna --guion tools/camara/tercera.jsonc → out/camara/tercera_*.png
+{
+  "registro": "out/camara/tercera.log",
+  "naves": ["abejorro", "alcotan"],
+  "pasos": [
+    { "nave": "abejorro" },
+    { "esperar": 2.0 },
+    { "linterna": true },
+    // on the ground by the tug, looking at it
+    { "ir": [3.6, -1.65, 4.2] },
+    { "mirar_a": [0, 0.6, 0.8] },
+    { "tercera": 3.2 },
+    { "esperar": 1.2 },
+    { "foto": "out/camara/tercera_a_pie.png" },
+    { "andar": [1, 0] },
+    { "esperar": 1.1 },
+    { "foto": "out/camara/tercera_andando.png" },
+    { "andar": [0, 0] },
+    { "equipo": "lanzacohetes" },
+    { "esperar": 1.6 },
+    { "foto": "out/camara/tercera_herramienta.png" },
+    { "equipo": "" },
+    { "tercera": 6.5 },
+    { "esperar": 1.5 },
+    { "foto": "out/camara/tercera_lejos.png" },
+    // sat in it: the ship from outside
+    { "sentar": "piloto" },
+    { "tercera": 3.2 },
+    { "esperar": 1.0 },
+    { "foto": "out/camara/tercera_sentado.png" },
+    { "mirar": [140, -12] },
+    { "esperar": 0.6 },
+    { "foto": "out/camara/tercera_sentado_proa.png" },
+    // the seat close up, from the side and from behind: how it sits
+    { "tercera": 0 },
+    { "camara": { "en": [2.3, 1.1, 1.9], "mira": [0, 0.75, 0.9], "fov": 50 } },
+    { "foto": "out/camara/tercera_asiento_lado.png" },
+    { "camara": { "en": [1.6, 1.5, -1.2], "mira": [0, 0.8, 0.8], "fov": 50 } },
+    { "foto": "out/camara/tercera_asiento_detras.png" },
+    { "camara": { "en": [0.0, 0.9, 3.4], "mira": [0, 0.8, 0.8], "fov": 50 } },
+    { "foto": "out/camara/tercera_asiento_frente.png" },
+    // off it: on its step, seen from outside
+    { "jugador": null },
+    { "sentar": "" },
+    { "esperar": 0.8 },
+    { "camara": { "en": [4.2, 0.4, 3.4], "mira": [0.6, -0.2, 1.0], "fov": 55 } },
+    { "foto": "out/camara/tercera_bajada.png" },
+    { "jugador": null },
+    { "tercera": 3.2 },
+    { "esperar": 1.0 },
+    { "foto": "out/camara/tercera_bajada_fuera.png" },
+    // the Alcotán: sat at the controls, from behind the seats and from outside
+    { "nave": "alcotan" },
+    { "tercera": 0 },
+    { "sentar": "piloto" },
+    { "esperar": 0.8 },
+    { "camara": { "en": [-0.6, 1.9, 3.3], "mira": [0.62, 0.9, 4.8], "fov": 60 } },
+    { "foto": "out/camara/tercera_alcotan_asiento.png" },
+    { "camara": { "en": [1.55, 1.15, 5.5], "mira": [0.62, 0.8, 4.75], "fov": 60 } },
+    { "foto": "out/camara/tercera_alcotan_lado.png" },
+    { "jugador": null },
+    { "tercera": 3.2 },
+    { "esperar": 1.0 },
+    { "foto": "out/camara/tercera_alcotan_fuera.png" },
+    { "tercera": 0 },
+    { "sentar": "" },
+    { "esperar": 0.5 }
+  ]
+}

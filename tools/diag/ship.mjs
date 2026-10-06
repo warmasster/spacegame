@@ -34,14 +34,15 @@ const P = progress('nave', (mode === 'views' ? 0 : CHECK_BLOCKS) + (mode === 'ch
 await boot(page, `${url}/?manual&offline`);
 
 // helpers inside the page
-await page.evaluate(() => {
+await page.evaluate(async () => {
   const g = window.game;
+  window.diagOrigin = (await import('/src/client/render/origin.ts')).origin;
   const THREE_V = (x, y, z) => g.debug.camera.position.clone().set(x, y, z);
   window.diag = {
     ship: () => g.ships[0],
     /** ship-space point → world */
     w(x, y, z) {
-      return g.ships[0].view.root.localToWorld(THREE_V(x, y, z));
+      return g.ships[0].world([x, y, z]);
     },
     /** free camera at ship-space `from`, looking at ship-space `to` */
     look(from, to) {
@@ -133,6 +134,13 @@ if (mode === 'checks' || mode === 'all') {
     const sw0 = { ...s.sim.sw };
     for (const c of s.sim.def.controls) {
       if (c.kind === 'cover') continue;
+      // Turn the physical drum to the face being tested; the previous selector may have turned it.
+      if (c.drum) {
+        for (let k = 0; k < c.drum.faces && s.sim.sw[c.drum.key] !== c.drum.face; k++) {
+          const turn = s.sim.def.controls.find(x => x.key === c.drum.key && x.drum?.face === s.sim.sw[c.drum.key]);
+          g.shipControl(turn.id);
+        }
+      }
       const guard = c.guard && s.sim.sw[c.guard] !== 1 ? s.sim.def.controls.find((x) => x.kind === 'cover' && x.key === c.guard && x.console === c.console) : null;
       if (guard) g.shipControl(guard.id);
       const before = s.sim.sw[c.key];
@@ -177,7 +185,11 @@ if (mode === 'checks' || mode === 'all') {
     const g = window.game;
     const s = g.ships[0];
     const list = window.diag.crates();
-    const b = list[Math.min(6, list.length - 1)];
+    const b = list.find(c => c.spec.half[1] >= 0.25 && c.spec.mass <= 30);
+    // Test a free floor crate, not a box blocked by another stack beside the wall.
+    g.crates.grab(b, s.id);
+    g.crates.place([0, b.spec.half[1] + 0.01, 1.5], [0, 0, 0, 1]);
+    g.step(10, 1 / 30, false);
     const l0 = window.diag.crateLocal(b);
     window.diag.stand([l0.x, 0.02, l0.z + 1.2], [l0.x, 0.3, l0.z - 3]);
     g.step(5, 1 / 30, false);
@@ -197,9 +209,9 @@ if (mode === 'checks' || mode === 'all') {
     const g = window.game;
     const s = g.ships[0];
     return s.sim.def.extLights.map((l) => {
-      const from = window.diag.w(l.pos[0] + l.n[0] * 0.25, l.pos[1] + l.n[1] * 0.25, l.pos[2] + l.n[2] * 0.25);
-      const to = window.diag.w(...l.pos);
-      const d = to.clone().sub(from).normalize();
+      // ShipPhysics casts in ship space, with array coordinates (not THREE.Vector3/world space).
+      const from = l.pos.map((n, i) => n + l.n[i] * 0.25);
+      const d = l.n.map(n => -n);
       const hit = s.physics.castRay(from, d, 0.6);
       return { kind: l.kind, gap: hit ? hit.t - 0.25 : null };
     });
@@ -209,10 +221,21 @@ if (mode === 'checks' || mode === 'all') {
   // refusals the ship is right to give in its parked state
   const expected = {
     gear: /peso/,
-    apu: /propelente/,
     'rx.reset': /SCRAM|caliente/,
     'eng.L.start': /desarmado/,
     'eng.R.start': /desarmado/,
+    'ap.land': /Ya estás en tierra/,
+    'ap.circ': /Solo en régimen orbital/,
+    'ap.baj': /Solo en régimen orbital/,
+    'ap.bajq': /Ya estás en tierra/,
+    'ap.ocrz': /Ya estás en tierra/,
+    'ap.pro': /En tierra/,
+    'ap.retro': /En tierra/,
+    'ap.rad': /En tierra/,
+    'ap.nad': /En tierra/,
+    'ap.nor': /En tierra/,
+    'ap.anor': /En tierra/,
+    'ap.crz': /En tierra/,
   };
   for (const a of r.acts) {
     if (a.key in expected) check(`control ${a.id} (negativa esperada)`, !!a.reason && expected[a.key].test(a.reason), a.reason ?? 'no se negó');
@@ -279,8 +302,8 @@ if (mode === 'checks' || mode === 'all') {
     o.ramp = s.anim.movers.ramp;
     o.shield = s.anim.movers.shield;
     // closed ramp blocks a ray through the rear opening
-    const from = window.diag.w(0, 1.2, 8);
-    const dir = window.diag.w(0, 1.2, 0).sub(from).normalize();
+    const from = [0, 1.2, 8];
+    const dir = [0, 0, -1];
     o.rampBlocks = !!s.physics.castRay(from, dir, 4);
     g.shipControl('bk2.b/door.cargo');
     g.shipControl('ext.ramp/ramp');
@@ -344,9 +367,8 @@ if (mode === 'checks' || mode === 'all') {
     o.collider = s.physics.hasPanel(target.index);
     g.step(2, 1 / 30, false);
     // from inside the bay, out through the hole (the nacelle is right outside, so just check we pass the wall)
-    const from = window.diag.w(target.c[0] - target.n[0] * 1.5, target.c[1] - target.n[1] * 1.5, target.c[2] - target.n[2] * 1.5);
-    const to = window.diag.w(...target.c);
-    const hit = s.physics.castRay(from, to.clone().sub(from).normalize(), 3.5);
+    const from = target.c.map((n, i) => n - target.n[i] * 1.5);
+    const hit = s.physics.castRay(from, target.n, 3.5);
     o.rayThrough = !hit || hit.t > 1.5 + target.t;
     o.caution = s.sim.sw.caution;
     // conduit: the hydraulic trunk under the cargo deck (the grid notices on its next tick)
@@ -417,8 +439,10 @@ if (mode === 'checks' || mode === 'all') {
     // aim from the real eye (the camera), like a player would
     for (let k = 0; k < 3; k++) {
       g.step(4, 1 / 30);
-      const cam = g.debug.camera.getWorldPosition(g.debug.camera.position.clone());
+      const cam = window.diagOrigin.toWorld(g.debug.camera.getWorldPosition(g.debug.camera.position.clone()));
       const d = window.diag.w(...c.c).sub(cam);
+      const fq = g.frames.quat(g.debug.controller.frame);
+      d.applyQuaternion(g.debug.camera.quaternion.clone().set(...fq).invert());
       g.debug.controller.yaw = Math.atan2(-d.x, -d.z);
       g.debug.controller.pitch = Math.atan2(d.y, Math.hypot(d.x, d.z));
     }

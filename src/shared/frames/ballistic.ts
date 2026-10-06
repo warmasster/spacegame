@@ -51,7 +51,7 @@ export interface BallisticEnv {
   /** First solid thing of a host along a → b (its space): the point there, or null. */
   sweepHost(host: FrameHost, a: V3, b: V3): V3 | null;
   /** First hull along a world segment: which host, where in its space and in the world. */
-  sweepWorld(a: V3, b: V3): Contact | null;
+  sweepWorld(a: V3, b: V3, start: number, end: number): Contact | null;
   /** Height of a world point over the ground under it (≤ 0: in it). */
   groundAlt(pw: V3): number;
   /** Crew it can hit this step: their centres (world). */
@@ -74,6 +74,8 @@ const OWNER_GRACE = 0.12;
 /** Longest sub-step (m of travel in its frame): gravity and the ground test stay fine at any speed. */
 const SUBSTEP_M = 6;
 const MAX_SUBSTEPS = 8;
+/** Contact is kept on the exposed side of the ground, within this distance along the path (m). */
+const GROUND_CONTACT_M = 0.001;
 
 /**
  * A body leaving a launcher. `fr`: the launcher's frame (a host's id or WORLD_FRAME); `o`, `d` and
@@ -96,6 +98,34 @@ export function launch(owner: number, kind: string, fr: number, o: V3, d: V3, sp
 }
 
 const _g: V3 = [0, 0, 0];
+const _ground: V3 = [0, 0, 0];
+
+/**
+ * Refine a segment ending inside the terrain against the real radial surface, including edits.
+ * The hull contact, if any, limits this segment: a hull behind the ground cannot win the impact.
+ * Only a crossing needs refinement; samples reuse `out`, so flight leaves no new scratch arrays.
+ */
+function groundHit(a: V3, end: V3, env: BallisticEnv, out: V3): boolean {
+  if (env.groundAlt(end) > 0) return false;
+  const x = end[0] - a[0], y = end[1] - a[1], z = end[2] - a[2];
+  const length = Math.sqrt(x * x + y * y + z * z);
+  let lo = 0, hi = 1;
+  if (env.groundAlt(a) > 0) {
+    for (let i = 0; i < 24 && (hi - lo) * length > GROUND_CONTACT_M; i++) {
+      const t = (lo + hi) * 0.5;
+      out[0] = a[0] + x * t;
+      out[1] = a[1] + y * t;
+      out[2] = a[2] + z * t;
+      if (env.groundAlt(out) > 0) lo = t;
+      else hi = t;
+    }
+  }
+  // Use the last exposed point, not the buried endpoint (even at high inherited speeds).
+  out[0] = a[0] + x * lo;
+  out[1] = a[1] + y * lo;
+  out[2] = a[2] + z * lo;
+  return true;
+}
 
 /**
  * One fixed step: gravity, travel, what it runs into, then (still flying) the frame it belongs to.
@@ -123,8 +153,8 @@ export function stepBallistic(b: Ballistic, spec: BallisticSpec, dt: number, env
       const l = env.sweepHost(host, from, p);
       if (l) hit = { p: toWorld(host.pose, l), fr: host.id, l };
     } else {
-      hit = env.sweepWorld(from, p);
-      if (!hit && env.groundAlt(p) <= 0) hit = { p: [p[0], p[1], p[2]], fr: WORLD_FRAME, l: null };
+      hit = env.sweepWorld(from, p, s / n, (s + 1) / n);
+      if (groundHit(from, hit ? hit.p : p, env, _ground)) hit = { p: [_ground[0], _ground[1], _ground[2]], fr: WORLD_FRAME, l: null };
     }
     // crew along the segment it swept (world), up to the solid thing it met
     const end = hit ? (host ? hit.l! : hit.p) : p;

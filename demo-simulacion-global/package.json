@@ -1,0 +1,10 @@
+{
+  "name": "demo-simulacion-global",
+  "private": true,
+  "type": "commonjs",
+  "description": "Demo 2D de la simulación global. Sin dependencias: abrir index.html. Las pruebas del núcleo corren con Node.",
+  "scripts": {
+    "pruebas": "node pruebas/comprobar.js",
+    "humo": "node pruebas/humo.js"
+  }
+}

@@ -49,6 +49,33 @@ export function carry(a: FramePose | null, b: FramePose | null, p: V3, v: V3, q?
 /** A point of a host's space well away from it (cheap reject before asking about its rooms). */
 export const outOfReach = (h: FrameHost, l: V3) => Math.abs(l[0]) > h.reach || Math.abs(l[1]) > h.reach || Math.abs(l[2]) > h.reach;
 
+/** World point in a moving host at a fraction of this fixed step. No temporary poses or arrays. */
+export function localAt(h: FrameHost, p: V3, t: number, out: V3): V3 {
+  const a = h.prev, b = h.pose;
+  let d = 0;
+  for (let i = 0; i < 4; i++) d += a.q[i] * b.q[i];
+  const sign = d < 0 ? -1 : 1;
+  d = Math.min(1, Math.abs(d));
+  let ka = 1 - t, kb = t * sign;
+  if (d < 0.9995) {
+    const angle = Math.acos(d), s = Math.sin(angle);
+    ka = Math.sin((1 - t) * angle) / s;
+    kb = Math.sin(t * angle) / s * sign;
+  }
+  let qx = a.q[0] * ka + b.q[0] * kb, qy = a.q[1] * ka + b.q[1] * kb;
+  let qz = a.q[2] * ka + b.q[2] * kb, qw = a.q[3] * ka + b.q[3] * kb;
+  const inv = 1 / Math.hypot(qx, qy, qz, qw);
+  qx *= -inv; qy *= -inv; qz *= -inv; qw *= inv;
+  const x = p[0] - a.p[0] - (b.p[0] - a.p[0]) * t;
+  const y = p[1] - a.p[1] - (b.p[1] - a.p[1]) * t;
+  const z = p[2] - a.p[2] - (b.p[2] - a.p[2]) * t;
+  const tx = 2 * (qy * z - qz * y), ty = 2 * (qz * x - qx * z), tz = 2 * (qx * y - qy * x);
+  out[0] = x + qw * tx + qy * tz - qz * ty;
+  out[1] = y + qw * ty + qz * tx - qx * tz;
+  out[2] = z + qw * tz + qx * ty - qy * tx;
+  return out;
+}
+
 /** The host whose compartment holds a world point, and the point in its space (null: none). */
 export function hostAt(hosts: Iterable<FrameHost>, pw: V3, skip?: number): { host: FrameHost; l: V3 } | null {
   for (const h of hosts) {

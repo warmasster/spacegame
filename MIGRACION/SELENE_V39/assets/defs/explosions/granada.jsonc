@@ -1,0 +1,7 @@
+// A small charge (thrown with B: shots.jsonc). Only its explosive: crater, flash, shake, damage and
+// every particle come from detonacion.jsonc. (An explosion can also be written by hand: see
+// impacto.jsonc.)
+{
+  "name": "Granada",
+  "charge": { "tnt": 4.0, "casing": 0.4 }
+}

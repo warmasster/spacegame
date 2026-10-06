@@ -1,5 +1,5 @@
 // The astronaut: boots on each kind of ground (surfaces.ts names them), landings, the jetpack,
-// tools, the suit and the helmet (breathing, its fan, its warnings, what hits it).
+// tools, the suit and the helmet (its warnings, what hits it).
 
 import { defineSound } from '../bank';
 import { ad, add, brown, buf, crackle, dc, edges, filter, fit, loopOf, modes, noise, normalize, pink, shape, sweep, thump, tick, tone, wobble } from '../dsp';
@@ -232,52 +232,6 @@ defineSound('seat.buckle', {
 });
 
 // ---- inside the helmet ----------------------------------------------------------------------
-
-// breathing: in and out through the suit's loop (played faster when working hard)
-defineSound('suit.breath', {
-  loop: true,
-  gain: 0.13,
-  make: (s) => {
-    const L = 4.8;
-    return loopOf(
-      s,
-      L,
-      (b) => {
-        const inh = (t: number) => (t > 0.05 && t < 1.35 ? Math.sin((Math.PI * (t - 0.05)) / 1.3) ** 1.5 : 0);
-        const exh = (t: number) => (t > 1.8 && t < 3.5 ? Math.sin((Math.PI * (t - 1.8)) / 1.7) ** 1.2 : 0);
-        const a = buf(s, b.length / s.sr);
-        noise(s, a, (t) => 0.6 * inh(t));
-        filter(s, a, 'bp', 1500, 0.8);
-        const e = buf(s, b.length / s.sr);
-        noise(s, e, (t) => 0.7 * exh(t));
-        filter(s, e, 'bp', 650, 0.6);
-        add(s, b, a);
-        add(s, b, e);
-      },
-      null,
-      0.85,
-      0.2,
-    );
-  },
-});
-
-// the suit's fan pushing air past your face
-defineSound('suit.fan', {
-  loop: true,
-  gain: 0.05,
-  make: (s) => {
-    const L = 2;
-    return loopOf(
-      s,
-      L,
-      (b) => {
-        pink(s, b, 0.7);
-        filter(s, b, 'bp', 1800, 0.4);
-      },
-      (b) => tone(s, b, fit(190, L), 0.05),
-    );
-  },
-});
 
 // low oxygen: three quick beeps
 defineSound('suit.warn', {

@@ -1,0 +1,52 @@
+// The body aboard: up the Alcotán's ramp on foot (each foot on the ramp, then on the deck), in
+// the hold, sat in the pilot's seat; and a ship set down hard on its sprung legs.
+// Run: luna --guion tools/camara/abordo.jsonc → out/camara/abordo_*.png
+{
+  "registro": "out/camara/abordo.log",
+  "pasos": [
+    { "nave": "alcotan" },
+    { "esperar": 2.0 },
+    { "linterna": true },
+    // on the ground behind the ramp, facing the ship
+    { "ir": [0.3, -1.4, -15.2] },
+    { "mirar_a": [0.3, 1.2, -2.0] },
+    { "esperar": 0.6 },
+    { "camara": { "en": [4.6, 0.2, -13.6], "mira": [0.3, -0.5, -12.6], "fov": 50 } },
+    { "foto": "out/camara/abordo_al_pie.png" },
+    // up the ramp
+    { "andar": [1, 0] },
+    { "esperar": 1.3 },
+    { "foto": "out/camara/abordo_rampa_1.png" },
+    { "esperar": 0.5 },
+    { "camara": { "en": [3.4, 0.6, -11.6], "mira": [0.3, -0.1, -11.0], "fov": 50 } },
+    { "foto": "out/camara/abordo_rampa_2.png" },
+    { "esperar": 0.45 },
+    { "camara": { "en": [2.2, 0.5, -10.6], "mira": [0.3, 0.2, -10.4], "fov": 55 } },
+    { "foto": "out/camara/abordo_rampa_pies.png" },
+    { "esperar": 1.3 },
+    // in the hold: on the deck
+    { "camara": { "en": [1.5, 1.5, -4.6], "mira": [0.3, 0.9, -7.6], "fov": 60 } },
+    { "esperar": 0.2 },
+    { "foto": "out/camara/abordo_bodega.png" },
+    { "andar": [0, 0] },
+    { "esperar": 1.0 },
+    { "volcar": ["rampa.pos"] },
+    // sat at the controls: from its own eyes looking down at its knees, and from behind
+    { "sentar": "piloto" },
+    { "esperar": 0.8 },
+    { "camara": { "en": [-0.5, 1.85, 3.3], "mira": [0.62, 1.0, 4.9], "fov": 60 } },
+    { "foto": "out/camara/abordo_sentado.png" },
+    { "camara": { "en": [1.5, 1.3, 5.6], "mira": [0.62, 0.95, 4.8], "fov": 60 } },
+    { "foto": "out/camara/abordo_sentado_lado.png" },
+    { "jugador": null },
+    // from its own eyes: ahead (the panel and the windows), then down at its knees
+    { "mirar": [0, -8] },
+    { "esperar": 0.4 },
+    { "foto": "out/camara/abordo_sentado_vista.png" },
+    { "mirar_a": [0.62, 0.3, 5.6] },
+    { "esperar": 0.4 },
+    { "foto": "out/camara/abordo_sentado_ojos.png" },
+    { "sentar": "" },
+    { "esperar": 0.5 }
+  ]
+}

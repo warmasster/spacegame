@@ -1,8 +1,11 @@
 import type RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
+import { PoseTrack } from '../shared/frames/track';
 
 interface Chunk {
   body: RAPIER.RigidBody;
+  /** Its last two steps (drawn between them, like everything that moves). */
+  track: PoseTrack;
   age: number;
   life: number;
   scale: number;
@@ -84,33 +87,39 @@ export class Debris {
         .setCcdEnabled(true);
       const body = this.world.createRigidBody(desc);
       this.world.createCollider(R.ColliderDesc.ball(size * 0.85).setRestitution(0.25).setFriction(0.9).setDensity(2600), body);
-      this.chunks.push({ body, age: 0, life: 25 + Math.random() * 15, scale: size });
+      const track = new PoseTrack();
+      const t = body.translation();
+      track.snap([t.x, t.y, t.z], [0, 0, 0, 1]);
+      this.chunks.push({ body, track, age: 0, life: 25 + Math.random() * 15, scale: size });
     }
   }
 
-  /** Called after each physics step. */
+  /** Called after each physics step: where each fragment got to (what is drawn), its age. */
   update(dt: number) {
     for (let i = this.chunks.length - 1; i >= 0; i--) {
       const c = this.chunks[i];
       c.age += dt;
       const t = c.body.translation();
+      const r = c.body.rotation();
+      c.track.push(t.x, t.y, t.z, r.x, r.y, r.z, r.w);
       if (c.age > c.life || t.x * t.x + t.y * t.y + t.z * t.z > FAR * FAR) this.remove(i);
     }
   }
 
   /**
-   * Once per frame: write instance transforms, from the world's frame (`frame`, as drawn; null =
-   * the identity) into render space (`origin`: the world position of render-space zero).
+   * Once per frame: write instance transforms, between the last two steps (`alpha`), from the
+   * world's frame (`frame`, as drawn; null = the identity) into render space (`origin`: the world
+   * position of render-space zero).
    */
-  sync(frame: DebrisFrame | null, origin: { x: number; y: number; z: number }) {
+  sync(frame: DebrisFrame | null, origin: { x: number; y: number; z: number }, alpha = 1) {
     const fq = frame ? this.fq.set(frame.q[0], frame.q[1], frame.q[2], frame.q[3]) : null;
     for (let i = 0; i < this.chunks.length; i++) {
       const c = this.chunks[i];
-      const t = c.body.translation();
-      const r = c.body.rotation();
       const fade = Math.min(1, (c.life - c.age) / 2);
-      this.p.set(t.x, t.y, t.z);
-      this.q.set(r.x, r.y, r.z, r.w);
+      c.track.at(alpha, _p);
+      c.track.quatAt(alpha, _q);
+      this.p.set(_p[0], _p[1], _p[2]);
+      this.q.set(_q[0], _q[1], _q[2], _q[3]);
       if (frame && fq) {
         this.p.applyQuaternion(fq);
         this.p.x += frame.p[0];
@@ -128,9 +137,17 @@ export class Debris {
     this.mesh.instanceMatrix.needsUpdate = true;
   }
 
-  /** The world was re-laid: every fragment carried into the new frame (`carry` maps p, v, q). */
-  rebase(carry: (p: [number, number, number], v: [number, number, number], q: [number, number, number, number]) => { p: number[]; v: number[]; q: number[] }, turn: (w: [number, number, number]) => number[]) {
+  /**
+   * The world was re-laid: every fragment carried into the new frame (`carry` maps p, v, q; `track`
+   * carries both drawn steps, shared/frames/track.ts).
+   */
+  rebase(
+    carry: (p: [number, number, number], v: [number, number, number], q: [number, number, number, number]) => { p: number[]; v: number[]; q: number[] },
+    turn: (w: [number, number, number]) => number[],
+    track?: (t: PoseTrack) => void,
+  ) {
     for (const c of this.chunks) {
+      track?.(c.track);
       const t = c.body.translation();
       const r = c.body.rotation();
       const lv = c.body.linvel();
@@ -149,3 +166,6 @@ export class Debris {
     this.chunks.splice(i, 1);
   }
 }
+
+const _p = [0, 0, 0];
+const _q = [0, 0, 0, 1];

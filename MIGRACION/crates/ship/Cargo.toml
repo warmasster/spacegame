@@ -1,0 +1,24 @@
+[package]
+name = "lunar-ship"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+# Ships: structures with systems. Generators (hull, decks, bulkheads, conduits), components, the
+# kind assembled from data, and the ship at work (networks, machines, actuators, joints, panels,
+# air, flight computer, black box). No render, no input: the app shows and drives it.
+[dependencies]
+lunar-core = { path = "../core" }
+lunar-signals = { path = "../signals", features = ["serde"] }
+lunar-controls = { path = "../controls" }
+lunar-machines = { path = "../machines" }
+glam.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+lunar-controls = { path = "../controls" }

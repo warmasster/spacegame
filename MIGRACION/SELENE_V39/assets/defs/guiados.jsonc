@@ -1,0 +1,16 @@
+// Guided missiles (crates/core/src/guided.rs, docs/COMBATE.md): what a ship's launcher fires
+// ("municion" of an "arma" of class "guiado"). seeker: what it follows — "calor" (what is hot:
+// engines; it radiates nothing, so no warner hears it coming) or "radar" (what reflects its own
+// radar: it is heard, and chaff takes it). accel (m/s²) and burn (s): its motor; turn (m/s²): the
+// most it steers with; nav: its navigation constant; life (s); fov: half the field of its
+// seeker (deg); fuse (m): how near it has to pass to go off; arm (s): after leaving its rail
+// before it can go off; mass (kg); charge: its explosive ({ "tnt": kg, "casing": kg }); look,
+// trail, trail_rate: how it and its motor's smoke are drawn.
+{
+  // short range, heat seeking: quick off the rail, hard turning, a small charge
+  "dardo": { "name": "Dardo (infrarrojo)", "seeker": "calor", "accel": 320.0, "burn": 3.5, "turn": 300.0, "nav": 4.0, "life": 22.0, "fov": 55.0, "fuse": 9.0, "arm": 0.5, "mass": 85.0,
+             "charge": { "tnt": 4.0, "casing": 6.0 }, "look": { "style": "cohete", "size": 0.22 }, "trail": "estela", "trail_rate": 60.0 },
+  // medium range, radar homing: a longer burn, a wider reach, a heavier charge
+  "lanza": { "name": "Lanza (radar)", "seeker": "radar", "accel": 240.0, "burn": 7.0, "turn": 220.0, "nav": 4.0, "life": 45.0, "fov": 60.0, "fuse": 12.0, "arm": 0.6, "mass": 150.0,
+             "charge": { "tnt": 9.0, "casing": 12.0 }, "look": { "style": "cohete", "size": 0.3 }, "trail": "estela", "trail_rate": 60.0 }
+}

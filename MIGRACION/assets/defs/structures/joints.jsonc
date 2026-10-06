@@ -1,0 +1,10 @@
+// Joint kinds: strength = energy that breaks it (J); transfer = share of the damage of the parts
+// it holds that reaches it.
+{
+  "soldadura": { "name": "Soldadura", "strength": 3.0e5, "transfer": 0.3 },
+  "tornillos": { "name": "Tornillería", "strength": 1.2e5, "transfer": 0.4 },
+  "mortero":   { "name": "Mortero", "strength": 1.5e5, "transfer": 0.35 },
+  "bisagra":   { "name": "Bisagra", "strength": 6.0e4, "transfer": 0.5 },
+  // what holds cargo to its clamp (crates/ship/src/cargo.rs): a hard blow tears it
+  "amarre":    { "name": "Amarre de carga", "strength": 4.0e4, "transfer": 0.6 }
+}

@@ -1,0 +1,64 @@
+// The Cachalote, the heavy freighter: outside (its box and its cab, four nacelles, the Abejorro
+// docked on its back), its hold with the gantry crane, the crane at work, its bridge.
+// Run: luna --guion tools/camara/cachalote.jsonc → out/camara/cachalote_*.png
+{
+  "registro": "out/camara/cachalote.log",
+  "pasos": [
+    { "nave": "cachalote" },
+    { "esperar": 3.0 },
+    { "camara": { "en": [30, 9, 34], "mira": [0, 2.5, -5], "fov": 55 } },
+    { "foto": "out/camara/cachalote_fuera.png" },
+    { "camara": { "en": [-26, 14, -34], "mira": [0, 3, -8], "fov": 55 } },
+    "oir",
+    { "foto": "out/camara/cachalote_popa.png" },
+    { "camara": { "en": [9, 9.5, -1], "mira": [0, 6.2, -8], "fov": 60 } },
+    { "foto": "out/camara/cachalote_cuna.png" },
+    { "linterna": true },
+    // the hold from its forward end: the crane's console in the middle, facing aft; three
+    // columns of bays with an aisle down each side
+    { "camara": { "en": [0.9, 1.9, -3.6], "mira": [-0.2, 1.0, -14], "fov": 80 } },
+    { "foto": "out/camara/cachalote_bodega.png" },
+    { "camara": { "en": [0.55, 1.6, -5.35], "mira": [0, 0.98, -6.38], "fov": 60 } },
+    { "foto": "out/camara/cachalote_consola_grua.png" },
+    { "camara": { "en": [0, 2.6, -21.4], "mira": [0, 0.2, -13.5], "fov": 80 } },
+    { "foto": "out/camara/cachalote_bahias.png" },
+    { "camara": { "en": [2.65, 1.7, -21.2], "mira": [2.6, 1.3, -8], "fov": 75 } },
+    { "foto": "out/camara/cachalote_pasillo.png" },
+    // the crane over the pallet of bay B1, ALL the way down: it stops on the pallet; the magnet
+    // on: the pallet is still in its clamp and it says so
+    { "hud": true },
+    { "ajustar": { "mando": "grua/puente", "valor": 0.0774 } },
+    { "esperar": 5.0 },
+    { "ajustar": { "mando": "grua/gancho", "valor": 1.0 } },
+    { "esperar": 9.0 },
+    { "pulsar": "grua/tapa_iman" },
+    { "pulsar": "grua/agarre" },
+    { "esperar": 1.2 },
+    { "volcar": ["grua_iman.*", "grua_gancho.pos", "grua_gancho.bloqueada", "anclaje_b1.sujeta"] },
+    { "camara": { "en": [1.9, 1.7, -17.2], "mira": [0, 0.9, -19.4], "fov": 60 } },
+    { "foto": "out/camara/cachalote_iman_anclada.png" },
+    { "camara": { "en": [0.3, 1.45, -5.75], "mira": [0, 1.0, -6.36], "fov": 55 } },
+    { "foto": "out/camara/cachalote_panel_anclada.png" },
+    // its clamp let go: the magnet takes it; up, and forward over the other pallets
+    { "senal": { "nombre": "anclaje_b1.soltar", "valor": 1 } },
+    { "esperar": 1.5 },
+    { "volcar": ["grua_iman.*", "anclaje_b1.sujeta"] },
+    { "ajustar": { "mando": "grua/gancho", "valor": 0.0 } },
+    { "ajustar": { "mando": "grua/puente", "valor": 0.5 } },
+    { "esperar": 7.5 },
+    { "hud": false },
+    { "camara": { "en": [2.5, 1.7, -19.5], "mira": [0, 1.6, -15.5], "fov": 70 } },
+    { "foto": "out/camara/cachalote_grua_en_marcha.png" },
+    { "volcar": ["grua.moviendo", "grua_baliza_izq.on"] },
+    { "esperar": 12.0 },
+    { "volcar": ["grua_iman.*", "grua.*", "grua_puente.pos", "grua_gancho.pos", "cuna.*", "giroscopo.carga", "brk.luces_bod", "luces.bodega", "campana_bod_izq*"] },
+    // set down in the free bay B5: all the way down again (it stops on the deck)
+    { "ajustar": { "mando": "grua/gancho", "valor": 1.0 } },
+    { "esperar": 9.0 },
+    { "camara": { "en": [0.2, 1.75, -5.1], "mira": [0, 1.0, -12.5], "fov": 70 } },
+    { "foto": "out/camara/cachalote_grua.png" },
+    { "volcar": ["grua_gancho.pos", "grua_gancho.bloqueada"] },
+    { "camara": { "en": [0.62, 1.18, 8.82], "mira": [0.2, 1.0, 9.8], "fov": 90 } },
+    { "foto": "out/camara/cachalote_puente.png" }
+  ]
+}

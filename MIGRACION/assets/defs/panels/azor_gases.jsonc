@@ -1,0 +1,61 @@
+// Left console of the Azor: the throttle hand. Throttle, nacelle tilt, the engines, and the
+// selector that turns the drum of panels over it.
+{
+  "name": "Gases y motores",
+  "tamano": ["0.28 m", "0.68 m"],
+  "rejilla": [4, 10],
+  "margen": "8 mm",
+  "separacion": "4 mm",
+  "grupos": [
+    { "id": "potencia", "titulo": "POTENCIA", "celda": [0, 0], "ocupa": [2, 4] },
+    // what it weighs, its propellant and what that is worth (the "masa" section of secciones.jsonc)
+    { "id": "masa", "seccion": "masa", "orden": "columnas", "celda": [2, 0], "ocupa": [2, 4] },
+    { "id": "motores", "titulo": "MOTORES", "celda": [0, 4], "ocupa": [4, 2] },
+    { "id": "circuitos", "titulo": "CIRCUITOS", "celda": [0, 6], "ocupa": [4, 2] },
+    { "id": "tambor", "titulo": "TAMBOR", "celda": [0, 8], "ocupa": [4, 2] }
+  ],
+  "mandos": [
+    { "id": "acelerador", "kind": "palanca", "grupo": "potencia", "rango": [0.0, 1.05], "unidad": "%", "rotulo": "ACELER.",
+      "retenes": [ { "en": 0.0, "nombre": "CORTE" }, { "en": 1.0, "nombre": "100" } ], "friccion": 0.8, "bind": { "senal": "vuelo.acelerador" },
+      "nombre": "Acelerador", "ayuda": "Empuje de las dos góndolas. Con un modo del piloto automático que vuele los motores, manda él. Sentado: Mayús y Ctrl; X lo corta." },
+    { "id": "gondolas", "kind": "palanca", "grupo": "potencia", "rango": [0.0, 1.0], "rotulo": "GÓNDOLAS",
+      "retenes": [ { "en": 0.0, "nombre": "FRENO" }, { "en": 0.5, "nombre": "VERT." }, { "en": 1.0, "nombre": "CRUCERO" } ], "defecto": 0.5,
+      "bind": { "senal": "gondolas.orden" }, "color": [40, 80, 160],
+      "nombre": "Inclinación de las góndolas", "ayuda": "VERT. (en medio): los motores empujan hacia arriba (despegar, posarse, sostenerse). CRUCERO: hacia delante. FRENO: hacia atrás. Con MANTENER o con el piloto automático volando las mueve el ordenador (también hacia atrás, para frenar) y la palanca no cuenta." },
+
+    { "id": "tapa_arm", "kind": "tapa", "grupo": "motores", "protege": ["arm"] },
+    { "id": "arm", "kind": "interruptor", "grupo": "motores", "posiciones": ["SEGURO", "ARMADO"], "rotulo": "ARMADO",
+      "bind": { "senal": "motores.armado" }, "nombre": "Armado de los motores", "ayuda": "Da corriente al encendido y abre las válvulas de las dos góndolas. Bajo tapa." },
+    { "id": "arr", "kind": "interruptor", "grupo": "motores", "posiciones": ["PARO", "MARCHA", "ARRANQUE"], "muelle": { "ARRANQUE": "MARCHA" },
+      "rotulo": "MOTORES", "bind": { "senal": "motores.arranque" }, "nombre": "Arranque de los motores",
+      "ayuda": "Lleva a ARRANQUE (vuelve solo a MARCHA): purga, ignición y subida de los dos. PARO los apaga." },
+    { "id": "lamp_mot", "kind": "lampara", "grupo": "motores", "rotulo": "FUEGO", "requiere": { "energia": "1 W" },
+      "reglas": [ { "si": "gondola_izq.estado == 6 || gondola_der.estado == 6", "color": "rojo", "parpadeo": 2.0 },
+                  { "si": "gondola_izq.encendido && gondola_der.encendido", "color": "verde" },
+                  { "si": "gondola_izq.estado > 0 || gondola_der.estado > 0", "color": "ambar" } ] },
+    { "id": "rcs", "kind": "interruptor", "grupo": "motores", "rotulo": "MANIOBRA", "bind": { "senal": "rcs.maestro" }, "defecto": 1,
+      "nombre": "Maestro de los propulsores de maniobra", "ayuda": "Las dieciséis toberas de maniobra: traslación, y el giro que los giróscopos no den." },
+
+    { "id": "brk_motores", "kind": "disyuntor", "grupo": "circuitos", "rotulo": "MOTOR", "nominal": "60 A", "bind": { "union": "brk.motores" }, "nombre": "Disyuntor de los motores",
+      "ayuda": "Encendido y válvulas de las dos góndolas y de las toberas de maniobra. Sácalo para cortarlos." },
+    { "id": "brk_armas", "kind": "disyuntor", "grupo": "circuitos", "rotulo": "ARMAS", "nominal": "220 A", "curva_disparo": "lenta", "bind": { "union": "brk.armas" }, "nombre": "Disyuntor de las armas",
+      "ayuda": "Cañones, lanzadores y dispensadores de señuelos." },
+    { "id": "brk_sensores", "kind": "disyuntor", "grupo": "circuitos", "rotulo": "SENSOR", "nominal": "360 A", "curva_disparo": "lenta", "bind": { "union": "brk.sensores" }, "nombre": "Disyuntor de los sensores",
+      "ayuda": "Radar, infrarrojo, alertador y perturbador." },
+    { "id": "brk_hid", "kind": "disyuntor", "grupo": "circuitos", "rotulo": "HIDR.", "nominal": "280 A", "curva_disparo": "lenta", "bind": { "union": "brk.hid" }, "nombre": "Disyuntor de la bomba hidráulica" },
+    { "id": "brk_avionica", "kind": "disyuntor", "grupo": "circuitos", "rotulo": "AVIÓN.", "nominal": "60 A", "bind": { "union": "brk.avionica" }, "nombre": "Disyuntor de la aviónica",
+      "ayuda": "El ordenador, el transpondedor y todos los paneles e instrumentos." },
+    { "id": "brk_luces", "kind": "disyuntor", "grupo": "circuitos", "rotulo": "LUCES", "nominal": "25 A", "bind": { "union": "brk.luces" }, "nombre": "Disyuntor de las luces" },
+    { "id": "brk_mec", "kind": "disyuntor", "grupo": "circuitos", "rotulo": "MECAN.", "nominal": "500 A", "curva_disparo": "lenta", "bind": { "union": "brk.mec" }, "nombre": "Disyuntor de los mecanismos",
+      "ayuda": "Todo lo que se mueve con motor: góndolas, radiadores, plataforma del asiento, tambor de paneles, compuertas de la bahía, válvulas del tren y giróscopos." },
+    { "id": "brk_reactor", "kind": "disyuntor", "grupo": "circuitos", "rotulo": "REACT.", "nominal": "25 A", "bind": { "union": "brk.reactor" }, "nombre": "Disyuntor del arranque del grupo de energía",
+      "ayuda": "La corriente con la que arranca el grupo de energía. En línea ya no la necesita." },
+    { "id": "valvula", "kind": "interruptor", "grupo": "circuitos", "rotulo": "PROPEL.", "posiciones": ["CERRADA", "ABIERTA"], "bind": { "senal": "pv.prop" }, "defecto": 1,
+      "nombre": "Válvula de propelente", "ayuda": "De los dos depósitos al colector de los motores y de las toberas." },
+
+    { "id": "cara", "kind": "selector", "grupo": "tambor", "rotulo": "PANEL", "posiciones": ["NAVEG.", "COMBATE", "SENSOR."], "tamano": [44, 44], "bind": { "senal": "tambor.cara" },
+      "nombre": "Tambor de paneles", "ayuda": "Gira el tambor de tres caras que hay sobre esta consola y te pone delante la que elijas: NAVEGACIÓN (piloto automático y ordenador de vuelo), COMBATE (armas, piloto de combate, señuelos) o SENSORES (radar y lo demás)." },
+    { "id": "lamp_cara", "kind": "lampara", "grupo": "tambor", "rotulo": "GIRANDO", "requiere": { "energia": "1 W" },
+      "reglas": [ { "si": "abs(tambor.pos - tambor.orden) > 0.02", "color": "ambar" } ] }
+  ]
+}

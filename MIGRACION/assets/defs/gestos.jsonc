@@ -1,0 +1,80 @@
+// Gestures (crates/app/src/gestures.rs; docs/MANOS.md): what a player says with the hands.
+// Chosen with the wheel (the gestures' key held, the mouse toward one or its number, the key
+// let go). The others are told a gesture's NUMBER — its place in "gestos", from 1 —: new ones go
+// at the END of the list, and none changes place.
+{
+  // Places a hand is held at, by name. Axes: x toward the arm's own side (out from the body's
+  // middle), y up, z ahead; metres; from the arm's own shoulder, or from the eyes ("desde":
+  // "ojos"). `en`: where the middle of the palm goes; `palma`: the way the palm faces; `dedos`:
+  // the way the fingers point; `codo`: the way the elbow goes, if not down and out. "mirada":
+  // instead of `en`, so far from the shoulder along the way the player looks, the fingers
+  // along it. Written once, they serve either arm.
+  "puntos": {
+    // a wave: the hand up by the head, palm ahead, from one side to the other
+    "ola_dentro": { "en": [0.10, 0.22, 0.26], "palma": [0, 0, 1], "dedos": [-0.35, 1, 0], "codo": [0.7, -0.7, 0.1] },
+    "ola_fuera": { "en": [0.27, 0.20, 0.26], "palma": [0, 0, 1], "dedos": [0.35, 1, 0], "codo": [0.7, -0.7, 0.1] },
+    // pointing where one looks: the arm out along the look, the palm down
+    "senalar": { "mirada": 0.5, "palma": [0, -1, 0] },
+    // a thumb up: the fist ahead of the chest, its palm inward (the thumb is then on top)
+    "pulgar": { "en": [0.0, -0.14, 0.40], "palma": [-1, 0, 0], "dedos": [0, 0.15, 1] },
+    "pulgar_alto": { "en": [0.0, -0.09, 0.42], "palma": [-1, 0, 0], "dedos": [0, 0.15, 1] },
+    // OK: the hand up ahead of the shoulder, its palm ahead
+    "ok": { "en": [0.03, -0.04, 0.40], "palma": [0, 0, 1], "dedos": [0, 1, 0] },
+    // stop: the arm out ahead, the hand upright, its palm to whoever is told
+    "alto": { "en": [0.03, 0.02, 0.50], "palma": [0, 0, 1], "dedos": [0, 1, 0] },
+    // a salute: the fingertips by the helmet's brow, the hand flat, palm down, the elbow out
+    "saludo": { "desde": "ojos", "en": [0.30, 0.02, -0.04], "palma": [0.25, -0.95, 0.1], "dedos": [-0.85, 0.4, 0.15], "codo": [1, 0.1, -0.3] },
+    // come here: the arm ahead, palm up; the fingers and the forearm called in
+    "ven_fuera": { "en": [0.04, -0.12, 0.46], "palma": [0, 1, 0], "dedos": [0, 0.1, 1] },
+    "ven_dentro": { "en": [0.04, -0.02, 0.36], "palma": [0, 0.6, -0.8], "dedos": [0, 0.9, 0.4] },
+    // a shrug: the forearms out to the sides, palms up
+    "encoger": { "en": [0.20, -0.24, 0.24], "palma": [0, 1, 0], "dedos": [0.55, 0, 0.83], "codo": [0.1, -1, -0.4] },
+    "encoger_alto": { "en": [0.23, -0.17, 0.25], "palma": [0, 1, 0], "dedos": [0.55, 0.1, 0.83], "codo": [0.1, -1, -0.4] },
+    // both arms up
+    "arriba": { "en": [0.14, 0.44, 0.10], "palma": [0, 0, 1], "dedos": [0.2, 1, 0], "codo": [1, 0, 0] },
+    "arriba_alto": { "en": [0.16, 0.50, 0.10], "palma": [0, 0, 1], "dedos": [0.2, 1, 0], "codo": [1, 0, 0] },
+    // a fist held up: wait
+    "puno_alto": { "en": [0.10, 0.26, 0.20], "palma": [-1, 0, 0], "dedos": [0, 1, 0], "codo": [0.6, -0.8, 0.1] },
+    // the flat hand across under the helmet, from one side to the other: cut (engines off)
+    "cortar_fuera": { "desde": "ojos", "en": [0.16, -0.30, 0.20], "palma": [0, -1, 0], "dedos": [-1, 0, 0.1], "codo": [1, -0.2, 0] },
+    "cortar_dentro": { "desde": "ojos", "en": [-0.06, -0.30, 0.22], "palma": [0, -1, 0], "dedos": [-1, 0, 0.1], "codo": [1, -0.2, 0] },
+    // the hands together ahead of the chest — palm on palm: each palm's point (the middle of
+    // what it would close on) is a little past the body's middle, the shoulders being 0.21 m
+    // off it — and apart
+    "palmas_juntas": { "en": [-0.228, -0.14, 0.38], "palma": [-1, 0.05, 0], "dedos": [0, 0.5, 0.87] },
+    "palmas_abiertas": { "en": [-0.11, -0.135, 0.38], "palma": [-1, 0.05, 0], "dedos": [0, 0.5, 0.87] }
+  },
+  // id: what a script calls it; nombre: as the wheel names it; dura: how long it lasts (s);
+  // mantener: it stays at its last key until its player lets it go; der / izq: each arm's keys,
+  // [time, place, hand pose (rigs/*.jsonc, "manos")]. A gesture of one arm goes to the other if
+  // its own hand is taken (a tool in it).
+  "gestos": [
+    { "id": "saludar", "nombre": "SALUDAR", "dura": 2.1,
+      "der": [[0.25, "ola_dentro", "abierta"], [0.55, "ola_fuera", "abierta"], [0.85, "ola_dentro", "abierta"], [1.15, "ola_fuera", "abierta"], [1.45, "ola_dentro", "abierta"], [1.75, "ola_fuera", "abierta"]] },
+    { "id": "senalar", "nombre": "SEÑALAR", "dura": 0.3, "mantener": true,
+      "der": [[0.3, "senalar", "apuntar"]] },
+    { "id": "pulgar", "nombre": "BIEN", "dura": 1.7,
+      "der": [[0.3, "pulgar", "pulgar_arriba"], [0.55, "pulgar_alto", "pulgar_arriba"], [0.8, "pulgar", "pulgar_arriba"]] },
+    { "id": "ok", "nombre": "OK", "dura": 1.7,
+      "der": [[0.3, "ok", "ok"]] },
+    { "id": "alto", "nombre": "ALTO", "dura": 0.3, "mantener": true,
+      "der": [[0.3, "alto", "plana"]] },
+    { "id": "saludo", "nombre": "SALUDO", "dura": 1.7,
+      "der": [[0.35, "saludo", "plana"]] },
+    { "id": "ven", "nombre": "VEN", "dura": 1.9,
+      "der": [[0.3, "ven_fuera", "abierta"], [0.6, "ven_dentro", "llamar"], [0.9, "ven_fuera", "abierta"], [1.2, "ven_dentro", "llamar"], [1.5, "ven_fuera", "abierta"]] },
+    { "id": "nose", "nombre": "NO SÉ", "dura": 1.6,
+      "der": [[0.3, "encoger", "abierta"], [0.6, "encoger_alto", "abierta"], [1.1, "encoger", "abierta"]],
+      "izq": [[0.3, "encoger", "abierta"], [0.6, "encoger_alto", "abierta"], [1.1, "encoger", "abierta"]] },
+    { "id": "celebrar", "nombre": "¡BIEN!", "dura": 1.9,
+      "der": [[0.3, "arriba", "puno"], [0.55, "arriba_alto", "puno"], [0.8, "arriba", "puno"], [1.05, "arriba_alto", "puno"], [1.3, "arriba", "puno"]],
+      "izq": [[0.3, "arriba", "puno"], [0.55, "arriba_alto", "puno"], [0.8, "arriba", "puno"], [1.05, "arriba_alto", "puno"], [1.3, "arriba", "puno"]] },
+    { "id": "esperad", "nombre": "ESPERAD", "dura": 0.3, "mantener": true,
+      "der": [[0.3, "puno_alto", "puno"]] },
+    { "id": "cortar", "nombre": "CORTAR", "dura": 1.9,
+      "der": [[0.3, "cortar_fuera", "plana"], [0.6, "cortar_dentro", "plana"], [0.9, "cortar_fuera", "plana"], [1.2, "cortar_dentro", "plana"], [1.5, "cortar_fuera", "plana"]] },
+    { "id": "aplaudir", "nombre": "APLAUDIR", "dura": 2.0,
+      "der": [[0.3, "palmas_abiertas", "palmada"], [0.45, "palmas_juntas", "palmada"], [0.6, "palmas_abiertas", "palmada"], [0.75, "palmas_juntas", "palmada"], [0.9, "palmas_abiertas", "palmada"], [1.05, "palmas_juntas", "palmada"], [1.2, "palmas_abiertas", "palmada"], [1.35, "palmas_juntas", "palmada"], [1.5, "palmas_abiertas", "palmada"]],
+      "izq": [[0.3, "palmas_abiertas", "palmada"], [0.45, "palmas_juntas", "palmada"], [0.6, "palmas_abiertas", "palmada"], [0.75, "palmas_juntas", "palmada"], [0.9, "palmas_abiertas", "palmada"], [1.05, "palmas_juntas", "palmada"], [1.2, "palmas_abiertas", "palmada"], [1.35, "palmas_juntas", "palmada"], [1.5, "palmas_abiertas", "palmada"]] }
+  ]
+}

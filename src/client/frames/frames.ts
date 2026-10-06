@@ -1,6 +1,6 @@
 import type RAPIER from '@dimforge/rapier3d-compat';
 import type * as THREE from 'three';
-import { carry, WORLD_FRAME } from '../../shared/frames';
+import { carry, carryPoint, WORLD_FRAME, type FramePair, type PoseTrack } from '../../shared/frames';
 import { dirToLocal, dirToWorld, pointVelocity, toLocal, toWorld, type ShipPose } from '../../shared/ship/flight';
 import type { Quat, V3 } from '../../shared/ship/geom';
 import type { ShipClient } from '../ship/ship';
@@ -107,6 +107,31 @@ export class Frames {
   /** The same across a re-laying of the bubble: from its old pose to its new one. */
   rebase(p: V3, v: V3, q?: Quat): { p: V3; v: V3; q: Quat } {
     return carry(this.bubble.from, this.bubble.pose, p, v, q);
+  }
+
+  /** A point of the step before, across a re-laying of the bubble (in place). */
+  rebasePrev(p: number[]) {
+    carryPoint(this.bubble.fromPrev, this.bubble.prev, p);
+  }
+
+  /** A frame's poses this step and the step before (null: an unknown ship). */
+  pair(fr: number): FramePair | null {
+    if (fr === WORLD_FRAME) return this.bubble;
+    return this.ship(fr) ?? null;
+  }
+
+  /**
+   * A drawn track into another frame: both of its steps, each with the frames' poses of its own
+   * step (what is drawn between them goes on unbroken through the door).
+   */
+  carryTrack(t: PoseTrack, to: number) {
+    t.carry(this.pair(t.fr), this.pair(to), to);
+  }
+
+  /** A drawn track in the bubble across its re-laying (both steps). */
+  rebaseTrack(t: PoseTrack) {
+    const b = this.bubble;
+    t.carry({ pose: b.from, prev: b.fromPrev }, b, WORLD_FRAME);
   }
 }
 

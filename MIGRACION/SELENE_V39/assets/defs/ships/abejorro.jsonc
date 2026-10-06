@@ -1,0 +1,176 @@
+// ABEJORRO — a one-seat cargo tug: an open frame on four tall legs, flown in a suit (no cabin, no
+// air). Ship frame: +Y up, nose toward +Z, +X to port, metres; the deck is y = 0.
+//
+// What is its own:
+// - it turns with momentum wheels (`giroscopo`), not thrusters: no propellant spent turning, but
+//   they fill up, and a full wheel answers no more until the cold gas unloads it (DESCARGA);
+// - it stands astride its load and takes it with an electropermanent magnet under its belly
+//   (`electroiman_carga`): holding costs nothing — it holds with the tug dead — but every switch
+//   takes a pulse from a capacitor. The magnet is a clamp like any other (crates/ship/src/cargo.rs);
+// - cold gas for the rest: twelve small nozzles to slide sideways and to unload the wheels.
+{
+  "nombre": "Abejorro",
+  "matricula": "ABJ-12",
+  "clase": "Remolcador de carga monoplaza",
+  "astillero": "Astilleros Orell",
+  "modelo": "Orell AB-2",
+  "descripcion": "Remolcador de celosía de 5 m: un asiento al aire, giróscopos en vez de toberas y un imán electropermanente bajo la panza. Se posa a horcajadas sobre la carga y se la lleva.",
+
+  "componentes": [
+    // ---- frame: two longerons, cross beams, two decks ----
+    { "id": "larguero_izq", "forma": { "kind": "box", "size": [0.12, 0.12, 4.9] }, "estilo": "viga_cajon", "en": [0.55, -0.06, 0.1], "material": "aluminio", "hueco": 0.005, "color": [206, 164, 30], "espejo": true },
+    { "id": "traviesa", "forma": { "kind": "box", "size": [0.98, 0.1, 0.12] }, "estilo": "viga_cajon", "en": [0, -0.06, -2.2], "repetir": [4, [0, 0, 1.5]], "material": "aluminio", "hueco": 0.005, "color": [206, 164, 30] },
+    { "id": "cubierta", "forma": { "kind": "box", "size": [1.22, 0.03, 2.05] }, "estilo": "chapa_cubierta", "en": [0, 0.015, 1.3], "material": "panel_suelo", "color": [110, 114, 118] },
+    { "id": "cubierta_popa", "forma": { "kind": "box", "size": [1.22, 0.03, 2.5] }, "estilo": "chapa_cubierta", "en": [0, 0.015, -1.1], "material": "panel_suelo", "color": [96, 100, 104] },
+    // a step each side to climb aboard, half way up
+    { "id": "estribo_izq", "forma": { "kind": "box", "size": [0.5, 0.05, 0.7] }, "estilo": "estribo", "en": [0.92, -0.7, 1.0], "material": "panel_suelo", "color": [206, 164, 30], "espejo": true },
+    { "id": "tirante_izq", "forma": { "kind": "box", "size": [0.06, 0.66, 0.06] }, "estilo": "tubo_jaula", "en": [0.68, -0.39, 1.0], "material": "aluminio", "hueco": 0.004, "color": [58, 60, 66], "espejo": true },
+
+    // ---- the seat, its console and the cage round them ----
+    { "id": "asiento", "tipo": "asiento", "en": [0, 0.03, 0.86] },
+    { "id": "consola", "tipo": "consola_tug", "en": [0, 0.03, 1.9] },
+    { "id": "arco_proa_izq", "forma": { "kind": "box", "size": [0.06, 1.8, 0.06] }, "estilo": "tubo_jaula", "en": [0.58, 0.93, 2.28], "material": "aluminio", "hueco": 0.004, "color": [58, 60, 66], "espejo": true },
+    { "id": "arco_proa", "forma": { "kind": "box", "size": [1.22, 0.06, 0.06] }, "estilo": "tubo_jaula", "en": [0, 1.86, 2.28], "material": "aluminio", "hueco": 0.004, "color": [58, 60, 66] },
+    { "id": "arco_popa_izq", "forma": { "kind": "box", "size": [0.06, 1.8, 0.06] }, "estilo": "tubo_jaula", "en": [0.58, 0.93, 0.35], "material": "aluminio", "hueco": 0.004, "color": [58, 60, 66], "espejo": true },
+    { "id": "arco_popa", "forma": { "kind": "box", "size": [1.22, 0.06, 0.06] }, "estilo": "tubo_jaula", "en": [0, 1.86, 0.35], "material": "aluminio", "hueco": 0.004, "color": [58, 60, 66] },
+    { "id": "techo_izq", "forma": { "kind": "box", "size": [0.06, 0.06, 1.87] }, "estilo": "tubo_jaula", "en": [0.58, 1.86, 1.315], "material": "aluminio", "hueco": 0.004, "color": [58, 60, 66], "espejo": true },
+
+    // ---- machinery on the after deck ----
+    { "id": "bateria", "tipo": "bateria", "en": [0, 0.03, -0.25], "cableado": false, "maquina": { "puertos": { "bornes": "elec:bat" }, "params": { "siempre": true, "soc_inicial": 0.9 } } },
+    { "id": "ordenador", "tipo": "ordenador", "en": [0, 0.56, -0.25], "cableado": false,
+      "maquina": { "puertos": { "energia": "elec:bus", "datos": "datos:fc" }, "params": { "siempre": false, "potencia": "120 W" }, "ordenes": { "encender": "ordenador.encender" } } },
+    { "id": "deposito_izq", "tipo": "deposito_tug", "en": [0.33, 0.34, -1.35], "espejo": true, "cableado": false, "maquina": { "puertos": { "salida": "prop:tanques" } } },
+    { "id": "giroscopo", "tipo": "giroscopo_cmg", "en": [0, 0.03, -2.3], "cableado": false,
+      "maquina": { "puertos": { "energia": "elec:bus" }, "ordenes": { "marcha": "giro.marcha" } } },
+
+    // ---- outriggers, the four lift engines, the legs it stands astride its load on ----
+    { "id": "brazo_proa_izq", "forma": { "kind": "box", "size": [1.05, 0.1, 0.12] }, "estilo": "viga_cajon", "en": [1.13, -0.06, 2.3], "material": "aluminio", "hueco": 0.005, "color": [206, 164, 30], "espejo": true },
+    { "id": "brazo_popa_izq", "forma": { "kind": "box", "size": [1.05, 0.1, 0.12] }, "estilo": "viga_cajon", "en": [1.13, -0.06, -2.2], "material": "aluminio", "hueco": 0.005, "color": [206, 164, 30], "espejo": true },
+    { "id": "motor_proa_izq", "tipo": "motor_elevacion", "en": [1.72, -0.12, 2.3], "espejo": true, "cableado": false,
+      "maquina": { "puertos": { "energia": "elec:bus", "propelente": "prop:colector" }, "ordenes": { "armado": "motores.armado", "arranque": "motores.arranque" } } },
+    { "id": "motor_popa_izq", "tipo": "motor_elevacion", "en": [1.72, -0.12, -2.2], "espejo": true, "cableado": false,
+      "maquina": { "puertos": { "energia": "elec:bus", "propelente": "prop:colector" }, "ordenes": { "armado": "motores.armado", "arranque": "motores.arranque" } } },
+    { "id": "pata_proa_izq", "forma": { "kind": "box", "size": [0.08, 1.5, 0.08] }, "estilo": "tren_pata", "en": [1.3, -0.85, 2.3], "material": "aluminio", "hueco": 0.005, "color": [190, 192, 196], "articulacion": "amort_proa_izq", "espejo": true },
+    { "id": "pie_proa_izq", "forma": { "kind": "box", "size": [0.32, 0.05, 0.32] }, "estilo": "tren_pie", "en": [1.3, -1.625, 2.3], "material": "acero", "color": [40, 40, 44], "articulacion": "amort_proa_izq", "espejo": true },
+    { "id": "pata_popa_izq", "forma": { "kind": "box", "size": [0.08, 1.5, 0.08] }, "estilo": "tren_pata", "en": [1.3, -0.85, -2.2], "material": "aluminio", "hueco": 0.005, "color": [190, 192, 196], "articulacion": "amort_popa_izq", "espejo": true },
+    { "id": "pie_popa_izq", "forma": { "kind": "box", "size": [0.32, 0.05, 0.32] }, "estilo": "tren_pie", "en": [1.3, -1.625, -2.2], "material": "acero", "color": [40, 40, 44], "articulacion": "amort_popa_izq", "espejo": true },
+
+    // ---- the cargo magnet, under the middle ----
+    { "id": "iman", "tipo": "electroiman_carga", "en": [0, -0.12, 0.05], "cableado": false,
+      "maquina": { "puertos": { "energia": "elec:bus" }, "ordenes": { "agarrar": "iman.agarrar" } } },
+
+    // ---- cold gas: three nozzles at each corner (down, outboard, fore or aft) ----
+    // (their exhaust is cold gas', not a rocket's: assets/defs/chorros.jsonc)
+    { "id": "rcs_proa_izq_arriba", "tipo": "tobera_rcs", "en": [1.72, 0.2, 2.3], "espejo": true, "cableado": false,
+      "maquina": { "puertos": { "propelente": "prop:colector", "energia": "elec:bus" }, "ordenes": { "maestro": "rcs.maestro" }, "params": { "empuje": "500 N", "isp": "1800 s" }, "chorro": { "estilo": "gas_frio" } } },
+    { "id": "rcs_proa_izq_fuera", "tipo": "tobera_rcs", "en": [1.94, -0.06, 2.3], "rot": [0, 0, -90], "espejo": true, "cableado": false,
+      "maquina": { "puertos": { "propelente": "prop:colector", "energia": "elec:bus" }, "ordenes": { "maestro": "rcs.maestro" }, "params": { "empuje": "500 N", "isp": "1800 s" }, "chorro": { "estilo": "gas_frio" } } },
+    { "id": "rcs_proa_izq_proa", "tipo": "tobera_rcs", "en": [1.72, -0.06, 2.52], "rot": [90, 0, 0], "espejo": true, "cableado": false,
+      "maquina": { "puertos": { "propelente": "prop:colector", "energia": "elec:bus" }, "ordenes": { "maestro": "rcs.maestro" }, "params": { "empuje": "500 N", "isp": "1800 s" }, "chorro": { "estilo": "gas_frio" } } },
+    { "id": "rcs_popa_izq_arriba", "tipo": "tobera_rcs", "en": [1.72, 0.2, -2.2], "espejo": true, "cableado": false,
+      "maquina": { "puertos": { "propelente": "prop:colector", "energia": "elec:bus" }, "ordenes": { "maestro": "rcs.maestro" }, "params": { "empuje": "500 N", "isp": "1800 s" }, "chorro": { "estilo": "gas_frio" } } },
+    { "id": "rcs_popa_izq_fuera", "tipo": "tobera_rcs", "en": [1.94, -0.06, -2.2], "rot": [0, 0, -90], "espejo": true, "cableado": false,
+      "maquina": { "puertos": { "propelente": "prop:colector", "energia": "elec:bus" }, "ordenes": { "maestro": "rcs.maestro" }, "params": { "empuje": "500 N", "isp": "1800 s" }, "chorro": { "estilo": "gas_frio" } } },
+    { "id": "rcs_popa_izq_popa", "tipo": "tobera_rcs", "en": [1.72, -0.06, -2.42], "rot": [-90, 0, 0], "espejo": true, "cableado": false,
+      "maquina": { "puertos": { "propelente": "prop:colector", "energia": "elec:bus" }, "ordenes": { "maestro": "rcs.maestro" }, "params": { "empuje": "500 N", "isp": "1800 s" }, "chorro": { "estilo": "gas_frio" } } },
+
+    // ---- lights ----
+    { "id": "nav_izq", "tipo": "luz_nav", "en": [1.72, 0.14, -2.0], "cableado": false, "maquina": { "puertos": { "alimentacion": "elec:bus" }, "ordenes": { "encender": "luces.nav" } } },
+    { "id": "nav_der", "tipo": "luz_nav", "en": [-1.72, 0.14, -2.0], "cableado": false,
+      "luz": { "color": [40, 255, 90], "alcance": 6.0, "intensidad": 1.6, "en": [0, 0.05, 0], "lente": 0.06, "dir": [0, 1, 0] },
+      "maquina": { "puertos": { "alimentacion": "elec:bus" }, "ordenes": { "encender": "luces.nav" } } },
+    { "id": "estrobo", "tipo": "estroboscopio", "en": [0, 1.92, 0.35], "cableado": false, "maquina": { "puertos": { "alimentacion": "elec:bus" }, "ordenes": { "encender": "luces.nav" } } },
+    { "id": "foco", "tipo": "foco", "en": [0, -0.14, 1.2], "rot": [180, 0, 0], "cableado": false, "maquina": { "puertos": { "alimentacion": "elec:bus" }, "ordenes": { "encender": "luces.foco" } } },
+    // hanging from the forward hoop, over the console and turned to it (its shade keeps it out of
+    // the pilot's eyes): the panel is read at night and in the ship's own shadow
+    { "id": "flexo", "tipo": "flexo", "en": [0, 1.63, 2.28], "cableado": false,
+      "luz": { "color": [255, 232, 196], "alcance": 2.6, "intensidad": 18.0, "en": [0, 0.19, 0], "lente": 0.0, "dir": [0, -0.892, -0.452], "cono": 64.0 },
+      "maquina": { "puertos": { "alimentacion": "elec:bus" }, "ordenes": { "encender": "ct.bat" } } }
+  ],
+
+  // ------------------------------------------------------------------ networks
+  // its four legs slide through the ends of its arms on gas springs: out in flight, three
+  // quarters in standing (crates/ship/src/def.rs, SpringDef)
+  "articulaciones": {
+    "amort_proa_izq": { "tipo": "corredera", "eje": [0, 1, 0], "limites": [0, 0.25], "nombre": "Pata de proa izquierda", "muelle": {} },
+    "amort_proa_der": { "tipo": "corredera", "eje": [0, 1, 0], "limites": [0, 0.25], "nombre": "Pata de proa derecha", "muelle": {} },
+    "amort_popa_izq": { "tipo": "corredera", "eje": [0, 1, 0], "limites": [0, 0.25], "nombre": "Pata de popa izquierda", "muelle": {} },
+    "amort_popa_der": { "tipo": "corredera", "eje": [0, 1, 0], "limites": [0, 0.25], "nombre": "Pata de popa derecha", "muelle": {} }
+  },
+  "redes": {
+    "elec": {
+      "medio": "electrico", "nominal": "28 V", "conducto": "cable",
+      "nodos": { "bat": [0, 0.6, -0.25], "bus": [0, 0.6, 0.1] },
+      "interruptores": [ { "id": "ct.bat", "de": "bat", "a": "bus" } ]
+    },
+    "datos": { "medio": "datos", "conducto": "datos", "nodos": { "fc": [0, 0.7, -0.25] } },
+    "prop": {
+      "medio": "propelente", "nominal": "2.0 MPa", "conducto": "tubo", "fuga": "1 kg/s",
+      "nodos": { "tanques": [0, 0.34, -0.6], "colector": [0, -0.06, 0.05] },
+      "interruptores": [ { "id": "pv.prop", "de": "tanques", "a": "colector" } ]
+    }
+  },
+
+  // ------------------------------------------------------------------ panels, seats
+  "paneles": [
+    { "id": "consola", "panel": "abe_consola", "pieza": "consola.cara", "en": [0, 0.9955, 1.8579], "normal": [0, 0.5736, -0.8192], "energia": "elec:bus", "cableado": false,
+      "sin": ["masa_nivel", "masa_reserva"] }
+  ],
+  // where one gets off it: sideways off the seat on to the step of either side, facing out; with
+  // both taken by something, down to the ground beside them (the first with room is the one)
+  "bajadas": [
+    { "id": "estribo_izq", "en": [1.05, -0.675, 1.0], "zona": [0.3, 0.6], "rumbo": 90 },
+    { "id": "estribo_der", "en": [-1.05, -0.675, 1.0], "zona": [0.3, 0.6], "rumbo": -90 },
+    { "id": "suelo_izq", "en": [2.2, -0.675, 0.2], "zona": [0.6, 1.8], "rumbo": 90, "baja": 2.5 },
+    { "id": "suelo_der", "en": [-2.2, -0.675, 0.2], "zona": [0.6, 1.8], "rumbo": -90, "baja": 2.5 }
+  ],
+  "asientos": [
+    { "id": "piloto", "nombre": "Asiento del Abejorro", "pieza": "asiento.cojin", "ojos": [0, 1.38, 0.97], "rumbo": 0, "salida": [1.05, -0.675, 1.0],
+      "paneles": ["consola"],
+      "mandos": [
+        { "tecla": "W", "mando": "consola/palanca", "eje": 0, "valor": 1.0, "ayuda": "Palanca de mando: cabeceo (morro abajo y arriba)" },
+        { "tecla": "S", "mando": "consola/palanca", "eje": 0, "valor": -1.0, "ayuda": "Palanca de mando: cabeceo (morro abajo y arriba)" },
+        { "tecla": "E", "mando": "consola/palanca", "eje": 1, "valor": 1.0, "ayuda": "Palanca de mando: alabeo (inclinarse a un lado y a otro)" },
+        { "tecla": "Q", "mando": "consola/palanca", "eje": 1, "valor": -1.0, "ayuda": "Palanca de mando: alabeo (inclinarse a un lado y a otro)" },
+        { "tecla": "A", "mando": "consola/guinada", "eje": 0, "valor": 1.0, "ayuda": "Guiñada (girar el morro a izquierda y derecha)" },
+        { "tecla": "D", "mando": "consola/guinada", "eje": 0, "valor": -1.0, "ayuda": "Guiñada (girar el morro a izquierda y derecha)" },
+        { "tecla": "R", "mando": "consola/vertical", "eje": 0, "valor": 1.0, "ayuda": "Subir y bajar (con MANTENER)" },
+        { "tecla": "F", "mando": "consola/vertical", "eje": 0, "valor": -1.0, "ayuda": "Subir y bajar (con MANTENER)" },
+        { "tecla": "I", "mando": "consola/traslacion", "eje": 0, "valor": 1.0, "ayuda": "Traslación adelante y atrás (gas frío)" },
+        { "tecla": "K", "mando": "consola/traslacion", "eje": 0, "valor": -1.0, "ayuda": "Traslación adelante y atrás (gas frío)" },
+        { "tecla": "J", "mando": "consola/traslacion", "eje": 1, "valor": 1.0, "ayuda": "Traslación a los lados (gas frío)" },
+        { "tecla": "L", "mando": "consola/traslacion", "eje": 1, "valor": -1.0, "ayuda": "Traslación a los lados (gas frío)" },
+        { "tecla": "Mayús", "mando": "consola/acelerador", "accion": "subir", "ayuda": "Acelerador de los motores: más" },
+        { "tecla": "Ctrl", "mando": "consola/acelerador", "accion": "bajar", "ayuda": "Acelerador de los motores: menos" },
+        { "tecla": "X", "mando": "consola/acelerador", "accion": "cero", "ayuda": "Acelerador de los motores: a cero" },
+        { "tecla": "G", "mando": "consola/agarre", "accion": "pulsar", "ayuda": "Imán de carga: agarrar o soltar (bajo tapa: ábrela antes)" }
+      ] }
+  ],
+
+  // ------------------------------------------------------------------ logic
+  "derivadas": {
+    // the magnet is a clamp: on, it holds what is under it; off, it lets go
+    "iman.soltar": "!iman.activo"
+    // (no master alarm: it has no annunciator nor a horn to feed; what would raise one is in
+    // "alarmas" below, and each has its own lamp or gauge on the console)
+  },
+  "enclavamientos": [
+    { "mando": "consola/arm", "hacia": 1, "si": "elec.bus < 20 V", "motivo": "Sin corriente en el bus" }
+  ],
+  "alarmas": {
+    "Bus sin tensión": "elec.bus < 20 V",
+    "Giróscopos saturados": "giroscopo.carga > 0.95",
+    "Propelente bajo": "deposito_izq.nivel < 0.15"
+  },
+  // No gravity of its own (an open frame flown in the suit): on it one weighs what is left of the
+  // world's pull as it goes (all of it parked, nothing in free fall)
+  "gravedad": { "g": 0.0, "tiempo": 0.0 },
+  "vuelo": {
+    "cabeceo": "vuelo.cabeceo", "alabeo": "vuelo.alabeo", "guinada": "vuelo.guinada",
+    "traslacion": ["vuelo.tx", "vuelo.ty", "vuelo.tz"], "acelerador": "vuelo.acelerador",
+    "estabilizador": "vuelo.sas", "mantener": "vuelo.mantener",
+    "giro": [12, 14, 12], "ganancia": 2.5,
+    "rcs": ["rcs_*"], "motores": ["motor_*"], "ordenador": "ordenador",
+    "ruedas": ["giroscopo"], "descarga": "vuelo.descarga"
+  }
+}

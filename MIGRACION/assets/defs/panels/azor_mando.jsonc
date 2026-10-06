@@ -1,0 +1,28 @@
+// Right console of the Azor: the stick hand. Flight stick, yaw, translation (sprung to centre),
+// and the trigger. Seated, the keys move them (the seat's bindings in the ship).
+{
+  "name": "Mando de vuelo y tiro",
+  "tamano": ["0.26 m", "0.60 m"],
+  "rejilla": [2, 8],
+  "margen": "8 mm",
+  "separacion": "4 mm",
+  "grupos": [
+    { "id": "mando", "titulo": "MANDO", "celda": [0, 0], "ocupa": [2, 3] },
+    { "id": "tras", "titulo": "TRASLACIÓN", "celda": [0, 3], "ocupa": [2, 3] },
+    { "id": "tiro", "titulo": "TIRO", "celda": [0, 6], "ocupa": [2, 2] }
+  ],
+  "mandos": [
+    { "id": "palanca", "kind": "palanca", "grupo": "mando", "ejes": 2, "rango": [-1.0, 1.0], "muelle_al_centro": true,
+      "bind": { "senal": "vuelo.cabeceo", "senal_y": "vuelo.alabeo" }, "nombre": "Palanca de mando",
+      "ayuda": "Adelante y atrás: cabeceo. A los lados: alabeo. Con el ordenador, pide velocidad de giro; sin él, empuje directo. Moverla manda sobre el piloto automático. Sentado: W/S, Q/E." },
+    { "id": "guinada", "kind": "palanca", "grupo": "mando", "rango": [-1.0, 1.0], "muelle_al_centro": true, "recorrido": 40, "tamano": [28, 60],
+      "bind": { "senal": "vuelo.guinada" }, "rotulo": "GUIÑADA", "nombre": "Guiñada", "ayuda": "Sentado: A/D." },
+    { "id": "traslacion", "kind": "palanca", "grupo": "tras", "ejes": 2, "rango": [-1.0, 1.0], "muelle_al_centro": true,
+      "bind": { "senal": "vuelo.tz", "senal_y": "vuelo.tx" }, "nombre": "Traslación", "ayuda": "Adelante, atrás y a los lados con los propulsores de maniobra. Sentado: I/K, J/L." },
+    { "id": "vertical", "kind": "palanca", "grupo": "tras", "rango": [-1.0, 1.0], "muelle_al_centro": true, "recorrido": 40, "tamano": [28, 60],
+      "bind": { "senal": "vuelo.ty" }, "rotulo": "SUBIR", "nombre": "Subir y bajar", "ayuda": "Sentado: R/F." },
+    { "id": "gatillo", "kind": "pulsador", "grupo": "tiro", "rotulo": "FUEGO", "modo": "momentaneo", "color": "rojo", "tamano": [30, 30],
+      "bind": { "senal": "armas.gatillo" }, "nombre": "Gatillo",
+      "ayuda": "Dispara el arma elegida mientras lo aprietas (un misil por pulsación). Hace falta el maestro de armas en ARMADO. Sentado: H." }
+  ]
+}

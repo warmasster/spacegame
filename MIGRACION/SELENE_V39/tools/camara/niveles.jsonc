@@ -1,0 +1,284 @@
+// The Alcotán from 150 m to 6 km, the same size on screen: as it is up to 200 m, then its levels
+// of detail (600, 1200, 2400 m, the far shape from 4.8 km), plain and tinted (F7). The log says
+// what the rangefinder reads and what the GPU holds at each.
+{
+ "registro": "out/camara/niveles.log",
+ "pasos": [
+  {
+   "nave": "alcotan"
+  },
+  {
+   "esperar": 3.0
+  },
+  {
+   "niveles_detalle": false
+  },
+  {
+   "camara": {
+    "en": [
+     120.5,
+     49.7,
+     73.3
+    ],
+    "mira": [
+     0,
+     1.5,
+     -2
+    ],
+    "fov": 9.148
+   }
+  },
+  {
+   "esperar": 1.0
+  },
+  "medir",
+  {
+   "foto": "out/camara/lod_n_150m.png"
+  },
+  {
+   "camara": {
+    "en": [
+     321.2,
+     130.0,
+     198.8
+    ],
+    "mira": [
+     0,
+     1.5,
+     -2
+    ],
+    "fov": 3.437
+   }
+  },
+  {
+   "esperar": 1.0
+  },
+  "medir",
+  {
+   "foto": "out/camara/lod_n_400m.png"
+  },
+  {
+   "camara": {
+    "en": [
+     722.8,
+     290.6,
+     449.7
+    ],
+    "mira": [
+     0,
+     1.5,
+     -2
+    ],
+    "fov": 1.528
+   }
+  },
+  {
+   "esperar": 1.0
+  },
+  "medir",
+  {
+   "foto": "out/camara/lod_n_900m.png"
+  },
+  {
+   "camara": {
+    "en": [
+     1445.5,
+     579.7,
+     901.4
+    ],
+    "mira": [
+     0,
+     1.5,
+     -2
+    ],
+    "fov": 0.764
+   }
+  },
+  {
+   "esperar": 1.0
+  },
+  "medir",
+  {
+   "foto": "out/camara/lod_n_1800m.png"
+  },
+  {
+   "camara": {
+    "en": [
+     2891.0,
+     1157.9,
+     1804.9
+    ],
+    "mira": [
+     0,
+     1.5,
+     -2
+    ],
+    "fov": 0.382
+   }
+  },
+  {
+   "esperar": 1.0
+  },
+  "medir",
+  {
+   "foto": "out/camara/lod_n_3600m.png"
+  },
+  {
+   "camara": {
+    "en": [
+     4818.3,
+     1928.8,
+     3009.5
+    ],
+    "mira": [
+     0,
+     1.5,
+     -2
+    ],
+    "fov": 0.229
+   }
+  },
+  {
+   "esperar": 1.0
+  },
+  "medir",
+  {
+   "foto": "out/camara/lod_n_6000m.png"
+  },
+  {
+   "niveles_detalle": true
+  },
+  {
+   "camara": {
+    "en": [
+     120.5,
+     49.7,
+     73.3
+    ],
+    "mira": [
+     0,
+     1.5,
+     -2
+    ],
+    "fov": 9.148
+   }
+  },
+  {
+   "esperar": 1.0
+  },
+  "medir",
+  {
+   "foto": "out/camara/lod_t_150m.png"
+  },
+  {
+   "camara": {
+    "en": [
+     321.2,
+     130.0,
+     198.8
+    ],
+    "mira": [
+     0,
+     1.5,
+     -2
+    ],
+    "fov": 3.437
+   }
+  },
+  {
+   "esperar": 1.0
+  },
+  "medir",
+  {
+   "foto": "out/camara/lod_t_400m.png"
+  },
+  {
+   "camara": {
+    "en": [
+     722.8,
+     290.6,
+     449.7
+    ],
+    "mira": [
+     0,
+     1.5,
+     -2
+    ],
+    "fov": 1.528
+   }
+  },
+  {
+   "esperar": 1.0
+  },
+  "medir",
+  {
+   "foto": "out/camara/lod_t_900m.png"
+  },
+  {
+   "camara": {
+    "en": [
+     1445.5,
+     579.7,
+     901.4
+    ],
+    "mira": [
+     0,
+     1.5,
+     -2
+    ],
+    "fov": 0.764
+   }
+  },
+  {
+   "esperar": 1.0
+  },
+  "medir",
+  {
+   "foto": "out/camara/lod_t_1800m.png"
+  },
+  {
+   "camara": {
+    "en": [
+     2891.0,
+     1157.9,
+     1804.9
+    ],
+    "mira": [
+     0,
+     1.5,
+     -2
+    ],
+    "fov": 0.382
+   }
+  },
+  {
+   "esperar": 1.0
+  },
+  "medir",
+  {
+   "foto": "out/camara/lod_t_3600m.png"
+  },
+  {
+   "camara": {
+    "en": [
+     4818.3,
+     1928.8,
+     3009.5
+    ],
+    "mira": [
+     0,
+     1.5,
+     -2
+    ],
+    "fov": 0.229
+   }
+  },
+  {
+   "esperar": 1.0
+  },
+  "medir",
+  {
+   "foto": "out/camara/lod_t_6000m.png"
+  }
+ ]
+}

@@ -1,0 +1,57 @@
+{
+  "version": null,
+  "edition": "demo",
+  "quality": "auto",
+  "fullscreen": true,
+  "window": [
+    1600,
+    900
+  ],
+  "vsync": true,
+  "backend": "auto",
+  "sound": true,
+  "skip_menu": false,
+  "after_play": "hide",
+  "server": "127.0.0.1:47600",
+  "name": "Fernando",
+  "servers": [],
+  "keep_versions": 5,
+  "extra": "",
+  "seen": 39,
+  "history": {
+    "played": {
+      "36/demo": {
+        "starts": 2,
+        "seconds": 368,
+        "last": 1791231398,
+        "failed": false
+      },
+      "37/demo": {
+        "starts": 1,
+        "seconds": 2855,
+        "last": 1791237961,
+        "failed": false
+      },
+      "38/demo": {
+        "starts": 1,
+        "seconds": 0,
+        "last": 1791264868,
+        "failed": false
+      },
+      "39/demo": {
+        "starts": 1,
+        "seconds": 0,
+        "last": 1791311824,
+        "failed": false
+      }
+    },
+    "last": {
+      "version": 39,
+      "edition": "demo",
+      "started": 1791311824,
+      "seconds": null,
+      "code": null,
+      "said": null
+    }
+  }
+}

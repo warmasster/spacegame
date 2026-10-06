@@ -3,3 +3,5 @@
 export * from './projectiles.js';
 export * from './weapons.js';
 export * from './objects.js';
+export * from './mounts.js';
+export * from './impacts.js';

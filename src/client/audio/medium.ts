@@ -1,22 +1,22 @@
-// How a sound gets from where it is made to the ear, whatever made it. Sound needs something to
-// travel through, so every sound has a place (`Place`) that says what carries it — the air of a
-// ship's room, the ship's structure, the ground, the listener's own suit — and the listener
-// (`Listener`) says what it is in and touching. `hear` walks the ways between the two:
+// How a sound gets from where it is made to the ear, whatever made it and wherever it is. Sound
+// needs something to travel through, so every sound has a place (`Place`) that says what carries
+// it — the air of a space, the structure of a host, the ground, the listener's own suit — and the
+// listener (`Listener`) says what it is in and touching. `hear` walks the ways between the two:
 //
-//   air        both in air (a pressurised room, or a body with an atmosphere), through the open
-//              doors, hatches and breaches between them; loud and full, thinner at low pressure
-//   structure  a sound on a ship reaches whoever stands, sits or breathes in that ship through
-//              its hull: muffled, low, from where the machine is
-//   ground     a blast, a landing, a boot on the regolith reaches whoever stands on the ground
-//              near it: a dull thud that dies out in tens of metres
-//   suit       the listener's own sounds (boots, jetpack, tools, breathing): always heard, through
-//              the suit — muffled in vacuum, open in air
+//   air        both in air (a pressurised space, or a body with an atmosphere), through the open
+//              ways between them; loud and full, thinner at low pressure
+//   structure  a sound on a host reaches whoever stands, sits or breathes in that host through its
+//              structure, as much as the sound shakes it (`body`): muffled, low
+//   ground     a blast, a landing, a boot on the ground reaches whoever stands on the ground near
+//              it: a dull thud that dies out in tens of metres
+//   suit       the listener's own sounds (boots, jetpack, tools): always heard, through the suit —
+//              muffled in vacuum, open in air
 //
 // In vacuum and touching nothing, nothing is heard. The `muffled` mode (settings) lets any sound
-// through as a low rumble instead, for players who want to hear the fight outside.
+// through as a low rumble instead.
 //
-// Nothing here knows about ships or bodies: the game answers `Acoustics` (the air in a room, how
-// open the way to it is), so any new place that holds air (a base, a rover) only answers that.
+// Nothing here knows ships, bases or bodies: a host is an id and its spaces are numbers; the game
+// answers `Acoustics` (acoustics.ts: the hosts' air and ways, the body's atmosphere outside).
 
 export type V3 = [number, number, number];
 
@@ -24,28 +24,28 @@ export type V3 = [number, number, number];
 export interface Place {
   /** World point (m). */
   p: V3;
-  /** Ship whose structure it is on (0: none). */
-  ship: number;
-  /** Compartment index of that ship whose air it is in (-1: outside the hull). */
-  room: number;
-  /** How well the ground carries it (0..1): on the ground, a landed ship, an exhaust hitting it. */
+  /** Host whose structure it is on (a frame id: a ship…; 0: none, out in the world). */
+  host: number;
+  /** Space of that host whose air it is in (-1: outside it). */
+  space: number;
+  /** How well the ground carries it (0..1): on the ground, a host standing on it, an exhaust hitting it. */
   ground: number;
-  /** The listener's own: 0 no, 1 through the suit (boots, tools), 2 inside the helmet (breath, radio). */
+  /** The listener's own: 0 no, 1 through the suit (boots, tools), 2 inside the helmet (radio, warnings). */
   own: 0 | 1 | 2;
   /** Only through the structure (no air path). */
   structural: boolean;
-  /** A point of a ship (ship space): the engine refreshes `p` from it while the sound plays. */
+  /** A point of the host's space: the engine refreshes `p` from it while the sound plays (it follows the host). */
   local: V3 | null;
 }
 
-export const newPlace = (): Place => ({ p: [0, 0, 0], ship: 0, room: -1, ground: 0, own: 0, structural: false, local: null });
+export const newPlace = (): Place => ({ p: [0, 0, 0], host: 0, space: -1, ground: 0, own: 0, structural: false, local: null });
 
 export function copyPlace(to: Place, from: Place) {
   to.p[0] = from.p[0];
   to.p[1] = from.p[1];
   to.p[2] = from.p[2];
-  to.ship = from.ship;
-  to.room = from.room;
+  to.host = from.host;
+  to.space = from.space;
   to.ground = from.ground;
   to.own = from.own;
   to.structural = from.structural;
@@ -63,28 +63,31 @@ export interface Listener {
   p: V3;
   fwd: V3;
   up: V3;
-  ship: number;
-  room: number;
+  /** Host whose space holds the head (0: out in the world). */
+  host: number;
+  space: number;
   /** Air around the helmet (kPa). */
   air: number;
-  /** How well the listener feels a ship's structure (0..1): seated 1, standing on it, breathing its air. */
-  onShip: number;
-  /** How well the listener feels the ground (0..1): standing on it, or aboard a landed ship. */
+  /** How well the listener feels a host's structure (0..1): seated 1, standing on it, floating in it. */
+  onHost: number;
+  /** Host it touches (its frame): the one whose structure it feels. */
+  touching: number;
+  /** How well the listener feels the ground (0..1): standing on it, or aboard a host standing on it. */
   onGround: number;
   /** Deaf (dead): only the helmet. */
   deaf: boolean;
 }
 
-export const newListener = (): Listener => ({ p: [0, 0, 0], fwd: [0, 0, -1], up: [0, 1, 0], ship: 0, room: -1, air: 0, onShip: 0, onGround: 0, deaf: false });
+export const newListener = (): Listener => ({ p: [0, 0, 0], fwd: [0, 0, -1], up: [0, 1, 0], host: 0, space: -1, air: 0, onHost: 0, touching: 0, onGround: 0, deaf: false });
 
-/** What the game answers about air (implemented for ships in shipSounds.ts). */
+/** What the game answers about air (acoustics.ts). */
 export interface Acoustics {
-  /** Air pressure (kPa) of a room of a ship; room -1 / ship 0: the outside at world point `p`. */
-  air(ship: number, room: number, p: V3): number;
-  /** How open the air way is (0..1) from wherever the listener is to `room` of `ship` (-1: the outside round it). */
-  way(ship: number, room: number): number;
-  /** World point of a ship-space point, as drawn (into `out`); false if the ship is gone. */
-  toWorld(ship: number, local: V3, out: V3): boolean;
+  /** Air pressure (kPa) in a space of a host; host 0 or space -1: the outside at world point `p`. */
+  air(host: number, space: number, p: V3): number;
+  /** How open the air way is (0..1) from wherever the listener is to `space` of `host` (-1: the outside round it). */
+  way(host: number, space: number): number;
+  /** World point of a point of a host's space (into `out`); false if the host is gone. */
+  toWorld(host: number, local: V3, out: V3): boolean;
 }
 
 /** How a sound is heard right now. */
@@ -93,7 +96,7 @@ export interface Heard {
   gain: number;
   /** Low-pass cutoff (Hz) of what gets through. */
   cutoff: number;
-  /** Reverb send (the room it is heard in). */
+  /** Reverb send (the space it is heard in). */
   wet: number;
   /** Seconds it takes to arrive (for one-shots). */
   delay: number;
@@ -105,15 +108,15 @@ export const newHeard = (): Heard => ({ gain: 0, cutoff: 20000, wet: 0, delay: 0
 export const MEDIUM = {
   /** Pressure (kPa) below which air carries nothing worth hearing. */
   thin: 3,
-  /** Structure path: loudness, cutoff (Hz), and the distance (m) it halves over. */
-  hull: { gain: 0.5, cutoff: 520, half: 9 },
+  /** Structure path: loudness of a sound that shakes it fully, cutoff (Hz), distance (m) it halves over. */
+  hull: { gain: 0.55, cutoff: 480, half: 9 },
   /** Ground path: loudness, cutoff, and how fast it dies out (e-folding m). */
   ground: { gain: 0.65, cutoff: 240, fade: 32 },
   /** Own suit: cutoff in vacuum (conducted through the suit and the body). */
   suit: { cutoff: 1400 },
   /** Muffled mode: what any sound in vacuum is allowed through as. */
   muffled: { gain: 0.35, cutoff: 700 },
-  /** Speed of sound (m/s) in air, through regolith. */
+  /** Speed of sound (m/s) in air, through the ground. */
   speed: { air: 343, ground: 180 },
 };
 
@@ -138,10 +141,11 @@ function way(g: number, cutoff: number, delay: number) {
 }
 
 /**
- * How `pl` is heard by `L`. `ref`: the source's size (m, full loudness within it). Every way
- * gives a loudness and a cutoff; they add as powers, the cutoff is their loudness-weighted mean.
+ * How `pl` is heard by `L`. `ref`: the source's size (m, full loudness within it); `body`: how much
+ * it shakes the structure it is on (0..1). Every way gives a loudness and a cutoff; they add as
+ * powers, the cutoff is their loudness-weighted mean.
  */
-export function hear(pl: Place, L: Listener, ac: Acoustics, ref: number, mode: VacuumMode, out: Heard): Heard {
+export function hear(pl: Place, L: Listener, ac: Acoustics, ref: number, body: number, mode: VacuumMode, out: Heard): Heard {
   out.gain = 0;
   out.cutoff = 20000;
   out.wet = 0;
@@ -161,27 +165,27 @@ export function hear(pl: Place, L: Listener, ac: Acoustics, ref: number, mode: V
   // air: both in air, and a way open between them
   const earAir = L.air;
   if (!pl.structural && pl.own === 0 && earAir > MEDIUM.thin) {
-    const srcAir = ac.air(pl.ship, pl.room, pl.p);
+    const srcAir = ac.air(pl.host, pl.space, pl.p);
     if (srcAir > MEDIUM.thin) {
-      // a ship knows the way from wherever the listener is to any of its rooms (or round it);
-      // a sound out in the open reaches a listener inside only through the listener's ship
-      const open = pl.ship !== 0 ? ac.way(pl.ship, pl.room) : L.room < 0 ? 1 : L.ship !== 0 ? ac.way(L.ship, -1) : 0;
+      // a host knows the way from wherever the listener is to any of its spaces (or round it);
+      // a sound out in the world reaches a listener inside only through the listener's host
+      const open = pl.host !== 0 ? ac.way(pl.host, pl.space) : L.space < 0 ? 1 : L.host !== 0 ? ac.way(L.host, -1) : 0;
       if (open > 0) {
         // a thin atmosphere carries less and loses the highs first
         const k = Math.sqrt(Math.min(srcAir, earAir) / 101);
         const absorb = 20000 * (120 / (120 + d));
         way(open * Math.min(1, k * 1.15) * spread, Math.max(400, absorb * Math.min(1, 0.35 + 0.65 * k) * (0.25 + 0.75 * open)), d / MEDIUM.speed.air);
-        if (L.room >= 0) wet = 0.22 * open;
+        if (L.space >= 0) wet = 0.22 * open;
       }
     }
   }
-  // the structure of the ship both are on
-  if (pl.ship !== 0 && pl.ship === L.ship) {
-    // breathing its air, the listener hears the walls ring even floating
-    const contact = Math.max(L.onShip, L.room >= 0 && earAir > MEDIUM.thin ? 0.55 : 0);
+  // the structure of the host both are on (as much as the sound shakes it)
+  if (pl.host !== 0 && body > 0) {
+    // breathing its air, the listener hears its walls ring even floating
+    const contact = Math.max(pl.host === L.touching ? L.onHost : 0, pl.host === L.host && L.space >= 0 && earAir > MEDIUM.thin ? 0.4 : 0);
     if (contact > 0) {
       const H = MEDIUM.hull;
-      way((H.gain * contact * Math.min(1, ref / 2 + 0.5)) / (1 + d / H.half), H.cutoff * (0.8 + 0.4 * contact), 0);
+      way((H.gain * body * contact) / (1 + d / H.half), H.cutoff * (0.8 + 0.4 * contact), 0);
     }
   }
   // the ground both touch

@@ -34,6 +34,29 @@ defineSound('air.rush', {
   },
 });
 
+// wind of a body with an atmosphere (BodyDef.wind): gusts over open ground. Never on the Moon.
+defineSound('env.wind', {
+  loop: true,
+  ref: 50,
+  range: 1e9,
+  gain: 0.5,
+  body: 0,
+  make: (s) => {
+    const L = 8;
+    const gust = wobble(s, L, 0.4);
+    const flutter = wobble(s, L, 3);
+    return loopOf(
+      s,
+      L,
+      (b) => {
+        pink(s, b, (t) => 0.7 * (0.35 + 0.65 * gust(t)) * (0.85 + 0.15 * flutter(t)));
+        sweep(s, b, 'bp', (t) => 300 + 700 * gust(t), 0.6);
+      },
+      null,
+    );
+  },
+});
+
 // a vent valve dumping a room's air through its pipe: a rush narrowed by the pipe
 defineSound('air.vent', { like: 'air.rush', pitch: 1.35, gain: 0.8 });
 

@@ -1,0 +1,78 @@
+// The pack on and beside a ship under way (docs/MOVIMIENTO.md). An Alcotán let go 9 km over the
+// site falls faster and faster (after 40 s, some 65 m/s). The player stands on its roof as it
+// falls, lifts off it on the pack and stays beside it hands off; then stands in its cabin and
+// hovers there. At each stage the log says where the player's feet are in the ship's frame,
+// what carries them and how fast they go from the ship (`donde`): beside the ship that must not
+// change from one reading to the next, and in the cabin the ship must go on carrying us.
+// Run: SeleneV38_debug.exe --guion <this file> → out/camara/mochila_nave_*.png, mochila_nave.log
+{
+  "registro": "out/camara/mochila_nave.log",
+  "naves": ["alcotan"],
+  "pasos": [
+    { "flota": { "nave": "alcotan", "cuenta": [1, 1], "paso": 60.0, "altura": 9000.0, "este": 500.0, "norte": 500.0 } },
+    { "esperar": 0.2 },
+    { "nave": "alcotan#1" },
+    // ---- on its roof as it falls ----
+    { "ir": [0.5, 2.92, -2.0] },
+    { "mirar_a": [0.3, 2.95, 4.0] },
+    { "esperar": 1.0 },
+    { "nota": "puesto en el techo:" },
+    "donde",
+    { "esperar": 19.0 },
+    { "nota": "de pie en el techo, 20 s cayendo:" },
+    "donde",
+    { "camara": { "en": [11.0, 5.5, -6.0], "mira": [0.0, 3.6, -1.0], "fov": 55 } },
+    { "foto": "out/camara/mochila_nave_techo.png" },
+    // ---- off it on the pack: beside it, hands off ----
+    { "mochila": true },
+    { "subir": true },
+    { "esperar": 1.2 },
+    { "subir": false },
+    { "esperar": 3.0 },
+    { "nota": "en el aire sobre el techo, manos fuera, 3 s despues de soltar:" },
+    "donde",
+    { "foto": "out/camara/mochila_nave_junto_1.png" },
+    { "esperar": 4.0 },
+    { "nota": "4 s mas tarde (la nave ha caido otros 170 m):" },
+    "donde",
+    { "esperar": 4.0 },
+    { "nota": "y 4 s mas:" },
+    "donde",
+    { "foto": "out/camara/mochila_nave_junto_2.png" },
+    // a push sideways and let go: it brakes us to the ship again
+    { "andar": [0, 1] },
+    { "esperar": 1.0 },
+    { "andar": [0, 0] },
+    { "esperar": 3.0 },
+    { "nota": "tras un empujon de lado de 1 s y soltar, 3 s:" },
+    "donde",
+    { "mochila": false },
+    // ---- in its cabin, on the deck and then in the air on the pack ----
+    { "ir": [0.6, -0.02, 0.5] },
+    { "mirar_a": [0.0, 1.4, 6.0] },
+    "jugador",
+    { "esperar": 2.5 },
+    { "nota": "de pie en la cabina:" },
+    "donde",
+    { "foto": "out/camara/mochila_nave_cabina_de_pie.png" },
+    { "mochila": true },
+    { "subir": true },
+    { "esperar": 0.35 },
+    { "subir": false },
+    { "esperar": 4.0 },
+    { "nota": "en el aire en la cabina, manos fuera, 4 s:" },
+    "donde",
+    { "foto": "out/camara/mochila_nave_cabina_en_el_aire.png" },
+    { "andar": [0, 1] },
+    { "esperar": 0.4 },
+    { "andar": [0, 0] },
+    { "esperar": 3.0 },
+    { "nota": "tras un empujon de lado y soltar, 3 s:" },
+    "donde",
+    { "mochila": false },
+    { "esperar": 1.5 },
+    { "nota": "mochila apagada, otra vez en la cubierta:" },
+    "donde",
+    { "esperar": 0.2 }
+  ]
+}

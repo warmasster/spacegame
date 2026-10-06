@@ -1,0 +1,134 @@
+SERVIDOR DE LUNA
+================
+
+Qué es
+------
+LunaServidor.exe es el servidor dedicado del juego: un programa pequeño, sin ventana de
+juego, al que se conectan los jugadores para verse y volar juntos. No simula nada: cada
+jugador tiene el mundo entero en su ordenador y el servidor reparte entre todos lo que hace
+cada uno, y decide de quién es cada nave. Gasta muy poco: parado, nada; con 8 jugadores,
+alrededor del 1 % de un núcleo y unos 80 kB por segundo de red (entre lo que entra y lo que sale).
+
+En esta carpeta:
+  LunaServidor.exe   el servidor
+  iniciar.bat        lo arranca y deja la ventana abierta cuando se para
+  servidor.jsonc     sus ajustes (puerto, nombre, jugadores...)
+  servidor.log       lo que va diciendo, con fecha (se crea solo; se puede borrar)
+  LEEME.txt          esto
+
+Arrancarlo
+----------
+Doble clic en iniciar.bat. Se abre una consola y dice algo así:
+
+  [12:00:00 UTC] Servidor «Servidor de Luna» en marcha en el puerto 47600 (UDP): hasta 16 jugadores, 20 envíos por segundo.
+  [12:00:00 UTC] En esta red se entra con: --servidor 192.168.1.20:47600   (en esta misma máquina: --servidor 127.0.0.1:47600)
+  [12:00:00 UTC] Órdenes: jugadores · expulsar <id> [motivo] · decir <texto> · salir. Para pararlo: «salir» (o cerrar esta ventana).
+
+Las horas son UTC (hora universal), no la hora local.
+Para pararlo: escribir salir y pulsar Intro (avisa a los jugadores), o cerrar la ventana.
+
+La primera vez, Windows puede preguntar si se le permite el acceso a la red: hay que decir
+que sí (redes privadas, y públicas si van a entrar desde fuera).
+
+Cómo entran los jugadores
+-------------------------
+Cada jugador arranca la edición multijugador del juego con la dirección del servidor y su
+nombre:
+
+  --servidor HOST:PUERTO --nombre NOMBRE
+
+  En el mismo ordenador que el servidor:   --servidor 127.0.0.1:47600 --nombre Ana
+  En la misma red (casa, oficina):         --servidor 192.168.1.20:47600 --nombre Luis
+                                           (la dirección que el servidor dice al arrancar)
+  Desde fuera, por internet:               --servidor LA.IP.PUBLICA:47600 --nombre Marta
+
+Todos tienen que tener la misma versión del juego y el mismo escenario. El primero que
+entra fija los dos; al que llega con otra versión u otro escenario el servidor no lo deja
+entrar y le dice por qué. Cuando salen todos, la partida se olvida y el siguiente que entre
+empieza otra (puede ser con otra versión).
+
+El puerto, el cortafuegos y el router
+-------------------------------------
+El servidor escucha en el puerto 47600 y es UDP (no TCP). Se cambia en servidor.jsonc o
+con  iniciar.bat --puerto 47601.
+
+Para jugar en la misma red basta con que el cortafuegos del ordenador del servidor deje
+entrar ese puerto. Si Windows no lo preguntó al arrancar, se abre a mano desde una consola
+de administrador:
+
+  netsh advfirewall firewall add rule name="Servidor de Luna" dir=in action=allow protocol=UDP localport=47600
+
+(o en «Firewall de Windows Defender con seguridad avanzada» > Reglas de entrada > Nueva
+regla > Puerto > UDP > 47600 > Permitir la conexión).
+
+Para que entren desde internet hace falta además, en el router de casa del servidor:
+  1. Redirigir («abrir», «port forwarding», «servidor virtual») el puerto 47600 UDP hacia la
+     dirección local del ordenador del servidor (la 192.168.x.x que dice al arrancar).
+  2. Dar a los amigos la IP pública de esa casa (la que sale al buscar «cuál es mi IP»).
+Los jugadores no tienen que abrir nada en su lado.
+Si el router no deja redirigir puertos (algunas conexiones de fibra o móviles comparten la
+IP pública entre varios clientes), la salida es una red privada entre amigos (una VPN) y
+usar las direcciones de esa red.
+
+Órdenes de la consola
+---------------------
+  jugadores                quién está: número de jugador, nombre, dirección y retardo
+  expulsar <id> [motivo]   echa al jugador con ese número (se le dice el motivo)
+  decir <texto>            aviso a todos, como servidor
+  salir                    despide a todos y para el servidor
+  ayuda                    recuerda estas órdenes
+
+Además el servidor va contando solo quién entra, quién sale y por qué, a quién no deja
+entrar, las naves que se ponen, el chat, y cada 30 segundos (si hay alguien) cuántos
+jugadores y naves hay y cuánta red entra y sale.
+
+Ajustes
+-------
+En servidor.jsonc (se lee al arrancar; lleva comentarios que explican cada uno):
+  puerto         47600   puerto UDP
+  nombre                 nombre del servidor
+  max_jugadores  16      jugadores a la vez (1 a 64)
+  tasa           20      veces por segundo que se reparten posiciones (5 a 60)
+  espera         10      segundos sin noticias de un jugador para darlo por caído
+Si el fichero tiene un error, el servidor no arranca y dice en qué línea está.
+Opciones al arrancar (mandan sobre el fichero):  --puerto N   --nombre "TEXTO"   --ayuda
+
+Qué se sincroniza en esta primera versión
+-----------------------------------------
+  - Los jugadores: dónde está cada uno, hacia dónde mira, cómo se mueve, si va agachado,
+    con la mochila, la linterna, qué lleva en la mano y en qué asiento va. Cada ordenador
+    dibuja y anima a los demás a partir de eso.
+  - Las naves: cada nave tiene un dueño, que es quien la simula «de verdad» y manda su
+    posición, giro, velocidad y articulaciones (tren, puertas, rampas); los demás la siguen.
+    El dueño es quien se sienta a sus mandos (el primero que llega); si no hay nadie a los
+    mandos, es del anfitrión, que es el jugador que lleva más tiempo conectado. Cuando el
+    dueño se levanta o se va, la nave pasa a quien toque y se avisa a todos.
+  - Los mandos de las naves: cada interruptor, botón o palanca que alguien toca llega a
+    todos, una sola vez y en el mismo orden.
+  - Las naves que se ponen durante la partida.
+  - El chat y los avisos del servidor.
+  - Quien entra tarde recibe lo que pasó antes: quién está, las naves puestas, de quién es
+    cada una y los mandos tocados hasta entonces (los últimos 4096).
+
+Y qué no
+--------
+  - El servidor no simula ni guarda nada: no hay partida guardada. Cuando sale el último
+    jugador, se olvida todo.
+  - Solo viaja lo de la lista de arriba. Lo demás lo calcula cada ordenador por su cuenta
+    (por ejemplo la carga suelta, los proyectiles o los daños) y puede no coincidir entre
+    jugadores.
+  - A los demás se les ve con un retraso de una décima de segundo, más o menos (algo más con
+    mala conexión): es lo que permite verlos moverse suave aunque la red vaya a saltos.
+  - No hay contraseña ni cifrado: entra quien conozca la dirección y tenga la misma versión.
+    Para jugar con amigos; no para dejarlo abierto a desconocidos.
+  - Si a un jugador se le corta la conexión no vuelve solo: tiene que entrar otra vez.
+  - Si el servidor se para, la partida se acaba para todos.
+
+Si algo no va
+-------------
+  «el servidor no responde»: la dirección o el puerto no son esos, el servidor no está en
+      marcha, o el cortafuegos o el router no dejan pasar el puerto (UDP).
+  «versión del juego distinta» / «escenario distinto»: no todos tienen el mismo juego.
+  «el servidor está lleno»: sube max_jugadores en servidor.jsonc.
+  «No se puede abrir el puerto 47600 (UDP)»: ya hay otro servidor (u otro programa) usando
+      ese puerto en este ordenador; ciérralo o usa otro puerto.

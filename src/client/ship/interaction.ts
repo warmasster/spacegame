@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { clearOfHull } from '../../shared/frames';
 import { SEAT_PICK, boxFrame, coverHit, seatFrame, type ConsoleDef } from '../../shared/ship/def';
 import { REACH, SOLID_HP } from '../../shared/ship/sim';
 import type { Particles } from '../fx/particles';
@@ -92,7 +93,8 @@ export class Interaction {
     let best: Target | null = null;
     if (!ctx.disabled) {
       for (const ship of ships) {
-        if (ship.position.distanceTo(eye) > 40) continue;
+        // out of reach of anything on it (its own size, not a fixed radius)
+        if (clearOfHull(ship.sim.def, ship.sim.toLocal([eye.x, eye.y, eye.z]), max)) continue;
         const h = ship.pick(from, dir, max, ctx.seated);
         if (h && (!best || h.dist < best.dist)) best = { ...h, ship, inReach: false };
       }
@@ -161,7 +163,7 @@ export class Interaction {
         color: Math.random() < 0.5 ? [2.4, 3, 4.5] : [4, 2.6, 1],
         life: 0.1 + Math.random() * 0.35,
         size: 0.012 + Math.random() * 0.018,
-        gravity: 1.62,
+        gravity: 1,
       });
     }
     this.particles.emit('glow', { pos: at, vel: n.clone().multiplyScalar(0.05), carry, color: [3, 4, 6], life: 0.05, size: 0.12 + Math.random() * 0.1 });

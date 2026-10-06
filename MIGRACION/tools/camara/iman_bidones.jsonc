@@ -1,0 +1,47 @@
+// The cargo magnet takes everything under its face: the Cachalote's crane over bay C1, where two
+// drums of water stand side by side. Down on them with the magnet on (they are still lashed: it
+// says ANCLADA and takes nothing); their clamp let go: it takes both; up with both. And what a
+// drum has written on it, which comes from its data (docs/CARGA.md).
+// Run: luna --guion tools/camara/iman_bidones.jsonc → out/camara/iman_*.png
+{
+  "registro": "out/camara/iman_bidones.log",
+  "naves": ["cachalote"],
+  "pasos": [
+    { "nave": "cachalote" },
+    { "esperar": 3.0 },
+    { "linterna": true },
+    // what is written on a drum: AGUA / POTABLE · 170 L (the substance and the capacity of its data)
+    { "camara": { "en": [-0.75, 0.62, -18.45], "mira": [-1.07, 0.44, -19.15], "fov": 45 } },
+    { "foto": "out/camara/iman_rotulo_bidon.png" },
+    // over bay C1 (the carriage to starboard), all the way down, the magnet on
+    { "hud": true },
+    { "ajustar": { "mando": "grua/puente", "valor": 0.0774 } },
+    { "ajustar": { "mando": "grua/carro", "valor": 0.275 } },
+    { "esperar": 7.0 },
+    { "ajustar": { "mando": "grua/gancho", "valor": 1.0 } },
+    { "esperar": 9.0 },
+    { "pulsar": "grua/tapa_iman" },
+    { "pulsar": "grua/agarre" },
+    { "esperar": 1.2 },
+    { "volcar": ["grua_iman.*", "grua_gancho.pos", "anclaje_c1.*"] },
+    { "camara": { "en": [0.7, 1.6, -17.3], "mira": [-1.35, 0.8, -19.4], "fov": 55 } },
+    { "foto": "out/camara/iman_sobre_dos_bidones.png" },
+    // their clamp let go: the magnet, still on, takes both; up with both
+    { "senal": { "nombre": "anclaje_c1.soltar", "valor": 1 } },
+    { "esperar": 1.5 },
+    { "volcar": ["grua_iman.*", "anclaje_c1.*"] },
+    { "ajustar": { "mando": "grua/gancho", "valor": 0.2 } },
+    { "esperar": 7.0 },
+    { "hud": false },
+    { "foto": "out/camara/iman_dos_bidones_colgando.png" },
+    // the console's screen: CARGA 365 kg
+    { "camara": { "en": [0.3, 1.45, -5.75], "mira": [0, 1.0, -6.36], "fov": 55 } },
+    { "foto": "out/camara/iman_consola_carga.png" },
+    // SUELTA: both fall to the deck
+    { "pulsar": "grua/agarre" },
+    { "esperar": 3.0 },
+    { "volcar": ["grua_iman.*"] },
+    { "camara": { "en": [0.7, 1.6, -17.3], "mira": [-1.35, 0.8, -19.4], "fov": 55 } },
+    { "foto": "out/camara/iman_dos_bidones_sueltos.png" }
+  ]
+}

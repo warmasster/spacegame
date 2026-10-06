@@ -1,0 +1,19 @@
+// The guard covers: shut, open (laid back), on the reactor and the pedestal; the main panel's
+// screens (no bloom). Run: luna --guion tools/camara/tapas.jsonc  → out/camara/tapa_*.png
+{
+  "registro": "out/camara/tapas.log",
+  "pasos": [
+    { "nave": "alcotan" },
+    { "esperar": 2.0 },
+    { "camara": { "mando": "reactor/tapa_marcha", "distancia": 0.45, "desde": [1, 0.5, 0.7] } },
+    { "foto": "out/camara/tapa_cerrada.png" },
+    { "pulsar": "reactor/tapa_marcha" },
+    { "pulsar": "reactor/tapa_scram" },
+    { "esperar": 0.8 },
+    { "foto": "out/camara/tapa_abierta.png" },
+    { "camara": { "panel": "reactor", "distancia": 1.1, "desde": [0.8, 0.2, 1] } },
+    { "foto": "out/camara/tapa_reactor_lado.png" },
+    { "camara": { "panel": "principal", "distancia": 1.0 } },
+    { "foto": "out/camara/pantallas_principal.png" }
+  ]
+}

@@ -43,6 +43,9 @@ export interface ShipDeps {
   debris: Debris;
 }
 
+/** Beyond this from its hull (m), a ship's outer colliders leave the lunar world: nothing simulated reaches that far from the player. */
+const PHYSICS_REACH = 400;
+
 const _o = new THREE.Vector3();
 const _d = new THREE.Vector3();
 const _wp = new THREE.Vector3();
@@ -221,7 +224,7 @@ export class ShipClient implements FrameHost {
         color: glass ? [1.5, 2, 2.6] : [4, 2, 0.6],
         life: 0.2 + Math.random() * 0.6,
         size: 0.03 + Math.random() * 0.04,
-        gravity: 1.62,
+        gravity: 1,
       });
     }
   }
@@ -233,11 +236,14 @@ export class ShipClient implements FrameHost {
 
   /**
    * The pose for this step is set (flown here or played back): the lunar-world body sweeps to it
-   * and the interior feels the motion (apparent gravity, blended by the compensator).
+   * and the interior feels the motion (apparent gravity, blended by the compensator). `focus`: the
+   * player (world); a ship far from it keeps its hull out of the lunar world (PHYSICS_REACH).
    */
-  posed(dt: number) {
+  posed(dt: number, focus?: THREE.Vector3) {
     const sim = this.sim;
-    this.physics.follow(this.bubblePose());
+    const p = sim.pose.p;
+    const active = !focus || Math.hypot(p[0] - focus.x, p[1] - focus.y, p[2] - focus.z) < this.view.bounds.radius + PHYSICS_REACH;
+    this.physics.follow(this.bubblePose(), active);
     const k = sim.vars.has('grav.k') ? sim.get('grav.k') : 0;
     this.space.update(dt, sim.pose, k);
   }
@@ -493,6 +499,10 @@ export class ShipClient implements FrameHost {
     this.sparks(dt);
   }
 
+  frameScreens(eye: THREE.Vector3) {
+    this.view.updateScreens(this.time, this.sim.def.ramp ? this.drawAnim : this.anim, eye);
+  }
+
   /** Damaged panels spit sparks now and then; cut conduits arc. */
   private sparks(dt: number) {
     this.sparkT -= dt;
@@ -526,7 +536,7 @@ export class ShipClient implements FrameHost {
           color: cut ? [2.2, 2.6, 4] : [4, 2.2, 0.7],
           life: 0.12 + Math.random() * 0.35,
           size: 0.018 + Math.random() * 0.02,
-          gravity: 1.62,
+          gravity: 1,
         });
       }
     }

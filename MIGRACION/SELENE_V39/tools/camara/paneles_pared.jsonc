@@ -1,0 +1,20 @@
+// The wall panels (their own boxes on the hull's leaning walls): none cut by the wall it is on.
+// Run: luna --guion tools/camara/paneles_pared.jsonc → out/camara/pared_*.png
+{
+  "registro": "out/camara/paneles_pared.log",
+  "pasos": [
+    { "nave": "alcotan" },
+    { "esperar": 2.0 },
+    { "linterna": true },
+    { "camara": { "panel": "reactor", "distancia": 1.1, "fov": 60 } },
+    { "foto": "out/camara/pared_reactor.png" },
+    { "camara": { "en": [-0.9, 2.1, -6.6], "mira": [-1.95, 1.6, -7.3], "fov": 50 } },
+    { "foto": "out/camara/pared_reactor_lado.png" },
+    { "camara": { "panel": "disyuntores", "distancia": 1.1, "fov": 60 } },
+    { "foto": "out/camara/pared_disyuntores.png" },
+    { "camara": { "panel": "soporte", "distancia": 1.1, "fov": 60 } },
+    { "foto": "out/camara/pared_soporte.png" },
+    { "camara": { "panel": "rampa_bodega", "distancia": 0.8, "fov": 60 } },
+    { "foto": "out/camara/pared_rampa.png" }
+  ]
+}

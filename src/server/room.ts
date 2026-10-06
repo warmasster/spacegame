@@ -1,22 +1,36 @@
 import type { WebSocket } from 'ws';
 import { MAX_PLAYERS, SERVER_SNAPSHOT_RATE, WORLD_SEED } from '../shared/constants.js';
 import { CREW_BLAST_RADIUS, REACH, REPAIR_RATE, shipBlast, ShipSim, SYSTEMS_HZ } from '../shared/ship/sim.js';
-import { FLIGHT_IDLE, MASS, type Lump } from '../shared/ship/flight/index.js';
-import { validCrate, WORLD_FRAME, type Crate } from '../shared/ship/crates.js';
-import { PROJECTILES, projectileById, projectileOf, weaponById, type ImpactDef } from '../shared/items/index.js';
-import { startCrates, startShips } from '../shared/ship/spawn.js';
+import { copyPose, FLIGHT_IDLE, MASS, type Lump } from '../shared/ship/flight/index.js';
+import { StepClock } from '../shared/time/stepClock.js';
+import { Replica } from '../shared/net/replica.js';
+import { PROJECTILES, projectileById, projectileOf, terrainImpact, weaponById, type ImpactDef } from '../shared/items/index.js';
+import { siteCrews, siteDepots, siteToWorld, startCrates, startShips } from '../shared/ship/spawn.js';
+import { shipHullReach } from '../shared/frames/ships.js';
+import { bodyGround } from '../shared/actors/ground.js';
+import type { Obstacle } from '../shared/actors/walker.js';
+import { LOUDNESS, witnesses } from '../shared/actors/perception.js';
+import { physicalRegions, regionAt } from '../shared/space/galaxy.js';
+import { JUMP, jumpPose, jumpRefusal } from '../shared/space/jump.js';
 import { VarSync } from '../shared/ship/state.js';
+import { shotFits, works } from '../shared/ship/modules/weapons.js';
 import type { SysEvent } from '../shared/ship/systems.js';
 import { SUIT, crewStep } from '../shared/ship/crew.js';
-import { BODIES, bodyAt, heightAboveGround, surfaceOf, type CelestialBody } from '../shared/space/body.js';
-import { blastCrater, type TerrainMod } from '../shared/space/terrainMods/index.js';
+import { BODIES, bodyAt, surfaceOf, type CelestialBody } from '../shared/space/body.js';
+import type { TerrainMod } from '../shared/space/terrainMods/index.js';
 import { spawnPoint } from '../shared/space/world.js';
 import { decodeClient, encodeServer } from '../shared/wire.js';
+import { LooseObjects } from './objects.js';
+import type { Peer } from './peer.js';
+import { WorldBridge } from './world.js';
+import { ObjectsLink } from './worldObjects.js';
+import { PeopleLink } from './worldPeople.js';
+import { Npcs } from './npcs.js';
+import type { SimClient } from '../sim/host/client.js';
 import {
   PROTOCOL_VERSION,
   StateFlags,
   type ClientMessage,
-  type CrateWire,
   type PlayerInfo,
   type PlayerState,
   type PoseWire,
@@ -26,16 +40,11 @@ import {
 
 export const MAX_HP = 100;
 const BLAST_RADIUS = CREW_BLAST_RADIUS; // m, damage falls off linearly
-const CRATER_RADIUS = 2.4;
 const RESPAWN_MS = 4000;
-/** Explosions higher than this above the ground (m) leave no crater (e.g. on a ship's hull). */
-const CRATER_MAX_HEIGHT = 1.2;
 /** Flight step of the ships nobody pilots (Hz); the systems tick every FLIGHT_HZ / SYSTEMS_HZ steps. */
 const FLIGHT_HZ = 60;
 /** A pilot whose client stopped reporting its flight this long ago (ms) hands the ship to the server. */
 const PILOT_STALE_MS = 600;
-/** A crate's owner silent this long (ms) loses it to whoever asks. */
-const CRATE_STALE_MS = 1500;
 
 interface Member {
   info: PlayerInfo;
@@ -57,9 +66,18 @@ interface Member {
   /** Ships this member follows closely (network interest) and where it was last seen (world). */
   near: Set<number>;
   at: Vec3 | null;
+  /** How the server's parts (objects, NPCs, the world) see and reach it. */
+  peer: Peer;
+  /** Who it is in the world simulation (0 until the world says). */
+  simId: number;
 }
 
 const now = () => performance.now();
+/** Test and admin commands (`dev` messages) are accepted only with DEV_TOOLS=1. */
+const DEV_TOOLS = process.env.DEV_TOOLS === '1';
+
+/** A client's time of a state (ms, its step clock), trusted within reason: never ahead of us, never ancient. */
+const clampTime = (t: unknown, at = now()) => (typeof t === 'number' && Number.isFinite(t) ? Math.min(at + 50, Math.max(at - 1000, t)) : at);
 
 /**
  * A single shared world instance. The server relays player states (co-op, trusted clients) and is
@@ -82,15 +100,56 @@ export class Room {
   private pilots = new Map<number, Member>();
   /** Ships the server was flying on its last step (a pilot leaving hands them back mid-flight). */
   private serverFlown = new Set<number>();
-  private crates: Array<Crate & { t: number }> = [];
+  /** Loose objects: who simulates each, who knows each (server/objects.ts). */
+  private objects = new LooseObjects(
+    {
+      toWorld: (fr, p, out) => {
+        const ship = this.ships.find((s) => s.id === fr);
+        if (!ship) return null;
+        const w = ship.toWorld(p);
+        out[0] = w[0];
+        out[1] = w[1];
+        out[2] = w[2];
+        return out;
+      },
+    },
+    () => this.peers(),
+    now,
+  );
   private stepTimer: NodeJS.Timeout;
   private lastTick = now();
   private tickAcc = 0;
   private steps = 0;
   private ticks = 0;
+  /**
+   * Time of each flight step's state (ms): exactly 1/FLIGHT_HZ apart whatever the timer does, kept
+   * on the wall clock by slewing. Poses go out stamped with it (a stamp from the timer's jitter is
+   * a ship that jumps back and forth on every screen: docs/MOVIMIENTO.md).
+   */
+  private clock = new StepClock(1000 / FLIGHT_HZ);
+  /** Ships a pilot flies: their reports, carried to our present every step (shared/net/replica.ts). */
+  private piloted = new Map<number, Replica>();
+  /** The world simulation (docs/MUNDO.md), once its thread is up: where loose objects are kept. */
+  private world: { sim: SimClient; bridge: WorldBridge } | null = null;
+  /** The world's people near a player, with a body (server/npcs.ts). */
+  private npcs = new Npcs(
+    {
+      ground: () => bodyGround(this.surfaces),
+      obstacles: (p, r) => {
+        const out: Obstacle[] = [];
+        for (const s of this.ships) {
+          const reach = shipHullReach(s.def, 0) * 0.75;
+          if (dist(s.pose.p, p) < r + reach) out.push({ c: [s.pose.p[0], s.pose.p[1], s.pose.p[2]], r: reach });
+        }
+        return out;
+      },
+    },
+    () => this.peers(),
+  );
 
   constructor(private readonly log: (msg: string) => void) {
     this.snapshotTimer = setInterval(() => this.broadcastSnapshot(), 1000 / SERVER_SNAPSHOT_RATE);
+    this.clock.sync(now());
     this.buildWorld();
     // flight and ship machinery run on a fixed step whatever the timer jitter
     this.stepTimer = setInterval(() => this.step(), 1000 / FLIGHT_HZ / 2);
@@ -99,6 +158,48 @@ export class Room {
   dispose() {
     clearInterval(this.snapshotTimer);
     clearInterval(this.stepTimer);
+    this.world?.bridge.stop();
+  }
+
+  /**
+   * The world's thread is up (server/world.ts): loose objects are kept there from now on, and its
+   * people walk about near the players.
+   */
+  attachWorld(sim: SimClient) {
+    const links = [
+      new ObjectsLink({
+        objects: this.objects,
+        startCrates: () => startCrates(this.ships, this.surfaces),
+        depots: () => siteDepots(this.surfaces),
+        taker: (by) => this.taker(by),
+        log: this.log,
+      }),
+      new PeopleLink({
+        npcs: this.npcs,
+        crews: () => siteCrews(this.surfaces),
+        siteToWorld: (site, x, z) => siteToWorld(this.surfaces, site, x, z),
+        now: () => this.clock.t,
+        log: this.log,
+      }),
+    ];
+    const bridge = new WorldBridge(
+      sim,
+      {
+        peers: () => this.peers(),
+        hosts: () => this.ships.map((s): [number, number, number, number] => [s.id, s.pose.p[0], s.pose.p[1], s.pose.p[2]]),
+        log: this.log,
+      },
+      links,
+    );
+    this.world = { sim, bridge };
+    bridge.start().catch((e: Error) => this.log(`Mundo: la sala sigue sin él (${e.message})`));
+    // those already here: who they are in the world
+    for (const m of this.players()) this.meet(m);
+  }
+
+  /** Before the world is saved: what came to rest goes in. */
+  async flushWorld() {
+    await this.world?.bridge.flush().catch(() => undefined);
   }
 
   /** A fresh world: no craters, the ships parked on their pads, their cargo aboard. */
@@ -109,7 +210,8 @@ export class Room {
     for (const ship of this.ships) this.sync.set(ship.id, new VarSync(ship.vars, ship.st));
     this.pilots.clear();
     this.serverFlown.clear();
-    this.crates = startCrates(this.ships, this.surfaces).map((c) => ({ ...c, t: 0 }));
+    this.objects.reset(startCrates(this.ships, this.surfaces));
+    this.piloted.clear();
   }
 
   /** Fixed steps: flight at FLIGHT_HZ, ship systems + crew life support at SYSTEMS_HZ. */
@@ -122,9 +224,17 @@ export class Room {
     while (this.tickAcc >= h) {
       this.tickAcc -= h;
       this.steps++;
+      this.clock.step();
       this.stepFlight(h);
-      if (this.steps % every === 0) this.stepSystems(1 / SYSTEMS_HZ);
+      if (this.steps % every === 0) {
+        this.stepSystems(1 / SYSTEMS_HZ);
+        // people on foot: a step, stamped with this step's time, to whoever sees them
+        this.npcs.step(1 / SYSTEMS_HZ, this.clock.t);
+        this.npcs.broadcast(this.clock.t);
+      }
     }
+    // the last step's state belongs to now minus what is still to be simulated
+    this.clock.sync(t - this.tickAcc * 1000);
   }
 
   /**
@@ -133,18 +243,35 @@ export class Room {
    * Their pose goes to everyone at 30 Hz while awake, once a second asleep.
    */
   private stepFlight(h: number) {
-    const t = now();
+    const wall = now();
+    // the time this step's state belongs to (not when the timer fired)
+    const t = this.clock.t;
     for (const ship of this.ships) {
       const pilot = this.pilots.get(ship.id);
-      if (pilot && t - pilot.lastFlight < PILOT_STALE_MS) {
+      const reports = this.piloted.get(ship.id);
+      if (pilot && wall - pilot.lastFlight < PILOT_STALE_MS) {
+        // a pilot's ship is where its reports say it is now (they are a trip old): the systems
+        // and the reach checks work on the present
+        const s = reports?.sample(t);
+        if (s) copyPose(ship.pose, s);
         this.serverFlown.delete(ship.id);
         continue;
+      }
+      if (reports) {
+        // taking over: from where its reports put it the step before — this step flies it to `t`
+        // (not from the last report, a network trip old: at 1.6 km/s that is tens of metres back)
+        const s = reports.sample(t - this.clock.last);
+        if (s) copyPose(ship.pose, s);
+        this.piloted.delete(ship.id);
       }
       if (!this.serverFlown.has(ship.id)) {
         this.serverFlown.add(ship.id);
         ship.flight.resume();
       }
-      ship.flight.step(h, FLIGHT_IDLE, { extra: this.aboard(ship), surface: this.surfaces(bodyAt(ship.pose.p)) });
+      const env = { extra: this.aboard(ship), surface: this.surfaces(bodyAt(ship.pose.p)) };
+      // sim LOD: parked with nobody near, it rests (its contacts need not finish settling)
+      if (!ship.flight.sleeping && ship.landed && !this.pilots.has(ship.id) && Math.hypot(...ship.pose.v) < REST_V && !this.playerWithin(ship.pose.p, REST_NEAR_M)) ship.flight.settle(env);
+      ship.flight.step(h, FLIGHT_IDLE, env);
       const every = ship.flight.sleeping ? FLIGHT_HZ : 2;
       // interest: players close get every pose, the far ones a couple a second (their compass and
       // the distant speck still move)
@@ -161,6 +288,11 @@ export class Room {
       data ??= encodeServer(msg) ?? JSON.stringify(msg);
       m.socket.send(data);
     }
+  }
+
+  private playerWithin(p: Vec3, r: number) {
+    for (const m of this.members.values()) if (m.info.id > 0 && m.at && dist(m.at, p) < r) return true;
+    return false;
   }
 
   private poseNear(m: Member, ship: ShipSim) {
@@ -189,10 +321,17 @@ export class Room {
         } else m.near.delete(ship.id);
       }
     }
+    this.objects.interest();
+    this.npcs.interest();
   }
 
   private shipsList() {
     return this.ships;
+  }
+
+  /** Every connected socket's player, as the server's parts see it. */
+  private *peers(): Generator<Peer> {
+    for (const m of this.members.values()) yield m.peer;
   }
 
   /** A ship's own news (switches, panels, state diffs, its messages): to the players following it. */
@@ -232,8 +371,7 @@ export class Room {
       x.group = 'tripulación';
       out.push(x);
     }
-    for (const c of this.crates) {
-      if (c.fr !== ship.id) continue;
+    for (const c of this.objects.inFrame(ship.id)) {
       const x = lump();
       x.m = c.mass;
       x.c = c.p;
@@ -307,7 +445,7 @@ export class Room {
     for (const e of events) {
       if (e.type === 'explode') {
         this.log(`✸ ${ship.def.name}: ${e.cause}`);
-        this.explosion(ship.toWorld(e.at), 0, { radius: e.radius, damage: e.damage, crater: false });
+        this.explosion(ship.toWorld(e.at), 0, { radius: e.radius, damage: e.damage });
         this.toNear(ship, { type: 'say', ship: ship.id, text: e.cause });
       } else if (e.type === 'say') this.toNear(ship, { type: 'say', ship: ship.id, text: e.text });
       else if (e.type === 'trip') {
@@ -324,6 +462,7 @@ export class Room {
   private reseed(seed: number) {
     this.seed = seed >>> 0;
     this.buildWorld();
+    this.world?.bridge.reseed().catch((e: Error) => this.log(`Mundo: no se pudo cambiar de terreno (${e.message})`));
     this.log(`mundo nuevo · semilla ${this.seed}`);
   }
 
@@ -348,6 +487,25 @@ export class Room {
       lastFlight: 0,
       near: new Set(),
       at: null,
+      peer: null as unknown as Peer,
+      simId: 0,
+    };
+    member.peer = {
+      get id() {
+        return member.info.id;
+      },
+      get dead() {
+        return member.dead;
+      },
+      get at() {
+        return member.at;
+      },
+      get fr() {
+        return member.state?.fr ?? 0;
+      },
+      send: (data) => {
+        if (socket.readyState === socket.OPEN) socket.send(data);
+      },
     };
     this.members.set(socket, member);
 
@@ -391,12 +549,16 @@ export class Room {
       case 'state':
         if (member.info.id === 0 || !isValidState(msg.s)) return;
         member.state = msg.s;
-        member.stateTime = now();
+        // the time of the step it belongs to (its owner's step clock), not when it got here
+        member.stateTime = clampTime(msg.t);
         return;
       case 'ping':
         return send(member.socket, { type: 'pong', t: msg.t, serverTime: now() });
       case 'fire':
-        return this.fire(member, msg.w, msg.o, msg.d, msg.v, msg.fr);
+        if (msg.m !== undefined) return this.fireMount(member, msg.m, msg.o, msg.d, msg.v, msg.fr, clampTime(msg.t));
+        return this.fire(member, msg.w, msg.o, msg.d, msg.v, msg.fr, clampTime(msg.t));
+      case 'aim':
+        return this.aim(member, msg.ship, msg.m, msg.y, msg.p);
       case 'hit':
         if (!projectileById(msg.k)) return;
         return this.hit(member, msg.k, msg.p, msg.fr);
@@ -408,12 +570,17 @@ export class Room {
         return this.repair(member, msg.ship, msg.part, 'part');
       case 'pilot':
         return this.pilot(member, msg.ship, msg.on);
+      case 'jump':
+        return this.jump(member, msg.ship, msg.to);
       case 'flight':
         return this.flight(member, msg);
       case 'crateTake':
-        return this.crateTake(member, msg.id);
+        return this.objects.take(member.peer, msg.id);
       case 'crate':
-        return this.crateMove(member, msg.c, msg.rest === true);
+        return this.objects.move(member.peer, msg.c, msg.rest === true, (fr) => this.ships.some((s) => s.id === fr));
+      case 'dev':
+        if (DEV_TOOLS && member.info.id > 0) this.dev(member, msg.cmd, msg.a ?? {});
+        return;
     }
   }
 
@@ -436,23 +603,44 @@ export class Room {
 
     if (this.playerCount === 0 && Number.isInteger(msg.seed) && (msg.seed as number) > 0) this.reseed(msg.seed as number);
     member.info = { id: this.nextId++, name: sanitizeName(msg.name, variant), variant };
+    const spawn = spawnPoint(variant, this.surfaces);
+    // it is where it will appear: what is near there it knows from the start
+    member.at = spawn;
 
     send(member.socket, {
       type: 'welcome',
       id: member.info.id,
       variant,
       players: this.others(member).map((m) => m.info),
-      spawn: spawnPoint(variant, this.surfaces),
+      spawn,
       worldSeed: this.seed,
       serverTime: now(),
       mods: this.dynamicMods(),
       health: this.others(member).map((m) => ({ id: m.info.id, hp: m.hp })),
       ships: this.ships.map((sh) => sh.snapshot()),
       pilots: [...this.pilots].map(([ship, m]): [number, number] => [ship, m.info.id]),
-      crates: this.crates.map(({ t: _t, ...c }) => c),
+      crates: this.objects.welcome(member.peer),
     });
     for (const other of this.others(member)) send(other.socket, { type: 'join', player: member.info });
     this.log(`+ ${member.info.name} (#${member.info.id}) — ${this.playerCount}/${MAX_PLAYERS}`);
+    this.meet(member);
+  }
+
+  /** Who a player is in the world (the same person every session, by name). */
+  private meet(member: Member) {
+    this.world?.sim
+      .ask<number>('players.join', { name: member.info.name })
+      .then((id) => (member.simId = id))
+      .catch(() => undefined);
+  }
+
+  /** A player taking an object: who it is in the world, where, and which of the world's people noticed. */
+  private taker(by: number): { actor: number; at: Vec3; witnesses: number[] } | null {
+    const m = this.players().find((x) => x.info.id === by);
+    const at = m ? this.centre(m) : null;
+    if (!m || !at) return null;
+    const seen = witnesses({ host: m.state?.fr ?? 0, p: [at[0], at[1], at[2]], air: false, loud: LOUDNESS.handle, visible: true }, this.npcs.eyes());
+    return { actor: m.simId, at: [at[0], at[1], at[2]], witnesses: seen };
   }
 
   private disconnect(member: Member) {
@@ -464,23 +652,18 @@ export class Room {
       this.pilots.delete(ship);
       this.broadcast({ type: 'pilot', ship, id: 0 });
     }
-    for (const c of this.crates) {
-      if (c.owner !== member.info.id) continue;
-      c.owner = 0;
-      c.v = [0, 0, 0];
-      c.w = [0, 0, 0];
-      this.broadcast({ type: 'crate', c: crateWire(c), rest: true });
-    }
+    this.objects.leave(member.peer);
+    this.npcs.leave(member.peer);
     for (const other of this.members.values()) send(other.socket, { type: 'leave', id: member.info.id });
     this.log(`- ${member.info.name} (#${member.info.id}) — ${this.playerCount}/${MAX_PLAYERS}`);
   }
 
   /** A shot of weapon `w` (its catalog decides what it fires and how often). */
-  private fire(m: Member, w: string, o: Vec3, d: Vec3, v?: Vec3, fr?: number) {
+  private fire(m: Member, w: string, o: Vec3, d: Vec3, v?: Vec3, fr?: number, at = now()) {
     const t = now();
     const weapon = weaponById(w);
     const kind = projectileOf(weapon);
-    if (m.info.id === 0 || m.dead || !weapon || !kind || !isFiniteVec(o) || !isFiniteVec(d)) return;
+    if (m.info.id === 0 || m.dead || !weapon || weapon.mounted || !kind || !isFiniteVec(o) || !isFiniteVec(d)) return;
     // a little slack on the weapon's rate (the network bunches messages)
     if (t - m.lastFire < weapon.cooldown * 1000 * 0.75) return;
     // fired aboard: in the space of a ship that exists
@@ -490,7 +673,39 @@ export class Room {
     m.lastFire = t;
     m.shots = m.shots.filter((s) => t - s.t < PROJECTILES[s.k].life * 1000 + 3000);
     m.shots.push({ k: kind.id, t });
-    this.broadcast({ type: 'fire', id: m.info.id, w: weapon.id, o, d, v, fr });
+    this.broadcast({ type: 'fire', id: m.info.id, w: weapon.id, o, d, v, fr, t: at });
+    const ship = fr !== undefined ? this.ships.find((s) => s.id === fr) : undefined;
+    this.report('shot', m, ship ? ship.toWorld(o) : o, fr ?? 0, LOUDNESS.shot);
+  }
+
+  /** The ship whose mount `i` this member works now (seated in a seat that lists it), or null. */
+  private gunnery(m: Member, shipId: number, i: number): ShipSim | null {
+    const s = m.state;
+    if (m.info.id === 0 || m.dead || !s || s.fr !== shipId || !(s.f & StateFlags.Seated) || !Number.isInteger(i)) return null;
+    const ship = this.ships.find((x) => x.id === shipId);
+    return ship && ship.mounts && works(ship.def, s.p, i) ? ship : null;
+  }
+
+  /** The gunner's aim for a mount: its head slews there (the angles reach everyone as ship state). */
+  private aim(m: Member, shipId: number, i: number, y: number, p: number) {
+    this.gunnery(m, shipId, i)?.mounts!.aim(i, y, p);
+  }
+
+  /** A shot of a ship's weapon mount `i` (ship space): working, loaded, at its rate and where its head points. */
+  private fireMount(m: Member, i: number, o: Vec3, d: Vec3, v?: Vec3, fr?: number, at = now()) {
+    if (fr === undefined || !isFiniteVec(o) || !isFiniteVec(d)) return;
+    const ship = this.gunnery(m, fr, i);
+    const mounts = ship?.mounts;
+    if (!ship || !mounts || !shotFits(mounts, ship.st, i, o, d)) return;
+    const t = now();
+    if (mounts.tryFire(ship.st, i, t / 1000) < 0) return;
+    const weapon = weaponById(mounts.list[i].kind.weapon)!;
+    const kind = projectileOf(weapon)!;
+    if (v !== undefined && (!isFiniteVec(v) || Math.hypot(v[0], v[1], v[2]) > 20000)) v = undefined;
+    m.shots = m.shots.filter((s) => t - s.t < PROJECTILES[s.k].life * 1000 + 3000);
+    m.shots.push({ k: kind.id, t });
+    this.broadcast({ type: 'fire', id: m.info.id, w: weapon.id, o, d, v, fr, m: i, t: at });
+    this.report('shot', m, ship.toWorld(o), ship.id, LOUDNESS.shot);
   }
 
   /** The shooter's word on where its projectile of kind `k` stopped. */
@@ -505,9 +720,9 @@ export class Room {
   }
 
   /** A ship's own blast (a tank, an engine going up): crew scale radius (m) and hull damage. */
-  private explosion(p: Vec3, by: number, o: { radius?: number; damage?: number; crater: boolean }, depth = 0, aboard?: { fr: number; l: Vec3 }) {
+  private explosion(p: Vec3, by: number, o: { radius?: number; damage?: number }, depth = 0, aboard?: { fr: number; l: Vec3 }) {
     const radius = o.radius ?? BLAST_RADIUS;
-    this.impact(p, by, { radius, crew: 110, falloff: true, hull: shipBlast(o.radius, o.damage), crater: o.crater, fx: 'blast' }, depth, aboard);
+    this.impact(p, by, { radius, crew: 110, falloff: true, hull: shipBlast(o.radius, o.damage), fx: 'blast' }, depth, aboard);
   }
 
   /**
@@ -517,18 +732,18 @@ export class Room {
    * clients draw it there); `k`: the projectile kind, for how the clients show it.
    */
   private impact(p: Vec3, by: number, o: ImpactDef, depth = 0, aboard?: { fr: number; l: Vec3 }, k?: string) {
-    let mod: TerrainMod | undefined;
+    const mod = terrainImpact(o.terrain, p, this.surfaces);
     // a crater wherever it went off on the ground, on whatever body: a modifier of its surface
     const body = bodyAt(p);
     const surface = this.surfaces(body);
-    if (o.crater && surface && heightAboveGround(body, p, surface) < CRATER_MAX_HEIGHT) {
-      mod = blastCrater(body.def.id, body.center, p, CRATER_RADIUS);
+    if (mod && surface) {
       // every client adds the same one in the same order (a repeat on the spot deepens the old one)
       surface.addMod(structuredClone(mod));
       // a crater under a parked ship: it has to notice the ground moved
       for (const ship of this.ships) if (dist(ship.pose.p, p) < 20) ship.flight.wake();
     }
     this.broadcast({ type: 'explode', id: by, p, mod, fr: aboard?.fr, l: aboard?.l, k });
+    if (depth === 0) this.report('explosion', by, p, aboard?.fr ?? 0, LOUDNESS.explosion);
     for (const ship of this.ships) {
       const r = ship.explode(p, o.hull);
       if (r.hp.length) {
@@ -538,7 +753,7 @@ export class Room {
       }
       // ruptured tanks go up in turn (bounded chain)
       if (depth < 3) this.shipEvents(ship, r.events.filter((e) => e.type !== 'explode'));
-      if (depth < 3) for (const e of r.events) if (e.type === 'explode') this.explosion(ship.toWorld(e.at), 0, { radius: e.radius, damage: e.damage, crater: false }, depth + 1, { fr: ship.id, l: e.at });
+      if (depth < 3) for (const e of r.events) if (e.type === 'explode') this.explosion(ship.toWorld(e.at), 0, { radius: e.radius, damage: e.damage }, depth + 1, { fr: ship.id, l: e.at });
     }
     for (const target of this.players()) {
       if (target.dead || !target.state) continue;
@@ -563,6 +778,20 @@ export class Room {
       setTimeout(() => this.respawn(target), RESPAWN_MS);
     }
     if (dead || Math.round(target.hp) !== before) this.broadcast({ type: 'health', id: target.info.id, hp: Math.round(target.hp), by: by || undefined, dead });
+    const at = this.centre(target);
+    if (by && by !== target.info.id && at) this.report('hurt', by, at, target.state?.fr ?? 0, LOUDNESS.voice, target.simId);
+  }
+
+  /**
+   * A fact of the world (docs/MUNDO.md §12): what a player did, and which of the world's people
+   * noticed it (their eyes and ears: shared/actors/perception.ts). Nothing if the world isn't up.
+   */
+  private report(kind: string, by: Member | number, at: Vec3, host: number, loud: number, subject = 0) {
+    const sim = this.world?.sim;
+    if (!sim) return;
+    const m = typeof by === 'number' ? this.players().find((x) => x.info.id === by) : by;
+    const seen = witnesses({ host, p: [at[0], at[1], at[2]], air: false, loud, visible: true }, this.npcs.eyes());
+    sim.fact(kind, m?.simId ?? 0, subject, 0, { witnesses: seen, at: [at[0], at[1], at[2]] });
   }
 
   private nameOf(id: number) {
@@ -624,9 +853,14 @@ export class Room {
   private flight(m: Member, msg: Extract<ClientMessage, { type: 'flight' }>) {
     const ship = this.ships.find((s) => s.id === msg.ship);
     if (!ship || this.pilots.get(ship.id) !== m || !isPose(msg) || !Number.isFinite(msg.t) || !Number.isFinite(msg.agl) || !Array.isArray(msg.out)) return;
+    // only a jump takes a ship to another system (and only here): reports from before one are late
+    if (regionAt(msg.p).index !== regionAt(ship.pose.p).index) return;
     m.lastFlight = now();
     ship.flight.adopt({ ...msg, out: msg.out.map((v) => (typeof v === 'number' && Number.isFinite(v) ? v : 0)) });
-    const t = Math.min(now(), Math.max(now() - 1000, msg.t));
+    const t = clampTime(msg.t);
+    let reports = this.piloted.get(ship.id);
+    if (!reports) this.piloted.set(ship.id, (reports = new Replica({ hostDelay: 0 })));
+    reports.push({ t, fr: 0, p: [...msg.p], v: [...msg.v], q: [...msg.q], w: [...msg.w] });
     const out: ServerMessage = { type: 'shipPose', ship: ship.id, t, p: msg.p, q: msg.q, v: msg.v, w: msg.w, landed: msg.landed, pad: msg.pad };
     const k = (this.flightMsgs.get(ship.id) ?? 0) + 1;
     this.flightMsgs.set(ship.id, k);
@@ -636,51 +870,71 @@ export class Room {
   /** Pilot reports relayed per ship (the far players get one in FAR_FLIGHT_EVERY). */
   private flightMsgs = new Map<number, number>();
 
-  /** Someone wants to simulate a crate: granted when nobody does (or its owner went quiet). */
-  private crateTake(m: Member, id: unknown) {
-    const c = this.crates.find((x) => x.id === id);
-    if (!c || m.info.id === 0 || m.dead) return;
+  /** When each ship last jumped (ms). */
+  private jumps = new Map<number, number>();
+
+  /**
+   * Its pilot asks for a jump (shared/space/jump.ts): the ship goes to region `to`, at rest over its
+   * body, and everything aboard with it (it all lives in the ship's space). Everyone is told where
+   * it is now; the pilot's client flies on from there.
+   */
+  private jump(m: Member, shipId: unknown, to: unknown) {
+    const ship = this.ships.find((s) => s.id === shipId);
+    if (!ship || m.info.id === 0 || m.dead || this.pilots.get(ship.id) !== m || typeof to !== 'number') return;
     const t = now();
-    if (c.owner === m.info.id) {
-      c.t = t;
+    const why = jumpRefusal(ship.pose.p, ship.landed, to) ?? (t - (this.jumps.get(ship.id) ?? -Infinity) < JUMP.cooldownS * 1000 ? 'el motor de salto aún se está cargando' : null);
+    if (why) {
+      send(m.socket, { type: 'say', ship: ship.id, text: `Salto: ${why}` });
       return;
     }
-    if (c.owner !== 0 && t - c.t < CRATE_STALE_MS && this.players().some((p) => p.info.id === c.owner)) {
-      send(m.socket, { type: 'crate', c: crateWire(c) });
-      return;
-    }
-    c.owner = m.info.id;
-    c.t = t;
-    this.broadcast({ type: 'crate', c: crateWire(c) });
+    this.jumps.set(ship.id, t);
+    const region = physicalRegions()[to];
+    jumpPose(ship.pose, region);
+    ship.flight.wake();
+    // what the pilot reported was the other system: start from here
+    this.piloted.get(ship.id)?.seed({ t: this.clock.t, fr: 0, p: [...ship.pose.p], v: [0, 0, 0], q: [...ship.pose.q], w: [0, 0, 0] });
+    this.broadcast({ type: 'jump', ship: ship.id, to, p: [ship.pose.p[0], ship.pose.p[1], ship.pose.p[2]] });
+    this.log(`⇝ ${ship.def.name} salta a ${region.system.name} (${m.info.name})`);
   }
 
-  /** The owner's crate: keep it, pass it on; at rest it goes back to nobody. */
-  private crateMove(m: Member, raw: unknown, rest: boolean) {
-    if (!validCrate(raw)) return;
-    const c = this.crates.find((x) => x.id === raw.id);
-    if (!c || c.owner !== m.info.id) return;
-    if (raw.fr !== WORLD_FRAME && !this.ships.some((s) => s.id === raw.fr)) return;
-    c.fr = raw.fr;
-    c.p = raw.p;
-    c.q = raw.q;
-    c.v = rest ? [0, 0, 0] : raw.v;
-    c.w = rest ? [0, 0, 0] : raw.w;
-    c.t = now();
-    if (rest) c.owner = 0;
-    const out: ServerMessage = { type: 'crate', c: crateWire(c), rest };
-    if (rest) {
-      this.broadcast(out);
-      return;
-    }
-    // moving: only to the players close enough to see it (at rest it goes to everyone)
-    const ship = c.fr !== WORLD_FRAME ? this.ships.find((s) => s.id === c.fr) : undefined;
-    const at = ship ? ship.toWorld(c.p) : c.p;
-    let data: string | ArrayBuffer | null = null;
-    for (const o of this.members.values()) {
-      if (o === m || o.info.id <= 0 || o.socket.readyState !== o.socket.OPEN) continue;
-      if (o.state?.fr !== c.fr && (!o.at || dist(o.at, at) > CRATE_NEAR_M)) continue;
-      data ??= encodeServer(out) ?? JSON.stringify(out);
-      o.socket.send(data);
+  /** Test and admin commands (DEV_TOOLS=1 only): make things appear and go, at runtime. */
+  private dev(m: Member, cmd: string, a: Record<string, unknown>) {
+    const vec = (v: unknown, d: Vec3): Vec3 => (isFiniteVec(v) ? v : d);
+    switch (cmd) {
+      case 'obj.spawn': {
+        const fr = Number.isInteger(a.fr) && this.ships.some((s) => s.id === a.fr) ? (a.fr as number) : 0;
+        const p = vec(a.p, m.at ?? [0, 0, 0]);
+        this.objects.spawn({ fr, p: [...p], q: [0, 0, 0, 1], v: [0, 0, 0], w: [0, 0, 0], owner: 0, kind: typeof a.kind === 'string' ? a.kind : undefined, half: vec(a.half, [0.3, 0.3, 0.3]), mass: typeof a.mass === 'number' ? a.mass : 30, paint: a.paint === 'grey' ? 'grey' : 'orange' });
+        return;
+      }
+      case 'obj.despawn':
+        if (typeof a.id === 'number') this.objects.despawn(a.id);
+        return;
+      case 'world.ask': {
+        const sim = this.world?.sim;
+        const reply = (data: unknown) => send(m.socket, { type: 'devReply', cmd, data });
+        if (!sim || typeof a.name !== 'string') return reply({ error: 'sin mundo' });
+        sim.ask(a.name, a.payload).then(reply, (e: Error) => reply({ error: e.message }));
+        return;
+      }
+      case 'world.query': {
+        const sim = this.world?.sim;
+        const reply = (data: unknown) => send(m.socket, { type: 'devReply', cmd, data });
+        if (!sim || !a.q || typeof a.q !== 'object') return reply({ error: 'sin mundo' });
+        sim.query(a.q as Parameters<SimClient['query']>[0]).then(reply, (e: Error) => reply({ error: e.message }));
+        return;
+      }
+      case 'world.save': {
+        const sim = this.world?.sim;
+        if (!sim) return send(m.socket, { type: 'devReply', cmd, data: { error: 'sin mundo' } });
+        this.flushWorld()
+          .then(() => sim.save())
+          .then(
+            (info) => send(m.socket, { type: 'devReply', cmd, data: info }),
+            (e: Error) => send(m.socket, { type: 'devReply', cmd, data: { error: e.message } }),
+          );
+        return;
+      }
     }
   }
 
@@ -801,10 +1055,6 @@ function send(socket: WebSocket, msg: ServerMessage) {
   if (socket.readyState === socket.OPEN) socket.send(encodeServer(msg) ?? JSON.stringify(msg));
 }
 
-function crateWire(c: Crate): CrateWire {
-  return { id: c.id, fr: c.fr, p: c.p, q: c.q, v: c.v, w: c.w, owner: c.owner };
-}
-
 function sanitizeName(name: unknown, variant: number) {
   const clean = typeof name === 'string' ? name.replace(/[^\p{L}\p{N} _.-]/gu, '').trim().slice(0, 20) : '';
   return clean || `Astronauta ${variant + 1}`;
@@ -837,16 +1087,18 @@ function isPose(p: PoseWire): boolean {
 /**
  * Interest (network): a player follows a ship's state closely within SHIP_IN_M (and lets it go
  * beyond SHIP_OUT_M), gets its poses at full rate within POSE_NEAR_M (a couple a second further
- * out), other players' states at full rate within PLAYER_NEAR_M (once a second further out), and a
- * moving crate within CRATE_NEAR_M. Worked out every INTEREST_EVERY systems ticks.
+ * out), other players' states at full rate within PLAYER_NEAR_M (once a second further out); loose
+ * objects by their own rule (server/objects.ts). Worked out every INTEREST_EVERY systems ticks.
  */
 const SHIP_IN_M = 1500;
 const SHIP_OUT_M = 1800;
 const POSE_NEAR_M = 3000;
 const PLAYER_NEAR_M = 2000;
-const CRATE_NEAR_M = 600;
 const INTEREST_EVERY = 10;
 const FAR_POSE_EVERY = 30;
+/** A parked ship with no player this close (m) and slower than REST_V (m/s) is put to sleep (sim LOD). */
+const REST_NEAR_M = 500;
+const REST_V = 0.5;
 const FAR_FLIGHT_EVERY = 15;
 const FAR_SNAPSHOT_EVERY = 20;
 

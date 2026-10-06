@@ -1,0 +1,6 @@
+// A big blast (launched with N: shots.jsonc): only its explosive and casing (detonacion.jsonc
+// makes the rest; on the Moon a 9 m crater).
+{
+  "name": "Bomba",
+  "charge": { "tnt": 730.0, "casing": 120.0 }
+}

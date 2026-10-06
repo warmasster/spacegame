@@ -6,12 +6,15 @@ import {
   NoiseEffect,
   BlendFunction,
   RenderPass,
+  SMAAEffect,
+  SMAAPreset,
   ToneMappingEffect,
   ToneMappingMode,
   VignetteEffect,
 } from 'postprocessing';
 import { N8AOPostPass } from 'n8ao';
 import * as THREE from 'three';
+import { NOTCHES, QualityGovernor, type Notch } from './governor';
 
 /**
  * Brightest value a pixel may carry into the post chain. A mirror-smooth surface catching the sun
@@ -54,30 +57,15 @@ export interface PipelineOptions {
   quality: 'high' | 'low';
 }
 
-/** Lowest resolution scale dynamic resolution goes to, and its steps. */
-const DYN_MIN = 0.7;
-const DYN_DOWN = 0.1;
-const DYN_UP = 0.05;
-/** Seconds between two changes (each one reallocates the post chain's buffers). */
-const DYN_EVERY = 3;
-/** Seconds after start before it may change anything (shader compiles and terrain streaming are not the steady load). */
-const DYN_WARMUP = 8;
-
 /**
- * Dynamic resolution driven by the GPU's own frame time (a timer query around the whole frame):
- * over budget → a lower pixel ratio, well under → back up. The CPU's time never lowers the image
- * (a CPU-bound frame gains nothing from fewer pixels). Without EXT_disjoint_timer_query_webgl2 it
- * stays off; `?nodynres` turns it off.
+ * The GPU's time per frame, from a timer query round the whole frame (EXT_disjoint_timer_query_webgl2;
+ * without it, none: the governor estimates). Measurement only: what to do with it is the governor's
+ * (render/governor.ts).
  */
-class DynamicResolution {
+class GpuTimer {
   private queries: WebGLQuery[] = [];
   private busy = false;
-  private gpuMs: number[] = [];
-  private frameMs: number[] = [];
-  private last = performance.now() + DYN_WARMUP * 1000;
-  /** Consecutive polls over budget: one slow burst (a streaming spike) doesn't lower the image. */
-  private over = 0;
-  scale = 1;
+  private done: number[] = [];
 
   constructor(
     private gl: WebGL2RenderingContext,
@@ -85,7 +73,7 @@ class DynamicResolution {
   ) {}
 
   begin() {
-    if (this.busy) return;
+    if (this.busy || this.queries.length > 8) return;
     const q = this.gl.createQuery();
     if (!q) return;
     this.gl.beginQuery(this.ext.TIME_ELAPSED_EXT, q);
@@ -99,37 +87,22 @@ class DynamicResolution {
     this.busy = false;
   }
 
-  /** Collect the finished queries; returns a new scale when it is time to change, else null. */
-  poll(dtMs: number): number | null {
+  /** The finished queries' mean (ms), or null if none finished since last time. */
+  take(): number | null {
     const gl = this.gl;
-    this.frameMs.push(dtMs);
-    if (this.frameMs.length > 120) this.frameMs.shift();
     const disjoint = gl.getParameter(this.ext.GPU_DISJOINT_EXT);
     while (this.queries.length) {
       const q = this.queries[0];
       if (!gl.getQueryParameter(q, gl.QUERY_RESULT_AVAILABLE)) break;
       const ns = gl.getQueryParameter(q, gl.QUERY_RESULT) as number;
-      if (!disjoint) this.gpuMs.push(ns / 1e6);
-      if (this.gpuMs.length > 90) this.gpuMs.shift();
+      if (!disjoint) this.done.push(ns / 1e6);
       gl.deleteQuery(q);
       this.queries.shift();
     }
-    const now = performance.now();
-    if (now - this.last < DYN_EVERY * 1000 || this.gpuMs.length < 30) return null;
-    this.last = now;
-    // the frame the display allows: the quickest recent frames (vsync), capped at 60 Hz's
-    const sorted = [...this.frameMs].sort((a, b) => a - b);
-    const interval = Math.min(1000 / 60, sorted[Math.floor(sorted.length * 0.1)] ?? 1000 / 60);
-    const budget = interval * 0.85;
-    const gpu = this.gpuMs.reduce((a, b) => a + b, 0) / this.gpuMs.length;
-    let next = this.scale;
-    this.over = gpu > budget ? this.over + 1 : 0;
-    if (this.over >= 2 && this.scale > DYN_MIN) next = Math.max(DYN_MIN, this.scale - DYN_DOWN);
-    else if (gpu < budget * 0.6 && this.scale < 1) next = Math.min(1, this.scale + DYN_UP);
-    if (next === this.scale) return null;
-    this.scale = next;
-    this.gpuMs.length = 0;
-    return next;
+    if (!this.done.length) return null;
+    const ms = this.done.reduce((x, y) => x + y, 0) / this.done.length;
+    this.done.length = 0;
+    return ms;
   }
 }
 
@@ -143,9 +116,19 @@ export class RenderPipeline {
   private ao: N8AOPostPass | null = null;
   private bloom: BloomEffect;
   private toneMapping: ToneMappingEffect;
-  /** Pixel ratio before dynamic resolution scales it. */
+  /** The last pass (bloom, tone mapping, vignette, grain) and the same without bloom (the governor's). */
+  private finalPass: EffectPass;
+  private finalNoBloom: EffectPass | null = null;
+  private finalEffects: Effect[];
+  /** MSAA samples of this profile (the governor may turn them off). */
+  private readonly msaa: number;
+  /** Cheap post anti-aliasing (SMAA) after tone mapping, whenever there is no MSAA; `?noaa`: none. */
+  private aaPass: EffectPass | null;
+  /** Pixel ratio before the governor scales it. */
   private basePixelRatio: number;
-  private dyn: DynamicResolution | null = null;
+  private gpuTimer: GpuTimer | null = null;
+  /** Keeps the frame rate up by lowering the image when the GPU can't keep up (render/governor.ts). */
+  private governor: QualityGovernor | null = null;
   /** Called when the pixel ratio changes (point sprites and stars size themselves with it). */
   onPixelRatio?: (pr: number) => void;
 
@@ -169,7 +152,9 @@ export class RenderPipeline {
     });
     // the post chain calls render() several times a frame: count the whole frame, not the last pass
     renderer.info.autoReset = false;
-    this.basePixelRatio = Math.min(window.devicePixelRatio, opts.quality === 'high' ? 1.5 : 1);
+    // a laptop's screen scaled to 125 % is blurry at 1: the low profile starts near native too (the
+    // governor lowers it if the GPU can't keep up)
+    this.basePixelRatio = Math.min(window.devicePixelRatio, opts.quality === 'high' ? 1.5 : 1.25);
     renderer.setPixelRatio(this.basePixelRatio);
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFShadowMap;
@@ -177,9 +162,10 @@ export class RenderPipeline {
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer = renderer;
 
+    this.msaa = opts.quality === 'high' ? 4 : 0;
     const composer = new EffectComposer(renderer, {
       frameBufferType: THREE.HalfFloatType,
-      multisampling: opts.quality === 'high' ? 4 : 0,
+      multisampling: this.msaa,
     });
     composer.addPass(new RenderPass(scene, camera));
 
@@ -213,19 +199,62 @@ export class RenderPipeline {
     const vignette = new VignetteEffect({ offset: 0.32, darkness: 0.42 });
     const grain = new NoiseEffect({ blendFunction: BlendFunction.OVERLAY, premultiply: true });
     grain.blendMode.opacity.value = 0.12;
-    composer.addPass(new EffectPass(camera, this.bloom, this.toneMapping, vignette, grain));
+    this.finalEffects = [this.toneMapping, vignette, grain];
+    this.finalPass = new EffectPass(camera, this.bloom, ...this.finalEffects);
+    composer.addPass(this.finalPass);
+    this.aaPass = new URLSearchParams(location.search).has('noaa') ? null : new EffectPass(camera, new SMAAEffect({ preset: opts.quality === 'high' ? SMAAPreset.MEDIUM : SMAAPreset.LOW }));
+    if (this.aaPass && !this.msaa) composer.addPass(this.aaPass);
     this.composer = composer;
 
+    // ?nodynres: the image stays as the profile says, however slow
     if (!new URLSearchParams(location.search).has('nodynres')) {
       const gl = renderer.getContext() as WebGL2RenderingContext;
       const ext = gl.getExtension('EXT_disjoint_timer_query_webgl2') as { TIME_ELAPSED_EXT: number; GPU_DISJOINT_EXT: number } | null;
-      if (ext) this.dyn = new DynamicResolution(gl, ext);
+      if (ext) this.gpuTimer = new GpuTimer(gl, ext);
+      // a profile without MSAA starts past that notch
+      this.governor = new QualityGovernor({ start: this.msaa ? 0 : 1 });
     }
   }
 
-  /** Current dynamic-resolution scale (1 = full). */
+  /** Current resolution scale (1 = full). */
   get resolutionScale() {
-    return this.dyn?.scale ?? 1;
+    return this.governor?.current.scale ?? 1;
+  }
+
+  /** What the governor has done to the image (F3). */
+  get governorState(): string {
+    const g = this.governor;
+    if (!g) return 'fija (?nodynres)';
+    const n = g.current;
+    const aa = n.msaa && this.msaa ? 'MSAA' : this.aaPass ? 'SMAA' : 'sin AA';
+    return `${g.notch}/${NOTCHES.length - 1} · ${Math.round(n.scale * 100)} % · ${aa} · bloom ${n.bloom ? 'sí' : 'no'}${this.gpuTimer ? '' : ' · GPU estimada'}`;
+  }
+
+  /**
+   * How the last frame went: its interval (ms, the display's) and the CPU's time in it (ms). The
+   * governor decides from it (and the GPU's time, when measured) whether to change the image.
+   */
+  frameStats(intervalMs: number, cpuMs: number) {
+    const n = this.governor?.frame(intervalMs, cpuMs, this.gpuTimer?.take() ?? null);
+    if (n) this.apply(n);
+  }
+
+  /** A notch of the governor: resolution before the next frame is drawn, MSAA and bloom now. */
+  private apply(n: Notch) {
+    this.pendingScale = n.scale;
+    const samples = n.msaa ? this.msaa : 0;
+    if (this.composer.multisampling !== samples) this.composer.multisampling = samples;
+    const want = n.bloom ? this.finalPass : (this.finalNoBloom ??= new EffectPass(this.camera, ...this.finalEffects));
+    const aa = samples === 0 ? this.aaPass : null;
+    const passes = this.composer.passes;
+    const now = passes.find((p) => p === this.finalPass || p === this.finalNoBloom);
+    const hasAa = !!this.aaPass && passes.includes(this.aaPass);
+    if (now === want && hasAa === !!aa) return;
+    // the tail again, in order (the composer draws its last pass to the screen)
+    if (this.aaPass && hasAa) this.composer.removePass(this.aaPass);
+    if (now) this.composer.removePass(now);
+    this.composer.addPass(want);
+    if (aa) this.composer.addPass(aa);
   }
 
   /** Scene exposure (applied before tone mapping). */
@@ -245,7 +274,7 @@ export class RenderPipeline {
 
   render(dt: number) {
     this.renderer.info.reset();
-    const dyn = this.dyn;
+    const timer = this.gpuTimer;
     // A new pixel ratio resizes the canvas, and a resized canvas is blank until drawn again: it
     // is applied right before drawing, never after (after, the browser would show that blank
     // frame — a black flash).
@@ -257,11 +286,10 @@ export class RenderPipeline {
       this.composer.setSize(size.x, size.y, false);
       this.onPixelRatio?.(pr);
     }
-    dyn?.begin();
+    timer?.begin();
+    this.beforeRender?.();
     this.composer.render(dt);
-    dyn?.end();
-    const next = dyn?.poll(dt * 1000);
-    if (next != null) this.pendingScale = next;
+    timer?.end();
   }
 
   dispose() {
@@ -270,6 +298,9 @@ export class RenderPipeline {
     void this.scene;
     void this.ao;
   }
+
+  /** Auxiliary views draw inside the frame's GPU timer and draw-call accounting. */
+  beforeRender: (() => void) | null = null;
 }
 
 const _size = new THREE.Vector2();

@@ -1,0 +1,37 @@
+// The start menu, as the game opens with: over the base, then with a ship chosen.
+// Run: luna --guion tools/camara/inicio.jsonc → out/camara/inicio_*.png
+{
+  "registro": "out/camara/inicio.log",
+  "pasos": [
+    { "esperar": 2.0 },
+    { "inicio": true },
+    { "esperar": 2.5 },
+    { "foto": "out/camara/inicio_base.png" },
+    { "lugar": 5 },
+    { "esperar": 3.0 },
+    { "foto": "out/camara/inicio_cachalote.png" },
+    { "lugar": 4 },
+    { "esperar": 3.0 },
+    { "foto": "out/camara/inicio_abejorro.png" },
+    // its options: the menu's own tabs over it
+    { "menu": "controles" },
+    { "esperar": 0.5 },
+    { "foto": "out/camara/inicio_opciones.png" },
+    { "menu": "" },
+    // JUGAR with "Junto al Abejorro" chosen: on foot astern of it, looking at it
+    { "lugar": 3 },
+    "jugar",
+    { "esperar": 1.0 },
+    { "hud": true },
+    { "foto": "out/camara/inicio_junto_abejorro.png" },
+    // and with "A los mandos del Alcotán": sat in its pilot's seat
+    { "inicio": true },
+    { "lugar": 2 },
+    "jugar",
+    { "esperar": 1.0 },
+    { "foto": "out/camara/inicio_mandos_alcotan.png" },
+    { "hud": false },
+    { "inicio": false },
+    { "esperar": 0.3 }
+  ]
+}

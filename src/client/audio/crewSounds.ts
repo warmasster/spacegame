@@ -75,27 +75,16 @@ export class CrewSounds {
   }
 }
 
-/** What only the wearer hears: breathing, the suit's fan, its warnings. */
+/**
+ * What only the wearer hears: the suit's warnings. (No ambient bed of breathing or fans: a
+ * constant hiss reads as wind, and there is none to hear in vacuum.)
+ */
 export class Helmet {
-  private breath = sfx.loop('suit.breath');
-  private fan = sfx.loop('suit.fan');
-  private effort = 0;
   private o2T = 0;
   private fuelLow = false;
 
-  constructor() {
-    this.breath.place.own = 2;
-    this.fan.place.own = 2;
-  }
-
   /** `work`: how hard the astronaut works now (0 idle … 1 running, jetting). */
   update(dt: number, s: { alive: boolean; work: number; o2: number; fuel: number; jetting: boolean }) {
-    // breathing follows the effort (slowly), and gasps when the oxygen runs out
-    const want = Math.max(s.work, s.o2 < 0.15 ? 1 - s.o2 / 0.15 : 0);
-    this.effort += (want - this.effort) * Math.min(1, dt / (want > this.effort ? 2.5 : 6));
-    this.breath.level = s.alive ? 0.55 + 0.45 * this.effort : 0;
-    this.breath.pitch = 1 + 0.55 * this.effort;
-    this.fan.level = s.alive ? 1 : 0;
     // low oxygen: beeps, faster as it drains
     this.o2T -= dt;
     if (s.alive && s.o2 < 0.25 && this.o2T <= 0) {

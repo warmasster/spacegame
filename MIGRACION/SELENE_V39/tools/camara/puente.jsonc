@@ -1,0 +1,24 @@
+// The flight deck as its pilots have it: from each seat's eyes ahead, down at the pedestal and the
+// side console, up at the overhead console; and the seats from behind.
+// Run: luna --guion tools/camara/puente.jsonc → out/camara/puente_*.png
+{
+  "registro": "out/camara/puente.log",
+  "pasos": [
+    { "nave": "alcotan" },
+    { "esperar": 2.0 },
+    { "camara": { "en": [0.62, 1.18, 4.82], "mira": [0.3, 1.0, 5.8], "fov": 90 } },
+    { "foto": "out/camara/puente_piloto_frente.png" },
+    { "camara": { "en": [0.62, 1.18, 4.82], "mira": [0.0, 2.02, 5.3], "fov": 80 } },
+    { "foto": "out/camara/puente_piloto_techo.png" },
+    { "camara": { "en": [0.62, 1.18, 4.82], "mira": [0.1, 0.66, 5.05], "fov": 80 } },
+    { "foto": "out/camara/puente_piloto_pedestal.png" },
+    { "camara": { "en": [0.62, 1.18, 4.82], "mira": [1.12, 0.66, 5.05], "fov": 80 } },
+    { "foto": "out/camara/puente_piloto_lateral.png" },
+    { "camara": { "en": [-0.62, 1.18, 4.82], "mira": [-0.2, 1.0, 5.8], "fov": 90 } },
+    { "foto": "out/camara/puente_copiloto_frente.png" },
+    { "camara": { "en": [0.0, 1.75, 2.9], "mira": [0.0, 1.2, 5.6], "fov": 75 } },
+    { "foto": "out/camara/puente_desde_atras.png" },
+    { "camara": { "en": [1.35, 1.5, 3.9], "mira": [0.0, 1.5, 5.3], "fov": 75 } },
+    { "foto": "out/camara/puente_lado.png" }
+  ]
+}

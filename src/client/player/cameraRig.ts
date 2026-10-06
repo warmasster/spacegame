@@ -18,9 +18,14 @@ const _q = new THREE.Quaternion();
 const _X = new THREE.Vector3(1, 0, 0);
 const _Y = new THREE.Vector3(0, 1, 0);
 const _p = [0, 0, 0];
+const _focus = new THREE.Vector3();
+const _off = new THREE.Vector3();
+const _inv = new THREE.Quaternion();
 
 /** First person from inside the helmet (own body visible), or over-the-shoulder third person. */
 export class CameraRig {
+  /** Optional gaze anchor. Any object can be a focus target; there is no screen/host dependency. */
+  focus: THREE.Object3D | null = null;
   mode: CameraMode = 'first';
   /** Free-look orbit around the astronaut in third person (Alt + mouse), radians. */
   orbit = 0;
@@ -28,7 +33,12 @@ export class CameraRig {
   private eye = new THREE.Vector3();
   /** Smoothed eye height above the body. The body itself is not smoothed, or the jet and falls leave the camera behind. */
   private smoothBob = 0;
-  private thirdPos = new THREE.Vector3();
+  /**
+   * Third person: where the camera sits relative to the astronaut, in its frame's axes (eased).
+   * Eased in world coordinates it would trail anything moving fast — 20 m behind a ship at
+   * 250 m/s, and shaking with every change of frame time.
+   */
+  private thirdOff = new THREE.Vector3();
   private initialized = false;
   zoom = 3.4;
   /** First-person optical zoom (wheel), ×1..×4. */
@@ -90,6 +100,7 @@ export class CameraRig {
     // only the gait bob is softened; the body rise (jet, fall) stays with the body
     this.smoothBob += (bob - this.smoothBob) * Math.min(1, dt * 18);
 
+    if (this.focus) this.mode = 'first';
     const third = this.mode === 'third';
     const pitch = third ? THREE.MathUtils.clamp(view.pitch + this.orbitPitch, -1.4, 1.3) : view.pitch;
     const orient = new THREE.Quaternion().copy(view.frame).multiply(_q.setFromAxisAngle(_Y, view.yaw + (third ? this.orbit : 0))).multiply(_q.setFromAxisAngle(_X, pitch));
@@ -115,9 +126,13 @@ export class CameraRig {
       const pivot = target.clone().addScaledVector(right, 0.2);
       const hit = occlude?.(pivot, desired);
       if (hit !== null && hit !== undefined) desired.lerpVectors(pivot, desired, Math.max(0.05, (hit - 0.25) / pivot.distanceTo(desired)));
-      if (!this.initialized) this.thirdPos.copy(desired);
-      this.thirdPos.lerp(desired, Math.min(1, dt * 12));
-      cam.position.copy(this.thirdPos);
+      // eased relative to the astronaut, in its frame's axes: the ease smooths the camera's swing
+      // around the body, never the body's own motion (however fast its frame goes)
+      _inv.copy(view.frame).invert();
+      const off = _off.copy(desired).sub(target).applyQuaternion(_inv);
+      if (!this.initialized) this.thirdOff.copy(off);
+      this.thirdOff.lerp(off, Math.min(1, dt * 12));
+      cam.position.copy(this.thirdOff).applyQuaternion(view.frame).add(target);
       // lookAt compares with the camera's own matrix: render space
       cam.lookAt(origin.toRender(target.clone().addScaledVector(right, 0.55)));
     }
@@ -133,6 +148,11 @@ export class CameraRig {
       cam.rotateY(k * (Math.sin(t * 0.97 + 1.7) + 0.5 * Math.sin(t * 2.33 + 0.4)));
       cam.rotateZ(k * 0.6 * Math.sin(t * 1.41 + 2.9));
       this.trauma = Math.max(0, this.trauma - dt * 1.4);
+    }
+    if (this.focus) {
+      this.focus.getWorldPosition(_focus);
+      cam.updateMatrixWorld();
+      cam.lookAt(_focus);
     }
     cam.updateProjectionMatrix();
     cam.updateMatrixWorld();

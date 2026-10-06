@@ -1,0 +1,283 @@
+# Multijugador: los cimientos
+
+Primera versión: un **servidor dedicado que no simula nada** (`crates/server`, `LunaServidor.exe`)
+y una **biblioteca de red** (`crates/net`, `lunar_net`) con el lado del cliente. Cada cliente
+simula el mundo entero (todos cargan el mismo escenario); la red los mantiene de acuerdo:
+
+1. **Jugadores**: cada cliente manda el estado de su jugador 20 veces por segundo; los demás
+   dibujan un astronauta a partir de él.
+2. **Naves**: cada nave tiene un **dueño**, cuyo cliente la simula con autoridad y manda su
+   estado rígido y sus articulaciones; los demás lo aplican.
+3. **Mandos**: cada interruptor o palanca que alguien toca viaja fiable a todos.
+4. **Naves puestas en partida**: se anuncian fiables; el servidor les da su id de red.
+5. **Chat** y avisos del servidor.
+
+Las naves del escenario no se anuncian: son las ids `0..n-1` en el orden del escenario en todos
+los clientes. El cliente dice cuántas tiene al saludar; el primero que entra fija la cuenta y la
+versión, y a quien llegue con otras se le rechaza diciéndole por qué.
+
+Sin dependencias nuevas: red de `std` (`UdpSocket`), sin `unsafe`.
+
+## Dónde está cada cosa
+
+| Fichero (`crates/net/src`) | Qué hace |
+|---|---|
+| `wire.rs` | `Writer` / `Reader` sobre rebanadas de bytes: enteros, varints, zig-zag, `f32`/`f64`, cadenas con tope, `Vec3`. Leer nunca hace `panic`: lo corto o roto es un `Err`. |
+| `quant.rs` | Valores cuantizados: ángulo en 16 bits, coma fija en varint, cuaternión «los tres menores» en 48 bits. |
+| `transport.rs` | `trait Transport` (mandar y recibir datagramas sin bloquear), `Addr`, `MTU` = 1200. |
+| `transport/udp.rs` | `Udp`: un `UdpSocket` no bloqueante. |
+| `transport/memory.rs` | `MemoryNet` / `Memory`: una red dentro del proceso que pierde, retrasa, duplica y desordena a propósito, igual en cada ejecución con la misma semilla (pruebas). |
+| `channel.rs` (+ `channel/`) | Conexión con un par: cabecera con secuencia y acuses, mensajes **fiables ordenados** y **no fiables secuenciados**, varios por datagrama, troceo de los largos, RTT, latidos, silencio. |
+| `proto.rs` | Qué es un datagrama (`Hello`, `Challenge`, `Welcome`, `Refused`, `Data`, `Bye`) y los mensajes del canal (`Msg`). |
+| `proto/states.rs` | Lotes de estados: `Up` (cliente → servidor) y `Down` (servidor → cliente). |
+| `game.rs` (+ `game/`) | `PlayerState`, `ShipState`, `ControlIntent`: datos planos, su codificación y su mezcla. Los bits de `flags` en `game::flag`. |
+| `snap.rs` | Interpolación de instantáneas: un anillo de 16 por cosa. |
+| `throttle.rs` | Mandar solo lo que cambia (y un latido por segundo). |
+| `clock.rs` | `now()` y la estimación del reloj del servidor. |
+| `server.rs` (+ `server/`) | `Server`: sesiones, entrada, reparto de estados, propiedad de naves, memoria de mandos. Sin E/S propia. |
+| `client.rs` (+ `client/`) | `Client`: lo que usa el juego. |
+| `text.rs` | Todos los textos que lee una persona (en castellano) y la limpieza de lo que la gente escribe. |
+
+`crates/server/src`: `main.rs` (el bucle), `config.rs` (`servidor.jsonc` y opciones), `console.rs`
+(órdenes), `journal.rs` (consola + `servidor.log`).
+
+## El protocolo
+
+### Datagramas
+
+El primer byte dice qué es. Ninguno pasa de 1200 bytes.
+
+| Datagrama | Quién | Contenido |
+|---|---|---|
+| `Hello` | cliente | marca `LUNA`, versión del protocolo (1), `salt` (un número que el cliente inventa para esta conexión), `cookie`, naves del escenario, versión del juego, nombre. **Siempre 300 bytes** (relleno). |
+| `Challenge` | servidor | `salt`, `cookie`: «repítelo con esto». |
+| `Welcome` | servidor | `salt`, id del jugador, envíos por segundo, nombre tal como quedó, nombre del servidor. |
+| `Refused` | servidor | `salt`, motivo (texto para la persona). |
+| `Data` | ambos | un datagrama del canal. |
+| `Bye` | ambos | `salt`, motivo. El cliente lo manda tres veces al cerrar. |
+
+**Entrada**: el cliente dice `Hello` (cada 0,25 s, hasta 5 s); el servidor contesta `Challenge`
+con una `cookie` (un hash con clave de la dirección y el `salt`: no guarda nada); el cliente
+repite el `Hello` con ella y entonces el servidor crea la sesión y contesta `Welcome` (o
+`Refused`). Así solo entra quien de verdad está en la dirección que dice el datagrama, y como
+el `Hello` es más largo que cualquier respuesta, el servidor no sirve para amplificar. Los
+rechazos se limitan a 8 por segundo (ni se contestan ni se apuntan más). El servidor no manda
+nada por el canal hasta oír al cliente por él (un `Welcome` perdido no desperdicia la puesta al
+día).
+
+### El canal
+
+Cabecera de 10 bytes: marca (1), secuencia (2), último recibido (2), los 32 anteriores en bits
+(4), y cuántos ms lleva esperando ese acuse (1). Cada acuse viaja en hasta 33 datagramas.
+Detrás, los mensajes: `[etiqueta][id, si es fiable][longitud][bytes]`.
+
+- **Fiables ordenados**: en cola hasta que se acusa un datagrama que los llevó; se reenvían si
+  pasa `RTT + 4·variación` (entre 50 ms y 1 s) sin acuse; se entregan una vez y en orden.
+  Ventana de 256 en vuelo. Uno más largo que un datagrama se corta en trozos de 1024 bytes
+  (tope 64 KiB).
+- **No fiables secuenciados**: se mandan una vez; si llegan después de un datagrama más
+  nuevo se tiran.
+- **RTT**: solo mide el acuse del datagrama más nuevo, y se le resta lo que esperó en el otro
+  lado; suavizado de TCP.
+- **Latido**: un datagrama vacío por segundo si no hay nada que decir.
+- **Sin reservas de memoria por paquete** una vez caliente: los búferes dan la vuelta. (Por
+  construcción; no medido con un asignador contador, que necesitaría `unsafe`.)
+
+### Mensajes
+
+| Mensaje | Fiable | Quién | Para qué |
+|---|---|---|---|
+| `Ping` / `Pong` | no | c / s | reloj del servidor |
+| `Up` | no | cliente | sus estados: su jugador y las naves que posee |
+| `Down` | no | servidor | los estados de los demás, por lotes |
+| `Control` / `Controlled` | sí | c / s | un mando tocado |
+| `Spawn` / `Spawned` | sí | c / s | nave puesta en partida (el servidor le da la id) |
+| `Chat` / `Said` | sí | c / s | chat; `Said` sin autor es el servidor |
+| `Joined`, `Left`, `Owner` | sí | servidor | quién está, de quién es cada nave |
+| `Bundle`, `Synced` | sí | servidor | la puesta al día de quien entra, y su final |
+
+## Tamaños y errores
+
+Medidos por `tests/wire.rs` (posición en la superficie de la Luna, sin ningún eje cerca de cero).
+
+| Cosa | Bytes |
+|---|---|
+| `PlayerState` andando | **26** |
+| `PlayerState` quieto | 22 |
+| `PlayerState` sentado a los mandos de una nave | 37 |
+| `PlayerState` con todo | 43 |
+| `ShipState` entero, volando, 20 articulaciones | **74** (78 a velocidad orbital; 114 con 40) |
+| `ShipState` sin articulaciones, como va cada envío | **34** volando (38 orbital, 23 aparcada) |
+| Articulaciones aparte (20) | 41 |
+| Cabecera de datagrama | **10** (+ 28 de IP y UDP) |
+| Mando: pulsar / soltar / fijar / girar | 6 / 5 / 13 / 13 (+ 4 de marco) |
+
+| Valor | Cómo viaja | Error máximo |
+|---|---|---|
+| Posición en el mundo (`f64`) | coma fija 1/4096 m, varint con signo: 5 bytes por eje hasta 4 194 km del origen, 6 hasta 536 000 km, 8 en todo el sistema solar | 0,12 mm |
+| Posición en el marco de una nave | 1/2048 m (3 bytes por eje hasta 512 m) | 0,24 mm |
+| Guiñada, cabeceo, cabeza | 16 bits por vuelta | 4,8·10⁻⁵ rad (0,0027°) |
+| Velocidad del jugador | 1/256 m/s | 2 mm/s |
+| Altura del ojo | centímetros (hasta 2,55 m) | 5 mm |
+| Rotación de nave | **«los tres menores» en 48 bits**: 2 bits para la componente omitida, 15 para cada una de las otras | 1,4·10⁻⁴ rad medido (0,008°) |
+| Velocidad de nave | 1/1024 m/s | 0,5 mm/s |
+| Giro de nave | 1/4096 rad/s | 1,2·10⁻⁴ rad/s |
+| Articulaciones | 1/2048 por unidad: 1 byte en cero, 2 hasta ±4, 3 hasta ±512; como mucho 64 | 0,24 mm o 0,014° |
+
+**Por qué 48 bits y no 32** para la rotación: con 10 bits por componente el error llega a 0,14°,
+que son 6 cm en la punta de una nave de 50 m, demasiado para un estado que se aplica a una
+simulación; los 2 bytes de diferencia son 40 B/s por nave. El cero es exacto: la identidad y
+los ángulos rectos llegan tal cual.
+
+**Solo viaja lo que cambia** (`throttle.rs`): un estado se manda cuando sus bytes cambian, dos
+veces más después del último cambio y una vez por segundo mientras sigue igual. Las
+articulaciones de una nave van aparte y solo cuando cambian ellas: en vuelo son más de la mitad
+de los bytes y casi nunca se mueven. Mientras un jugador va montado en una nave, su posición y
+velocidad en el mundo no cuentan como cambio (los demás lo colocan con `local`).
+
+## Ancho de banda medido
+
+`tests/bandwidth.rs`, red en memoria, bytes por segundo **contando los 28 de IP+UDP** de cada
+datagrama. 8 jugadores andando y mirando alrededor, 4 naves volando (del anfitrión) con 20
+articulaciones cada una, 20 envíos por segundo:
+
+| Caso | Anfitrión (su jugador + 4 naves) | Otro cliente (su jugador) | Servidor en total |
+|---|---|---|---|
+| Naves volando, articulaciones quietas | sube 4,5 kB/s · baja 5,6 kB/s | sube 1,5 kB/s · baja **8,6 kB/s** | manda 65,6 kB/s (525 kbit/s), recibe 14,9 kB/s |
+| Igual, con una articulación moviéndose siempre en cada nave | sube 7,7 kB/s · baja 5,6 kB/s | sube 1,5 kB/s · baja 11,8 kB/s | — |
+| Todos quietos, naves aparcadas | sube 0,36 kB/s · baja 0,31 kB/s | sube 0,10 kB/s · baja 0,57 kB/s | — |
+| 16 jugadores y 40 naves volando | sube 32 kB/s | baja 42 kB/s en 2 datagramas por envío | — |
+
+Con el programa de verdad y UDP real en esta máquina (8 clientes, 50 s): otro cliente sube
+1,46 kB/s y baja 7,5 kB/s; el servidor gasta **0,8–1,0 % de un núcleo**; parado y sin nadie,
+**0,000 %** (0 ms de CPU en 12 s: duerme 50 ms entre vueltas; con jugadores, 5 ms).
+
+La puesta al día de quien entra tarde va en pocos mensajes grandes (`Bundle`): 4096 mandos, 40
+naves puestas y 340 dueños son 81 kB en 75 datagramas y 0,43 s con un 10 % de pérdidas.
+
+## Reloj e interpolación
+
+- **Un solo reloj**: cada cliente estima el reloj del servidor con `Ping`/`Pong` (se queda con
+  el ping más rápido de los últimos 8; las correcciones se deslizan a 10 ms/s en vez de saltar)
+  y sella sus estados con esa hora, en microsegundos. El servidor respeta el sello (acotado:
+  ni más de 2 s atrás ni más de 0,1 s adelante).
+- **Los demás se dibujan en el pasado** (`snap.rs`): unos 100 ms. Entre dos instantáneas se
+  mezcla (posiciones en línea recta, ángulos y rotaciones por el camino corto); pasada la más
+  nueva se sigue con su velocidad **250 ms como mucho** y luego se congela.
+- **El retraso se adapta** (`client/delay.rs`): tiene que cubrir lo vieja que llega una
+  instantánea más un intervalo. Mínimo 100 ms, máximo 400 ms; crece como mucho un 10 % del
+  tiempo y baja un 3 %. En red limpia se queda en 100 ms; con 30–70 ms de retardo por sentido y
+  3 % de pérdidas, en unos 210 ms.
+- **Tras un silencio** el cambio no se estira: el estado va marcado y el receptor sabe que
+  estuvo quieto hasta un envío antes.
+
+Medido (`tests/interp.rs`): a 3 m/s con ese retardo irregular, error máximo 6,7 mm respecto
+a donde estaba en el instante dibujado, 0,2 mm fuera de su línea, nunca hacia atrás.
+
+## De quién es cada nave
+
+La decide el servidor (`server/world.rs`) y la anuncia con `Owner`:
+
+- es de **quien está sentado a sus mandos**: `PlayerState::seat` con el bit
+  `flag::AT_CONTROLS` (un asiento de pasajero no lo lleva). Si hay varios, del primero que se
+  sentó; cuando se levanta, pasa al siguiente que esperaba a los mandos;
+- sin nadie a los mandos, del **anfitrión**: el jugador conectado con la id más baja;
+- cambia cuando un piloto se sienta o se levanta, o cuando alguien se va.
+
+El servidor solo acepta estados de una nave si vienen de su dueño; los demás se ignoran y se
+cuentan (`ServerStats::foreign`).
+
+## El programa servidor
+
+`servidores/LunaServidor.exe`, con `servidor.jsonc` al lado (JSON con comentarios y comas
+finales): `puerto` (47600, UDP), `nombre`, `max_jugadores` (16), `tasa` (20), `espera` (10 s).
+Opciones: `--puerto N`, `--nombre X`, `--ayuda`. Órdenes: `jugadores`, `expulsar <id> [motivo]`,
+`decir <texto>`, `salir`, `ayuda`. Todo lo que dice va también a `servidor.log`. Las horas son
+UTC (`std` no conoce la hora local). No hay manejador de Ctrl+C: se para con `salir` o
+cerrándolo. Ver `servidores/LEEME.txt`.
+
+Tras cambiar el servidor: `tools/cargo.ps1 build --release -p luna-servidor --target-dir target/red`
+y copiar `target/red/release/luna-servidor.exe` a `servidores/LunaServidor.exe`.
+
+## Usarlo desde el juego
+
+```rust
+let mut net = lunar_net::Client::connect("192.168.1.20:47600", "Ana", "V35", naves_del_escenario)?;
+// cada frame, con el mismo reloj siempre (lunar_net::now() vale):
+net.set_player(&mi_estado);                                  // antes de update
+for nave in mis_naves { if net.owns(nave.id) { net.set_ship(&estado(nave)); } }
+net.update(now);
+for e in net.events() { /* Joined, Left, Spawned, Owner, Control, Chat, Synced, Disconnected */ }
+net.players(now, &mut otros);                                // los demás, interpolados
+for id in naves_ajenas { if let Some(s) = net.ship(id, now) { /* aplicar */ } }
+```
+
+- `set_player` / `set_ship` **antes** de `update`: los estados se sellan con el `now` de ese `update`.
+- Con `ride` puesto, colocar al jugador con `local` y la copia propia de la nave: su `pos` y
+  `vel` pueden tener hasta un segundo.
+- `ship(id, now)` es la nave como estaba hace ~100 ms (para dibujarla si no se simula);
+  `ship_now(id, now, &mut s)` es su última instantánea llevada al presente con su velocidad
+  (para corregir una simulación local) y devuelve su edad. `ship_into` es `ship` sin reservar.
+- `Event::Control` no incluye los mandos propios; `Event::Chat` sí incluye las líneas propias.
+- Lo que llega antes de `Event::Synced` es el pasado (aplicarlo sin sonidos ni avisos).
+- `spawn()` no crea nada: la nave existe para la red cuando vuelve `Event::Spawned` con su id.
+- Un rechazo o un «no responde» dejan `Status::Failed(motivo)`; `Event::Disconnected` solo sale
+  si se llegó a estar dentro.
+
+## Pruebas
+
+`tools/cargo.ps1 test -p lunar-net -p luna-servidor --target-dir target/red` — 73 pruebas, casi
+todas con la red en memoria (deterministas):
+
+| Fichero | Qué comprueba |
+|---|---|
+| `net/tests/wire.rs` (18) | ida y vuelta de cada tipo, cotas de error, tamaños; 200 000 datagramas de basura y mensajes reales cortados o con bits cambiados en todos los descodificadores, sin un `panic` |
+| `net/tests/channel.rs` (8) | 30 % de pérdidas + desorden + duplicados: 1000 fiables llegan una vez y en orden; los no fiables nunca llegan viejos; 5 kB y 64 KiB llegan enteros; latidos y silencio; 70 000 datagramas (los contadores dan la vuelta) |
+| `net/tests/session.rs` (13) | 2 y 8 clientes se ven; versión, escenario y protocolo distintos rechazados con su motivo; servidor lleno; cliente que desaparece; nombres; expulsar, decir, cerrar; reconexión desde la misma dirección; basura contra un servidor en marcha |
+| `net/tests/ownership.rs` (5) | el anfitrión posee las libres; sentarse la toma, levantarse la devuelve; el dueño que se va; estados de quien no es dueño ignorados (con un cliente tramposo hecho a mano) |
+| `net/tests/events.rs` (6) | mandos y naves nuevas llegan a todos una vez y en orden con 25 % de pérdidas; tope de naves; puesta al día de quien entra tarde |
+| `net/tests/interp.rs` (7) | el anillo; velocidad constante con llegada irregular; parar y arrancar sin saltos; un corte de red |
+| `net/tests/udp.rs` (2 + 1) | servidor y 2 clientes por UDP real en `127.0.0.1:0`; `load_for_a_running_server` (ignorada) carga un servidor en marcha con 8 clientes |
+| `net/tests/bandwidth.rs` (2) | las cifras de arriba |
+| `server/src` (10), `server/tests/programa.rs` (2) | ajustes, órdenes, fechas; el `.exe` arrancado de verdad, con dos clientes y sus órdenes por consola |
+
+## Lo que no hace (todavía)
+
+- **Naves que vuelan juntas a mucha velocidad**: las ajenas se dibujan ~100 ms en el pasado y
+  en coordenadas del mundo; a velocidad orbital eso son cientos de metros respecto a la propia.
+  `ship_now` da la estimación al presente, pero cada ms de error de reloj son 1,7 m a 1,7 km/s.
+  El arreglo de verdad es mandar el estado en un marco que se mueva con las naves.
+- **No se puede migrar de dirección**: si el router cambia el puerto de salida de un jugador a
+  media partida, el servidor deja de reconocerlo y el jugador cae por silencio.
+- **Sin cifrado ni autenticación**: la `cookie` impide suplantar direcciones al entrar, pero
+  los datagramas del canal no llevan firma. No hay límite de mensajes por jugador.
+- **La puesta al día de mandos** recuerda los últimos 4096; lo anterior se pierde para quien
+  entre después.
+- **El servidor no guarda la partida** ni valida lo que dicen los dueños de las naves.
+- No hay compresión por diferencias entre instantáneas ni prioridad por distancia: todos
+  reciben todo.
+
+## Investigación
+
+Solo enlaces abiertos y leídos para este trabajo.
+
+| Qué | De dónde | Qué se tomó | Dónde |
+|---|---|---|---|
+| Acuses redundantes | [Glenn Fiedler, *Reliable Ordered Messages*](https://gafferongames.com/post/reliable_ordered_messages/); [*Reliability and Congestion Avoidance over UDP*](https://gafferongames.com/post/reliability_ordering_and_congestion_avoidance_over_udp/) | Cabecera con secuencia de 16 bits, último recibido y 32 bits de anteriores: cada acuse va en ~33 datagramas. Comparar secuencias con vuelta. | `channel.rs` |
+| Mensajes fiables sobre acuses de paquete | [Fiedler, *Reliable Ordered Messages*](https://gafferongames.com/post/reliable_ordered_messages/) | El mensaje se queda en cola y se incluye en datagramas hasta que se acusa uno que lo llevó; no pasar nunca de la ventana del receptor; búferes circulares indexados por secuencia. | `channel/outgoing.rs`, `channel/incoming.rs` |
+| Trozos de un mensaje largo | [Fiedler, *Sending Large Blocks of Data*](https://gafferongames.com/post/sending_large_blocks_of_data/) | Trozos de 1024 bytes, reenvío por tiempo sin acuse. (Aquí cada trozo es un mensaje fiable más, sin acuse propio por trozo.) | `channel/outgoing.rs` (`FRAGMENT`) |
+| Espera antes de reenviar | [RFC 6298](https://www.rfc-editor.org/rfc/rfc6298) | `SRTT` con 1/8, variación con 1/4, espera = `SRTT + 4·var`. Sin el mínimo de 1 s de TCP: suelo de 50 ms. | `channel/rtt.rs` |
+| Medir el RTT descontando la espera del otro | [RFC 9000 §13.2.5](https://www.rfc-editor.org/rfc/rfc9000.html); [RFC 9002 §5](https://www.rfc-editor.org/rfc/rfc9002.html) | El acuse dice cuánto esperó; solo mide el paquete más nuevo recién acusado. | `channel.rs` (`acked`, byte de espera) |
+| Entrada con reto y relleno | [Fiedler, *Client Server Connection*](https://gafferongames.com/post/client_server_connection/); [RFC 9000 §8](https://www.rfc-editor.org/rfc/rfc9000.html) | Petición, reto, respuesta: el servidor no guarda nada hasta que el cliente demuestra que recibe en su dirección. La petición, más larga que cualquier respuesta. Número por conexión; despedida repetida. | `server/join.rs`, `proto.rs` (`HELLO_SIZE`), `client/send.rs` |
+| Dibujar a los demás en el pasado | [Fiedler, *Snapshot Interpolation*](https://gafferongames.com/post/snapshot_interpolation/); [Gabriel Gambetta, *Entity Interpolation*](https://www.gabrielgambetta.com/entity-interpolation.html) | Búfer de instantáneas con su hora; retraso suficiente para tener siempre hacia dónde interpolar; no extrapolar más que un poco. | `snap.rs`, `client/delay.rs` |
+| Cuaternión «los tres menores» y posición acotada | [Fiedler, *Snapshot Compression*](https://gafferongames.com/post/snapshot_compression/) | Omitir la componente mayor (2 bits de índice), las otras en ±1/√2; bit de «en reposo» que ahorra las velocidades. | `quant.rs`, `game/ship.rs` (`MOVING`) |
+| Precisión para un estado que se simula | [Fiedler, *State Synchronization*](https://gafferongames.com/post/state_synchronization/) | 4096 valores por metro y 15 bits por componente de cuaternión; qué se manda de un cuerpo rígido. | `game.rs` (`POS_UNITS`), `quant.rs` |
+| Autoridad por interacción, árbitro | [Fiedler, *Networked Physics in Virtual Reality*](https://gafferongames.com/post/networked_physics_in_virtual_reality/) | Cada objeto con un dueño que lo simula; un árbitro decide los conflictos y el resto converge. Aquí el árbitro es el servidor y la regla es «quien está a los mandos». | `server/world.rs` |
+
+*Source Multiplayer Networking* (Valve) no se pudo abrir (la página devolvió 403): no se cita
+nada de ella.
+
+**Hecho sin copiar de nadie** (salió de medir): mandar las articulaciones aparte y solo cuando
+cambian; no mandar lo que no cambia y marcar el primer estado tras un silencio; retraso de
+interpolación que se adapta; no mandar nada por el canal hasta que el cliente contesta al
+`Welcome` (sin eso la puesta al día de 81 kB costaba 222 kB).

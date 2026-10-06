@@ -1,0 +1,147 @@
+// What the suit carries in its hands, in the order of the number keys (1, 2...). tipo: what kind
+// of tool it is (what each kind does is in crates/app/src/gear.rs); modelo: what it looks like in
+// the hands (assets/models/<modelo>.glb, built by tools/modelos/recetas/herramientas.py); the
+// rest, its numbers.
+//
+// sujecion: how it is held and how it moves in the hands (crates/app/src/holding.rs). Everything
+// in the tool's own frame — x to the holder's left, y up, z ahead, metres — but `en`/`giro`,
+// which place the tool in the eye's:
+//   en, giro    where it is held (the eye's frame) and how it is turned there (degrees: nose up,
+//               nose to the left, rolled)
+//   inercia     how far it lags behind the look (m per rad/s); paso: how far it bobs with the
+//               steps (m); vida: the half-life it settles with (s)
+//   rebote      how it swings as it settles (1: never past its place; 0.5: once past and back;
+//               less: livelier); arrastre: how much of the holder's changes of speed leave it
+//               behind (a start, a stop, a jump, a landing: 0..1); alabeo: how far it rolls into
+//               a turn of the look (degrees per rad/s)
+//   pivote      the point it turns about as the look goes up and down (the eye's frame with the
+//               look level): a shoulder, for what rests on one. Without it, the eye: it keeps
+//               its place in the picture wherever one looks
+//   apoyo       what of the body carries it: a point of the rig (rigs/*.jsonc, "puntos") it goes
+//               up and down with as the body strides, sags and lands, and how much of that
+//               (peso: 1 all of it)
+//   clic        "herramienta": with it in hand a click is always its own, whatever is aimed at
+//               (a welder mends the door it is aimed at: it does not open it). Without it, a
+//               click works what is aimed at first (a control, a door) and the tool if nothing is
+//   retroceso   firing: back (m), nose up (degrees), half-life of the way back (s)
+//   piezas      what moves on it besides its body: where each piece's origin is (its pivot) and
+//               the axis it turns about; oculta: it shows only while a clip says so
+//   puntos      named places on it; for a hand: the middle of what it closes on, the way the palm
+//               faces there, the way from the index finger to the little one; pieza: it goes
+//               with that piece
+//   manos       the hands on it at rest (left, right): point and hand pose (rigs/*.jsonc,
+//               "manos"); null: that hand is free
+//   gatillo     the piece that turns while the trigger is held, how far, whose hand, its pose
+//   clips       movements, key by key (crates/core/src/anim/clip.rs): "sacar" as it is taken
+//               out, "guardar" as it is put away, "disparo", "recarga". canales: herramienta.en,
+//               herramienta.giro (the whole tool, in the eye's frame, added to where it is held),
+//               <pieza>.giro (degrees about its axis), <pieza>.en, <pieza>.ver; manos: where each
+//               hand is at each moment ([time, point, pose]; "cuerpo:<point>": a place on the
+//               suit, rigs/*.jsonc "puntos"); lleva: what a hand carries ([time, piece, hand,
+//               the piece's point it is held by]; hand "": back on the tool); eventos: "cargado"
+//               (a launcher is loaded), "sonido:<id>", "golpe:<left>,<up>,<ahead>[,<nose up>[,
+//               <roll>]]" (a blow to it, m/s and degrees/s: it jumps and swings back on its
+//               weight — a latch sprung, a rocket seated, a hatch slapped shut)
+[
+  // welder-scanner: reach (m), share of a part's hit points mended per second, seconds to put
+  // back a part that is gone, and how far round you its integrity view reaches (m)
+  { "id": "soldador", "nombre": "Soldador-escáner", "modelo": "soldador", "tipo": "soldador", "alcance": 4.5, "ritmo": 0.14, "reconstruir": 2.5, "vista": 90.0,
+    "clic": "herramienta",
+    "sujecion": {
+      "en": [-0.19, -0.17, 0.45],
+      "inercia": 0.028, "paso": 0.011, "vida": 0.07, "rebote": 0.5, "arrastre": 0.3, "alabeo": 3.0,
+      "apoyo": { "punto": "pecho", "peso": 0.5 },
+      "piezas": { "gatillo": { "en": [0, -0.027, 0.012], "eje": [1, 0, 0] } },
+      "puntos": {
+        "agarre": { "en": [0, -0.0866, -0.0449], "palma": [1, 0, 0.12], "traves": [0, -0.9659, -0.2591] },
+        "pantalla": { "en": [0.03, 0.078, -0.02] },
+        "punta": { "en": [0, 0.008, 0.178] }
+      },
+      "manos": [null, { "punto": "agarre", "pose": "dedo_fuera" }],
+      "gatillo": { "pieza": "gatillo", "giro": 14, "mano": 1, "pose": "gatillo" },
+      "clips": {
+        // up from the hip, nose first
+        "sacar": { "dura": 0.42, "canales": {
+          "herramienta.en": { "curva": "sale", "claves": [[0, 0.03, -0.34, -0.2], [0.42, 0, 0, 0]] },
+          "herramienta.giro": { "curva": "sale", "claves": [[0, -65, 0, 10], [0.42, 0, 0, 0]] } } },
+        "guardar": { "dura": 0.3, "canales": {
+          "herramienta.en": { "curva": "entra", "claves": [[0, 0, 0, 0], [0.3, 0.03, -0.34, -0.2]] },
+          "herramienta.giro": { "curva": "entra", "claves": [[0, 0, 0, 0], [0.3, -65, 0, 10]] } } }
+      }
+    } },
+  // rocket launcher: the shot it fires (shots.jsonc) and the seconds from a shot to the next
+  // (its "disparo" and "recarga" clips, up to "cargado")
+  { "id": "lanzacohetes", "nombre": "Lanzacohetes", "modelo": "lanzacohetes", "tipo": "lanzador", "tiro": "cohete", "recarga": 2.4,
+    "sujecion": {
+      // on the right shoulder: most of it beside and behind the helmet. It rests on that
+      // shoulder: it turns about it as one looks up and down, and goes with it as the body moves
+      "en": [-0.29, -0.13, 0.12],
+      "inercia": 0.04, "paso": 0.013, "vida": 0.09, "rebote": 0.42, "arrastre": 0.35, "alabeo": 3.5,
+      "pivote": [-0.25, -0.17, -0.15],
+      "apoyo": { "punto": "hombro_der", "peso": 1.0 },
+      "retroceso": [0.07, 5.0, 0.08],
+      "piezas": {
+        // the loading hatch, hinged at its rear edge: it opens up and back
+        "puerta": { "en": [0, 0.055, 0.03], "eje": [1, 0, 0] },
+        // the rocket in the chamber: seen only while it is being loaded
+        "cohete": { "en": [0, 0, 0.195], "oculta": true },
+        "gatillo": { "en": [0, -0.0545, 0.142], "eje": [1, 0, 0] }
+      },
+      "puntos": {
+        "agarre_der": { "en": [0, -0.1156, 0.0731], "palma": [1, 0, 0.12], "traves": [0, -0.9659, -0.2591] },
+        "agarre_izq": { "en": [0, -0.1077, 0.3142], "palma": [-1, 0, 0.1], "traves": [0, -0.9398, -0.3417] },
+        "boca": { "en": [0, 0, 0.46] },
+        "luz": { "en": [0.0635, 0.101, 0.236] },
+        // the latch at the hatch's front lip: a thumb on it and the hatch springs open
+        "pestillo": { "en": [0.0, 0.085, 0.365], "palma": [0, -1, 0.25], "traves": [0, 0.2, 1] },
+        // the rocket held from over it, the fingers down its far side (it goes with the rocket)
+        "cohete_mano": { "en": [0, 0.004, 0.185], "palma": [0, -1, 0], "traves": [0, 0, 1], "pieza": "cohete" },
+        // ... and where that hand is with the rocket over the open chamber, about to drop it in
+        "sobre_recamara": { "en": [0.03, 0.17, 0.185], "palma": [-0.25, -1, 0], "traves": [0, 0, 1] },
+        // the flat of the hand on the open hatch, to shut it (it goes with the hatch)
+        "puerta_mano": { "en": [0, 0.085, 0.27], "palma": [0, -1, 0], "traves": [0, 0, 1], "pieza": "puerta" }
+      },
+      "manos": [{ "punto": "agarre_izq", "pose": "agarre" }, { "punto": "agarre_der", "pose": "dedo_fuera" }],
+      "clips": {
+        // swung up from the right side on to the shoulder
+        "sacar": { "dura": 0.6, "canales": {
+          "herramienta.en": { "curva": "sale", "claves": [[0, 0.02, -0.5, 0.05], [0.6, 0, 0, 0]] },
+          "herramienta.giro": { "curva": "sale", "claves": [[0, -75, 0, 0], [0.6, 0, 0, 0]] } },
+          // (it comes down on the shoulder)
+          "eventos": [[0.5, "golpe:0,-0.25,0,18"]] },
+        "guardar": { "dura": 0.4, "canales": {
+          "herramienta.en": { "curva": "entra", "claves": [[0, 0, 0, 0], [0.4, 0.02, -0.5, 0.05]] },
+          "herramienta.giro": { "curva": "entra", "claves": [[0, 0, 0, 0], [0.4, -75, 0, 0]] } } },
+        // the finger on the trigger, the trigger in, and out again
+        "disparo": { "dura": 0.3,
+          "canales": { "gatillo.giro": [[0, 0], [0.05, 14], [0.16, 14], [0.3, 0]] },
+          "manos": { "der": [[0, "agarre_der", "gatillo"], [0.16, "agarre_der", "gatillo"], [0.3, "agarre_der", "dedo_fuera"]] } },
+        // off the shoulder and down across the chest, its top to the eye; the left hand thumbs
+        // the latch (the hatch springs open), goes to the pouch on the thigh for a rocket, sets
+        // it in the chamber, slaps the hatch shut and is back on its grip as the launcher goes
+        // up on the shoulder again
+        // (the launcher is never still meanwhile: it sinks as the hand that carried half of it
+        // lets go, leans to the pouch's side as that arm goes down, comes up to meet the rocket,
+        // and takes each blow — the latch, the rocket seated, the hatch slapped shut, the
+        // shoulder — on its weight)
+        "recarga": { "dura": 2.4,
+          "canales": {
+            "herramienta.en": [[0, 0, 0, 0], [0.35, 0.2, -0.03, 0.15], [0.62, 0.205, -0.055, 0.145], [1.0, 0.185, -0.075, 0.125], [1.5, 0.2, -0.015, 0.155], [1.7, 0.2, -0.045, 0.15], [2.0, 0.2, -0.05, 0.15], [2.4, 0, 0, 0]],
+            "herramienta.giro": [[0, 0, 0, 0], [0.35, 6, 60, -30], [1.0, 1, 55, -37], [1.5, 9, 62, -27], [2.0, 6, 60, -30], [2.4, 0, 0, 0]],
+            // (it springs open past its stop and settles; it is pushed shut)
+            "puerta.giro": [[0.45, 0], [0.62, -113], [0.74, -105], [1.82, -105], [1.98, 0]],
+            "cohete.ver": { "curva": "salto", "claves": [[0, 0], [1.02, 1], [2.05, 0]] }
+          },
+          "manos": { "izq": [
+            [0.0, "agarre_izq", "agarre"], [0.12, "agarre_izq", "abierta"],
+            [0.42, "pestillo", "empujar"], [0.52, "pestillo", "empujar"],
+            [1.0, "cuerpo:bolsa_izq", "coger"], [1.08, "cuerpo:bolsa_izq", "coger"],
+            [1.5, "sobre_recamara", "coger"], [1.66, "cohete_mano", "coger"], [1.72, "cohete_mano", "abierta"],
+            [1.84, "puerta_mano", "empujar"], [2.0, "puerta_mano", "empujar"],
+            [2.32, "agarre_izq", "agarre"] ] },
+          "lleva": [[1.02, "cohete", "izq", "cohete_mano"], [1.66, "cohete", "", "cohete_mano"]],
+          "eventos": [[0.46, "sonido:tapa"], [0.46, "golpe:0,0.14,0,-28"], [1.66, "sonido:anclaje"], [1.66, "golpe:0,-0.32,0.06,-34"], [1.98, "sonido:tapa"], [1.98, "golpe:0.1,-0.5,0,-55,30"], [2.02, "cargado"], [2.32, "golpe:0,-0.22,0,16"]]
+        }
+      }
+    } }
+]

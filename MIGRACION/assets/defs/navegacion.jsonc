@@ -1,0 +1,63 @@
+// La brujula: que referencias de orientacion hay en cada regimen (crates/app/src/nav.rs,
+// docs/MOVIMIENTO.md). No es un rumbo: es una cinta alrededor de tu propio "arriba" en la que se
+// marca cada referencia que significa algo ahora. Cada regimen pesa de 0 a 1 segun donde estas y
+// como vas, y sus marcas se ven tan solidas como pese: al pasar de uno a otro unas se apagan
+// mientras las otras salen, y nada salta. Con dos cuerpos a la vez (en la franja donde uno
+// releva al otro) salen las marcas de los dos, cada una con lo que pesa el suyo.
+{
+  // Lo que cuenta como ir "en orbita" y no "sobre el suelo": ir de lado a esta parte de la
+  // velocidad de orbita circular de donde estas (por debajo de la primera, nada; desde la
+  // segunda, del todo). Vale para cualquier cuerpo: no hay alturas ni velocidades escritas
+  "orbita": [0.45, 0.85],
+  // Cerca de un polo el norte deja de significar nada: se apaga entre estos dos senos del
+  // angulo al eje del cuerpo (0.002 son unos 3,5 km del polo de la Luna; 0.02, unos 35 km)
+  "polo": [0.002, 0.02],
+  // Una direccion casi vertical (encima o debajo de ti) no esta en ningun sitio de la cinta:
+  // su marca se apaga entre estos dos cosenos de su elevacion (87 y 78 grados)
+  "vertical": [0.05, 0.2],
+  // La nave de referencia: la que te lleva, o la que la mochila mantiene a tu lado; si no hay,
+  // la mas cercana a menos de esto (m)
+  "nave": 5000.0,
+  // "pesa": superficie (lo que el cuerpo tiene de donde estas, mientras no orbitas), orbita (lo
+  // mismo, cuando si) o espacio (lo que no tiene ningun cuerpo).
+  // "escala": desde que direccion se cuentan los grados de la cinta, y "nombre" como se llaman.
+  // Una marca: "hacia" (norte, marcha, radial, normal, proa, nave, sol), "contra" (la opuesta),
+  // "giro" (grados hacia la derecha alrededor de tu arriba), "texto" (admite {nave} y
+  // {distancia}), "mayor" (mas grande) y "borde" (fuera de la cinta espera en su borde, del lado
+  // hacia el que hay que girar)
+  "regimenes": [
+    {
+      "pesa": "superficie", "escala": "norte", "nombre": "RUMBO",
+      "marcas": [
+        { "hacia": "norte", "texto": "N", "mayor": true },
+        { "hacia": "norte", "giro": 45, "texto": "NE" },
+        { "hacia": "norte", "giro": 90, "texto": "E", "mayor": true },
+        { "hacia": "norte", "giro": 135, "texto": "SE" },
+        { "hacia": "norte", "giro": 180, "texto": "S", "mayor": true },
+        { "hacia": "norte", "giro": 225, "texto": "SO" },
+        { "hacia": "norte", "giro": 270, "texto": "O", "mayor": true },
+        { "hacia": "norte", "giro": 315, "texto": "NO" }
+      ]
+    },
+    {
+      "pesa": "orbita", "escala": "marcha", "nombre": "MARCHA",
+      "marcas": [
+        { "hacia": "marcha", "texto": "PRO", "mayor": true, "borde": true },
+        { "hacia": "marcha", "contra": true, "texto": "RETRO", "mayor": true, "borde": true },
+        { "hacia": "radial", "texto": "RAD+", "borde": true },
+        { "hacia": "radial", "contra": true, "texto": "RAD-", "borde": true },
+        { "hacia": "normal", "texto": "NOR+" },
+        { "hacia": "normal", "contra": true, "texto": "NOR-" }
+      ]
+    },
+    {
+      "pesa": "espacio", "escala": "proa", "nombre": "PROA",
+      "marcas": [
+        { "hacia": "proa", "texto": "PROA", "mayor": true, "borde": true },
+        { "hacia": "proa", "contra": true, "texto": "POPA" },
+        { "hacia": "nave", "texto": "{nave} {distancia}", "mayor": true, "borde": true },
+        { "hacia": "sol", "texto": "SOL", "borde": true }
+      ]
+    }
+  ]
+}

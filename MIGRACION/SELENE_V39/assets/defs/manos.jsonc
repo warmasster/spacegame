@@ -1,0 +1,116 @@
+// What a body's hands do with a ship: work its controls, and hold the stick and the throttle
+// of the seat it is flown from (crates/app/src/handwork.rs, reach.rs, cockpit.rs; how it fits:
+// docs/MANOS.md). Nothing here is of one ship, one panel or one seat. The hand poses named are
+// the rig's (rigs/*.jsonc, "manos").
+{
+  // half-life of a hand's way from one place to the next (s): about four of them and it is
+  // there; and how far off the straight line it goes on its way (a share of the way: a hand
+  // comes off what it was on and round to the next thing, toward the body, not through it)
+  "viaje": 0.06,
+  "arco": 0.16,
+
+  // ------------------------------------------------------------------ hands on the controls
+  "alcance": {
+    // how far off a control a hand waits before and after working it (m)
+    "separa": 0.045,
+    // the least a hand stays on what it worked (s), and how long it waits by it after, for more
+    // (s): then it goes back where it was
+    "toca": 0.18,
+    "queda": 1.1,
+    // half-lives (s): of the last of the way on to a control and off it, and of a hand after a
+    // part that jumps (a toggle thrown, a button going in)
+    "entra": 0.02,
+    "sigue": 0.022,
+    // how far the way a fingertip comes leans from the control's own way out toward the arm
+    // (degrees: nobody presses a button square on), the most a wrist bends (degrees), and the
+    // share of its length an arm stretches (a control farther than that is worked from as near
+    // as the arm gets, along the line to it)
+    "inclina": 42,
+    "muneca": 55,
+    "brazo": 0.97,
+    // a control farther than the arm goes is not stretched for: the farther it is, the less the
+    // arm is held out toward it, down to this share of its length (the hand works it from
+    // there, pointing at it)
+    "lejos": 0.8,
+    // waiting by a panel, the hand goes to the control the player aims at next
+    "mira": true,
+    // how a hand works each kind of control (crates/controls: `kind`; "<kind>/<axes>": only
+    // those of that many axes). toma: "dedo" (with the fingertips, from outside) or "puno" (in
+    // the fist). punta (dedo): what goes on it — "indice", "pulgar", "pinza" (between thumb and
+    // index), "yemas" (index and middle), "garra" (thumb, index and middle round it). pose /
+    // antes: the fingers on it, and before taking it. largo (puno): the way what the fist closes
+    // on runs — "fuera" (out of the control: a stick), "eje" (its own axis: a T bar), "aro" (its
+    // rim). dos_manos: both, if both are free. gira: how far a hand turns with it before it lets
+    // go and takes it again (degrees). A new kind of control is a line here.
+    "mandos": {
+      "pulsador":    { "punta": "indice", "pose": "apuntar" },
+      "bisel":       { "punta": "indice", "pose": "apuntar" },
+      "teclado":     { "punta": "indice", "pose": "apuntar" },
+      "interruptor": { "punta": "pinza", "pose": "pinza", "antes": "pinza_abierta" },
+      "disyuntor":   { "punta": "pinza", "pose": "pinza", "antes": "pinza_abierta" },
+      "llave":       { "punta": "pinza", "pose": "pinza", "antes": "pinza_abierta", "gira": 70 },
+      "selector":    { "punta": "garra", "pose": "pomo", "antes": "pomo_abierto", "gira": 60 },
+      "rueda":       { "punta": "garra", "pose": "pomo", "antes": "pomo_abierto", "gira": 60 },
+      "tapa":        { "punta": "yemas", "pose": "dedos" },
+      "palanca":     { "toma": "puno", "largo": "eje", "pose": "agarre", "antes": "coger" },
+      "palanca/2":   { "toma": "puno", "largo": "fuera", "pose": "agarre", "antes": "coger" },
+      "volante":     { "toma": "puno", "largo": "aro", "pose": "agarre", "antes": "coger", "dos_manos": true, "gira": 50 }
+    },
+    // any other kind: the index on it
+    "otro": { "punta": "indice", "pose": "apuntar" }
+  },
+
+  // ------------------------------------------------------------------ the seat's own controls
+  // A stick and a throttle beside every seat a ship is flown from (a seat with keys:
+  // `asientos[].mandos`), the hands of whoever sits there on them.
+  "cabina": {
+    // half-life with which they follow what is flown (s): a key held throws a control to its
+    // stop at once
+    "sigue": 0.035,
+    // what is flown, by name, and how to find each among a seat's keys: this axis of the
+    // `de`-th control its keys hold by an axis (-1 .. 1), or the control a key works with an
+    // action — "subir": its travel (0 .. 1); "pulsar": 1 while it is pressed
+    "canales": {
+      "cabeceo": { "eje": 0, "de": 0 },
+      "alabeo": { "eje": 1, "de": 0 },
+      "guinada": { "eje": 0, "de": 1 },
+      "gases": { "accion": "subir" },
+      "disparo": { "accion": "pulsar" }
+    },
+    // each: its model (assets/models/<modelo>.glb: the mesh "cuerpo" and one per piece; without
+    // it, plain shapes), whose hand, where its origin is from the seat's eyes in the seat's own
+    // frame (x to the sitter's left, y up, z ahead; m), its moving pieces (pivot, the piece it
+    // rides on, what moves it: about or along `eje`, so many degrees or metres at the most,
+    // from `desde` degrees with nothing flown) and where the hand holds it (the prop's frame:
+    // the middle of what the hand closes on, the way the palm faces, from index to little
+    // finger; the piece it goes with; the hand's pose, and on a trigger the channel that pulls
+    // it and the pose pulling). "libre": the hand goes where its piece goes but keeps facing as
+    // written here — what it holds turns in it.
+    // The pieces, their pivots and the grips are the MODEL'S (tools/modelos/datos/<modelo>.json,
+    // written by its recipe: recetas/mandos.py): a piece by a name the model has not is an
+    // error at start-up, and a grip that is not the model's puts the hand in the air.
+    "mandos": [
+      { "id": "palanca", "modelo": "palanca_vuelo", "mano": "der",
+        "en": [-0.34, -0.68, 0.24],
+        "piezas": {
+          "palanca": { "en": [0, 0.05, 0], "mueve": [
+            { "canal": "cabeceo", "eje": [1, 0, 0], "grados": 14 },
+            { "canal": "alabeo", "eje": [0, 0, 1], "grados": 14 },
+            { "canal": "guinada", "eje": [0, 1, 0], "grados": 10 } ] },
+          "gatillo": { "en": [0, 0.21063, 0.08117], "padre": "palanca", "mueve": [ { "canal": "disparo", "eje": [1, 0, 0], "grados": 14 } ] },
+          "seta": { "en": [0.01, 0.25429, 0.03604], "padre": "palanca" }
+        },
+        "agarre": { "en": [0, 0.1664, 0.02474], "palma": [0.9929, 0, 0.1191], "traves": [0.0246, -0.9784, -0.205], "pieza": "palanca", "pose": "dedo_fuera",
+          "gatillo": { "canal": "disparo", "pose": "gatillo" } } },
+      // (its lever is built upright: back 28 degrees at idle, 28 ahead at full; the left hand
+      // laid on its bar from above, its index toward the sitter's right: the bar turns in it as
+      // the lever swings, the hand stays palm down)
+      { "id": "gases", "modelo": "mando_gases", "mano": "izq",
+        "en": [0.34, -0.68, 0.22],
+        "piezas": {
+          "palanca": { "en": [0, 0.014, 0], "mueve": [ { "canal": "gases", "eje": [1, 0, 0], "desde": -28, "grados": 56 } ] }
+        },
+        "agarre": { "en": [0, 0.17, 0], "palma": [0, -0.94, 0.34], "traves": [1, 0, 0], "pieza": "palanca", "libre": true, "pose": "agarre" } }
+    ]
+  }
+}

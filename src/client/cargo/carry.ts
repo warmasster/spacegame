@@ -3,13 +3,12 @@ import * as THREE from 'three';
 import type { Quat } from '../../shared/protocol';
 import { qMul, qYaw, type V3 } from '../../shared/ship/geom';
 import type { Frames } from '../frames/frames';
+import { objectOf, throwSpeedOf } from '../../shared/items';
 import type { CrateBody, Crates } from './crates';
 
 /** How far a crate can be picked up / put down (m, from the eyes). */
 export const CARRY_REACH = 2.4;
 const PLACE_REACH = 3.2;
-/** Throw speed (m/s). */
-const THROW = 5.5;
 /** Ghost placement snaps its heading to this step (rad). */
 const YAW_SNAP = Math.PI / 12;
 
@@ -92,9 +91,11 @@ export class Carry {
     this.crates.release();
   }
 
-  /** Q: throw it along the view (frame coordinates). */
+  /** Q: throw it along the view (frame coordinates), as fast as its kind and mass allow (object catalog). */
   throw(dir: V3) {
-    this.crates.release([dir[0] * THROW, dir[1] * THROW, dir[2] * THROW]);
+    const c = this.held;
+    const k = c ? throwSpeedOf(objectOf(c.spec), c.spec.mass) : 0;
+    this.crates.release([dir[0] * k, dir[1] * k, dir[2] * k]);
   }
 
   /** Click: set it down on the ghost if it fits. Returns false when it doesn't. */

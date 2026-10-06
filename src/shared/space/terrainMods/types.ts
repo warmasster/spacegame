@@ -14,7 +14,7 @@ export interface TerrainMod {
   kind: string;
   /** Body it lies on (`BODIES` id). */
   body: string;
-  /** Centre: unit direction from the body's centre. */
+  /** Centre: radial unit direction, rounded for serialization (its length may differ slightly from 1). */
   center: Vec3;
   /** Size (m over the surface); what it measures is the kind's (its reach is a multiple of it). */
   radius: number;

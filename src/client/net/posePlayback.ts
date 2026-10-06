@@ -1,68 +1,58 @@
 import { INTERPOLATION_DELAY_MS } from '../../shared/constants';
-import { copyPose, extrapolatePose, hermitePose, type ShipPose } from '../../shared/ship/flight';
+import { copyPose, type ShipPose } from '../../shared/ship/flight';
+import { Replica, type ReplicaSample } from '../../shared/net/replica';
 
-interface Sample {
-  t: number;
-  pose: ShipPose;
+interface Contact {
   landed: boolean;
   pad: boolean;
 }
 
-/** Longest a starved stream is carried forward on its last velocities (ms). */
-const MAX_EXTRAPOLATE_MS = 300;
-
 /**
- * A ship's pose as the network delivers it (the server or its pilot, ~30 Hz, server-time stamped),
- * played back a little in the past with cubic Hermite through the samples and their velocities, so
- * a turning ship draws smooth arcs instead of a polyline. Everyone aboard lives in the ship's own
- * frame, so what little error is left moves the whole ship, never its crew relative to the deck.
+ * A ship's pose as the network delivers it (the server or its pilot, ~30 Hz), stamped with the
+ * time of the step that made it (shared/time/stepClock.ts). It is drawn in the present like
+ * everything this client simulates (shared/net/replica.ts): carried forward from the newest pose
+ * with its velocity and its acceleration (the last two poses: gravity and the burn alike), and a
+ * pose that disagrees with the prediction is blended in, never jumped to. Everyone aboard lives in
+ * the ship's own frame, so what little error is left moves the whole ship, never its crew
+ * relative to the deck.
  */
 export class PosePlayback {
-  private samples: Sample[] = [];
-  /** Playback clock (server ms), advanced by the fixed steps and eased toward now − delay. */
-  private clock = -1;
+  private replica = new Replica({ hostDelay: INTERPOLATION_DELAY_MS, smooth: 0.3 });
 
   push(t: number, pose: ShipPose, landed: boolean, pad: boolean) {
-    const last = this.samples[this.samples.length - 1];
-    if (last && t <= last.t) return;
-    this.samples.push({ t, pose, landed, pad });
-    if (this.samples.length > 60) this.samples.shift();
-  }
-
-  get empty() {
-    return this.samples.length === 0;
-  }
-
-  clear() {
-    this.samples = [];
-    this.clock = -1;
+    this.replica.push(sample(t, pose, landed, pad));
   }
 
   /**
-   * One fixed step of `dt` seconds: the pose to use now (written into `out`), with the ground
-   * contact flags. Null while nothing has arrived yet.
+   * Nobody sent anything yet but the ship was being drawn (we flew it until a moment ago): its
+   * last pose, at the time it belongs to, is where the stream starts — no freeze, no jump.
    */
-  step(dt: number, serverNow: number, out: ShipPose): { landed: boolean; pad: boolean } | null {
-    const s = this.samples;
-    if (!s.length) return null;
-    const target = serverNow - INTERPOLATION_DELAY_MS;
-    if (this.clock < 0 || Math.abs(this.clock - target) > 250) this.clock = target;
-    else this.clock += dt * 1000 + (target - this.clock) * 0.05;
-    const t = this.clock;
-    while (s.length > 2 && s[1].t <= t) s.shift();
-    const a = s[0];
-    const b = s[1];
-    if (b && t >= a.t && t <= b.t) {
-      const span = (b.t - a.t) / 1000;
-      hermitePose(a.pose, b.pose, span > 0 ? (t - a.t) / (b.t - a.t) : 1, span, out);
-      return t - a.t < b.t - t ? a : b;
-    }
-    const last = b && t > b.t ? b : a;
-    if (t < last.t) {
-      copyPose(out, last.pose);
-      return last;
-    }
-    extrapolatePose(last.pose, Math.min(MAX_EXTRAPOLATE_MS, t - last.t) / 1000, out);
-    return last;
+  seed(t: number, pose: ShipPose, landed: boolean, pad: boolean) {
+    this.replica.seed(sample(t, pose, landed, pad));
   }
+
+  get empty() {
+    return this.replica.empty;
+  }
+
+  clear() {
+    this.replica.clear();
+  }
+
+  /** Largest correction blended in so far (m) and corrections taken as jumps (diagnostics). */
+  get corrections() {
+    return { max: this.replica.maxCorrection, snaps: this.replica.snaps };
+  }
+
+  /** The pose at time `t` (ms, server clock: the fixed step's), written into `out`; null while nothing has arrived. */
+  step(t: number, out: ShipPose): Contact | null {
+    const s = this.replica.sample(t);
+    if (!s) return null;
+    copyPose(out, s);
+    return s.tag as Contact;
+  }
+}
+
+function sample(t: number, pose: ShipPose, landed: boolean, pad: boolean): ReplicaSample {
+  return { t, fr: 0, p: [pose.p[0], pose.p[1], pose.p[2]], v: [pose.v[0], pose.v[1], pose.v[2]], q: [pose.q[0], pose.q[1], pose.q[2], pose.q[3]], w: [pose.w[0], pose.w[1], pose.w[2]], tag: { landed, pad } };
 }

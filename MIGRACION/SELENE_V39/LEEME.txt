@@ -1,0 +1,583 @@
+NOVEDADES V39 (carpeta SELENE_V39: SeleneLauncher.exe, SeleneV39_demo.exe / _multiplayer.exe / _debug.exe):
+LO QUE RIGE EN CADA SITIO (gravedad, suelo, arriba y brujula, sin depender de
+en que cuerpo estas, de donde nacio cada cosa, de la velocidad ni de lo que
+paso antes). Cuatro cambios de fondo; el porque, en docs/MOVIMIENTO.md 6-11.
+LA GRAVEDAD SE ACABA: cada cuerpo dice hasta donde llega la suya. La Luna
+tira entera hasta 20 km de altura y de ahi baja suave a NADA a los 30 km; la
+Luna menor, 3,5 y 6 km. Fuera de toda influencia no hay gravedad, ni suelo,
+ni "arriba". (Antes la Luna tiraba 1,57 m/s2 a 30 km y nunca dejaba de
+tirar.) Donde se juntan dos cuerpos uno releva al otro sin salto. Se cambia
+en assets/defs/bodies/*.jsonc ("reach").
+LAS NAVES SON DE DONDE ESTAN: antes una nave se quedaba para siempre con la
+gravedad y el suelo del cuerpo donde la creaste: llevada a la Luna menor
+seguia cayendo hacia la Luna. Ahora todo (naves, carga, proyectiles, polvo,
+tu) pregunta que rige donde esta en cada momento.
+A BORDO, LA REFERENCIA ES LA NAVE: el Alcotan y el Cachalote dan su propia
+gravedad (1,62 m/s2 hacia la cubierta) en sus salas mientras tengan barra
+esencial. Da igual donde este la nave y como: posada, en orbita, fuera de
+toda gravedad, boca abajo o dando tumbos, andas por su cubierta. Sin
+corriente no hay gravedad a bordo. El Abejorro y el Azor no dan ninguna.
+SIN PESO SE FLOTA: en una nave sin gravedad propia pesas lo que quede de la
+gravedad segun vaya la nave: todo si esta posada, NADA si cae o va en orbita
+(flotas dentro), y hacia atras lo que empujen sus motores. Sin peso no se
+anda: se flota (y la mochila funciona igual).
+TU ARRIBA ES HACIA DONDE PESAS: al pasar del suelo a una cubierta inclinada,
+de una nave a otra o al entrar en la gravedad de un cuerpo, el cuerpo se
+endereza girando a su ritmo, no de golpe; cuanto menos pesas, mas despacio.
+En espacio libre conservas el arriba que traias: nada te gira.
+MOCHILA SIN GRAVEDAD: Espacio y Ctrl empujan segun tu propio arriba y abajo;
+no gasta gas en sostenerte donde nada pesa; te mantiene junto a la nave que
+tengas cerca, y si no hay suelo ni nave cerca no te frena (no hay respecto a
+que).
+BRUJULA NUEVA (arriba en el centro): ya no es un rumbo fijo sino una cinta
+con las referencias que significan algo donde estas:
+- sobre un cuerpo: N, E, S, O... y RUMBO (norte del propio cuerpo);
+- en orbita (yendo de lado casi a velocidad orbital): PRO y RETRO (a favor y
+  en contra de la marcha), RAD+ y RAD- (hacia fuera y hacia el cuerpo),
+  NOR+ y NOR-, y MARCHA;
+- en espacio libre: PROA y POPA de la nave que te lleva o tienes cerca, esa
+  nave con su distancia, y SOL.
+Al cambiar de un regimen a otro unas marcas se apagan mientras salen las
+otras: nada salta. Una marca fuera de la cinta espera en su borde con una
+flecha hacia donde girar; un triangulo dice si esta por encima o por debajo.
+Arriba a la izquierda pone que tira donde estas: el cuerpo, la nave si da
+gravedad, o ESPACIO. Todo declarado en assets/defs/navegacion.jsonc.
+SIN SALTOS AL MIRAR: tu orientacion ya no sale de un eje fijo del mundo. En
+dos puntos de cada cuerpo la vista giraba 90 grados de golpe al pasar.
+CAMARA LEJOS DE TI: que naves se simulan en fino dependia de donde estaba la
+camara, no de donde estas tu. Con la camara lejos (la vista de un misil, un
+guion, el menu) la nave que tenias al lado se quedaba un fotograma atras.
+Ahora lo que te rodea va siempre a tu paso.
+DECISIONES QUE HE TOMADO YO (son datos, se cambian con un numero):
+- la Luna deja de tirar a 30 km (el trafico en orbita va ahora a 12-19 km);
+- la gravedad de a bordo vale dentro de las salas de la nave, no encima de
+  su casco: de pie en el techo de una nave que cae, flotas;
+- sin peso no se anda ("sin_peso" en scenario.jsonc; a 0 las botas agarran
+  cualquier cubierta que toquen);
+- "orbita" en la brujula es ir de lado entre el 45 y el 85 % de la velocidad
+  de orbita circular de donde estes.
+LO QUE FALTA DE ESTO: la carga suelta dentro de una nave no siente todavia la
+gravedad propia de la nave (en orbita tu andas y un bidon suelto flota); sin
+peso no hay asideros ni empujon con las piernas; en red, los otros jugadores
+se ven con la vertical del cuerpo mas cercano.
+SIN PROBAR JUGANDO: comprobado con pruebas que barren los dos cuerpos y uno
+inventado, dentro, en el borde y fuera de cada influencia, de 0 a 7800 m/s,
+de 10 a 240 fotogramas por segundo y con la nave derecha, de lado, boca abajo
+y dando tumbos; y con un guion en el juego, tools/camara/espacio.jsonc, que
+lleva un Alcotan del suelo a orbita, fuera de la Luna y a la Luna menor
+contigo dentro y fuera (fotos y registro en out/camara/espacio*).
+PILOTO AUTOMATICO NUEVO (Azor, cara NAVEG. del tambor), como el de la version
+web: tres retenciones que se apilan, cada una con su interruptor y su rueda:
+ALTURA (metros sobre el suelo), RUMBO (grados de brujula) y VELOC. (m/s). Con
+cualquiera puesta el ordenador vuela los motores y el casco va horizontal; lo
+que no retienes sigue como va y las teclas de traslacion empujan.
+PROGRAMAS (selector): FRENAR (se para y se queda sostenida), SEGUIR (va a la
+traza elegida y se queda a la distancia pedida, yendo como ella), DESPEG.
+(sube en vertical a la altura de la rueda), ATERRIZ. (baja donde estes y se
+posa suave), y ACTITUD / PROGR. / RETRO, que solo apuntan el morro.
+GONDOLAS QUE SE MUEVEN SOLAS: con MANTENER, una retencion o un programa, el
+ordenador gira las gondolas a donde hace falta el empuje, tambien hacia atras
+para frenar. La nave ya no se pone de cola al tumbarlas. Con MANTENER y la
+tecla de avanzar la nave avanza nivelada. La palanca GONDOLAS tiene ahora tres
+posiciones: FRENO, VERT. (en medio, como arranca) y CRUCERO.
+PILOTO DE COMBATE: ya no hace piruetas ni acaba boca abajo. Gira primero de
+lado hacia la traza y luego arriba o abajo, con el techo siempre arriba, y
+llega sin pasarse. (Las trazas no giraban con la nave entre dos barridos del
+radar y el piloto perseguia donde habian estado.)
+PANTALLA MIRA: ensena siempre hacia donde va la nave (aro verde con alas) y a
+que velocidad; con una traza elegida, su marca y la cruz de tiro. Las marcas
+de RADAR y MIRA se mueven suaves al girar la nave.
+UN SOLO RELOJ (arreglo de raiz de la mochila y las naves rapidas): la V38
+compensaba el fallo dentro del jugador; la V39 quita su causa. Antes habia dos
+relojes: las naves avanzaban cada fotograma y tu en pasos propios de 1/60 s,
+dibujado un paso tarde. Ahora el mundo te da el paso a la vez que a las naves,
+trozo a trozo, y no hay nada que compensar: tu y cualquier nave sois siempre
+del mismo instante, a cualquier velocidad, en cualquier sitio y a cualquier
+numero de fotogramas. Vale para todo lo que ande o flote entre naves.
+FISICA DE LAS NAVES, dos fallos de fondo que dependian de la velocidad:
+- A velocidad orbital un empuje pequeno se perdia (la velocidad se guardaba
+  con pocas cifras): los chorros finos de maniobra casi no movian la nave.
+- Lo que una nave lleva sujeto (carga anclada, otra nave en su cuna) contaba
+  como quieto en el mundo para lo que chocaba con ello: una caja suelta que
+  tocaba una caja anclada en una nave en vuelo salia disparada hacia atras.
+SALAS DE UNA NAVE: en el aire dentro de una nave, esa nave te lleva aunque
+hayas entrado volando sin pisarla.
+BOTAS: frenan lo que resbalas respecto a lo que pisas, no respecto al mundo.
+EN ORBITA: junto a una nave en caida libre te quedas a su lado tambien con el
+estabilizador apagado (antes derivabas unos decimetros cada 10 s).
+NADA A MANO EN EL CODIGO: todos los numeros de como se mueve el cuerpo y de
+la mochila estan en assets/defs/scenario.jsonc (player: cuerpo, mochila,
+linterna). El porque de todo, en docs/MOVIMIENTO.md.
+SIN PROBAR JUGANDO: comprobado con pruebas (de 0 a 7800 m/s, de 10 a 240
+fotogramas por segundo, con la fisica real) y con un guion en el juego
+(tools/camara/mochila_nave.jsonc). Cuentame si notas algo raro: al no haber
+ya pasos fijos, andar y saltar deberian sentirse igual o mas suaves.
+
+NOVEDADES V38 (carpeta SELENE_V38: SeleneLauncher.exe, SeleneV38_demo.exe / _multiplayer.exe / _debug.exe):
+MOCHILA Y NAVES A CUALQUIER VELOCIDAD: con la mochila dentro de una nave que
+va deprisa ya no hay teletransportes, al salir no pega el tiron y la nave no
+parpadea despues. Da igual la velocidad (probado de 0 a 7800 m/s), donde
+estes y a cuantos fotogramas vaya el juego (30, 60, 144, 240, a trompicones):
+tu y la nave sois siempre del mismo instante. Vale igual para una nave a la
+que te acercas sin haber estado nunca en ella.
+CHOCAR CON ALGO EN MARCHA: lo que tocas te para contra ello, no contra el
+mundo. Saltar sobre una cubierta que vuela te deja donde saltaste y sin bote,
+bajar sus escalones no da golpes y empujar contra una pared de la nave no te
+deja atras.
+ESTABILIZADOR (Z): al soltar las teclas la mochila te mantiene junto a la
+nave que tengas al lado TAL COMO VA AHORA: si cae o va en orbita caes con
+ella sin gastar gas; si acelera la sigue hasta donde puede; a mas de 60 m te
+deja a la velocidad que llevaba. Apagado, nada de lo que haga la nave te
+arrastra. (Antes, en orbita, la nave se te iba hacia abajo al salir.)
+GAS DE LA MOCHILA: dentro de una nave en marcha el chorro sale contigo (antes
+se quedaba atras).
+SIN PROBAR JUGANDO: lo de la mochila esta comprobado con pruebas que corren
+el fotograma como el juego y con un guion (tools/camara/mochila_nave.jsonc);
+cuentame si notas algo raro. El porque de todo, en docs/MOVIMIENTO.md.
+NAVE NUEVA, EL AZOR: caza monoplaza de 11 m y 12 t. Sale posado al este de la
+base, junto a las otras. Todo lo suyo esta contado en docs/COMBATE.md.
+COMO SE ENTRA: en el costado de babor, tras el ala, hay un panel exterior.
+ASIENTO baja el asiento por la panza en una plataforma (como en las pelis de
+ovnis). Te sientas (E) y lo subes con ASIENTO en la repisa de tu derecha. Si
+te levantas con el asiento abajo quedas en el suelo junto a la nave.
+BAHIA DE UTILIDADES: BAHIA (panel exterior o repisa derecha) abre las dos
+compuertas de popa: la de abajo es una rampa de tres tramos, la de arriba una
+visera. Dentro estan el grupo de energia, el ordenador, las dos baterias, la
+hidraulica y los giroscopos. Compuertas y plataforma funcionan con la nave
+fria (llevan su propio accionamiento).
+TAMBOR DE PANELES: sobre la consola izquierda hay un tambor de tres caras que
+gira con el selector PANEL: NAVEG. (piloto automatico de navegacion y
+ordenador de vuelo), COMBATE (armas, piloto de combate, senuelos) y SENSOR
+(radar, alertador, infrarrojo, identificacion, perturbador).
+UN SOLO GRUPO DE ENERGIA: reactor con su refrigeracion y su radiador en una
+unidad. MARCHA y en 6 s da corriente. PARO es parar, sin disparo ni rearme. Si
+no puede soltar calor da menos en vez de dispararse, y si se dispara la
+pantalla dice por que y se rearma solo al enfriarse.
+PANTALLA TACTICA (la izquierda): RADAR con las otras naves marcadas (cuadrado
+ambar: desconocida; circulo cian: civil; verde: amiga; rombo rojo: hostil;
+triangulo: misil), ALERT (quien te esta mirando con su radar y desde donde),
+MIRA (donde poner el morro para dar), ARMAS y VUELO.
+FIJAR: N traza siguiente, U la mas cercana, B fijar. Se puede fijar y disparar
+a cualquier traza, tambien a las civiles: el unico seguro es el maestro de
+armas. El trafico civil sale en pantalla por su baliza aunque el radar calle.
+RADAR CON ALCANCE CONFIGURABLE: 5, 20, 40 u 80 km. A menos alcance, menos
+potencia radiada y de mas cerca te oyen: un radar encendido se oye desde el
+triple de lejos de lo que el ve. En SILENCIO no radia.
+ARMAS: dos canones rotativos de 20 mm (se calientan), seis misiles DARDO (de
+calor, nadie los oye venir) y cuatro LANZA (de radar, hay que fijar). H es el
+gatillo; un misil por pulsacion.
+SENUELOS (M): nubes de dipolos contra el radar y bengalas contra el calor. En
+el vacio nada los frena: siguen a tu lado hasta que giras o aceleras. Suelta y
+alejate. Programa MANUAL, MISIL (salen solos si viene un misil) o FIJADO.
+PILOTO AUTOMATICO DE DOS TIPOS: de navegacion (ACTITUD, PROGR., RETRO, FRENAR,
+NIVEL, IGUALAR velocidad con la traza elegida, APROX.) y de combate (PERSEG.,
+APUNTAR, DISTAN., EVADIR, SEPARAR). La palanca manda sobre los dos. Con
+PERSEG. y AUTO la nave apunta y dispara sola a lo que declares hostil.
+ORDENADOR DE VUELO CONFIGURABLE: perfil FINO, NORMAL o COMBATE y limite de g.
+VISOR: fuera el visor solar (la tecla U ya no hace nada a pie) y el visor ya
+no se oscurece solo. El filtro de soldadura se pone con el boton derecho del
+soldador en la mano.
+SIN PROBAR JUGANDO: el Azor y el combate estan comprobados con pruebas y
+fotos. No hay todavia enemigos que disparen, ni sonidos de armas, ni va por
+la red.
+
+NOVEDADES V37 (carpeta SELENE_V37: SeleneLauncher.exe, SeleneV37_demo.exe / _multiplayer.exe / _debug.exe):
+SOLDADOR: con el en la mano el clic SIEMPRE suelda o repone lo que miras: ya
+no abre puertas ni acciona mandos (guardalo para accionar). Con el
+lanzacohetes sigue igual: primero el mando al que apuntas, si no hay, dispara.
+LANZACOHETES: ya no sale volando en las rampas (se alejaba de las manos en vez
+de acercarse cuando el cuerpo quedaba mas bajo). Ahora va apoyado en el hombro:
+gira sobre el al mirar arriba y abajo y sube y baja con el cuerpo al andar. Las
+herramientas tienen peso: se quedan atras al arrancar, frenar, saltar o caer y
+vuelven pasandose un poco; la recarga da golpes (pestillo, cohete, tapa).
+PALANCA Y GASES: se ven enteros (faltaba la palanca: solo salia la base y el
+gatillo suelto) y van sobre un soporte del reposabrazos, tambien en el
+Abejorro. La mano izquierda ya no esta del reves sobre los gases.
+MUNECAS DE VERDAD: una muneca solo dobla, ladea y gira lo que una muneca
+puede; si se le pide mas, el codo gira para aliviarla y la mano cede. Vale
+para todo: mandos, palancas, herramientas, gestos. Un mando fuera del alcance
+del brazo ya no se alcanza estirandolo: la mano lo senala desde donde llega.
+La mano va al mando haciendo un arco, no en linea recta.
+VER LAS MANOS (debug, F8): ejes sobre cada mano (verde: hacia donde mira la
+palma; azul: los dedos; rojo: de indice a menique; gris: como estaria con la
+muneca recta; bola ambar: muneca en su tope) y arriba a la izquierda cuanto
+dobla, ladea y gira cada muneca y cuanto esta estirado el brazo.
+ORDENADOR DE MUNECA: bien puesto alrededor del antebrazo (estaba girado un
+cuarto de vuelta y en el puno del guante), con la pantalla mas grande y
+mirando a los ojos al levantarlo, tambien sentado.
+APLAUDIR: las palmas se juntan.
+COMBUSTIBLE: el Alcotan aguanta 61 minutos suspendido sobre la Luna con los
+depositos llenos (antes 2 min y medio); el Abejorro 2 h 15 min y el Cachalote
+1 h 50 min.
+PARTICULAS EN TERCERA PERSONA (V): ya salen donde deben (se dibujaban
+desplazadas lo que hay de tus ojos a la camara).
+VISOR: el filtro de soldadura ya no deja la imagen a oscuras: baja un poco la
+luz y aplasta lo que deslumbra, asi ves lo que sueldas. El visor solar (U) es
+un parasol: casi sin tinte, quita el deslumbre del suelo y del casco al sol.
+
+NOVEDADES V36 (carpeta SELENE_V36: SeleneLauncher.exe, SeleneV36_demo.exe / _multiplayer.exe / _debug.exe):
+EL JUEGO SE LLAMA SELENE: lo dicen la pantalla de carga, el menu, las ventanas
+y el launcher. Cada version va ya en su propia carpeta con sus datos (esta en
+SELENE_V36, la anterior en V35_jugable): asi una version nueva no rompe las
+anteriores.
+PANTALLA DE CARGA NUEVA: la misma composicion que el menu de inicio (emblema,
+nombre, etapas y una linea que se llena) sobre el espacio y el limbo de la
+Luna, por el que avanza el amanecer segun lo cargado. No hay nada que tocar.
+LAUNCHER NUEVO (SeleneLauncher.exe): tres tarjetas DEMO, DEBUG y MULTIJUGADOR
+(teclas 1, 2, 3), lista de versiones con fecha y lo que trajo cada una
+(flechas; Enter juega), y pestanas OPCIONES, MULTIJUGADOR (servidor, nombre,
+tu direccion para los amigos), HERRAMIENTAS (guiones de camara, comprobar el
+arranque, documentos, registros) y SISTEMA (tarjeta grafica, ultima partida,
+copiar diagnostico). Guarda cuanto has jugado a cada version.
+VUELO, ARREGLADO: el Alcotan ya no se va hacia delante al encender motores.
+ - Sus alas van metro y medio mas a proa: las gondolas quedan bajo el centro
+   de masas (antes empujaban 1,3 m por detras y lo sostenian las toberas).
+ - Los motores encendidos se quedan al ralenti (2 % del empuje, antes 35 %):
+   la nave no se mueve hasta que subes el acelerador.
+ - MANTENER nivela la nave: la pone derecha sobre sus motores y la deja
+   quieta; las toberas apenas disparan. Probado con cuatro gravedades (de
+   0,21 a 2,2 m/s2) en las tres naves.
+ - La carga sujeta mueve el centro de masas y el ordenador lo compensa.
+ - El Cachalote reparte bien sus cuatro motores: da 256 de sus 260 kN (antes
+   230).
+SIN ESPERAS: nada a bordo hace esperar una eternidad, y una prueba lo vigila
+(docs/TIEMPOS.md). El reactor esta en linea a los 15 s, cubre el consumo a
+los 44 s y da plena potencia al minuto. El compresor vacia la bodega en 1 min
+43 s (antes 34 min) y la devuelve en 35 s. De fria y a oscuras a lista para
+despegar: 27 s siguiendo el manual. Puertas 2-3 s, tren 4-6 s, rampa 7-9 s,
+represurizar 28 s, igualar con el volante 16 s.
+LA NAVE PESA LO QUE LLEVA: los depositos de propelente, las botellas de
+oxigeno y nitrogeno y el deposito de aire pesan lo que les queda, y la nave
+se aligera segun gasta. El Alcotan pesa 35,1 t (2,3 t de propelente); el
+Cachalote, 80,2 t (ocho depositos de ala, 9,2 t); el Abejorro, 2,9 t. En el
+panel de combustible (y en la consola del Abejorro) hay una seccion MASA:
+toneladas, propelente, lo que da de si (m/s) y empuje/peso.
+MANOS EN LOS MANDOS: al accionar un mando la mano va a el: el dedo pulsa los
+botones, pinza en los interruptores, puno en las palancas. Sentado a los
+mandos, las manos descansan en la palanca y en los gases y se mueven con lo
+que pilotas.
+GESTOS: manten Tab, mueve el raton hacia uno (o pulsa su numero) y suelta:
+saludar, senalar, bien, OK, alto, saludo, ven, no se, celebrar, esperad,
+cortar, aplaudir. Con los dedos animados.
+ORDENADOR DE MUNECA: pulsa Y y levantas el antebrazo: oxigeno, presion, gas
+de la mochila, hora y la energia y el aire de la nave en la que estas o la
+mas cercana. Clic pasa de pagina; Y lo baja.
+HUELLAS: las botas dejan huella en el regolito (izquierda y derecha, con su
+dibujo, mas hondas al correr o caer), las patas de las naves dejan su marca
+y la carga arrastrada, su surco.
+VISOR: se oscurece solo cuando hay un arco de soldadura a la vista. Con U
+bajas el visor solar dorado. Con el esfuerzo se empana un poco el borde.
+LOGICA DE LAS NAVES, PROBADA: nueve juegos de pruebas nuevos para toda nave
+(cada disyuntor corta lo suyo, baterias y conservacion de la energia, reparto
+cuando falta potencia, ningun mando muerto, avisos, enclavamientos, uso al
+azar de todos los mandos sin que nada reviente). 501 pruebas en total.
+MULTIJUGADOR: el servidor es nuevo (servidores/SeleneServidor.exe) y no se
+entiende con la V35. En el juego hace lo mismo que en la V35 (os veis, mandos,
+naves, vuelo de quien pilota); lo demas (carga suelta, danos, disparos,
+gestos de los otros) esta a medio hacer.
+
+NOVEDADES V35 (LunaV35_demo.exe / LunaV35_multiplayer.exe / LunaV35_debug.exe / LunaLauncher.exe / servidores):
+PANTALLA DE CARGA: al abrir el juego sale una cabina arrancando en frio: una
+pantalla con la secuencia de arranque, una aguja que sube, los avisos que
+pasan de ambar a verde y los disyuntores que van entrando; al final, prueba de
+lamparas y LISTO. El juego se carga por detras en su propio hilo, asi que la
+ventana responde siempre (ya no se cae si haces clic mientras carga) y tarda
+menos (unos 8 s en vez de 13).
+ANDAR: el paso ya no va a saltos. Andando siempre hay un pie en el suelo (un
+pie tras otro, con un momento con los dos apoyados), con cualquier gravedad;
+solo al correr hay un instante con los dos en el aire.
+MOCHILA: con el estabilizador (Z) encendido, al soltar las teclas te frena en
+menos de un segundo (antes tardaba varios).
+ALT, MIRAR SIN GIRAR: manten Alt y mueve el raton. Desde tus ojos giras solo
+la cabeza: el cuerpo, la herramienta y la mira siguen donde estaban (puedes
+seguir soldando un punto mientras miras a otro lado). En tercera persona
+(V), Alt mueve solo la camara alrededor de tu astronauta. Al soltar, la
+vista vuelve.
+MULTIJUGADOR (PREPARADO): hay una tercera edicion, LunaV35_multiplayer.exe, y
+una carpeta servidores con el servidor (servidores/iniciar.bat).
+ 1. Arranca el servidor: doble clic en servidores/iniciar.bat (o el boton
+    INICIAR SERVIDOR LOCAL del launcher, pestana MULTIJUGADOR).
+ 2. Cada jugador abre el launcher, elige MULTIJUGADOR, escribe la direccion
+    del servidor (en el mismo PC: 127.0.0.1:47600; en tu red, la que dice el
+    servidor al arrancar) y su nombre, y pulsa JUGAR. Tambien se puede
+    escribir en el propio menu de inicio del juego (CON OTROS, CONECTAR).
+ Que se comparte: os veis (cada astronauta con su nombre encima, andando,
+ volando o sentado), los mandos que acciona cada uno, las naves que pone cada
+ uno y el vuelo de la nave de quien va a sus mandos. Arriba a la izquierda,
+ RED dice cuantos sois y el retardo. Que NO se comparte todavia: la carga
+ suelta, los danos, los disparos y las puertas movidas a mano. Probado en el
+ mismo PC; por red local o internet aun no (ver servidores/LEEME.txt).
+EL IMAN SE LLEVA TODO LO QUE TIENE DEBAJO: el de la grua del Cachalote y el
+del Abejorro son el mismo. Pon la placa centrada sobre lo que quieres (el
+centro de cada bulto a menos de medio metro del centro de la placa), baja
+hasta tocar y AGARRA: sube todo lo que este bajo la placa y contra ella. Dos
+bidones juntos, los dos. Carga nominal 2 500 kg: si hay mas, toma lo mas
+centrado, deja el resto y lo avisa. La consola de la grua dice los kilos que
+cuelgan (CARGA 365 kg). SUELTA lo suelta todo. Lo que sigue en su anclaje del
+suelo no se lo lleva (ANCLADA): suelta antes el anclaje.
+CARGA CON PESO DE VERDAD: lo que lleva un recipiente pesa, y pesa menos segun
+se gasta (ya no es un rotulo). Un bidon de agua lleno son 182 kg (12 kg el
+bidon y 170 L de agua, que es lo que cabe en ese bidon); a medias, 97 kg. El
+de propelente, 170 kg; un pale de regolito, 640 kg; una caja de repuestos,
+54 kg. Lo que pone cada bidon y lo que lee el escaner salen de lo que lleva.
+Un bidon de propelente vacio ya no estalla.
+PASAR AIRE DE UN COMPARTIMENTO A OTRO: junto a cada puerta de mamparo, a media
+altura y a los dos lados, hay una placa con un volante amarillo y un manometro
+de la diferencia de presion. Apunta al volante y gira la rueda del raton
+(arriba abre; Mayus un cuarto de golpe, Ctrl fino): se abre lo que gires y se
+oye pasar el aire. Cuando la aguja entra en verde (menos de 5 kPa) la puerta ya
+abre. Cabina y bodega se igualan en minuto y medio con la valvula del todo
+abierta. En la popa de la bodega, a babor de la rampa, el volante rojo abre al
+vacio.
+RECUPERAR EL AIRE (COMPRESOR): en la bodega, pared de babor, panel COMPRESOR DE
+AIRE con su compresor y su deposito AIRE RECUPERADO. Eliges de donde saca
+(ORIGEN) y donde mete (DESTINO), levantas la tapa y pulsas MARCHA.
+ - Abrir la rampa sin tirar el aire: ORIGEN BODEGA, DESTINO DEPOS., MARCHA.
+   Baja la aguja de ORIGEN y sube la del DEPOSITO; tarda media hora larga (el
+   60 % sale en el primer cuarto de hora) y gasta bateria: mejor con el
+   reactor en marcha. Con LIMITE encendido (5 kPa) ya no saca mas: abre el
+   volante rojo y lo que queda sale fuera. Se recupera el 93 %.
+ - Volver a llenarla: rampa cerrada, volante rojo cerrado, ORIGEN DEPOS.,
+   DESTINO BODEGA, MARCHA. Baja sola del deposito en 3 minutos.
+ - Con prisa: DESTINO CABINA (5 minutos) y se devuelve luego por el volante
+   del mamparo.
+ - Lamparas: EN MARCHA (fija comprime, parpadea pasa solo), LIMITE, LLENO,
+   ABIERTO (el destino no esta estanco), SIN ENERGIA.
+CHORROS: todo lo que empuja se ve empujar, mas cuanto mas empuja. Los motores
+(gondolas del Alcotan y del Cachalote, motores del Abejorro): boca al blanco y
+un cono azulado que se abre mucho y se apaga pronto, como en el vacio, que
+ilumina la gondola y el suelo y sigue a la gondola cuando bascula. Las toberas
+de maniobra (RCS): un cono corto y palido solo mientras disparan. Las de gas
+frio del Abejorro y las diez de la mochila: un soplo blanquecino hacia el lado
+contrario del empuje.
+REACTOR, MAS RAPIDO Y SIN SUSTOS: en la bodega, pared de estribor, esta el
+panel del reactor. Levanta la tapa y pulsa MARCHA (necesita bateria y las dos
+bombas de refrigerante, BOMBA 1 y 2 de ese mismo panel, que ya vienen
+puestas). A los 45 s esta EN LINEA; da corriente util a los 3 minutos y cubre
+lo que gasta la nave en unos 6 (antes tardaba mas de un cuarto de hora).
+Mientras tanto tiran las baterias, que aguantan mas de tres horas. La rueda
+POTENCIA se puede subir de golpe: las barras ya no dejan que se dispare (antes
+saltaba la parada de emergencia). Si no puede soltar el calor baja el solo la
+potencia: lampara ESTADO en ambar fijo y aviso de reactor limitado por
+temperatura. Despliega entonces los radiadores (RADIAD. en el panel del techo
+del puente) o baja POTENCIA.
+BALANCE DE ENERGIA: un panel nuevo, ENERGIA, en la pared de babor de la
+cabina, en el Alcotan y en el Cachalote. Dice GENERA (kW), CONSUMO (kW),
+QUEDAN (minutos de bateria al ritmo de ahora; 9999 si no se gastan), la carga
+de las baterias en una barra y una lampara (ambar: se gastan; verde: se
+cargan). Lo mismo sale en la pagina ENERGIA de las pantallas multifuncion. A
+baterias el Alcotan gasta 7,4 kW y le quedan unos 220 minutos.
+TITULOS DE LOS PANELES: el nombre de cada seccion de un panel es ahora mas
+grande que los rotulos de sus mandos, en todos los paneles.
+FOTOS DE GUION SIN VENTANA: los guiones (--guion) ya no abren ventana.
+
+NOVEDADES V34 (LunaV34_debug.exe / LunaV34_demo.exe / LunaLauncher.exe):
+LAUNCHER: abre LunaLauncher.exe. Elige version (demo o desarrollo), calidad
+grafica, pantalla completa o ventana y pulsa JUGAR. Tambien abre este manual
+y la carpeta de fotos.
+MENU DE INICIO: el juego abre con un menu sobre el mundo en marcha, con
+jugar, donde empezar (en la base, junto a cada nave o ya sentado a sus
+mandos), opciones y controles, y salir. Con las flechas eliges el sitio y con
+Intro juegas. Desde el menu de pausa (Esc) puedes volver a el o salir.
+TERCERA PERSONA: tecla V. A pie ves a tu astronauta desde detras del hombro;
+la RUEDA acerca o aleja la camara; si algo la tapa, se acerca sola. La mira
+sigue marcando lo que apuntas (herramientas, mandos, cajas). Sentado, V te
+saca fuera de la nave para verla volar (las teclas del asiento siguen
+pilotando; el raton gira la camara alrededor). V otra vez: tus ojos.
+BAJARSE DE UNA NAVE: cada nave dice por donde se baja uno. Del Abejorro sales
+al estribo del lado de babor mirando hacia fuera; si esta ocupado, al otro; si
+los dos lo estan, al suelo de al lado. Nunca apareces dentro de algo.
+SENTADO: el astronauta se sienta de verdad en el cojin, con las botas en el
+suelo y las manos en los muslos. El asiento es nuevo: en vez de respaldo lleva
+una cuna donde encaja la mochila (antes la atravesaba). Los ojos van 17 cm
+mas altos que antes: se ve mejor por encima del panel.
+BODEGA DEL CACHALOTE CON MEDIDAS: rejilla pintada en el suelo. Cada bahia es
+una celda (columnas A, B, C y filas 1 a 8, con sus letras y numeros en los
+bordes); una regla a cada lado marca los METROS desde el umbral de la rampa
+y otra en cada extremo los metros desde el centro (BABOR / ESTRIBOR). La
+consola de la grua tiene una pantalla que dice sobre que bahia esta el
+gancho (por ejemplo BAHIA C4 CENTRADO) y sus metros a lo largo y a babor.
+(La tecla de prueba de la bala, solo en debug, pasa de V a O.)
+
+NOVEDADES V33 (LunaV33_debug.exe / LunaV33_demo.exe):
+EL IMAN DE LA GRUA (Cachalote), COMO SE USA:
+ 1. Suelta el anclaje de la carga: mira su palanca roja (en el suelo, junto a
+    la carga) y pulsa E. Sin eso el iman NO se la lleva (va atornillada).
+ 2. En la consola de la grua (ahora en medio de la bodega, mirando a popa):
+    PUENTE y CARRO hasta ponerla encima; IZADO abajo del todo: baja y SE PARA
+    SOLA al tocar la carga (lampara TOPE).
+ 3. Levanta la tapa roja y pon IMAN en AGARRA: lampara SUJETA en verde.
+    Si se enciende ANCLADA (roja) es que la carga sigue en su anclaje: paso 1.
+ 4. IZADO arriba (la carga pasa por encima de todo lo demas), llevala con
+    PUENTE y CARRO, IZADO abajo (se para en el suelo) e IMAN en SUELTA.
+ Arriba a la derecha te lo dice con palabras cuando algo se para o no agarra.
+TREN DE ATERRIZAJE: las patas son amortiguadores de verdad (muelle de gas y
+freno): la nave se hunde al posarse, cabecea y se asienta. Las del Cachalote
+son mas grandes. Una toma dura llega al tope.
+NADA ATRAVIESA NADA: lo que mueve un mecanismo se para en lo que encuentra:
+el izado de la grua en la carga, la rampa en el suelo (y sube con la nave al
+asentarse), una puerta no se cierra si estas en el hueco (ni la compuerta de
+la bodega con una caja debajo). Se queda ahi hasta que la mandes al otro lado
+o se quite lo que estorba.
+BODEGA DEL CACHALOTE: 24 bahias (A1..C8, rotuladas en el suelo) en tres
+columnas, con un pasillo libre a cada banda. La grua es un mastil telescopico
+de cuatro tramos: recogida, la carga pasa por encima de palés y bidones.
+TU CUERPO: llevas el traje puesto. Mira abajo y veras la caja del pecho, los
+brazos y, al andar, las piernas. Cada pie pisa donde hay suelo de verdad
+(regolito, rampa, cubierta, un escalon) y no resbala; en la Luna el paso es
+largo y con un momento en el aire, como en las peliculas del Apolo. Tu sombra
+es la del traje entero. Sentado, estas sentado.
+- ESCALONES: subes sin saltar lo que no pase de 45 cm (un bordillo, el borde
+  de la rampa, un palé bajo) y bajas sin quedarte flotando.
+- AL ATERRIZAR con velocidad las botas agarran: frenas en uno o dos metros en
+  vez de patinar; las rodillas se doblan con el golpe.
+- MOCHILA: el estabilizador (Z) ahora mantiene tambien la ALTURA: suelta las
+  teclas y te quedas quieto en el aire (gastando gas). Ctrl: bajar.
+HERRAMIENTAS EN LA MANO: se ven las manos (guantes con dedos) en el soldador
+y en el lanzacohetes; pesan (se retrasan al girar, se mueven con los pasos),
+el dedo aprieta el gatillo y se sacan y se guardan con su gesto.
+LANZACOHETES NUEVO: carcasa blanca y grafito, bobinas, mira con pantalla.
+Dispara con retroceso y SE RECARGA A LA VISTA: baja del hombro, el pulgar
+abre la compuerta, la mano izquierda saca un cohete de la bolsa del muslo, lo
+deja en la recamara, cierra de un golpe y vuelve al hombro (2,4 s).
+
+NOVEDADES V32 (LunaV32_debug.exe / LunaV32_demo.exe):
+MODELOS: de cerca (hasta unos 40 m de cada nave) ya no se ven cajas ni
+cilindros: cada aparato, bulto, asiento, consola, lampara, deposito y motor
+tiene su modelo, hecho en Blender con una receta (tools/modelos). De lejos se
+dibuja lo de antes: cuesta lo mismo que costaba.
+- NAVES: alas con perfil, borde de ataque, flap y remaches; aletas en V; lomo
+  con tapas y pasamanos; tren con vastago, tijeras y zapata; el Abejorro es de
+  vigas perforadas y tubo; la grua del Cachalote tiene viga, testeros con
+  ruedas, carro con su motor y mastil telescopico.
+- CASCO: cada chapa con su junta y las aristas suaves redondeadas. Las
+  VENTANAS y la cupula tienen marco por fuera y por dentro (antes parecian
+  huecos). Las puertas y la rampa, marco, panel rehundido y nervios.
+- EN LA MANO: el soldador-escaner y el lanzacohetes son modelos de verdad (la
+  pantalla del soldador va en su carcasa, sobre un brazo).
+- ROTULOS: lo que hay escrito va con la pieza. Bidones (AGUA, PROPELENTE),
+  botellas (O2, N2), reactor, cajas con su numero de serie, gondolas, depositos
+  y el casco (RESCATE, BODEGA DE CARGA). Un bidon lo conserva aunque lo saques.
+- BASE: losas, muros, bloques, rampa y ventana tambien tienen modelo.
+INTERFAZ: marco de visor en las esquinas, reloj de mision arriba a la
+izquierda, emblema y pie en el menu de Esc, y el catalogo (G), el inspector
+(F4), el editor (F6) y las cifras (F3) con el mismo cristal que el resto.
+Las taquillas de la cabina del Alcotan miran ahora al pasillo.
+
+NOVEDADES V31 (LunaV31_debug.exe / LunaV31_demo.exe):
+MANOS: con las manos libres, clic mantenido sobre una caja suelta: la coges y
+la llevas delante (la rueda la acerca o la aleja). Si pesa demasiado no la
+levantas: la arrastras. Suelta el clic para dejarla.
+VOLVER A ANCLAR: deja la carga sobre un anclaje abierto (el riel amarillo) y
+haz clic en su palanca roja.
+BODEGA DEL ALCOTAN: hay pasillo a estribor para pasar sin saltar.
+MOCHILA: al salir de una nave en marcha sigues con su velocidad, y al soltar
+las teclas la mochila te frena respecto a ESA nave, no al suelo. Si la nave
+acelera, frena o gira, se te va. Z: apaga o enciende ese estabilizador. Abajo a
+la derecha, en el aire: altura, subida y la nave mas cercana con su distancia y
+tu velocidad respecto a ella.
+SONIDO (nuevo; volumen en Esc > CONTROLES): no hay nada grabado, todo se
+fabrica. Fuera no hay aire: solo oyes tu traje (respiracion, ventilador, la
+mochila) y lo que TOCAS (tus pasos, el casco que te lleva, el mando bajo la
+mano), sordo. Dentro de una cabina con aire se oye de verdad, mas flojo cuanto
+menos presion: si la cabina pierde el aire, se va quedando en silencio. Pasos
+distintos en cubierta y en regolito, mandos que chasquean, anclajes e imanes,
+motores a traves del casco, rampa/tren/grua moviendose y la alarma general
+(dos tonos) hasta que pulses RECONOCER en el panel principal.
+POLVO: las botas levantan polvo al andar por el regolito, y la mochila y los
+motores de cualquier nave lo sacan a ras de suelo cuando estan cerca de el.
+F12: foto de lo que ves (sin HUD) a la carpeta fotos.
+NAVES NUEVAS (G: catalogo; las dos estan tambien junto al inicio):
+- ABEJORRO: remolcador de un asiento, sin cabina (se vuela con el traje).
+  Consola: BATERIA, PROPEL., tapa + ARMAR, ARRANQUE (dos veces) y acelerador.
+  GIROSCOPOS: gira sin gastar propelente hasta que se llenan (DESCARGA los
+  vacia con el gas frio). IMAN (bajo tapa): posate sobre una caja y agarra;
+  sujetar no gasta, y sin corriente NO suelta.
+- CACHALOTE: carguero de 45 m. Bodega de 22 m con PUENTE GRUA: (V33: consola en medio de la bodega) panel junto a
+  la puerta de la cabina (PUENTE, CARRO, IZADO: deja cada palanca donde
+  quieras que vaya; IMAN bajo tapa). Suelta antes el anclaje del pale. En el
+  puente, panel de popa: giroscopos y CUNA (suelta o toma el Abejorro que
+  lleva atracado en el lomo). Cuatro motores: el ordenador reparte el empuje
+  para que no cabecee aunque muevas la carga.
+RENDIMIENTO: una nave posada ya no gasta fisica (antes las que tenian
+estabilizador activo no se dormian) y un paso de nave despierta cuesta 10
+veces menos. Medido: ver docs/OPTIMIZACION.md.
+
+NOVEDADES V30 (LunaV30_debug.exe / LunaV30_demo.exe):
+Esc: MENU con pestanas. CONTROLES lista todas las teclas (las del juego, las de
+tus herramientas y las del asiento de la nave que tengas mas cerca), con la
+sensibilidad del raton. GRAFICOS es el menu de antes.
+J: mochila propulsora, encendida o apagada (apagada, Espacio solo salta).
+Encendida: Espacio sube, Ctrl baja, WASD empuja de lado en el aire. Abajo a la
+izquierda, su gas; abajo en el centro, tus herramientas (1, 2); abajo a la
+derecha, altura y subida cuando vuelas con ella; bajo la mira, que es lo que
+apuntas; a la derecha, su ficha; arriba a la derecha, los avisos.
+Sentado, una tecla mantenida mantiene el mando (W: palanca adelante hasta soltar).
+Los pilotos se sientan a un metro del panel; la consola de techo cuelga delante,
+inclinada hacia ellos. Las herramientas siguen a la vista tambien arriba y abajo.
+Carga: cada bulto va sujeto por su anclaje (el riel con cierres amarillos y
+palanca roja). Apunta al anclaje y haz clic: lo suelta y pasa a ser un cuerpo
+suelto con fisica. Si rompes el anclaje, tambien. El bidon rojo de propelente
+estalla si se destruye.
+
+NOVEDADES V29:
+1: soldador-escaner. Su pantallita dice que es lo que miras y como esta.
+   Clic mantenido: suelda, o repone lo que falta. Boton derecho: vista de
+   integridad (rojo = danado, mas vivo cuanto peor; morado = falta).
+2: lanzacohetes (clic dispara, boton derecho apunta).
+Mochila propulsora (J la enciende; ver arriba): en el aire, WASD empuja de lado
+y al soltar te frena; Ctrl baja. Se rellena a bordo de una nave.
+La demo se juega a pie: sin vuelo libre (F) ni las armas de prueba.
+Hay 2000 naves de trafico yendo de campo en campo; el campo de casa esta
+600 m al nordeste del inicio.
+Rendimiento: LunaV31_debug.exe --guion tools/rendimiento/batalla_100.jsonc
+--vsync off (graba cada fotograma en out/rendimiento).
+
+NAVES:
+Delante del inicio esta el Alcotan, una lanzadera con todos sus sistemas.
+Sube por la rampa y camina dentro. Apunta a un mando y haz clic (mantener =
+tirar/armar; rueda = girar, Mayus grueso, Ctrl fino; palancas: clic y arrastra).
+E: sentarse en el asiento apuntado. Espacio: levantarse. En el asiento del
+piloto: W/S cabeceo, Q/E alabeo, A/D guinada, R/F subir/bajar, I/K/J/L
+traslacion, Mayus/Ctrl acelerador, X corte.
+Arranque: techo BOMBA A (hidraulica), pedestal: tapas, ARM IZQ/DER, MOT IZQ/DER
+dos veces (ARRANQUE) y acelerador. Reactor: panel del reactor, tapa y MARCHA.
+G: catalogo de naves (y estructuras en debug): elige, apunta, clic. Sin suelo
+delante la pone flotando. F4 (debug): inspector de la nave.
+
+ABRIR: doble clic en Luna.exe o JUGAR.cmd.
+
+Clic dentro de la ventana: capturar el raton y mirar.
+WASD: moverse. Shift: correr. Espacio: saltar.
+F: alternar vuelo libre. En vuelo: Espacio sube, Ctrl baja.
+Rueda: velocidad de vuelo. Shift en vuelo multiplica por 10; Alt, otra vez
+(x10 por defecto, ajustable de 1 a 1000 en el menu Esc > Controles).
+B: lanza una granada. N: lanza una bomba. Vuelan en arco (se ven en vuelo) y
+estallan donde caen: crater, brillo, destello, temblor y polvo. Su explosion
+sale solo de su carga (assets/defs/detonacion.jsonc). Cada explosion es un
+fichero de assets/defs/explosions (con su tecla); los estilos de particula,
+assets/defs/particles.jsonc. Prueba sin teclado: lunar-app --explode bomba@90
+V: bala. H: proyectil pesado. Q (mantener): metralleta (assets/defs/shots.jsonc).
+P: proyectil personalizado; su carga (hasta 15 kt), velocidad y tamano se
+cambian en el menu Esc. Las estructuras de
+delante (estacion, torre, modulo lunar; assets/defs/structures) se agrietan,
+pierden esquirlas, se parten en trozos con su forma y masa, y lo que queda
+suelto es un solido rigido: cae, rueda, se apila sobre losas y otros trozos
+y se duerme quieto. Las redes (energia, propelente) van por las uniones:
+destruye el reactor o corta el cableado y se apagan focos y ventanas.
+M: misil al punto de la mira a cualquier distancia que alcance (sube en F y
+apunta lejos); K: camara siguiendo al misil. F3 dice a que va a dar y cuando.
+Despierta lo que va a golpear aunque este a 100 km (assets/defs/missiles.jsonc).
+Contenido (cuerpos, naves, paleta, escenario): assets/defs/*.jsonc.
+R: volver al punto inicial. Esc: liberar el raton.
+C: agacharse. L: linterna. T: telemetro. F7: niveles de detalle tenidos.
+Guiones de camara: LunaV30_debug.exe --guion tools/camara/carga.jsonc (fotos en out/camara).
+F3: datos en el titulo. F11: pantalla completa.
+
+Esta es la primera demo interactiva: superficie lunar real del proyecto,
+render nativo wgpu, caminar y volar. La generacion del terreno sigue
+provisionalmente en un hilo de CPU. Todavia no hay naves, NPC ni sombras
+en cascada. El hito CDLOD de GPU y la comparacion 100+100 quedan pendientes.
+Al arrancar, el suelo tarda unos segundos en aparecer.
+
+Todo lo creado esta dentro de MIGRACION.

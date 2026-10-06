@@ -1,0 +1,18 @@
+// Performance: 20 Alcotán more standing round the first, seen from outside. What the frame
+// costs with nothing happening: drawing them and their systems idling.
+// Run: luna --guion tools/rendimiento/flota_20.jsonc → out/rendimiento/flota_20.json (+ .log, .png)
+{
+  "naves": ["alcotan"],
+  "registro": "out/rendimiento/flota_20.log",
+  "pasos": [
+    { "nave": "alcotan" },
+    { "esperar": 2.0 },
+    { "flota": { "nave": "alcotan", "cuenta": [4, 5], "paso": 34, "este": -10, "norte": 24 } },
+    { "camara": { "en": [0, 45, -120], "mira": [0, 0, 0], "fov": 70 } },
+    { "esperar": 4.0 },
+    { "perfil": "out/rendimiento/flota_20.json" },
+    { "esperar": 10.0 },
+    "fin_perfil",
+    { "foto": "out/rendimiento/flota_20.png" }
+  ]
+}

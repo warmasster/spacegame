@@ -1,0 +1,54 @@
+// Overhead panel of the Alcotán: electrical system, hydraulics, lights, air, radiators.
+{
+  "name": "Panel de techo",
+  "tamano": ["0.95 m", "0.66 m"],
+  "rejilla": [12, 8],
+  "margen": "10 mm",
+  "separacion": "5 mm",
+  "grupos": [
+    { "id": "elec", "titulo": "ELÉCTRICO", "celda": [0, 0], "ocupa": [7, 4] },
+    { "id": "hid", "titulo": "HIDRÁULICA", "celda": [7, 0], "ocupa": [5, 4] },
+    { "id": "luces", "titulo": "LUCES", "celda": [0, 4], "ocupa": [7, 4] },
+    { "id": "aire", "titulo": "AIRE · TÉRMICO", "celda": [7, 4], "ocupa": [5, 4] }
+  ],
+  "mandos": [
+    { "id": "bat1", "kind": "interruptor", "grupo": "elec", "rotulo": "BAT 1", "posiciones": ["DESC", "CONEC"], "bind": { "senal": "ct.bat1" }, "defecto": 1,
+      "nombre": "Contactor batería 1", "ayuda": "Conecta la batería 1 a la barra de baterías." },
+    { "id": "bat2", "kind": "interruptor", "grupo": "elec", "rotulo": "BAT 2", "posiciones": ["DESC", "CONEC"], "bind": { "senal": "ct.bat2" }, "defecto": 1,
+      "nombre": "Contactor batería 2" },
+    { "id": "bus_a", "kind": "interruptor", "grupo": "elec", "rotulo": "BUS A", "bind": { "senal": "ct.bus_a" }, "defecto": 1, "nombre": "Contactor bus A" },
+    { "id": "bus_b", "kind": "interruptor", "grupo": "elec", "rotulo": "BUS B", "bind": { "senal": "ct.bus_b" }, "defecto": 1, "nombre": "Contactor bus B" },
+    { "id": "ess", "kind": "interruptor", "grupo": "elec", "rotulo": "ESENC.", "bind": { "senal": "ct.ess" }, "defecto": 1, "nombre": "Contactor bus esencial" },
+    { "id": "apu", "kind": "interruptor", "grupo": "elec", "rotulo": "APU", "posiciones": ["PARO", "MARCHA"], "bind": { "senal": "apu.marcha" },
+      "nombre": "APU", "ayuda": "Arranca la APU (8 s, 2,5 kW de la barra). Quema propelente del colector izquierdo." },
+    { "id": "gen", "kind": "interruptor", "grupo": "elec", "rotulo": "GEN APU", "bind": { "senal": "ct.apu" }, "defecto": 1, "nombre": "Contactor del generador de la APU" },
+    { "id": "conv_a", "kind": "interruptor", "grupo": "elec", "rotulo": "CONV A", "bind": { "senal": "ct.conv_a" }, "defecto": 1, "nombre": "Convertidor A (alta → 28 V)" },
+    { "id": "conv_b", "kind": "interruptor", "grupo": "elec", "rotulo": "CONV B", "bind": { "senal": "ct.conv_b" }, "defecto": 1, "nombre": "Convertidor B (alta → 28 V)" },
+    { "id": "v_bus", "kind": "display7", "grupo": "elec", "senal": "elec.barra", "unidad": "V", "decimales": 1, "digitos": 4, "requiere": { "energia": "1 W" }, "rotulo": "V BARRA" },
+
+    { "id": "hpu_a", "kind": "interruptor", "grupo": "hid", "rotulo": "BOMBA A", "bind": { "senal": "hid.a" }, "nombre": "Unidad hidráulica A",
+      "ayuda": "Motor y bomba del sistema hidráulico (tren de aterrizaje). 6,5 kW del bus A." },
+    { "id": "hpu_b", "kind": "interruptor", "grupo": "hid", "rotulo": "BOMBA B", "bind": { "senal": "hid.b" }, "nombre": "Unidad hidráulica B" },
+    { "id": "aisla", "kind": "interruptor", "grupo": "hid", "rotulo": "MORRO", "posiciones": ["AISLADO", "ABIERTO"], "bind": { "senal": "hv.morro" }, "defecto": 1,
+      "nombre": "Válvula del ramal del morro", "ayuda": "Aísla la tubería del tren de morro (si pierde, cierra para salvar el resto)." },
+    { "id": "p_hid", "kind": "aguja", "grupo": "hid", "senal": "hid.colector", "escala": ["0 MPa", "28 MPa"], "unidad": "MPa", "rotulo": "PRESIÓN",
+      "zonas": { "verde": ["18 MPa", "23 MPa"], "roja": ["0 MPa", "8 MPa"] }, "requiere": { "energia": "1 W" } },
+
+    { "id": "l_puente", "kind": "interruptor", "grupo": "luces", "rotulo": "PUENTE", "bind": { "senal": "luces.puente" }, "defecto": 1, "nombre": "Luces del puente" },
+    { "id": "l_cabina", "kind": "interruptor", "grupo": "luces", "rotulo": "CABINA", "bind": { "senal": "luces.cabina" }, "defecto": 1, "nombre": "Luces de la cabina" },
+    { "id": "l_bodega", "kind": "interruptor", "grupo": "luces", "rotulo": "BODEGA", "bind": { "senal": "luces.bodega" }, "defecto": 1, "nombre": "Luces de la bodega" },
+    { "id": "l_nav", "kind": "interruptor", "grupo": "luces", "rotulo": "NAVEG.", "bind": { "senal": "luces.nav" }, "defecto": 1, "nombre": "Luces de navegación" },
+    { "id": "l_estrobo", "kind": "interruptor", "grupo": "luces", "rotulo": "DESTELLO", "bind": { "senal": "luces.estrobos" }, "nombre": "Destelladores" },
+    { "id": "l_baliza", "kind": "interruptor", "grupo": "luces", "rotulo": "BALIZA", "bind": { "senal": "luces.baliza" }, "defecto": 1, "nombre": "Balizas" },
+    { "id": "l_aterr", "kind": "interruptor", "grupo": "luces", "rotulo": "FOCOS", "bind": { "senal": "luces.aterrizaje" }, "nombre": "Focos de aterrizaje" },
+    { "id": "l_suelo", "kind": "interruptor", "grupo": "luces", "rotulo": "SUELO", "bind": { "senal": "luces.suelo" }, "defecto": 1, "nombre": "Tiras de suelo" },
+
+    { "id": "vent", "kind": "interruptor", "grupo": "aire", "rotulo": "VENTIL.", "bind": { "senal": "aire.vent" }, "defecto": 1, "nombre": "Ventiladores" },
+    { "id": "depur", "kind": "interruptor", "grupo": "aire", "rotulo": "DEPUR.", "bind": { "senal": "aire.depurador" }, "defecto": 1, "nombre": "Depurador de CO₂" },
+    { "id": "o2", "kind": "interruptor", "grupo": "aire", "rotulo": "INY O2", "bind": { "senal": "aire.o2" }, "defecto": 1, "nombre": "Inyector de oxígeno" },
+    { "id": "n2", "kind": "interruptor", "grupo": "aire", "rotulo": "INY N2", "bind": { "senal": "aire.n2" }, "defecto": 1, "nombre": "Inyector de nitrógeno" },
+    { "id": "rad", "kind": "interruptor", "grupo": "aire", "rotulo": "RADIAD.", "posiciones": ["PLEGADOS", "DESPLEG."], "bind": { "senal": "rad.orden" },
+      "nombre": "Radiadores", "ayuda": "Despliega las dos aletas de radiador del lomo (husillos eléctricos)." },
+    { "id": "antena", "kind": "interruptor", "grupo": "aire", "rotulo": "ANTENA", "posiciones": ["RECOG.", "FUERA"], "bind": { "senal": "antena.orden" }, "nombre": "Mástil de la antena" }
+  ]
+}

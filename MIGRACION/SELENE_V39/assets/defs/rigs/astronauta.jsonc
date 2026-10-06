@@ -1,0 +1,140 @@
+// The player's body: the suit of assets/models/astronauta.glb (made and rigged by
+// tools/modelos/astronauta, see docs/RIGGING.md) and what is what in it. The game poses it by
+// these names (crates/app/src/rig.rs, body.rs): nothing in the code knows a bone of this model.
+// Model axes: x to its left, y up, z the way it faces. Sides: left first, then right.
+{
+  "modelo": "astronauta",
+  // metres of the world per unit of the model: its eyes at the walker's 1.75 m
+  "escala": 1.057,
+  // where its eyes are at rest: in the helmet, over its middle and ahead of it, by the visor:
+  // ahead of the chest, so that looking down one sees it from outside
+  "ojos": [0.0, 1.655, 0.15],
+  // what whoever wears it does not see: the helmet and its neck ring are round the eyes
+  "oculto": ["Helmet", "HelmetDark", "HelmetInner", "Visor", "Lamp", "NeckRing", "NeckRingBand"],
+  "pelvis": "pelvis",
+  "columna": ["spine", "chest"],
+  "piernas": [
+    { "muslo": "thigh.L", "espinilla": "shin.L", "pie": "foot.L", "punta": "toe.L" },
+    { "muslo": "thigh.R", "espinilla": "shin.R", "pie": "foot.R", "punta": "toe.R" }
+  ],
+  "brazos": [
+    { "clavicula": "clavicle.L", "brazo": "upperarm.L", "antebrazo": "forearm.L", "mano": "hand.L",
+      "dedos": [["thumb.01.L", "thumb.02.L", "thumb.03.L"], ["index.01.L", "index.02.L", "index.03.L"], ["middle.01.L", "middle.02.L", "middle.03.L"], ["ring.01.L", "ring.02.L", "ring.03.L"], ["pinky.01.L", "pinky.02.L", "pinky.03.L"]] },
+    { "clavicula": "clavicle.R", "brazo": "upperarm.R", "antebrazo": "forearm.R", "mano": "hand.R",
+      "dedos": [["thumb.01.R", "thumb.02.R", "thumb.03.R"], ["index.01.R", "index.02.R", "index.03.R"], ["middle.01.R", "middle.02.R", "middle.03.R"], ["ring.01.R", "ring.02.R", "ring.03.R"], ["pinky.01.R", "pinky.02.R", "pinky.03.R"]] }
+  ],
+  // how far each joint of a finger turns from rest (degrees): to a fist, and to a flat hand (a
+  // pressurised glove rests half closed)
+  "pulgar": { "cerrar": [22, 30, 35], "abrir": [18, 22, 20] },
+  "dedo": { "cerrar": [42, 40, 36], "abrir": [28, 40, 28] },
+  // how far each finger's tip is past the head of its last bone, thumb first (model units: the
+  // glove's own tip, docs/RIGGING.md): where a fingertip put on a control is
+  // (crates/app/src/handwork.rs)
+  "yemas": [0.030, 0.024, 0.027, 0.026, 0.021],
+  // hand poses: how closed each finger is, thumb first (-1 flat, 0 at rest, 1 a fist)
+  "manos": {
+    "reposo": [0, 0, 0, 0, 0],
+    "abierta": [-0.8, -0.9, -0.9, -0.9, -0.9],
+    "agarre": [0.55, 0.8, 0.9, 0.9, 0.85],
+    // on a grip with the index finger along the guard, and on the trigger
+    "dedo_fuera": [0.55, -0.35, 0.9, 0.9, 0.85],
+    "gatillo": [0.55, 0.75, 0.9, 0.9, 0.85],
+    // round something thick (a rocket)
+    "coger": [0.2, 0.35, 0.4, 0.4, 0.4],
+    "empujar": [-0.5, -0.7, -0.7, -0.7, -0.7],
+    // ---- on a ship's controls (assets/defs/manos.jsonc)
+    // the index out, the rest shut: what presses a button, and points
+    "apuntar": [0.7, -0.9, 0.95, 0.95, 0.9],
+    // thumb and index on something small (a toggle's bat, a key, a breaker's stem), and open by it
+    "pinza": [1.0, 0.55, 0.9, 0.9, 0.85],
+    "pinza_abierta": [0.1, 0.1, 0.9, 0.9, 0.85],
+    // round a knob, and open over it
+    "pomo": [0.6, 0.5, 0.5, 0.6, 0.7],
+    "pomo_abierto": [-0.3, -0.2, -0.2, 0.0, 0.2],
+    // four fingers together, flat: what lifts a cover by its lip
+    "dedos": [0.3, -0.6, -0.6, -0.5, -0.4],
+    // ---- gestures (assets/defs/gestos.jsonc)
+    "puno": [0.8, 1.0, 1.0, 1.0, 1.0],
+    "pulgar_arriba": [-1.0, 1.0, 1.0, 1.0, 1.0],
+    // thumb and index in a ring, the rest out
+    "ok": [1.0, 0.8, -0.9, -0.9, -0.9],
+    // the fingers called in ("come here")
+    "llamar": [0.2, 0.9, 0.9, 0.9, 0.9],
+    // a flat hand, fingers together (a salute, "stop")
+    "plana": [-0.2, -1.0, -1.0, -1.0, -1.0],
+    // a hand that claps: open, a little cupped
+    "palmada": [-0.3, -0.62, -0.6, -0.6, -0.55]
+  },
+  // how far a wrist goes from the line of its forearm (degrees: a gloved hand's, a little less
+  // than a bare one's): bent toward the palm and toward the back of the hand, leant toward the
+  // thumb and toward the little finger, turned about the forearm palm back and palm ahead from
+  // how the arm hangs. A hand asked past this has its elbow go round to ease it and is then
+  // held to it, its palm where it was asked (crates/app/src/body.rs, `ease`)
+  "muneca": { "flexion": 60, "extension": 55, "radial": 20, "cubital": 32, "pronacion": 92, "supinacion": 85 },
+  // places on the suit a hand goes to (model axes at rest): the middle of the palm there, the
+  // way the palm faces, the way from index to little finger, and the bone it goes with
+  "puntos": {
+    // the rockets' pouch on the left thigh
+    "bolsa_izq": { "en": [0.27, 0.80, 0.07], "palma": [-1, 0, 0], "traves": [0, -0.3, -1], "hueso": "thigh.L" },
+    // the tool hooks on the right of the waist
+    "cintura_der": { "en": [-0.25, 1.0, 0.06], "palma": [1, 0, 0], "traves": [0, -0.3, -1], "hueso": "pelvis" },
+    // the front of each thigh, two thirds of the way to the knee (seated, its top): where a hand
+    // rests (the palm on it: its grip point a handle's half under the cloth)
+    "muslo_izq": { "en": [0.118, 0.67, 0.086], "palma": [0, 0, -1], "traves": [1, 0, 0], "hueso": "thigh.L" },
+    "muslo_der": { "en": [-0.118, 0.67, 0.086], "palma": [0, 0, -1], "traves": [-1, 0, 0], "hueso": "thigh.R" },
+    // the wrist computer (assets/defs/muneca.jsonc; its model is built round the sleeve:
+    // tools/modelos/recetas/equipo.py, `ordenador_muneca`): on the left forearm, under the
+    // glove's cuff. `en`: the middle of the forearm there, ON ITS AXIS (0.40 of the way from the
+    // elbow to the wrist: its block ends where the sleeve widens into the cuff); `palma`: the way out
+    // through its glass — the thumb's side of the forearm, a little toward its back: what faces
+    // the eyes with the forearm raised across the chest and the elbow out and low; `traves`:
+    // along the forearm toward the hand (the way a line of its screen runs)
+    "ordenador_muneca": { "en": [0.357, 1.076, -0.018], "palma": [0.324, 0.228, 0.918], "traves": [0.3199, -0.9398, 0.12], "hueso": "forearm.L" },
+    // what carries a tool (assets/defs/gear.jsonc, "apoyo"): the top of the right shoulder (a
+    // launcher rests on it) and the breastbone (what is held out in a hand goes a little with it)
+    "hombro_der": { "en": [-0.2, 1.5, -0.02], "palma": [0, 1, 0], "traves": [1, 0, 0], "hueso": "chest" },
+    "pecho": { "en": [0, 1.3, 0.12], "palma": [0, 0, 1], "traves": [1, 0, 0], "hueso": "chest" },
+    // the pack's nozzles (assets/defs/chorros.jsonc, "mochila": the points named "tobera_..."):
+    // where the mouth of each is on the pack and, as `palma`, the way its jet leaves. Two under
+    // it (they lift), two over it (they push down), one at each side, two at its back (they
+    // push ahead) and two at its top corners, over the shoulders (they push back); all a little
+    // outward, clear of the legs, the arms and the helmet
+    "tobera_abajo_izq": { "en": [0.17, 0.885, -0.25], "palma": [0.22, -1, -0.12], "traves": [1, 0, 0], "hueso": "chest" },
+    "tobera_abajo_der": { "en": [-0.17, 0.885, -0.25], "palma": [-0.22, -1, -0.12], "traves": [1, 0, 0], "hueso": "chest" },
+    "tobera_arriba_izq": { "en": [0.2, 1.64, -0.27], "palma": [0.25, 1, -0.2], "traves": [1, 0, 0], "hueso": "chest" },
+    "tobera_arriba_der": { "en": [-0.2, 1.64, -0.27], "palma": [-0.25, 1, -0.2], "traves": [1, 0, 0], "hueso": "chest" },
+    "tobera_lado_izq": { "en": [0.238, 1.3, -0.27], "palma": [1, 0, 0], "traves": [0, 0, -1], "hueso": "chest" },
+    "tobera_lado_der": { "en": [-0.238, 1.3, -0.27], "palma": [-1, 0, 0], "traves": [0, 0, -1], "hueso": "chest" },
+    "tobera_atras_izq": { "en": [0.15, 1.18, -0.385], "palma": [0.2, 0, -1], "traves": [1, 0, 0], "hueso": "chest" },
+    "tobera_atras_der": { "en": [-0.15, 1.18, -0.385], "palma": [-0.2, 0, -1], "traves": [1, 0, 0], "hueso": "chest" },
+    "tobera_frente_izq": { "en": [0.21, 1.655, -0.2], "palma": [0.3, 0.35, 1], "traves": [1, 0, 0], "hueso": "chest" },
+    "tobera_frente_der": { "en": [-0.21, 1.655, -0.2], "palma": [-0.3, 0.35, 1], "traves": [1, 0, 0], "hueso": "chest" }
+  },
+  // seated: its hip joints this far over what it sits on (m of the world: the thigh's thickness
+  // under them; with it the eyes are 0.89 m over the seat, which is where every seat's eyes must
+  // be: `lunar_ship::diag::seat_fit`), and where each hand rests with nothing to hold
+  "sentado": { "asiento": 0.113, "manos": ["muslo_izq", "muslo_der"] },
+  // how it walks (crates/core/src/anim/gait.rs): lengths in m of the world
+  "marcha": {
+    "ancho": 0.14,
+    "holgura": 0.14,
+    "giro": 38,
+    "zancada": [0.2, 0.09],
+    "zancada_max": 0.46,
+    // a walk is one foot after the other: each is down 60 % of the cycle (never both in the
+    // air); from 2.6 to 4.2 m/s it turns into a run (40 %: a moment in the air between strides)
+    "paso": [0.34, 0.2],
+    "paso_max": 1.3,
+    "apoyo": [0.6, 0.4],
+    "correr": [2.6, 4.2],
+    "vuelo": 0.34,
+    "ingravidez": 0.25,
+    "vuelo_lim": [0.22, 0.62],
+    "altura": [0.07, 0.035],
+    "altura_max": 0.26,
+    "quieto": 0.15,
+    "colgar": 0.12,
+    "arrastre": 0.05,
+    "muelle": 0.12
+  }
+}

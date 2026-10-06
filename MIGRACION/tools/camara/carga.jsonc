@@ -1,0 +1,31 @@
+// The hold's cargo and its clamps: each piece held by its clamp (the rail across the deck with a
+// yellow lock at each end and a red lever); a clamp let go (its order: what a hand's click on it
+// gives) and what it held loose on the deck; then a rocket into the drum of propellant.
+// Run: luna --guion tools/camara/carga.jsonc → out/camara/carga_*.png
+{
+  "registro": "out/camara/carga.log",
+  "pasos": [
+    { "nave": "alcotan" },
+    { "esperar": 2.0 },
+    { "linterna": true },
+    { "camara": { "en": [1.5, 1.7, -3.9], "mira": [0.0, 0.3, -7.2], "fov": 75 } },
+    { "foto": "out/camara/carga_bodega.png" },
+    { "camara": { "en": [1.35, 0.75, -7.3], "mira": [0.55, 0.1, -8.0], "fov": 60 } },
+    { "foto": "out/camara/carga_anclaje.png" },
+    { "volcar": ["anclaje_*"] },
+    // the crates let go: they are bodies of their own now (the one on top slides off)
+    { "senal": { "nombre": "anclaje_cajas.soltar", "valor": 1 } },
+    { "esperar": 3.0 },
+    { "volcar": ["anclaje_*"] },
+    { "camara": { "en": [1.5, 1.7, -3.9], "mira": [0.0, 0.3, -7.2], "fov": 75 } },
+    { "foto": "out/camara/carga_suelta.png" },
+    // a rocket into the propellant drum: it goes off, and takes what is round it with it
+    { "camara": { "en": [0.0, 1.95, -9.1], "mira": [0.0, 0.7, -5.2], "fov": 70 } },
+    { "disparar": "cohete" },
+    { "esperar": 0.35 },
+    { "foto": "out/camara/carga_estalla.png" },
+    { "esperar": 3.0 },
+    { "camara": { "en": [9.0, 5.0, -16.0], "mira": [0.0, 1.0, -6.0], "fov": 60 } },
+    { "foto": "out/camara/carga_despues.png" }
+  ]
+}

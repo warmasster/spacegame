@@ -12,12 +12,54 @@ export interface ObjectDef {
   /** Default size (half extents, m) and mass (kg). */
   half: V3;
   mass: number;
-  /** What the crew can do with it. */
-  handling: { grab: boolean; throw: boolean };
+  /**
+   * What the crew can do with it. `throwSpeed`: how fast a throw sends it (m/s, relative to the
+   * thrower); left out, from its mass (a shove of THROW_IMPULSE N·s, within THROW_SPEED).
+   */
+  handling: { grab: boolean; throw: boolean; throwSpeed?: number };
+  /** How it behaves as a body (anything left out: DEFAULT_OBJECT_PHYSICS). */
+  physics?: Partial<ObjectPhysics>;
   /** Client look (client/cargo/looks.ts). */
   look: string;
   /** Sound bank ids (the common ones when left out). */
   sounds?: { grab?: string; drop?: string; throw?: string };
+}
+
+/**
+ * A loose body's contact and damping. Linear damping is 0 by default: out there is vacuum, and
+ * damping is measured in whatever frame the body is simulated in — a moving one (a ship in flight,
+ * the physics bubble in orbit) would brake it against that frame, not against anything real (a
+ * crate thrown out of a ship at 250 m/s would fall behind at 12 m/s²). Air drag comes from the air
+ * (client/cargo/crates.ts `airPull`), where there is air.
+ */
+export interface ObjectPhysics {
+  friction: number;
+  restitution: number;
+  linearDamping: number;
+  /** Tumbling fades (it keeps loose cargo from spinning forever on a deck). */
+  angularDamping: number;
+}
+
+export const DEFAULT_OBJECT_PHYSICS: Readonly<ObjectPhysics> = { friction: 0.85, restitution: 0.05, linearDamping: 0, angularDamping: 0.3 };
+
+/** A throw is about this shove (N·s) when the kind gives no speed of its own… */
+export const THROW_IMPULSE = 275;
+/** …within these speeds (m/s). */
+export const THROW_SPEED: readonly [number, number] = [2.5, 9];
+
+const physicsCache = new WeakMap<ObjectDef, ObjectPhysics>();
+
+/** Contact and damping of a kind (its own values over the defaults). */
+export function physicsOf(def: ObjectDef): ObjectPhysics {
+  let p = physicsCache.get(def);
+  if (!p) physicsCache.set(def, (p = { ...DEFAULT_OBJECT_PHYSICS, ...def.physics }));
+  return p;
+}
+
+/** How fast a throw sends an object of this kind and mass (m/s). */
+export function throwSpeedOf(def: ObjectDef, mass = def.mass): number {
+  if (def.handling.throwSpeed !== undefined) return def.handling.throwSpeed;
+  return Math.max(THROW_SPEED[0], Math.min(THROW_SPEED[1], THROW_IMPULSE / Math.max(1, mass)));
 }
 
 export const OBJECTS: Record<string, ObjectDef> = {};

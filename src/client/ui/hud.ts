@@ -4,6 +4,7 @@ import type { ShipSim } from '../../shared/ship/sim';
 import { ShipManual, type ManualHooks } from './manual';
 import type { PromptInfo } from '../ship/interaction';
 import { WEAPON_LIST } from '../../shared/items';
+import type { PipStatus } from '../render/pip';
 
 export interface HudData {
   heading: number; // radians, 0 = north
@@ -27,6 +28,7 @@ export interface HudData {
   /** Camera magnification (1 = none). */
   zoom: number;
   dead: boolean;
+  station: PipStatus | null;
   markers: Array<{ label: string; bearing: number; distance: number; color: string }>;
 }
 
@@ -43,6 +45,10 @@ export class Hud {
   private tags = new Map<number, HTMLDivElement>();
   private tagLayer: HTMLDivElement;
   private vitals: HTMLDivElement;
+  private station: HTMLDivElement;
+  private stationTitle: HTMLElement;
+  private stationDetail: HTMLElement;
+  private stationHint: HTMLElement;
   private deathScreen: HTMLDivElement;
   private hitFlash: HTMLDivElement;
   private prompt: HTMLDivElement;
@@ -137,6 +143,7 @@ export class Hud {
       ['Espacio', 'saltar'],
       ['C / Ctrl', 'agacharse'],
       ['Clic izq.', 'disparar / soldar · pulsar botón'],
+      ['G / T (artillero)', 'apuntar en pantalla / disparar'],
       ['E', 'accionar · sentarse / levantarse · coger / soltar objeto'],
       ['Q', 'lanzar el objeto que llevas'],
       [WEAPON_LIST.map((_, i) => i + 1).join(' / '), WEAPON_LIST.map((w) => w.name.toLowerCase()).join(' / ')],
@@ -156,6 +163,10 @@ export class Hud {
       .join('');
     this.toasts = el('div', 'hud-toasts', this.root);
     this.vitals = el('div', 'hud-vitals', this.root);
+    this.station = el('div', 'hud-station hidden', this.root);
+    this.stationTitle = el('b', '', this.station);
+    this.stationDetail = el('span', '', this.station);
+    this.stationHint = el('small', '', this.station);
     for (let k = 0; k < 4; k++) {
       const box = el('div', 'vital', this.vitals);
       const label = el('span', '', box);
@@ -316,6 +327,13 @@ export class Hud {
     const now = performance.now();
     if (now - this.lastText < 100) return;
     this.lastText = now;
+    this.station.classList.toggle('hidden', !d.station || d.dead);
+    if (d.station) {
+      setText(this.stationTitle, d.station.title);
+      setText(this.stationDetail, d.station.detail);
+      setText(this.stationHint, d.station.hint);
+      this.station.classList.toggle('warning', d.station.warning);
+    }
     const t = Math.floor(d.evaSeconds);
     setText(this.tel.eva, `${pad(Math.floor(t / 3600))}:${pad(Math.floor(t / 60) % 60)}:${pad(t % 60)}`);
     setText(this.tel.hdg, `${pad3(Math.round(hdg) % 360)}°`);

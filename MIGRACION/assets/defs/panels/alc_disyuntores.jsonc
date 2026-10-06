@@ -1,0 +1,55 @@
+// Breaker panel of the Alcotán (cabin, port wall). Every breaker is a switch of the 28 V network
+// between its bus and its circuit: it trips on the real current through it (I²t) and is reset by
+// hand once it cools. Pull one to cut its circuit.
+{
+  "name": "Disyuntores",
+  "tamano": ["0.86 m", "0.86 m"],
+  "rejilla": [6, 6],
+  "margen": "12 mm",
+  "separacion": "6 mm",
+  "grupos": [
+    { "id": "a", "titulo": "BUS A", "celda": [0, 0], "ocupa": [6, 2] },
+    { "id": "b", "titulo": "BUS B", "celda": [0, 2], "ocupa": [6, 2] },
+    { "id": "e", "titulo": "ESENCIAL", "celda": [0, 4], "ocupa": [3, 2] },
+    { "id": "v", "titulo": "BARRAS", "celda": [3, 4], "ocupa": [3, 2] }
+  ],
+  "mandos": [
+    { "id": "luces_cab", "kind": "disyuntor", "grupo": "a", "rotulo": "L CAB", "nominal": "6 A", "bind": { "union": "brk.luces_cab" }, "nombre": "Disyuntor luces cabina" },
+    // (the hold's ceiling lights and its two 150 W floodlights hang from it: 372 W on the Alcotán,
+    // 492 W on the Cachalote; at 8 A the floodlights tripped it in three seconds)
+    { "id": "luces_bod", "kind": "disyuntor", "grupo": "a", "rotulo": "L BOD", "nominal": "25 A", "bind": { "union": "brk.luces_bod" }, "nombre": "Disyuntor luces bodega" },
+    { "id": "puertas", "kind": "disyuntor", "grupo": "a", "rotulo": "PUERTAS", "nominal": "120 A", "bind": { "union": "brk.puertas" }, "nombre": "Disyuntor puertas" },
+    { "id": "rampa", "kind": "disyuntor", "grupo": "a", "rotulo": "RAMPA", "nominal": "200 A", "bind": { "union": "brk.rampa" }, "nombre": "Disyuntor rampa" },
+    { "id": "hid_a", "kind": "disyuntor", "grupo": "a", "rotulo": "HID A", "nominal": "280 A", "curva_disparo": "lenta", "bind": { "union": "brk.hid_a" }, "nombre": "Disyuntor bomba hidráulica A" },
+    { "id": "soporte", "kind": "disyuntor", "grupo": "a", "rotulo": "S. VITAL", "nominal": "110 A", "bind": { "union": "brk.soporte" }, "nombre": "Disyuntor soporte vital" },
+    { "id": "refrig", "kind": "disyuntor", "grupo": "a", "rotulo": "REFRIG", "nominal": "160 A", "curva_disparo": "lenta", "bind": { "union": "brk.refrig" }, "nombre": "Disyuntor bombas de refrigerante" },
+    { "id": "compresor", "kind": "disyuntor", "grupo": "a", "rotulo": "COMPR.", "nominal": "650 A", "curva_disparo": "lenta", "bind": { "union": "brk.compresor" }, "nombre": "Disyuntor compresor de aire",
+      "ayuda": "Alimenta el motor del compresor de recuperación de aire (15 kW). Sácalo para cortarlo." },
+
+    { "id": "luces_puente", "kind": "disyuntor", "grupo": "b", "rotulo": "L PUENTE", "nominal": "6 A", "bind": { "union": "brk.luces_puente" }, "nombre": "Disyuntor luces puente" },
+    { "id": "luces_ext", "kind": "disyuntor", "grupo": "b", "rotulo": "L EXT", "nominal": "25 A", "bind": { "union": "brk.luces_ext" }, "nombre": "Disyuntor luces exteriores" },
+    { "id": "hid_b", "kind": "disyuntor", "grupo": "b", "rotulo": "HID B", "nominal": "280 A", "curva_disparo": "lenta", "bind": { "union": "brk.hid_b" }, "nombre": "Disyuntor bomba hidráulica B" },
+    { "id": "gondolas", "kind": "disyuntor", "grupo": "b", "rotulo": "GÓNDOL.", "nominal": "200 A", "bind": { "union": "brk.gondolas" }, "nombre": "Disyuntor góndolas" },
+    { "id": "tren", "kind": "disyuntor", "grupo": "b", "rotulo": "TREN", "nominal": "15 A", "bind": { "union": "brk.tren" }, "nombre": "Disyuntor válvulas del tren" },
+    { "id": "motores", "kind": "disyuntor", "grupo": "b", "rotulo": "MOTORES", "nominal": "25 A", "bind": { "union": "brk.motores" }, "nombre": "Disyuntor encendido de motores" },
+    { "id": "rcs", "kind": "disyuntor", "grupo": "b", "rotulo": "RCS", "nominal": "25 A", "bind": { "union": "brk.rcs" }, "nombre": "Disyuntor RCS" },
+    { "id": "reactor", "kind": "disyuntor", "grupo": "b", "rotulo": "REACTOR", "nominal": "25 A", "bind": { "union": "brk.reactor" }, "nombre": "Disyuntor control del reactor",
+      "ayuda": "Sin corriente de control el reactor hace SCRAM (a prueba de fallos)." },
+    { "id": "radiadores", "kind": "disyuntor", "grupo": "b", "rotulo": "RADIAD.", "nominal": "200 A", "bind": { "union": "brk.radiadores" }, "nombre": "Disyuntor radiadores" },
+    { "id": "antena", "kind": "disyuntor", "grupo": "b", "rotulo": "ANTENA", "nominal": "100 A", "bind": { "union": "brk.antena" }, "nombre": "Disyuntor antena" },
+    { "id": "apu", "kind": "disyuntor", "grupo": "b", "rotulo": "APU", "nominal": "130 A", "bind": { "union": "brk.apu" }, "nombre": "Disyuntor arranque APU" },
+    // (circuits only the bigger ships have: a ship without them mounts this panel "sin" them)
+    { "id": "grua", "kind": "disyuntor", "grupo": "b", "rotulo": "GRÚA", "nominal": "650 A", "curva_disparo": "lenta", "bind": { "union": "brk.grua" }, "nombre": "Disyuntor puente grúa",
+      "ayuda": "Alimenta los tres husillos de la grúa de la bodega, su imán y su consola. Sácalo para dejarla sin corriente." },
+    { "id": "giro", "kind": "disyuntor", "grupo": "b", "rotulo": "GIRÓS.", "nominal": "200 A", "curva_disparo": "lenta", "bind": { "union": "brk.giro" }, "nombre": "Disyuntor giróscopos",
+      "ayuda": "Alimenta los giróscopos de control. Sin corriente se van parando y devuelven al casco lo que guardaban." },
+
+    { "id": "emergencia", "kind": "disyuntor", "grupo": "e", "rotulo": "EMERG.", "nominal": "5 A", "bind": { "union": "brk.emergencia" }, "nombre": "Disyuntor luces de emergencia" },
+    { "id": "avionica", "kind": "disyuntor", "grupo": "e", "rotulo": "AVIÓN.", "nominal": "45 A", "bind": { "union": "brk.avionica" }, "nombre": "Disyuntor aviónica" },
+    { "id": "pantallas", "kind": "disyuntor", "grupo": "e", "rotulo": "PANTALL.", "nominal": "20 A", "bind": { "union": "brk.pantallas" }, "nombre": "Disyuntor paneles e indicadores" },
+
+    { "id": "v_a", "kind": "display7", "grupo": "v", "senal": "elec.bus_a", "unidad": "V", "decimales": 1, "digitos": 4, "rotulo": "A" },
+    { "id": "v_b", "kind": "display7", "grupo": "v", "senal": "elec.bus_b", "unidad": "V", "decimales": 1, "digitos": 4, "rotulo": "B" },
+    { "id": "v_e", "kind": "display7", "grupo": "v", "senal": "elec.bus_ess", "unidad": "V", "decimales": 1, "digitos": 4, "rotulo": "ESS" }
+  ]
+}

@@ -1,0 +1,28 @@
+// The utility bay of the Azor (on its forward wall): its doors and lights, and what its power
+// pack and its batteries are doing, for whoever works on them there.
+{
+  "name": "Bahía de utilidades",
+  "tamano": ["0.66 m", "0.40 m"],
+  "rejilla": [10, 4],
+  "margen": "10 mm",
+  "separacion": "5 mm",
+  "grupos": [
+    { "id": "energia", "seccion": "energia", "celda": [0, 0], "ocupa": [6, 2] },
+    { "id": "rx", "titulo": "GRUPO DE ENERGÍA", "celda": [0, 2], "ocupa": [6, 2] },
+    { "id": "bahia", "titulo": "BAHÍA", "celda": [6, 0], "ocupa": [4, 4] }
+  ],
+  "mandos": [
+    { "id": "estado", "kind": "pantalla", "grupo": "rx", "tamano": [110, 40], "requiere": { "energia": "2 W" },
+      "paginas": [ { "titulo": "RU-40", "lineas": ["{reactor.estado|PARADO|ARRANCANDO|EN LINEA|DISPARADO}", "{reactor.causa|SIN AVISOS|SETA PULSADA|MUY CALIENTE|DAÑADO}"] } ],
+      "nombre": "Estado del grupo de energía", "ayuda": "Qué hace y, si se ha parado solo, por qué. Se manda desde la cabina (repisa de sistemas)." },
+    { "id": "t", "kind": "aguja", "grupo": "rx", "senal": "reactor.t", "escala": ["0 °C", "1000 °C"], "unidad": "°C", "rotulo": "TEMP.", "tamano": [70, 70],
+      "zonas": { "verde": ["0 °C", "700 °C"], "ambar": ["700 °C", "870 °C"], "roja": ["870 °C", "1000 °C"] }, "requiere": { "energia": "1 W" } },
+    { "id": "p", "kind": "display7", "grupo": "rx", "senal": "reactor.p", "unidad": "kW", "decimales": 1, "digitos": 4, "rotulo": "DA kW", "requiere": { "energia": "1 W" } },
+
+    { "id": "compuertas", "kind": "pulsador", "grupo": "bahia", "rotulo": "COMPUERTAS", "modo": "momentaneo", "color": "amarillo", "luz": "rampa.abierta > 0.02", "tamano": [34, 34],
+      "nombre": "Compuertas de la bahía", "ayuda": "Abre o cierra la rampa y la visera de popa." },
+    { "id": "luces", "kind": "interruptor", "grupo": "bahia", "rotulo": "LUCES", "bind": { "senal": "luces.bahia_local" }, "nombre": "Luces de la bahía" },
+    { "id": "lamp_hid", "kind": "lampara", "grupo": "bahia", "rotulo": "HIDRÁUL.", "requiere": { "energia": "1 W" },
+      "reglas": [ { "si": "hid.colector > 14 MPa", "color": "verde" }, { "si": "hid.marcha", "color": "ambar" } ] }
+  ]
+}

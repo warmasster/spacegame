@@ -1,0 +1,16 @@
+{
+  "fixtures": [
+    {
+      "path": "surface.csv",
+      "sha256": "005226497a7d77401f879c9ddb4d36245d94545a777624f362ad1c580ee36481"
+    },
+    {
+      "path": "noise.csv",
+      "sha256": "36b2ebbcbbb79e5129ca3505fafa9e3bc98bd4dd9d806ca18983ecf3d519161e"
+    },
+    {
+      "path": "gpu-1000.json",
+      "sha256": "42c2ef8de50ecf8829d67b964d30d7fc5858d9d84cfe20b8fd0878bd2d79af70"
+    }
+  ]
+}

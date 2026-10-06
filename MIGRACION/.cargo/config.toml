@@ -1,0 +1,5 @@
+# The official GNU package contains these libraries and the LLD linker.
+# No system-wide Visual Studio / MinGW installation is required for H0.
+[target.x86_64-pc-windows-gnu]
+linker = "rust-lld.exe"
+rustflags = ["-C", "linker-flavor=ld.lld", "-C", "link-self-contained=yes"]

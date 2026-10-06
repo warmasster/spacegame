@@ -1,0 +1,16 @@
+[package]
+name = "lunar-controls"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+# Mechanisms of controls (continuous state machines), indicators and the panel framework (model +
+# layout). Knows no ship and no pixel: takes Intents, gives values, poses and events.
+[dependencies]
+lunar-signals = { path = "../signals", features = ["serde"] }
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

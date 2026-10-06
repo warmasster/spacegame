@@ -1,0 +1,21 @@
+// The launcher: a rocket at the tower from the site, and what it does to it.
+// Run: luna --guion tools/camara/cohete.jsonc → out/camara/cohete_*.png
+{
+  "registro": "out/camara/cohete.log",
+  "pasos": [
+    { "esperar": 2.0 },
+    { "equipo": "lanzacohetes" },
+    // from 60 m south of the tower (30 m east, 95 m north of the site), aimed at it
+    { "camara_sitio": { "en": [20, 35, 6], "mira": [30, 95, 3.5], "fov": 65 } },
+    { "esperar": 0.5 },
+    { "foto": "out/camara/cohete_antes.png" },
+    { "gatillo": true },
+    { "esperar": 0.25 },
+    { "foto": "out/camara/cohete_vuelo.png" },
+    { "esperar": 0.35 },
+    { "foto": "out/camara/cohete_impacto.png" },
+    { "esperar": 2.5 },
+    "medir",
+    { "foto": "out/camara/cohete_despues.png" }
+  ]
+}

@@ -1,0 +1,76 @@
+// nave mediana: a container hauler, about 33 m. Same fields as nave_pequena.jsonc (cone [r_back,
+// r_front, len]; rot [90, 0, 0] lays a cylinder nose forward). Fine detail is shader plating.
+{
+  "name": "nave mediana",
+  "kind": "hull",
+  "seed": 1592590433,
+  // finest first: on-screen radius (px) it is drawn from, greeble budget, round-shape detail
+  "lods": [
+    { "min_px": 150.0, "budget": 9000, "segments": 1.0, "min_segments": 8, "greeble": 0.5, "bevel": true, "pipes": true },
+    { "min_px": 40.0, "budget": 1800, "segments": 0.35, "min_segments": 8, "greeble": 1.1 },
+    { "min_px": 1.2, "budget": 300, "segments": 0.14, "min_segments": 5 },
+  ],
+  "greebles": { "dark": "oscuro", "metal": "metal", "dark_below": 0.2, "metal_below": 0.3, "pipe_chance": 0.2, "attempts": 12000 },
+  // emissive parts drawn as sprites from afar: engines (big) and beacons
+  "glows": {
+    "min_emissive": 200,
+    "engine_size": 0.4,
+    "engine": { "scale": 1.2, "intensity": 40.0 },
+    "beacon": { "scale": 1.8, "intensity": 18.0 },
+  },
+  "parts": [
+    // spine
+    {"box": [2.4, 2.4, 26.0], "at": [0, 4.6, -1.0], "mat": "grafito", "hull": true},
+    // cockpit: block, sloped nose with the windscreen and a stripe laid on the slope
+    {"box": [5.4, 4.2, 5.0], "at": [0, 4.8, 12.5], "mat": "casco", "hull": true},
+    {"box": [5.5, 0.6, 5.1], "at": [0, 3.5, 12.5], "mat": "naranja", "lod_max": 1},
+    {"wedge": [5.4, 4.2, 2.6], "at": [0, 4.8, 16.3], "mat": "casco"},
+    {"box": [4.6, 0.1, 1.5], "at": [0, 6.0, 15.6], "rot": [58.3, 0, 0], "mat": "cristal", "lod_max": 1},
+    {"box": [5.42, 0.06, 0.8], "at": [0, 3.77, 16.97], "rot": [58.3, 0, 0], "mat": "naranja", "lod_max": 1},
+    {"box": [0.3, 0.3, 0.3], "at": [0, 7.05, 12.5], "mat": "blanco", "lod_max": 1},
+    {"cyl": [0.08, 1.6], "at": [1.4, 7.7, 11.6], "mat": "metal", "lod_max": 1},
+    {"dome": 0.9, "at": [1.4, 8.6, 11.6], "rot": [180, 0, 0], "mat": "casco", "lod_max": 1},
+    // containers and their end frames
+    {"box": [6.4, 5.0, 5.4], "at": [0, 4.6, 5.6], "mat": "naranja", "hull": true},
+    {"box": [6.4, 5.0, 5.4], "at": [0, 4.6, -0.4], "mat": "casco", "hull": true},
+    {"box": [6.4, 5.0, 5.4], "at": [0, 4.6, -6.4], "mat": "azul", "hull": true},
+    {"box": [6.7, 5.3, 0.3], "at": [0, 4.6, 8.15], "mat": "grafito", "lod_max": 1},
+    {"box": [6.7, 5.3, 0.3], "at": [0, 4.6, 3.05], "mat": "grafito", "lod_max": 1},
+    {"box": [6.7, 5.3, 0.3], "at": [0, 4.6, 2.15], "mat": "grafito", "lod_max": 1},
+    {"box": [6.7, 5.3, 0.3], "at": [0, 4.6, -2.95], "mat": "grafito", "lod_max": 1},
+    {"box": [6.7, 5.3, 0.3], "at": [0, 4.6, -3.85], "mat": "grafito", "lod_max": 1},
+    {"box": [6.7, 5.3, 0.3], "at": [0, 4.6, -8.95], "mat": "grafito", "lod_max": 1},
+    // engine block, hazard band, three bells with their flames
+    {"box": [6.8, 4.6, 4.2], "at": [0, 4.6, -12.0], "mat": "casco2", "hull": true},
+    {"box": [6.9, 0.5, 4.3], "at": [0, 6.4, -12.0], "mat": "amarillo", "lod_max": 1},
+    {"cone": [1.2, 0.7, 2.0], "at": [-2.1, 4.6, -15.1], "rot": [90, 0, 0], "mat": "oscuro"},
+    {"cyl": [1.0, 0.06], "at": [-2.1, 4.6, -16.12], "rot": [90, 0, 0], "mat": "ion", "lod_max": 1},
+    {"cone": [1.2, 0.7, 2.0], "at": [0.0, 4.6, -15.1], "rot": [90, 0, 0], "mat": "oscuro"},
+    {"cyl": [1.0, 0.06], "at": [0.0, 4.6, -16.12], "rot": [90, 0, 0], "mat": "ion", "lod_max": 1},
+    {"cone": [1.2, 0.7, 2.0], "at": [2.1, 4.6, -15.1], "rot": [90, 0, 0], "mat": "oscuro"},
+    {"cyl": [1.0, 0.06], "at": [2.1, 4.6, -16.12], "rot": [90, 0, 0], "mat": "ion", "lod_max": 1},
+    { "mirror": [
+      // cockpit side windows (rows of 0.5 m), nav light, RCS
+      {"box": [0.12, 0.5, 3.6], "at": [2.7, 5.75, 12.4], "mat": "ventanas", "lod_max": 1},
+      {"box": [0.25, 0.25, 0.25], "at": [2.8, 6.6, 14.6], "mat": "verde", "mirror_mat": "rojo", "lod_max": 1},
+      {"box": [0.35, 0.35, 0.35], "at": [2.85, 6.6, 10.4], "mat": "oscuro", "lod_max": 1},
+      // side tank: body, end caps, straps and saddles
+      {"cyl": [1.3, 13.0], "at": [4.55, 3.2, -0.4], "rot": [90, 0, 0], "mat": "metal", "hull": true},
+      {"ball": 1.3, "at": [4.55, 3.2, 6.1], "mat": "metal", "lod_max": 1},
+      {"ball": 1.3, "at": [4.55, 3.2, -6.9], "mat": "metal", "lod_max": 1},
+      {"cyl": [1.36, 0.35], "at": [4.55, 3.2, 3.0], "rot": [90, 0, 0], "mat": "grafito", "lod_max": 1},
+      {"cyl": [1.36, 0.35], "at": [4.55, 3.2, -0.4], "rot": [90, 0, 0], "mat": "grafito", "lod_max": 1},
+      {"cyl": [1.36, 0.35], "at": [4.55, 3.2, -3.8], "rot": [90, 0, 0], "mat": "grafito", "lod_max": 1},
+      {"box": [1.2, 0.5, 0.6], "at": [3.6, 3.2, 3.0], "mat": "grafito", "lod_max": 1},
+      {"box": [1.2, 0.5, 0.6], "at": [3.6, 3.2, -3.8], "mat": "grafito", "lod_max": 1},
+      // radiator wing on its hinge
+      {"box": [5.0, 0.12, 3.2], "at": [5.6, 6.6, -12.0], "rot": [0, 0, 18], "mat": "radiador"},
+      {"cyl": [0.2, 3.3], "at": [3.45, 5.9, -12.0], "rot": [90, 0, 0], "mat": "metal", "lod_max": 1},
+      // legs and feet
+      {"cyl": [0.2, 2.7], "at": [2.2, 1.35, 11.5], "mat": "metal", "lod_max": 1},
+      {"cyl": [0.6, 0.18], "at": [2.2, 0.09, 11.5], "mat": "oscuro", "lod_max": 1},
+      {"cyl": [0.2, 2.3], "at": [2.6, 1.15, -11.0], "mat": "metal", "lod_max": 1},
+      {"cyl": [0.6, 0.18], "at": [2.6, 0.09, -11.0], "mat": "oscuro", "lod_max": 1},
+    ] },
+  ],
+}

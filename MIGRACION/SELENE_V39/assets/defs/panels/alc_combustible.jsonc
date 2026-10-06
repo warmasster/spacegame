@@ -1,0 +1,29 @@
+// Copilot side console of the Alcotán: propellant valves and levels, and what the ship weighs
+// (the "masa" section of secciones.jsonc, down its outboard side: read, not worked).
+{
+  "name": "Propelente",
+  "tamano": ["0.26 m", "0.60 m"],
+  "rejilla": [3, 6],
+  "margen": "8 mm",
+  "separacion": "4 mm",
+  "grupos": [
+    { "id": "niveles", "titulo": "DEPÓSITOS", "celda": [0, 0], "ocupa": [2, 2] },
+    { "id": "valvulas", "titulo": "VÁLVULAS", "celda": [0, 2], "ocupa": [2, 4] },
+    { "id": "masa", "seccion": "masa", "orden": "columnas", "celda": [2, 0], "ocupa": [1, 6] }
+  ],
+  "mandos": [
+    { "id": "nivel_izq", "kind": "barra", "grupo": "niveles", "senal": "deposito_izq.nivel", "rotulo": "IZQ", "color": "verde", "requiere": { "energia": "1 W" } },
+    { "id": "nivel_der", "kind": "barra", "grupo": "niveles", "senal": "deposito_der.nivel", "rotulo": "DER", "color": "verde", "requiere": { "energia": "1 W" } },
+    { "id": "p_alim", "kind": "display7", "grupo": "niveles", "senal": "prop.alim_izq", "unidad": "kPa", "digitos": 4, "rotulo": "P ALIM", "requiere": { "energia": "1 W" } },
+    { "id": "v_izq", "kind": "interruptor", "grupo": "valvulas", "rotulo": "DEP IZQ", "posiciones": ["CERRADA", "ABIERTA"], "bind": { "senal": "pv.izq" }, "defecto": 1,
+      "nombre": "Válvula del depósito izquierdo", "ayuda": "Aísla el depósito izquierdo (si fuga, ciérrala)." },
+    { "id": "v_der", "kind": "interruptor", "grupo": "valvulas", "rotulo": "DEP DER", "posiciones": ["CERRADA", "ABIERTA"], "bind": { "senal": "pv.der" }, "defecto": 1,
+      "nombre": "Válvula del depósito derecho" },
+    { "id": "cruce", "kind": "interruptor", "grupo": "valvulas", "rotulo": "CRUCE", "posiciones": ["CERRADA", "ABIERTA"], "bind": { "senal": "pv.cruce" },
+      "nombre": "Alimentación cruzada", "ayuda": "Une los dos colectores: un depósito alimenta a los dos motores." },
+    { "id": "v_apu", "kind": "interruptor", "grupo": "valvulas", "rotulo": "APU", "posiciones": ["CERRADA", "ABIERTA"], "bind": { "senal": "pv.apu" }, "defecto": 1,
+      "nombre": "Alimentación de la APU" },
+    { "id": "v_rcs", "kind": "interruptor", "grupo": "valvulas", "rotulo": "RCS", "posiciones": ["CERRADA", "ABIERTA"], "bind": { "senal": "pv.rcs" }, "defecto": 1,
+      "nombre": "Alimentación del RCS" }
+  ]
+}

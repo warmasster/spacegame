@@ -1,0 +1,21 @@
+// Performance: the three ships of the library together, many of each: 12 Abejorro, 12 Alcotán
+// and 6 Cachalote (each with its Abejorro on its back), standing. What the frame costs with a
+// mixed fleet in view.
+// Run: luna --guion tools/rendimiento/flota_mixta.jsonc → out/rendimiento/flota_mixta.json (+ .log, .png)
+{
+  "naves": ["alcotan"],
+  "registro": "out/rendimiento/flota_mixta.log",
+  "pasos": [
+    { "nave": "alcotan" },
+    { "esperar": 2.0 },
+    { "flota": { "nave": "alcotan", "cuenta": [3, 4], "paso": 34, "este": -10, "norte": 24 } },
+    { "flota": { "nave": "abejorro", "cuenta": [3, 4], "paso": 14, "este": -90, "norte": 24 } },
+    { "flota": { "nave": "cachalote", "cuenta": [2, 3], "paso": 60, "este": 120, "norte": 40 } },
+    { "camara": { "en": [20, 90, -230], "mira": [20, 0, 0], "fov": 70 } },
+    { "esperar": 5.0 },
+    { "perfil": "out/rendimiento/flota_mixta.json" },
+    { "esperar": 10.0 },
+    "fin_perfil",
+    { "foto": "out/rendimiento/flota_mixta.png" }
+  ]
+}

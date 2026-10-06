@@ -1,0 +1,165 @@
+// The launcher loaded again, moment by moment: from the eyes (a picture every fifth of a
+// second) and from outside.
+// Run: luna --guion tools/camara/recarga.jsonc -> out/camara/recarga_*.png
+{
+ "registro": "out/camara/recarga.log",
+ "naves": [],
+ "pasos": [
+  {
+   "esperar": 1.0
+  },
+  {
+   "mirar": [
+    -20,
+    0
+   ]
+  },
+  {
+   "equipo": "lanzacohetes"
+  },
+  {
+   "esperar": 1.2
+  },
+  {
+   "gatillo": true
+  },
+  {
+   "esperar": 0.3
+  },
+  {
+   "esperar": 0.2
+  },
+  {
+   "foto": "out/camara/recarga_00.png"
+  },
+  {
+   "esperar": 0.2
+  },
+  {
+   "foto": "out/camara/recarga_01.png"
+  },
+  {
+   "esperar": 0.2
+  },
+  {
+   "foto": "out/camara/recarga_02.png"
+  },
+  {
+   "esperar": 0.2
+  },
+  {
+   "foto": "out/camara/recarga_03.png"
+  },
+  {
+   "esperar": 0.2
+  },
+  {
+   "foto": "out/camara/recarga_04.png"
+  },
+  {
+   "esperar": 0.2
+  },
+  {
+   "foto": "out/camara/recarga_05.png"
+  },
+  {
+   "esperar": 0.2
+  },
+  {
+   "foto": "out/camara/recarga_06.png"
+  },
+  {
+   "esperar": 0.2
+  },
+  {
+   "foto": "out/camara/recarga_07.png"
+  },
+  {
+   "esperar": 0.2
+  },
+  {
+   "foto": "out/camara/recarga_08.png"
+  },
+  {
+   "esperar": 0.2
+  },
+  {
+   "foto": "out/camara/recarga_09.png"
+  },
+  {
+   "esperar": 0.2
+  },
+  {
+   "foto": "out/camara/recarga_10.png"
+  },
+  {
+   "esperar": 0.2
+  },
+  {
+   "foto": "out/camara/recarga_11.png"
+  },
+  {
+   "esperar": 0.6
+  },
+  {
+   "camara_jugador": {
+    "en": [
+     0.9,
+     1.75,
+     1.5
+    ],
+    "mira": [
+     -0.05,
+     1.35,
+     0.3
+    ],
+    "fov": 45
+   }
+  },
+  {
+   "gatillo": true
+  },
+  {
+   "esperar": 0.3
+  },
+  {
+   "esperar": 0.36
+  },
+  {
+   "foto": "out/camara/recarga_fuera_0.png"
+  },
+  {
+   "esperar": 0.36
+  },
+  {
+   "foto": "out/camara/recarga_fuera_1.png"
+  },
+  {
+   "esperar": 0.36
+  },
+  {
+   "foto": "out/camara/recarga_fuera_2.png"
+  },
+  {
+   "esperar": 0.36
+  },
+  {
+   "foto": "out/camara/recarga_fuera_3.png"
+  },
+  {
+   "esperar": 0.36
+  },
+  {
+   "foto": "out/camara/recarga_fuera_4.png"
+  },
+  {
+   "esperar": 0.36
+  },
+  {
+   "foto": "out/camara/recarga_fuera_5.png"
+  },
+  {
+   "esperar": 0.5
+  }
+ ]
+}

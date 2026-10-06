@@ -1,0 +1,9 @@
+// An outlet or a junction box badly hurt and still fed: it arcs. A blue-white blink and a few
+// sparks, again and again (the worse it is, the more often).
+{
+  "name": "Chispas",
+  "flash": { "color": [0.7, 0.85, 1.0], "intensity": 1.4, "range": 2.2, "duration": 0.04 },
+  "emitters": [
+    { "style": "chispas", "count": 5, "speed": [1.5, 5.0], "cone": 80.0, "size": [0.006, 0.012], "life": [0.15, 0.45] }
+  ]
+}

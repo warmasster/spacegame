@@ -1,0 +1,27 @@
+[package]
+name = "lunar-audio"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+# Sound made, not played back: every sound is a recipe (data) of a few oscillators and noises
+# through filters, mixed by a fixed pool of voices on the sound card's own thread. What is heard
+# goes by the medium it comes through: the air round the head (none in a vacuum), what the body
+# touches, the suit itself. Knows nothing of the game: it is given sounds to start and levels to
+# hold.
+[dependencies]
+serde.workspace = true
+rtrb = "=0.4.0"
+cpal = { version = "=0.18.2", optional = true }
+
+[dev-dependencies]
+lunar-core = { path = "../core" }
+
+[features]
+default = ["device"]
+# The sound card (cpal). Without it: the mixer alone, rendering to a buffer (tests, tools).
+device = ["dep:cpal"]
+
+[lints]
+workspace = true

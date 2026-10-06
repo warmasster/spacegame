@@ -1,0 +1,20 @@
+// Performance: a hundred Alcotán, half of them dropped from the sky over the other half, under
+// 300 rounds a second. A battle as big as they come.
+// Run: luna --guion tools/rendimiento/batalla_100.jsonc → out/rendimiento/batalla_100.json (+ .log, .png)
+{
+  "naves": ["alcotan"],
+  "registro": "out/rendimiento/batalla_100.log",
+  "pasos": [
+    { "nave": "alcotan" },
+    { "esperar": 2.0 },
+    { "flota": { "nave": "alcotan", "cuenta": [7, 7], "paso": 36, "este": -10, "norte": 24 } },
+    { "camara": { "en": [0, 110, -260], "mira": [0, 0, 0], "fov": 70 } },
+    { "esperar": 5.0 },
+    { "perfil": "out/rendimiento/batalla_100.json" },
+    { "flota": { "nave": "alcotan", "cuenta": [7, 7], "paso": 36, "altura": 40, "este": 8, "norte": 42 } },
+    { "fuego": { "tiro": "metralleta", "por_segundo": 300, "segundos": 14 } },
+    { "esperar": 15.0 },
+    "fin_perfil",
+    { "foto": "out/rendimiento/batalla_100.png" }
+  ]
+}

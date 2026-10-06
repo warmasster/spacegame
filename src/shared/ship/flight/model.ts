@@ -165,6 +165,11 @@ function rot(q: readonly number[], x: number, y: number, z: number, out: V3) {
   return out;
 }
 
+/** Parked, idle and slower than this (m/s, rad/s) for CREEP_SLEEP_S: asleep even if not dead still. */
+const CREEP_V = 0.1;
+const CREEP_W = 0.05;
+const CREEP_SLEEP_S = 4;
+
 export class FlightModel {
   readonly thrusters: ThrusterSet;
   readonly contact: ContactModel;
@@ -182,6 +187,8 @@ export class FlightModel {
   private liftCmd: Float64Array;
   sleeping = false;
   private still = 0;
+  /** Seconds parked and idle but still creeping (a slope, a leg settling): past CREEP_SLEEP_S it sleeps too. */
+  private creep = 0;
   private sleepClear = 0;
   private sleepCheck = 0;
   private ventCheck = 0;
@@ -256,6 +263,7 @@ export class FlightModel {
   wake() {
     this.sleeping = false;
     this.still = 0;
+    this.creep = 0;
   }
 
   /**
@@ -694,21 +702,33 @@ export class FlightModel {
     const quiet = vv < 0.04 * 0.04 && ww < 0.012 * 0.012;
     let idleThrust = true;
     for (let i = 0; i < this.out.length; i++) if (!(this.out[i] < 0.02)) idleThrust = false;
-    if (sim.landed && quiet && idleThrust && isIdle(cmd) && !fc.climbing) this.still += dt;
+    const parked = sim.landed && idleThrust && isIdle(cmd) && !fc.climbing;
+    if (parked && quiet) this.still += dt;
     else this.still = 0;
-    if (this.still > 0.8) {
-      this.sleeping = true;
-      this.still = 0;
-      pose.v.fill(0);
-      pose.w.fill(0);
-      this.sleepClear = this.clearanceNow(env, gear);
-      this.sleepCheck = 0.5;
-      this.ventCheck = VENT_CHECK_STEPS;
-      this.out.fill(0);
-      this.rcsOut.fill(0);
-      this.liftVec.fill(0);
-    }
+    // a parked ship creeping on a slope (mm/s: the contacts' slip) would never sleep: it stays awake
+    // for nothing (a flight step and a pose on the network every step) — after a few seconds it rests
+    if (parked && vv < CREEP_V * CREEP_V && ww < CREEP_W * CREEP_W) this.creep += dt;
+    else this.creep = 0;
+    if (this.still > 0.8 || this.creep > CREEP_SLEEP_S) this.settle(env);
     this.publish(fc, mp);
+  }
+
+  /**
+   * Asleep where it is, now: what a parked ship does once still (and what the server does to a
+   * parked ship nobody is near, whatever its contacts are still settling: sim LOD).
+   */
+  settle(env: FlightEnv) {
+    this.creep = 0;
+    this.sleeping = true;
+    this.still = 0;
+    this.sim.pose.v.fill(0);
+    this.sim.pose.w.fill(0);
+    this.sleepClear = this.clearanceNow(env, this.gear());
+    this.sleepCheck = 0.5;
+    this.ventCheck = VENT_CHECK_STEPS;
+    this.out.fill(0);
+    this.rcsOut.fill(0);
+    this.liftVec.fill(0);
   }
 
   /** The body's surface as a contact ground (one per surface; null without surface data). */

@@ -1,0 +1,95 @@
+// The one console of the Abejorro (a one-seat cargo tug flown in a suit): flight controls, the
+// four lift engines, the momentum wheels and their unloading, the cargo magnet, power and lights.
+{
+  "name": "Consola del Abejorro",
+  "tamano": ["0.70 m", "0.52 m"],
+  "rejilla": [16, 10],
+  "margen": "10 mm",
+  "separacion": "4 mm",
+  "grupos": [
+    { "id": "mando", "titulo": "MANDO", "celda": [0, 0], "ocupa": [5, 4] },
+    { "id": "potencia", "titulo": "POTENCIA", "celda": [5, 0], "ocupa": [2, 4] },
+    { "id": "inst", "titulo": "VUELO", "celda": [7, 0], "ocupa": [7, 4] },
+    { "id": "motores", "titulo": "MOTORES", "celda": [0, 4], "ocupa": [4, 3] },
+    { "id": "modos", "titulo": "ORDENADOR", "celda": [4, 4], "ocupa": [5, 3] },
+    { "id": "giro", "titulo": "GIRÓSCOPOS", "celda": [9, 4], "ocupa": [5, 3] },
+    { "id": "energia", "titulo": "ENERGÍA", "celda": [0, 7], "ocupa": [5, 3] },
+    { "id": "iman", "titulo": "IMÁN DE CARGA", "celda": [5, 7], "ocupa": [5, 3] },
+    { "id": "luces", "titulo": "LUCES", "celda": [10, 7], "ocupa": [4, 3] },
+    // what it weighs with what hangs from its magnet, what its propellant is worth and whether
+    // its engines lift it all (the "masa" section of secciones.jsonc; the ship leaves out its
+    // bar and its lamp: the needle beside it is the level), to the right of the instruments
+    { "id": "masa", "seccion": "masa", "orden": "columnas", "celda": [14, 0], "ocupa": [2, 4] }
+  ],
+  "mandos": [
+    { "id": "palanca", "kind": "palanca", "grupo": "mando", "ejes": 2, "rango": [-1.0, 1.0], "muelle_al_centro": true,
+      "bind": { "senal": "vuelo.cabeceo", "senal_y": "vuelo.alabeo" }, "nombre": "Palanca de mando",
+      "ayuda": "Adelante y atrás: cabeceo. A los lados: alabeo. La giran los giróscopos: sin toberas, sin gasto. Sentado: W/S, Q/E." },
+    { "id": "guinada", "kind": "palanca", "grupo": "mando", "rango": [-1.0, 1.0], "muelle_al_centro": true, "recorrido": 40, "tamano": [28, 60],
+      "bind": { "senal": "vuelo.guinada" }, "rotulo": "GUIÑADA", "nombre": "Guiñada", "ayuda": "Sentado: A/D." },
+    { "id": "traslacion", "kind": "palanca", "grupo": "mando", "ejes": 2, "rango": [-1.0, 1.0], "muelle_al_centro": true,
+      "bind": { "senal": "vuelo.tz", "senal_y": "vuelo.tx" }, "nombre": "Traslación", "ayuda": "Adelante, atrás y a los lados con el gas frío. Sentado: I/K, J/L." },
+    { "id": "vertical", "kind": "palanca", "grupo": "mando", "rango": [-1.0, 1.0], "muelle_al_centro": true, "recorrido": 40, "tamano": [28, 60],
+      "bind": { "senal": "vuelo.ty" }, "rotulo": "SUBIR", "nombre": "Subir y bajar", "ayuda": "Con MANTENER: pide subir o bajar. Sentado: R/F." },
+
+    { "id": "acelerador", "kind": "palanca", "grupo": "potencia", "rango": [0.0, 1.05], "unidad": "%", "rotulo": "ACELER.",
+      "retenes": [ { "en": 0.0, "nombre": "CORTE" }, { "en": 1.0, "nombre": "100" } ], "friccion": 0.8, "bind": { "senal": "vuelo.acelerador" },
+      "nombre": "Acelerador", "ayuda": "Empuje de los cuatro motores de elevación. Sentado: Mayús y Ctrl; X lo corta." },
+
+    { "id": "alt", "kind": "aguja", "grupo": "inst", "tamano": [100, 100], "senal": "nave.altura", "escala": ["0 m", "100 m"], "unidad": "m", "rotulo": "ALTURA",
+      "requiere": { "energia": "1 W" } },
+    { "id": "vs", "kind": "aguja", "grupo": "inst", "tamano": [100, 100], "senal": "nave.vs", "escala": ["-6 m/s", "6 m/s"], "unidad": "m/s", "rotulo": "V/S",
+      "zonas": { "roja": ["-6 m/s", "-3 m/s"] }, "requiere": { "energia": "1 W" } },
+    { "id": "prop", "kind": "aguja", "grupo": "inst", "tamano": [100, 100], "senal": "deposito_izq.nivel", "escala": ["0 %", "100 %"], "unidad": "%", "rotulo": "PROPEL.",
+      "zonas": { "roja": ["0 %", "15 %"], "ambar": ["15 %", "30 %"] }, "requiere": { "energia": "1 W" } },
+
+    { "id": "tapa_arm", "kind": "tapa", "grupo": "motores", "protege": ["arm"] },
+    { "id": "arm", "kind": "interruptor", "grupo": "motores", "posiciones": ["SEGURO", "ARMADO"], "rotulo": "ARMADO",
+      "bind": { "senal": "motores.armado" }, "nombre": "Armado de los motores", "ayuda": "Da corriente al encendido y abre las válvulas de los cuatro motores. Bajo tapa." },
+    { "id": "arr", "kind": "interruptor", "grupo": "motores", "posiciones": ["PARO", "MARCHA", "ARRANQUE"], "muelle": { "ARRANQUE": "MARCHA" },
+      "rotulo": "MOTORES", "bind": { "senal": "motores.arranque" }, "nombre": "Arranque de los motores",
+      "ayuda": "Lleva a ARRANQUE (vuelve solo a MARCHA): purga, ignición y subida de los cuatro. PARO los apaga." },
+    { "id": "lamp_mot", "kind": "lampara", "grupo": "motores", "rotulo": "FUEGO", "requiere": { "energia": "1 W" },
+      "reglas": [ { "si": "motor_proa_izq.estado == 6 || motor_proa_der.estado == 6 || motor_popa_izq.estado == 6 || motor_popa_der.estado == 6", "color": "rojo", "parpadeo": 2.0 },
+                  { "si": "motor_proa_izq.encendido && motor_proa_der.encendido && motor_popa_izq.encendido && motor_popa_der.encendido", "color": "verde" },
+                  { "si": "motor_proa_izq.estado > 0", "color": "ambar" } ] },
+
+    { "id": "ordenador", "kind": "interruptor", "grupo": "modos", "rotulo": "ORDEN.", "bind": { "senal": "ordenador.encender" }, "defecto": 1,
+      "nombre": "Ordenador de vuelo", "ayuda": "Sin él no hay estabilizador ni mantenimiento: vuelo directo." },
+    { "id": "sas", "kind": "interruptor", "grupo": "modos", "rotulo": "ESTAB.", "bind": { "senal": "vuelo.sas" }, "defecto": 1,
+      "nombre": "Estabilizador", "ayuda": "Frena los giros al soltar la palanca." },
+    { "id": "mantener", "kind": "interruptor", "grupo": "modos", "rotulo": "MANTENER", "bind": { "senal": "vuelo.mantener" },
+      "nombre": "Mantener", "ayuda": "El ordenador sostiene el Abejorro contra la gravedad y anula la deriva." },
+    { "id": "rcs", "kind": "interruptor", "grupo": "modos", "rotulo": "GAS FRÍO", "bind": { "senal": "rcs.maestro" }, "defecto": 1,
+      "nombre": "Maestro del gas frío", "ayuda": "Las doce toberas de gas frío: traslación, y el giro que los giróscopos no den." },
+    { "id": "lamp_modo", "kind": "lampara", "grupo": "modos", "requiere": { "energia": "1 W" },
+      "reglas": [ { "si": "vuelo.modo == 0", "color": "rojo" }, { "si": "vuelo.modo == 3", "color": "cian" }, { "si": "vuelo.modo >= 1", "color": "verde" } ] },
+
+    { "id": "giro", "kind": "interruptor", "grupo": "giro", "rotulo": "MARCHA", "bind": { "senal": "giro.marcha" }, "defecto": 1,
+      "nombre": "Giróscopos", "ayuda": "Tres volantes de inercia giran el Abejorro sin gastar propelente. Tardan en coger vueltas; sin corriente se paran y devuelven al casco lo que guardaban." },
+    { "id": "descarga", "kind": "interruptor", "grupo": "giro", "rotulo": "DESCARGA", "bind": { "senal": "vuelo.descarga" },
+      "nombre": "Descarga de los giróscopos", "ayuda": "Los giróscopos se llenan si giras siempre hacia el mismo lado (o cargas descentrado). Con DESCARGA, el gas frío gira contra ellos mientras se vacían." },
+    { "id": "carga_giro", "kind": "aguja", "grupo": "giro", "tamano": [90, 90], "senal": "giroscopo.carga", "escala": ["0 %", "100 %"], "unidad": "%", "rotulo": "MOMENTO",
+      "zonas": { "verde": ["0 %", "60 %"], "ambar": ["60 %", "90 %"], "roja": ["90 %", "100 %"] }, "requiere": { "energia": "1 W" } },
+    { "id": "lamp_sat", "kind": "lampara", "grupo": "giro", "rotulo": "SATUR.", "requiere": { "energia": "1 W" },
+      "reglas": [ { "si": "giroscopo.carga > 0.95", "color": "rojo", "parpadeo": 2.0 }, { "si": "giroscopo.carga > 0.6", "color": "ambar" }, { "si": "giroscopo.on", "color": "verde" } ] },
+
+    { "id": "bat", "kind": "interruptor", "grupo": "energia", "rotulo": "BATERÍA", "posiciones": ["DESC", "CONEC"], "bind": { "senal": "ct.bat" }, "defecto": 1,
+      "nombre": "Contactor de la batería" },
+    { "id": "valvula", "kind": "interruptor", "grupo": "energia", "rotulo": "PROPEL.", "posiciones": ["CERRADA", "ABIERTA"], "bind": { "senal": "pv.prop" }, "defecto": 1,
+      "nombre": "Válvula de propelente", "ayuda": "De los dos depósitos al colector de los motores y del gas frío." },
+    { "id": "v_bus", "kind": "display7", "grupo": "energia", "senal": "elec.bus", "unidad": "V", "decimales": 1, "digitos": 4, "requiere": { "energia": "1 W" }, "rotulo": "V BUS" },
+
+    { "id": "tapa_iman", "kind": "tapa", "grupo": "iman", "protege": ["agarre"] },
+    { "id": "agarre", "kind": "interruptor", "grupo": "iman", "posiciones": ["SUELTA", "AGARRA"], "rotulo": "IMÁN",
+      "bind": { "senal": "iman.agarrar" }, "nombre": "Imán de carga",
+      "ayuda": "Imán electropermanente bajo la panza: posa el Abejorro sobre la carga y agarra todo lo que tenga bajo su cara y contra ella (dos bidones juntos, los dos), empezando por lo más centrado y sin pasar de su carga nominal: lo que la pasaría lo deja y avisa. Sujetar no gasta nada (aguanta con la nave apagada); cada cambio pide un pulso del condensador." },
+    { "id": "lamp_iman", "kind": "lampara", "grupo": "iman", "rotulo": "SUJETA", "requiere": { "energia": "1 W" },
+      "reglas": [ { "si": "iman.sujeta", "color": "verde" }, { "si": "iman.activo", "color": "ambar" }, { "si": "!iman.listo", "color": "rojo" } ] },
+    { "id": "cond", "kind": "aguja", "grupo": "iman", "tamano": [90, 90], "senal": "iman.carga", "escala": ["0 %", "100 %"], "unidad": "%", "rotulo": "CONDENS.",
+      "zonas": { "roja": ["0 %", "40 %"] }, "requiere": { "energia": "1 W" } },
+
+    { "id": "l_nav", "kind": "interruptor", "grupo": "luces", "rotulo": "NAVEG.", "bind": { "senal": "luces.nav" }, "defecto": 1, "nombre": "Luces de navegación y destello" },
+    { "id": "l_foco", "kind": "interruptor", "grupo": "luces", "rotulo": "FOCO", "bind": { "senal": "luces.foco" }, "nombre": "Foco de trabajo", "ayuda": "Alumbra hacia abajo, a la carga." }
+  ]
+}

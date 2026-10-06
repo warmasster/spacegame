@@ -75,8 +75,10 @@ export class Input {
   }
 
   /** Mouse delta since last call (radians). */
-  look(): [number, number] {
-    const r: [number, number] = [this.dx * this.sensitivity, this.dy * this.sensitivity];
+  look(out?: [number, number]): [number, number] {
+    const r: [number, number] = out ?? [0, 0];
+    r[0] = this.dx * this.sensitivity;
+    r[1] = this.dy * this.sensitivity;
     this.dx = this.dy = 0;
     return r;
   }

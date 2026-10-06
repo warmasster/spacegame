@@ -1,0 +1,14 @@
+// The drum of the Azor, face 3: SENSORES. The radar and its range scale, the passive sensors,
+// the transponder, the jammer.
+{
+  "name": "Sensores",
+  "tamano": ["0.56 m", "0.27 m"],
+  "rejilla": [8, 3],
+  "margen": "7 mm",
+  "separacion": "4 mm",
+  "grupos": [
+    { "id": "radar", "seccion": "radar", "celda": [0, 0], "ocupa": [4, 3] },
+    { "id": "sens", "seccion": "sensores", "celda": [4, 0], "ocupa": [4, 3] }
+  ],
+  "mandos": []
+}
