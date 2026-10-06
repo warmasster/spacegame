@@ -97,7 +97,8 @@ def naves():
 
 def clave_forma(forma):
     """A shape's size as a name, to the millimetre — the same the game makes
-    (`crates/ship/src/components.rs`, `shape_key`): `b300x660x700`, `c85x1000`, `w100x1200x1600`."""
+    (`crates/ship/src/components.rs`, `shape_key`): `b300x660x700`, `c85x1000`, `w100x1200x1600`,
+    and a hull of points `h` and eight hex digits."""
     import numpy as np
 
     def mm(v):
@@ -113,6 +114,15 @@ def clave_forma(forma):
         return 'c%dx%d' % (mm(forma['radius']), mm(forma['height'])) + ('' if abs(t - 1.0) < 5e-4 else 't%d' % mm(t))
     if k == 'wedge':
         return 'w%dx%dx%d' % tuple(mm(v) for v in forma['size'])
+    if k == 'hull':
+        # by its points to the millimetre, in their order: FNV-1a over them as little-endian i32
+        import struct
+        h = 0x811c9dc5
+        for p in forma['points']:
+            for v in p:
+                for b in struct.pack('<i', mm(v)):
+                    h = ((h ^ b) * 0x01000193) & 0xffffffff
+        return 'h%08x' % h
     return None
 
 
@@ -214,6 +224,11 @@ class Pieza(Marco):
 
     @property
     def semi(self):
+        """How far it reaches from its origin each way: half its size, centred (a hull of points
+        need not be: as far as its farthest point, as the game measures it)."""
+        if self.forma.get('kind') == 'hull':
+            pts = [Vector(p) for p in self.forma.get('points', [(0, 0, 0)])]
+            return Vector(tuple(max(abs(p[i]) for p in pts) for i in range(3)))
         return self.tam * 0.5
 
 
@@ -329,7 +344,8 @@ ESTILOS = {}
 
 def estilo(*nombres):
     """Says that the function builds a plain shape seen as that style: `f(m, p)` puts geometry
-    on piece `p` (a box, a cylinder or a wedge of whatever size a ship gave it), in its frame."""
+    on piece `p` (a box, a cylinder, a wedge or a hull of points, of whatever size a ship gave
+    it), in its frame."""
 
     def registrar(f):
         for n in nombres:
@@ -1017,7 +1033,10 @@ class Modelo:
             # what it takes up against what the game has it as: a model may round its shape off
             # and stand a little proud of it, never be another size
             fuera = max(max(-s - l, h - s) for s, l, h in zip(p.semi, lo, hi))
-            dentro = min((h - l) / max(2 * s, 1e-6) for s, l, h in zip(p.semi, lo, hi))
+            # (a hull of points away from its origin fills what it reaches along one axis at least,
+            # as the game measures it: `modelos.rs`)
+            llenos = [(h - l) / max(2 * s, 1e-6) for s, l, h in zip(p.semi, lo, hi)]
+            dentro = max(llenos) if p.forma.get('kind') == 'hull' else min(llenos)
             aviso = '  <-- se sale' if fuera > max(0.05, 0.12 * max(p.tam)) else ('  <-- se queda corta' if dentro < 0.5 else '')
             print(f'  {self.nombre}/{p.nombre}: {tris} triángulos, sale {fuera * 100:+.1f} cm, llena {dentro * 100:.0f} %{aviso}')
         print(f'{self.nombre}: {sum(t for t, _, _ in info.values())} triángulos -> {os.path.relpath(ruta, RAIZ)} ({os.path.getsize(ruta) // 1024} KB)')

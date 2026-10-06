@@ -51,6 +51,19 @@ vuelo (V40)», [`COMBATE.md`](COMBATE.md), [`MOVIMIENTO.md`](MOVIMIENTO.md) §8)
   Blender (`tools/modelos/hacer.py`). `coherencia.rs` comprueba en toda nave que un asiento que
   se mueve tiene a mano lo que lo mueve en cada extremo, y una tecla.
 
+- **El Azor más épico**: alas en flecha de 11,2 m de envergadura (antes 5,4) en dos paneles por
+  lado con la góndola girando en el hueco, canards, derivas más altas, estabilizadores más
+  anchos, DARDO en los paneles exteriores, luces en las puntas, panel exterior en la pata. Para
+  ello los estilos de Blender visten también envolventes de puntos (`shape_key` de `hull` en Rust
+  y en Python) y hay un estilo nuevo, `ala_flecha`, para cualquier nave.
+
+- **Repaso de lo que dependía de los fotogramas** (Fernando: «a lo mejor lo del porcentaje y
+  los fotogramas pasa en más sistemas»): las teclas mantenidas del asiento (arreglado, arriba);
+  la vista que sigue al ordenador de muñeca se suavizaba con un factor lineal por fotograma (ahora
+  exponencial, `play.rs`); la inercia de las ruedas depende de su paso pero corre al tic fijo de
+  la nave (50 Hz), no al fotograma; el jugador y lo que vive entre estructuras van por lonchas del
+  mundo (`MOVIMIENTO.md`). No se encontró nada más con un umbral o un redondeo por fotograma.
+
 Queda de esto:
 
 - **Nadie lo ha jugado.** Todo está comprobado con pruebas; los .exe de `SELENE_V39` no se han

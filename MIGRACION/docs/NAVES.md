@@ -167,7 +167,9 @@ rompe). Un **modelo** es solo lo que se ve de cerca, dibujado en lugar de esa fo
 - **Qué nombre:** un tipo de componente, el suyo (`bidon_agua/cuerpo`, `asiento/cojin`); una pieza
   de estructura, `parte_<id>/cuerpo`; una herramienta, el de `"modelo"` en `gear.jsonc`; una pieza
   suelta de una nave con `"estilo": "ala"`, `estilo_ala/<forma>` donde la forma es su tamaño al
-  milímetro (`b2500x160x2400`, `c85x1000`, `w100x1200x1600`: `components::shape_key`).
+  milímetro (`b2500x160x2400`, `c85x1000`, `w100x1200x1600`: `components::shape_key`); una
+  envolvente de puntos (`hull`), `h` y ocho cifras hexadecimales (FNV-1a de sus puntos al
+  milímetro, en orden; `kit.clave_forma` hace lo mismo en Python).
 - **Materiales:** el que empieza por `tinte` es la superficie propia de la pieza según sus datos
   (color, acabado), por la sombra horneada: un modelo sirve para el bidón azul y para el rojo. Los
   demás son colores del modelo; `#acabado` al final del nombre elige el acabado.
@@ -176,14 +178,22 @@ rompe). Un **modelo** es solo lo que se ve de cerca, dibujado en lugar de esa fo
   juego. El taller (`kit.py`) da cajas biseladas, tornos, tubos, extrusiones, pieles, tornillos,
   rejillas, bridas, taladros (booleanos), y hornea la oclusión ambiental en los vértices.
   **Estilos** (`@estilo('ala')`, `recetas/estilos.py`): una función para cualquier tamaño; el
-  taller construye una pieza por cada tamaño que piden las naves.
+  taller construye una pieza por cada tamaño que piden las naves. Un estilo puede vestir también
+  una envolvente de puntos: `ala_flecha` hace un ala en flecha y con estrechamiento (o un canard,
+  un estabilizador) de cualquier contorno convexo visto desde arriba, tan gruesa en la raíz y en
+  la punta como digan sus puntos.
 - **Construir:** `blender -b -P tools/modelos/hacer.py -- [nombres] [--sin-vista] [--sin-sombra]
   [--lista]`. Sin nombres, todo (93 modelos en unos 20 s). Deja una vista de cada uno en
   `out/modelos/` y `python tools/modelos/hoja.py` las junta en hojas. `--lista` dice qué falta.
   Hay que **volver a construir** cuando cambia el tamaño de una pieza con estilo o se añade un
   tipo: `tests/modelos.rs` falla si falta alguno o si uno no cabe en su forma.
 - **Copia reflejada:** la copia `"espejo"` de una pieza con estilo lleva el modelo reflejado
-  (`PartModel::mirrored`): la punta del ala queda por fuera en las dos.
+  (`PartModel::mirrored`): la punta del ala queda por fuera en las dos. (`espejo` gira la pieza,
+  no refleja su forma de choque: una envolvente que no es simétrica en su propio x — un ala en
+  flecha — se escribe a cada lado con sus puntos, como `ala_izq` y `ala_der` del Azor.)
+- **Construir sin Blender instalado:** con Python 3.11, `pip install "bpy==4.5.*"` y
+  `python -c "import bpy, sys, runpy; sys.argv=['hacer.py','--', ...]; runpy.run_path('tools/modelos/hacer.py', run_name='__main__')"`
+  (hay que importar `bpy` antes de que el taller importe `bmesh`).
 - **Casco, puertas:** no llevan modelo de Blender; su aspecto fino lo hace el generador
   (`geom::plate_look`: junta cortada alrededor de cada chapa, aristas `suaves` redondeadas;
   `geom::window_look`: marco y cristal rehundido; `closures::leaf_look`: marco, panel y nervios).

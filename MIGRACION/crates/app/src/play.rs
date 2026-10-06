@@ -847,7 +847,8 @@ impl State {
         let wrist = self.wrist_look.filter(|_| !free && self.start.is_none() && self.bench.is_none());
         self.look.update(dt, free || wrist.is_some());
         if let Some((yaw, pitch)) = wrist {
-            let k = (dt * 6.0).min(1.0);
+            // (the same however the second is cut into frames)
+            let k = 1.0 - (-dt * 6.0).exp();
             self.look.yaw += (yaw - self.look.yaw) * k;
             self.look.pitch += (pitch - self.look.pitch) * k;
         }

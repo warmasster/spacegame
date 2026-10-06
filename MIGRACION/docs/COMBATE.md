@@ -157,7 +157,16 @@ puesta vuelve a arrancar. Arranca con las baterías en 6 s y luego ya no las nec
 
 ## El Azor
 
-Caza monoplaza de 11 m y 12 t, posado en horizontal sobre tres patas largas.
+Caza monoplaza de 11 m y 13 t, posado en horizontal sobre tres patas largas.
+
+- **Forma (V40):** alas en flecha de 11,2 m de envergadura en dos paneles por lado: el interior
+  del casco a la góndola (5,8 m de cuerda en la raíz) y el exterior más allá; la góndola gira en
+  el hueco entre los dos, sobre el larguero que pasa por su eje. Canards delante, derivas dobles
+  más altas y en flecha, estabilizadores más anchos, los DARDO bajo los paneles exteriores y las
+  luces de posición en las puntas. Las alas son envolventes de puntos (`hull`) vestidas con el
+  estilo `ala_flecha`. Las góndolas y sus depósitos están en z −0,615, bajo el centro de masas
+  (los motores a la par no pueden compensar un cabeceo). El panel exterior (ASIENTO, BAHÍA) va en
+  una caja en la pata izquierda, a la altura de los ojos de quien está de pie.
 
 - **Entrar** (V40): el Azor está sobre patas largas, con la panza a 2,1 m del suelo: se pasa por
   debajo de pie. ASIENTO, en el panel exterior a babor tras el ala, abre las **dos compuertas de

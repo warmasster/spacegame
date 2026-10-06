@@ -127,6 +127,120 @@ def ala(m, p):
         m.tubo([(x, 0, zt + 0.01), (x, -0.004, zt - 0.1)], 0.0025, 'plastico_negro', p, p, lados=6)
 
 
+def planta(puntos):
+    """A flat convex wing given as a hull of points (in its piece's frame, span along x, chord
+    along z, thickness along y): its outline seen from above (convex, counter-clockwise in x-z),
+    its mid-plane height, and its thickness at its root (least x) and at its tip (most x)."""
+    pts = [(p[0], p[2]) for p in puntos]
+    pts = sorted(set(pts))
+
+    def giro(o, a, b):
+        return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+
+    bajo, alto = [], []
+    for q in pts:
+        while len(bajo) >= 2 and giro(bajo[-2], bajo[-1], q) <= 0:
+            bajo.pop()
+        bajo.append(q)
+    for q in reversed(pts):
+        while len(alto) >= 2 and giro(alto[-2], alto[-1], q) <= 0:
+            alto.pop()
+        alto.append(q)
+    contorno = bajo[:-1] + alto[:-1]
+    xs = [p[0] for p in puntos]
+    x0, x1 = min(xs), max(xs)
+    ys = [p[1] for p in puntos]
+    medio = (min(ys) + max(ys)) / 2
+
+    def grueso(x):
+        cerca = [p[1] for p in puntos if abs(p[0] - x) < 1e-4]
+        return (max(cerca) - min(cerca)) if cerca else 0.0
+
+    return contorno, medio, grueso(x0), grueso(x1), x0, x1
+
+
+def cuerda(contorno, x):
+    """Where the outline is crossed at span station `x`: (trailing edge z, leading edge z)."""
+    zs = []
+    n = len(contorno)
+    for i in range(n):
+        (ax, az), (bx, bz) = contorno[i], contorno[(i + 1) % n]
+        if (ax - x) * (bx - x) <= 0 and ax != bx:
+            zs.append(az + (bz - az) * (x - ax) / (bx - ax))
+        elif ax == x:
+            zs.append(az)
+    return min(zs), max(zs)
+
+
+@estilo('ala_flecha')
+def ala_flecha(m, p):
+    """A swept, tapered wing (a canard, a stabiliser) from its hull of points: its outline from
+    above, as thick at root and tip as its points say, an airfoil all along (rounded leading
+    edge, sharp trailing edge), the leading edge in its warning paint, a flap along the inner
+    two thirds of its trailing edge, rows of fasteners over its spars and wicks off its tip."""
+    contorno, y0, g0, g1, x0, x1 = planta(p.forma['points'])
+    n_u = 14
+    # (more stations near the root and the tip, where the outline turns)
+    estaciones = [x0 + (x1 - x0) * (0.5 - 0.5 * math.cos(math.pi * k / 10)) for k in range(11)]
+
+    def perfil(x, enc=1.0):
+        zt, zl = cuerda(contorno, x)
+        t = g0 + (g1 - g0) * (x - x0) / max(x1 - x0, 1e-6)
+        anillo = []
+        for k in range(n_u + 1):
+            u = k / n_u
+            # thickness along the chord (NACA-like, its thickest a third back), from the edge
+            h = t / 2 * enc * (2.969 * math.sqrt(u) - 1.26 * u - 3.516 * u ** 2 + 2.843 * u ** 3 - 1.015 * u ** 4) / 1.0
+            anillo.append((x, y0 + h, zl + (zt - zl) * u))
+        for k in range(n_u - 1, 0, -1):
+            u = k / n_u
+            h = t / 2 * enc * (2.969 * math.sqrt(u) - 1.26 * u - 3.516 * u ** 2 + 2.843 * u ** 3 - 1.015 * u ** 4)
+            anillo.append((x, y0 - h, zl + (zt - zl) * u))
+        return anillo
+
+    m.piel([perfil(x) for x in estaciones], mat=TINTE, pieza=p, marco=p, liso=55.0)
+    # the leading edge in warning paint: the first tenth of the chord, a touch proud
+    banda = []
+    for x in estaciones[1:-1]:
+        zt, zl = cuerda(contorno, x)
+        t = g0 + (g1 - g0) * (x - x0) / max(x1 - x0, 1e-6)
+        anillo = []
+        for k in range(7):
+            a = math.radians(-90 + 180 * k / 6)
+            anillo.append((x, y0 + t * 0.36 * math.sin(a), zl + 0.004 - (zt - zl) * 0.06 * (1 - math.cos(a))))
+        banda.append(anillo)
+    m.piel(banda, mat='pintura_roja', pieza=p, marco=p, cerrado=False, liso=60.0)
+    # (its root is its thicker end, whichever side of the ship it is on)
+    raiz, punta = (x0, x1) if g0 >= g1 else (x1, x0)
+    hacia = 1.0 if punta > raiz else -1.0
+    # the flap: a line along the inner two thirds of the trailing edge (a slot top and bottom)
+    xf = raiz + (punta - raiz) * 0.66
+    for lado in (1, -1):
+        pts = []
+        for x in tramos(raiz + 0.05 * hacia, xf, 0.25):
+            zt, zl = cuerda(contorno, x)
+            t = g0 + (g1 - g0) * (x - x0) / max(x1 - x0, 1e-6)
+            z = zt + (zl - zt) * 0.22
+            pts.append((x, y0 + lado * t * 0.21, z))
+        m.tubo(pts, 0.004, 'acero_oscuro', p, p, lados=6)
+    # fasteners over its two spars, top and bottom
+    arriba, abajo = [], []
+    for f in (0.25, 0.6):
+        for x in tramos(x0 + 0.1, x1 - 0.1, 0.18):
+            zt, zl = cuerda(contorno, x)
+            t = g0 + (g1 - g0) * (x - x0) / max(x1 - x0, 1e-6)
+            z = zl + (zt - zl) * f
+            arriba.append((x, y0 + t * 0.49, z))
+            abajo.append((x, y0 - t * 0.49, z))
+    m.tornillos(arriba, 0.0045, 0.0014, 'acero', p, p, eje='y')
+    m.tornillos(abajo, 0.0045, 0.0014, 'acero', p, p, eje=(0, -1, 0))
+    # static wicks off the tip's trailing edge
+    zt, zl = cuerda(contorno, punta - 0.02 * hacia)
+    for f in (0.0, 0.3):
+        a = Vector((punta - (0.02 + f * 0.4) * hacia, y0, zt + 0.01))
+        m.tubo([a, a + Vector((0, -0.004, -0.12))], 0.0025, 'plastico_negro', p, p, lados=6)
+
+
 @estilo('borde_ala')
 def borde_ala(m, p):
     """A wing's leading edge: a rounded nose in its paint, a band over each rib joint."""

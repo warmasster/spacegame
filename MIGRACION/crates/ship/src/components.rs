@@ -226,7 +226,19 @@ pub fn shape_key(shape: &ShapeDef) -> Option<String> {
         ShapeDef::Box { size } => Some(format!("b{}x{}x{}", mm(size[0]), mm(size[1]), mm(size[2]))),
         ShapeDef::Cylinder { radius, height, taper, .. } => Some(if (taper - 1.0).abs() < 5e-4 { format!("c{}x{}", mm(radius), mm(height)) } else { format!("c{}x{}t{}", mm(radius), mm(height), mm(taper)) }),
         ShapeDef::Wedge { size } => Some(format!("w{}x{}x{}", mm(size[0]), mm(size[1]), mm(size[2]))),
-        ShapeDef::Hull { .. } => None,
+        // a hull of points: by its points to the millimetre, in their order (FNV-1a over them as
+        // little-endian i32): `h` and eight hex digits
+        ShapeDef::Hull { ref points } => {
+            let mut h: u32 = 0x811c_9dc5;
+            for p in points {
+                for v in p {
+                    for b in (mm(*v) as i32).to_le_bytes() {
+                        h = (h ^ u32::from(b)).wrapping_mul(0x0100_0193);
+                    }
+                }
+            }
+            Some(format!("h{h:08x}"))
+        }
     }
 }
 
@@ -318,7 +330,8 @@ mod tests {
         assert_eq!(shape_key(&ShapeDef::Cylinder { radius: 0.085, height: 1.0, sides: 10, taper: 1.0 }).as_deref(), Some("c85x1000"));
         assert_eq!(shape_key(&ShapeDef::Cylinder { radius: 0.055, height: 0.13, sides: 10, taper: 1.6 }).as_deref(), Some("c55x130t1600"));
         assert_eq!(shape_key(&ShapeDef::Wedge { size: [0.1, 1.2, 1.6] }).as_deref(), Some("w100x1200x1600"));
-        assert_eq!(shape_key(&ShapeDef::Hull { points: vec![[0.0; 3]] }), None);
+        assert_eq!(shape_key(&ShapeDef::Hull { points: vec![[0.0; 3]] }).as_deref(), Some("he23c62b5"));
+        assert_eq!(shape_key(&ShapeDef::Hull { points: vec![[1.15, 0.11, 2.2], [-0.5, 0.0, -3.6]] }).as_deref(), Some("hb2c955bc"));
         assert_eq!(style_model("ala", &ShapeDef::Box { size: [2.5, 0.16, 2.4] }).as_deref(), Some("estilo_ala/b2500x160x2400"));
         assert_eq!(model_name("bidon_agua", ""), "bidon_agua/cuerpo");
         assert_eq!(model_name("asiento", "cojin"), "asiento/cojin");
