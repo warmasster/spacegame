@@ -736,6 +736,6 @@ mod tests {
         // the real definitions: no shot, missile or explosion shares a key or takes the player's
         let d = crate::content::Defs::load(&crate::root().join("assets/defs")).unwrap_or_else(|e| panic!("{e}"));
         let b = Blasts::new(&d.effects, lunar_core::missiles::Missiles::new(d.missiles.clone()), 1000).unwrap_or_else(|e| panic!("{e}"));
-        assert!(b.keys.iter().any(|(k, a)| *k == KeyCode::KeyQ && matches!(a, Action::Shoot(i) if b.shots[*i].0 == "metralleta")));
+        assert!(b.keys.iter().any(|(k, a)| *k == KeyCode::KeyU && matches!(a, Action::Shoot(i) if b.shots[*i].0 == "metralleta")));
     }
 }

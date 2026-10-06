@@ -604,14 +604,21 @@ fn its_engines_push_what_the_figures_say_full_and_at_their_least() {
         let l = diag::lift(&ship, &s);
         start_engines(&mut ship, &mut s, &mut |ship, s, secs| run(ship, s, g as f32, secs));
         let throttle = kind.def.vuelo.as_ref().unwrap().acelerador.clone().unwrap();
-        // at full: what really pushes it (trimmed through its centre of mass, fed by its tanks)
-        // is the figure near enough, and beats its weight full with the margin
+        // at full: what its engines really push (trimmed through its centre of mass, fed by its
+        // tanks) is the figure near enough, and beats its weight full with the margin. (Its
+        // engines alone: what its thrusters add or take, holding it straight, is theirs)
+        let engines_push = |ship: &Ship, s: &Structure| -> f64 {
+            engines(kind).iter().map(|&m| {
+                let part = &s.parts[kind.machines[m].part.unwrap() as usize];
+                f64::from(part.local.transform_vector3(kind.machines[m].thrust).normalize_or_zero().y) * signal(ship, &format!("{}.empuje", kind.machines[m].id))
+            }).sum()
+        };
         set(&mut ship, &s, &throttle, 1.0);
         run(&mut ship, &mut s, g as f32, 4.0);
-        let full = f64::from(s.force.dot(s.rot * Vec3::Y));
+        let full = engines_push(&ship, &s);
         set(&mut ship, &s, &throttle, 0.0);
         run(&mut ship, &mut s, g as f32, 4.0);
-        let least = f64::from(s.force.dot(s.rot * Vec3::Y));
+        let least = engines_push(&ship, &s);
         eprintln!("{}: a tope {:.1} kN (nominal {:.1}), al mínimo {:.1} kN ({:.1}); pesa {:.1} kN llena y {:.1} kN seca: empuje/peso {:.2} y {:.2}", kind.id, full / 1e3, l.thrust / 1e3, least / 1e3, l.least / 1e3, l.full * g / 1e3, l.dry * g / 1e3, full / (l.full * g), full / (l.dry * g));
         assert!(full > l.thrust * 0.9 && full < l.thrust * 1.06, "{}: a tope empuja {full:.0} N de {:.0}: no le llega el propelente", kind.id, l.thrust);
         assert!(full > l.full * g * diag::LIFT_MARGIN, "{}: llena no despega: {full:.0} N contra {:.0}", kind.id, l.full * g);

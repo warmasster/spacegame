@@ -4,11 +4,10 @@
 //! port, which controls a hand can work, what feeds what on a network. Nothing here names a ship,
 //! a panel or a signal of one: a new ship gets every test for free.
 #![allow(dead_code)]
+pub mod vuelo;
 use glam::{DQuat, DVec3, Vec3};
 use lunar_controls::{Intent, Mods, Outcome};
-use lunar_core::{
-    structure::{Library, state::Structure},
-};
+use lunar_core::structure::{Library, state::Structure};
 use lunar_machines::{EdgeKind, PortIo, net::Medium};
 use lunar_ship::{Ship, ShipKind, ShipLibrary, World, ship::TICK};
 use lunar_signals::{SignalId, Writer};

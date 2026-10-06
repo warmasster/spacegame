@@ -53,7 +53,8 @@
             "ERR {tac.obj.error:1}",
             "VUELO {tac.obj.vuelo:1}",
             "D {tac.obj.dist:2}",
-            "{ap.activo|MANUAL|P. NAV|P. COMBATE}" ] }
+            "{ap.activo|MANUAL|P. NAV|P. COMBATE}",
+            "{ap.sin_objetivo| |SIN TRAZA}{ap.sin_cuerpo| |SIN CUERPO}" ] }
         ] },
         { "titulo": "ARMAS", "boton": "ARMAS", "elementos": [
           { "tipo": "barra", "senal": "canon_izq.nivel", "rotulo": "CAÑÓN IZQ", "decimales": 0, "ocupa": [2, 1], "zonas": { "roja": ["0 %", "15 %"], "ambar": ["15 %", "35 %"], "verde": ["35 %", "100 %"] } },
@@ -77,7 +78,7 @@
           { "tipo": "grafica", "senal": "nave.altura", "rotulo": "ALTURA", "escala": ["0 m", "200 m"], "ventana": 120, "zonas": { "roja": ["0 m", "3 m"] } },
           { "tipo": "reloj", "senal": "gondola_izq.empuje", "rotulo": "EMP IZQ", "escala": ["0 kN", "100 kN"], "zonas": { "verde": ["20 kN", "90 kN"], "roja": ["93 kN", "100 kN"] } },
           { "tipo": "reloj", "senal": "gondola_der.empuje", "rotulo": "EMP DER", "escala": ["0 kN", "100 kN"], "zonas": { "verde": ["20 kN", "90 kN"], "roja": ["93 kN", "100 kN"] } },
-          { "tipo": "texto", "lineas": ["MODO {vuelo.modo|DIRECTO|NORMAL|ESTAB.|MANTENER}", "{ap.activo|MANUAL|P. NAV|P. COMBATE}"], "ocupa": [2, 1] }
+          { "tipo": "texto", "lineas": ["MODO {vuelo.modo|DIRECTO|NORMAL|ESTAB.|MANTENER}", "{ap.activo|MANUAL|P. NAV|P. COMBATE} {ap.sin_objetivo| |SIN TRAZA}{ap.sin_cuerpo| |SIN CUERPO}"], "ocupa": [2, 1] }
         ] }
       ] },
 

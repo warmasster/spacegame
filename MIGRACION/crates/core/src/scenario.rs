@@ -195,6 +195,13 @@ pub struct JetpackDef {
     /// Steadying: under this speed sideways it leaves you be (m/s).
     pub quieto: f64,
     pub junto: BesideDef,
+    /// Floating where nothing weighs, how fast its jets roll you (rad/s, Q and E).
+    #[serde(default = "roll_rate")]
+    pub alabeo: f64,
+}
+
+fn roll_rate() -> f64 {
+    1.2
 }
 
 /// What the pack steadies you to in the air: whatever near you goes most as you do — a ship you

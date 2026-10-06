@@ -132,6 +132,7 @@ impl Wheel {
     }
 
     /// Stops (or wrap), detents and resolution. Says whether it hit a stop or fell in a detent.
+    /// (A wheel's detent holds it against a notch: it is left with a faster turn, or with Ctrl.)
     fn settle(&self, st: &mut ControlState, fine: bool, entered: &mut Option<Event>) {
         let mut x = st.x;
         if self.hard {
@@ -210,7 +211,8 @@ impl Mechanism for Wheel {
         match *i {
             Intent::Turn { notches, rate, m } => {
                 let mut mult = 1.0;
-                if let Some((from, k, gamma, max)) = self.accel {
+                // (spun fast it goes faster; with Ctrl, the fine step it says, however it is spun)
+                if let Some((from, k, gamma, max)) = self.accel.filter(|_| !m.fine) {
                     mult = (1.0 + k * (f64::from(rate) - from).max(0.0).powf(gamma)).min(max);
                 }
                 let amount = f64::from(notches) * self.step_for(m, st) * mult;
@@ -219,6 +221,7 @@ impl Mechanism for Wheel {
                 if let (Some(c), Some((from, ..))) = (self.damping, self.accel)
                     && f64::from(rate) > from
                     && !self.log
+                    && !m.fine
                 {
                     st.v += amount * c * 0.5;
                 }

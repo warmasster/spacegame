@@ -21,6 +21,9 @@ pub enum Action {
     /// Sit, stand (E).
     Use,
     Jetpack,
+    /// Floating with the pack on: roll left, right (held).
+    RollLeft,
+    RollRight,
     /// The pack's steadying on or off.
     Steady,
     Lamp,
@@ -113,7 +116,9 @@ pub const BINDINGS: &[Binding] = &[
     key(A::Jetpack, &[K::KeyJ], "J", G::Traje, "Mochila propulsora: encender o apagar"),
     key(A::Jump, &[], "Espacio (mantener)", G::Traje, "Con la mochila encendida: empuje hacia arriba"),
     key(A::Down, &[K::ControlLeft], "Ctrl", G::Traje, "Con la mochila encendida: empuje hacia abajo"),
-    key(A::Forward, &[], "W A S D en el aire", G::Traje, "Con la mochila encendida: empuje de lado (al soltar, te frena)"),
+    key(A::Forward, &[], "W A S D en el aire", G::Traje, "Con la mochila encendida: empuje hacia donde miras (W adelante, también hacia arriba o abajo si miras así; A y D a los lados). Al soltar, te frena"),
+    key(A::RollLeft, &[K::KeyQ], "Q", G::Traje, "Flotando sin peso con la mochila: alabear a la izquierda. Sin peso el ratón gira todo el cuerpo, sin límite, y al apagar la mochila sigues como estabas"),
+    key(A::RollRight, &[], "E (mantener)", G::Traje, "Flotando sin peso con la mochila: alabear a la derecha (si no apuntas a un asiento)"),
     key(A::Steady, &[K::KeyZ], "Z", G::Traje, "Estabilizador de la mochila: al soltar las teclas te frena (respecto a la nave que tengas al lado, y cae con ella; si no hay, al suelo); apagado, sigues con lo que llevabas"),
     key(A::Lamp, &[K::KeyL], "L", G::Traje, "Linterna del casco"),
     key(A::Rangefinder, &[K::KeyT], "T", G::Traje, "Telémetro: distancia a lo que miras"),
@@ -161,7 +166,7 @@ pub fn taken(key: KeyCode) -> bool {
 }
 
 /// Keys held: where each of the held actions is kept.
-pub const HELD: usize = 10;
+pub const HELD: usize = 12;
 
 /// The place among the held keys of an action that is held (the rest happen once, when pressed).
 pub fn held(a: Action) -> Option<usize> {
@@ -176,6 +181,8 @@ pub fn held(a: Action) -> Option<usize> {
         Action::FreeLook => 7,
         Action::Crouch => 8,
         Action::Gesture => 9,
+        Action::RollLeft => 10,
+        Action::RollRight => 11,
         _ => return None,
     })
 }
@@ -206,7 +213,7 @@ mod tests {
         assert_eq!(shown(Action::Jetpack), "J");
         assert_eq!(shown(Action::Jump), "Espacio");
         // what is held has a place of its own
-        let places: Vec<usize> = [A::Forward, A::Back, A::Left, A::Right, A::Jump, A::Down, A::Run, A::FreeLook, A::Crouch, A::Gesture].into_iter().filter_map(held).collect();
+        let places: Vec<usize> = [A::Forward, A::Back, A::Left, A::Right, A::Jump, A::Down, A::Run, A::FreeLook, A::Crouch, A::Gesture, A::RollLeft, A::RollRight].into_iter().filter_map(held).collect();
         assert_eq!(places, (0..HELD).collect::<Vec<_>>());
         assert_eq!(held(A::Lamp), None);
     }

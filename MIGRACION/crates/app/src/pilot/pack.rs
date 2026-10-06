@@ -1,15 +1,18 @@
-//! The suit's jet pack (`PlayerDef::mochila`): Space pushes up, the keys one walks with push
-//! sideways once off the ground, Ctrl pushes down; it burns its gas doing so and fills up again
-//! aboard a ship. Hands off, with its steadying on, it brakes you and holds your height — to
-//! whatever near you goes most as you do (`Hold`): the ship you left or came up to, as it goes
-//! now, or the ground you hover over. Beside a ship that falls you fall with it, burning nothing;
-//! if it speeds up the pack goes after it as it can. With the steadying off nothing a ship does
-//! is anything to you. Every number is the pack's data.
+//! The suit's jet pack (`PlayerDef::mochila`), as in Space Engineers: once off the ground the
+//! keys one walks with push you where you look — W ahead, up or down too if you look up or
+//! down; A and D to the sides — Space pushes up and Ctrl down along the body; it burns its gas
+//! doing so and fills up again aboard a ship. Hands off, with its steadying on, it brakes you
+//! and holds your height — to whatever near you goes most as you do (`Hold`): the ship you left
+//! or came up to, as it goes now, or the ground you hover over. Beside a ship that falls you
+//! fall with it, burning nothing; if it speeds up the pack goes after it as it can. With the
+//! steadying off nothing a ship does is anything to you. Every number is the pack's data.
 //!
-//! Its jets push along the body's own frame (up, down, level), whatever that is turned to, and
-//! it holds you against what you weigh, whatever that is: where nothing weighs it has nothing
-//! to hold up and burns nothing standing still. And where there is no ground and nothing near
-//! goes as you do, it has nothing to steady you to (`Hold::Free`): it lets you be.
+//! It holds you against what you weigh, whatever that is: where nothing weighs it has nothing
+//! to hold up and burns nothing standing still, and the body is yours to turn every way
+//! (`Pilot::floating`: the mouse turns it whole, Q and E roll it, and it stays as it is left).
+//! Where there is no ground and nothing near goes as you do, it steadies you to the nearest
+//! structure as it goes, or else to the bodies' own frame: it is never without something to
+//! brake you against (`Hold::Free` is only what it keeps to with no pack).
 use super::{Input, Pilot};
 use glam::DVec3;
 use lunar_core::structure::{set::Structures, state::Structure};
@@ -19,8 +22,7 @@ use lunar_core::structure::{set::Structures, state::Structure};
 pub enum Hold {
     /// What our speeds are counted in: aboard, the ship that carries us; else the ground.
     Still,
-    /// Nothing: no ground under us (past every body's reach) and nothing near that goes as we
-    /// do. It brakes nothing.
+    /// Nothing: no pack to steady us to anything (or not yet looked).
     Free,
     /// A speed (world, m/s): that of what we went beside, as it was when it went out of reach.
     Speed(DVec3),
@@ -85,7 +87,8 @@ impl Pilot {
     /// In the air on our own: what the pack keeps us to, looked at again. Whatever near us goes
     /// most as we do — a structure (as it goes now) or the ground, where there is ground — and
     /// another than now only if it goes clearly more as we do (`mochila.junto`). What we kept
-    /// beside and is out of reach: the speed it had. Nothing of all that: nothing.
+    /// beside and is out of reach: the speed it had. Nothing of all that (deep space, nothing
+    /// near): the nearest structure as it goes now, or, with none, the bodies' frame.
     pub(super) fn refer(&mut self, set: &Structures, dt: f64) {
         let Some(j) = self.def.mochila.map(|m| m.junto) else { return };
         let ours = self.drift + self.up * self.vertical_velocity;
@@ -123,7 +126,11 @@ impl Pilot {
             }
             (None, Some(v)) if v == DVec3::ZERO && ground.is_some() => Hold::Still,
             (None, Some(v)) => Hold::Speed(v),
-            (None, None) => Hold::Free,
+            (None, None) => {
+                let at = self.position;
+                let nearest = set.list.iter().min_by(|a, b| a.to_world(a.center).distance_squared(at).total_cmp(&b.to_world(b.center).distance_squared(at)));
+                Hold::Speed(nearest.map_or(DVec3::ZERO, |s| s.vel))
+            }
         };
     }
 
@@ -131,7 +138,9 @@ impl Pilot {
     /// `pace` the way `wish` says (level, unit or none), and a jump; in the air with the pack
     /// on, its jets. `g`: what of our weight presses on what is under our feet (m/s²; none
     /// where nothing weighs).
-    pub(super) fn legs_or_jets(&mut self, dt: f64, input: &Input, up: DVec3, g: f64, wish: DVec3, pace: f64) {
+    /// `aim`: where the keys push in the air (unit or none), the way we look.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn legs_or_jets(&mut self, dt: f64, input: &Input, up: DVec3, g: f64, wish: DVec3, aim: DVec3, pace: f64) {
         // off the ground you keep the speed you had and the pack's jets change it
         let pack = self.def.mochila.filter(|_| self.pack_on && self.fuel > 0.0);
         let mut burn = 0.0;
@@ -147,10 +156,14 @@ impl Pilot {
         } else if let Some(j) = pack {
             // off an edge: with the speed we walked at
             self.drift += std::mem::take(&mut self.walked);
-            if wish != DVec3::ZERO {
-                self.drift += wish * j.lateral * dt;
+            if aim != DVec3::ZERO {
+                // where we look: its level part to the drift, the rest up or down
+                let dv = aim * j.lateral * dt;
+                let rise = dv.dot(up);
+                self.drift += dv - up * rise;
+                self.vertical_velocity += rise;
                 burn += j.gasto_lado;
-                jets += wish * j.gasto_lado;
+                jets += aim * j.gasto_lado;
             } else if self.steady {
                 // hands off: it steadies you to what it keeps you to
                 let side = self.aside(up);
@@ -186,7 +199,7 @@ impl Pilot {
                 self.vertical_velocity -= j.empuje * j.abajo * dt;
                 burn += j.abajo;
                 jets -= up * j.abajo;
-            } else if let (true, true, Some((goes, gains))) = (flying, self.steady, self.kept_to()) {
+            } else if let (true, true, Some((goes, gains)), false) = (flying, self.steady, self.kept_to(), aim.dot(up).abs() > 1e-9) {
                 // hands off: it holds your height too — level with what it keeps you to, as that
                 // climbs, sinks or falls — pushing against your weight and what you still carry
                 // (kept to nothing, there is nothing to hold you level with)

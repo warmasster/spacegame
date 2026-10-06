@@ -298,12 +298,12 @@ fn past_every_reach_nothing_pulls_and_nothing_turns_us() {
                 assert!(g.p.ground.is_none() && g.p.weight() == DVec3::ZERO && !g.p.grounded, "{what}: algo rige");
                 assert!(g.p.feet().1 == up && g.p.heading().dot(ahead) > 1.0 - 1e-12, "{what}: gira solo: su arriba se ha movido {:.2e} rad", g.p.feet().1.angle_between(up));
                 assert!((g.p.position - (from + v * t)).length() < 1e-6 * (1.0 + speed * t) && worst < 1e-6 * (1.0 + speed), "{what}: no va recto (se aparta {:.2e} m por fotograma)", worst);
-                // the pack on, hands off: nothing to keep to, nothing burnt, nothing changed
-                g.p.pack_on = true;
+                // the pack on, its steadying off, hands off: nothing burnt, nothing changed
+                (g.p.pack_on, g.p.steady) = (true, false);
                 for _ in 0..120 {
                     g.frame(Input::default(), &outside);
                 }
-                assert!(g.p.hold == Hold::Free && g.p.fuel == 1.0, "{what}: la mochila hace algo sin nada a lo que sujetarnos: {:?}, gas {:.6}", g.p.hold, g.p.fuel);
+                assert!(g.p.fuel == 1.0, "{what}: la mochila sin estabilizador gasta sin que la toquen: gas {:.6}", g.p.fuel);
                 // (how fast we go, read off where we are from one slice to the next: as fine as
                 // a place millions of metres from the world's origin is told)
                 assert!((g.p.velocity() - v).length() < 1e-6 * (1.0 + speed), "{what}: con la mochila encendida y las manos quietas la velocidad cambia {:.3e} m/s", (g.p.velocity() - v).length());
@@ -513,5 +513,70 @@ fn from_one_way_up_to_another_the_body_rights_itself_at_its_own_pace() {
             assert!(farthest < e.giro * g.p.def.eye_height * 1.3, "{what}: el ojo va a {farthest:.2} m/s mientras se endereza");
             assert!(g.p.grounded && g.p.ride.is_some_and(|r| r.id == id), "{what}: acaba sin estar de pie en la cubierta");
         }
+    }
+}
+
+#[test]
+fn floating_the_body_turns_every_way_and_the_pack_pushes_where_we_look() {
+    let bodies = worlds();
+    for (place, at, out) in places(&bodies).into_iter().filter(|p| p.0.contains("fuera")) {
+        let mut p = pilot_in(&bodies);
+        p.put(at, out);
+        (p.grounded, p.aloft, p.pack_on, p.steady) = (false, true, true, false);
+        let mut g = Loop::new(p, Structures::new(library()));
+        g.frame(Input::default(), &outside);
+        assert!(g.p.floating(), "{place}: con la mochila y sin peso no flota");
+        // the mouse up and over, a whole turn: the body goes head over heels with it, no stop at
+        // looking straight up
+        // (the first turn makes the look the body's: from there)
+        g.p.look(0.0, 0.0);
+        let up0 = g.p.feet().1;
+        let per = std::f64::consts::TAU / 360.0 / g.p.def.mouse;
+        let mut most = 0.0f64;
+        for _ in 0..360 {
+            g.p.look(0.0, -per);
+            most = most.max(g.p.feet().1.angle_between(up0));
+        }
+        assert!(most > 3.0, "{place}: el ratón no da la vuelta al cuerpo: su arriba se aparta {most:.2} rad como mucho");
+        assert!(g.p.feet().1.angle_between(up0) < 1e-6, "{place}: tras una vuelta entera el cuerpo no vuelve a como estaba");
+        // E rolls it about where we look, to the right
+        let (ahead, up) = (g.p.view().forward, g.p.feet().1);
+        let mut t = 0.0;
+        while t < 1.0 {
+            g.frame(Input { roll: 1.0, ..Default::default() }, &outside);
+            t += g.dt;
+        }
+        let j = g.p.def.mochila.unwrap();
+        let rolled = g.p.feet().1.angle_between(up);
+        assert!((rolled - j.alabeo * t).abs() < 0.05 * j.alabeo * t, "{place}: E alabea {rolled:.3} rad en {t:.2} s");
+        assert!(g.p.view().forward.angle_between(ahead) < 1e-6, "{place}: al alabear cambia hacia dónde mira");
+        assert!(g.p.feet().1.dot(ahead.cross(up)) > 0.0, "{place}: E alabea hacia la izquierda");
+        // looking a quarter turn up from the body, W pushes that way: up the body
+        g.p.look(0.0, -std::f64::consts::FRAC_PI_2 / g.p.def.mouse);
+        let (want, before) = (g.p.view().forward, g.p.velocity());
+        let mut t = 0.0;
+        while t < 1.0 {
+            g.frame(Input { forward: 1.0, ..Default::default() }, &outside);
+            t += g.dt;
+        }
+        let gained = g.p.velocity() - before;
+        assert!(gained.normalize().dot(want) > 0.999 && (gained.length() - j.lateral * t).abs() < 0.03 * j.lateral * t, "{place}: W empuja {gained:.3?} y se mira hacia {want:.3?}");
+        // the pack off: it stays as it was turned and goes as it went
+        let (up, ahead, v) = (g.p.feet().1, g.p.view().forward, g.p.velocity());
+        g.p.pack_on = false;
+        for _ in 0..120 {
+            g.frame(Input::default(), &outside);
+        }
+        assert!(g.p.feet().1.angle_between(up) < 1e-9 && g.p.view().forward.angle_between(ahead) < 1e-9, "{place}: al apagar la mochila el cuerpo gira");
+        assert!((g.p.velocity() - v).length() < 1e-6 * (1.0 + v.length()), "{place}: al apagar la mochila cambia la velocidad");
+        // with nothing near and its steadying on, the pack brakes us against the bodies' frame
+        (g.p.pack_on, g.p.steady) = (true, true);
+        let fast = g.p.velocity().length();
+        let mut t = 0.0;
+        while t < 2.0 {
+            g.frame(Input::default(), &outside);
+            t += g.dt;
+        }
+        assert!(g.p.velocity().length() < fast - 0.5 * j.frenada.min(j.empuje) * t * 0.5 || g.p.velocity().length() < j.quieto * 2.0, "{place}: el estabilizador no frena lejos de todo: de {fast:.2} a {:.2} m/s", g.p.velocity().length());
     }
 }

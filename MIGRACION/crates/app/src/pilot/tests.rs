@@ -827,6 +827,8 @@ fn what_is_bumped_into_stops_you_against_itself_not_against_the_world() {
     g.p.position = g.set.list[0].to_world(Vec3::new(0.0, 0.75, 8.6)) + up * g.p.eye_h;
     (g.p.vertical_velocity, g.p.drift) = (v.dot(up), v - up * v.dot(up));
     // pushed at the block (ahead of us, the way everything goes): it stops us, and we go on with it
+    // (looking level at it: the pack pushes the way we look)
+    g.p.pitch = 0.0;
     for _ in 0..150 {
         g.frame(Input { forward: 1.0, ..Default::default() }, &outside);
     }

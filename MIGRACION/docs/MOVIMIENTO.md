@@ -250,13 +250,28 @@ nunca de golpe. Lo comprueba para todas las naves `ship/tests/gravedad.rs`.
   pies las botas no agarran y se flota. Con `sin_peso` a 0 las botas agarrarían cualquier
   cubierta que tocasen.
 
-### La mochila sin gravedad (`app/src/pilot/pack.rs`)
+### La mochila, como en Space Engineers (`app/src/pilot/pack.rs`, V40)
 
-Sus chorros empujan según el marco del propio cuerpo (arriba, abajo, a nivel), esté girado como
-esté. Sostiene contra lo que peses: donde nada pesa no tiene nada que sostener y parada no gasta.
-Te estabiliza respecto a la nave que tengas cerca; el suelo solo cuenta como referencia donde hay
-suelo, y **sin suelo y sin nada cerca no tiene a qué sujetarte** (`Hold::Free`): te deja como
-vas.
+- **Empuja hacia donde miras.** En el aire, W empuja hacia donde mira la cámara, también hacia
+  arriba o hacia abajo si miras así; A y D, a los lados de la vista. Espacio y Ctrl, a lo largo
+  del arriba del cuerpo. (Antes W/A/D empujaban solo a nivel y la mirada arriba o abajo no
+  contaba.) En el suelo W sigue siendo andar.
+- **Flotando, el cuerpo es tuyo** (`Pilot::floating`: mochila encendida, en el aire, sin peso por
+  encima de `cuerpo.sin_peso`). El ratón gira el cuerpo entero, sin tope al mirar arriba o abajo
+  (puedes dar la vuelta completa), y **Q / E alabean** a `mochila.alabeo` rad/s. La mirada pasa a
+  ser la del cuerpo (`fold_look`) la primera vez que mueves el ratón flotando. Al apagar la
+  mochila **te quedas como estabas**, girado y con tu velocidad: nada te endereza donde nada pesa.
+  E sigue siendo sentarse si apuntas a un asiento.
+- **Con peso te enderezas** hacia donde pesas, como siempre (`right`), con la mochila o sin ella.
+- Sostiene contra lo que peses: donde nada pesa no tiene nada que sostener y parada no gasta.
+- **El estabilizador siempre tiene a qué sujetarte.** Te estabiliza respecto a la nave que tengas
+  cerca o al suelo donde lo hay; sin suelo y sin nada cerca, **respecto a la estructura más
+  cercana tal como va, y si no hay ninguna, respecto al marco de los cuerpos** (los cuerpos están
+  quietos en el mundo). Antes, en el espacio libre, no frenaba nada (`Hold::Free` queda solo para
+  quien no lleva mochila). Z lo apaga: entonces sigues con lo que llevas.
+- Pruebas: `pilot/frames.rs` → `floating_the_body_turns_every_way_and_the_pack_pushes_where_we_look`
+  (vuelta completa con el ratón, alabeo con E, W hacia donde se mira, al apagar se queda como
+  estaba, el estabilizador frena lejos de todo) y `past_every_reach_nothing_pulls_and_nothing_turns_us`.
 
 ### Los números (`scenario.jsonc` → `player.cuerpo`)
 

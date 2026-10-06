@@ -65,6 +65,8 @@ pub struct Input {
     pub jump: bool,
     /// C held: crouched (lower, slower, the air takes less of you).
     pub crouch: bool,
+    /// Q and E floating with the pack on: roll left (−1) and right (1).
+    pub roll: f64,
 }
 
 /// Player-tunable controls (Esc menu).
@@ -412,6 +414,17 @@ impl Pilot {
     }
 
     pub fn look(&mut self, x: f64, y: f64) {
+        // floating where nothing weighs with the pack on, the mouse turns the whole body, every
+        // way and without end (`floating`)
+        if self.floating() {
+            self.fold_look();
+            let (fore, up) = (self.fore, self.up);
+            let right = fore.cross(up);
+            let turn = DQuat::from_axis_angle(right, -y * self.def.mouse) * DQuat::from_axis_angle(-up, x * self.def.mouse);
+            self.up = (turn * up).normalize();
+            self.fore = level(turn * fore, self.up);
+            return;
+        }
         let head = self.def.cuerpo.cabeza;
         self.yaw += x * self.def.mouse;
         self.pitch = (self.pitch - y * self.def.mouse).clamp(-head.arriba, head.arriba);
@@ -419,6 +432,32 @@ impl Pilot {
             // seated the head turns, the body does not
             self.yaw = self.yaw.clamp(-head.sentado, head.sentado);
         }
+    }
+
+    /// Floating with the pack on where nothing weighs (in the air, on our own): the body turns
+    /// whole with the mouse, rolls with Q and E, and keeps however it is turned once the pack is
+    /// off. Where something weighs the body rights itself toward it, the pack on or not.
+    pub fn floating(&self) -> bool {
+        self.pack_on && self.def.mochila.is_some() && self.seat.is_none() && !self.flying && !self.grounded && self.weight.length() <= self.def.cuerpo.sin_peso
+    }
+
+    /// The look made the body's: it faces where we look, its way up the look's, the head
+    /// straight on it.
+    fn fold_look(&mut self) {
+        if self.yaw == 0.0 && self.pitch == 0.0 {
+            return;
+        }
+        let (forward, right, _) = self.directions();
+        let up = right.cross(forward).normalize();
+        (self.up, self.fore, self.yaw, self.pitch) = (up, level(forward, up), 0.0, 0.0);
+    }
+
+    /// Rolled `angle` rad to the right about where we look (floating).
+    fn roll(&mut self, angle: f64) {
+        self.fold_look();
+        let turn = DQuat::from_axis_angle(self.fore, angle);
+        self.up = (turn * self.up).normalize();
+        self.fore = level(self.fore, self.up);
     }
 
     /// Sit on `seat` of its structure: eyes on the seat, looking the way it faces.
@@ -608,6 +647,14 @@ impl Pilot {
                 self.drift = ours - self.up * self.vertical_velocity;
             }
         }
+        if input.roll != 0.0
+            && self.floating()
+            && let Some(j) = self.def.mochila
+        {
+            self.roll(input.roll.clamp(-1.0, 1.0) * j.alabeo * dt);
+            self.vertical_velocity = ours.dot(self.up);
+            self.drift = ours - self.up * self.vertical_velocity;
+        }
         let (forward, right, up) = self.directions();
         let tangent = (forward - up * forward.dot(up)).normalize_or(right.cross(up));
         // what of our weight presses on what is under our feet; too little of it and the boots
@@ -625,6 +672,8 @@ impl Pilot {
             self.position += wish.normalize_or_zero() * self.speed * controls.factor(&input) * dt;
         } else {
             let wish = (tangent * input.forward + right * input.side).normalize_or_zero();
+            // (the pack's jets push where we look: up or down too if we look so)
+            let aim = (forward * input.forward + right * input.side).normalize_or_zero();
             let pace = if self.crouched() {
                 shape.agachado.paso
             } else if input.run {
@@ -636,7 +685,7 @@ impl Pilot {
             // about it)
             let apart = self.aside(up).length();
             // on our feet, walking; in the air with the pack on, its jets
-            self.legs_or_jets(dt, &input, up, g, wish, pace);
+            self.legs_or_jets(dt, &input, up, g, wish, aim, pace);
             // our weight, whichever way it is (while the body rights itself, not all of it is
             // along its own way up)
             if upright {

@@ -6,6 +6,54 @@ Lista viva de lo que Fernando ha pedido y aún no está hecho. Lo de rendimiento
 **Regla para todos los agentes:** si haces algo de esta lista, táchalo en el mismo cambio, con la
 fecha y una línea de cómo quedó. Si queda a medias, apunta qué falta.
 
+## V40 (2026-10-07): prueba de coherencia, ordenador de vuelo, teclas, mochila, piloto automático
+
+Fernando: el Azor «se inclina hacia abajo» y lleva los giróscopos siempre saturados; Mayús no sube
+los gases (hay que arrastrar la palanca) y Ctrl en las ruedas «sube de 5 a 40»; SEGUIR hace cosas
+raras; ¿qué hace el piloto automático con una altura puesta en el espacio?; la mochila tiene que
+ir como en Space Engineers. Pidió «una mega prueba de coherencia de cada mando, cada cosa» y que lo
+aprendido valga para todas las naves. Hecho ([`NAVES.md`](NAVES.md) «Coherencia y ordenador de
+vuelo (V40)», [`COMBATE.md`](COMBATE.md), [`MOVIMIENTO.md`](MOVIMIENTO.md) §8):
+
+- **`crates/ship/tests/coherencia.rs`**, para toda nave que vuela, sin nombrar ninguna: teclas
+  mantenidas a 30/60/144/240 fps, pasos de ruedas (normal, Mayús, Ctrl) contra datos y ayuda,
+  retenes de palancas, cada tecla de la palanca por su eje y su sentido (y la misma en todas las
+  naves), potencia sin giro en cada posición de las góndolas, piloto automático fuera de todo
+  cuerpo. Lo que encontró al principio: 46 pasos de rueda o retenes incoherentes, 8 teclas que
+  no movían los gases, 12 casos de nave que se gira sola con gas (el Azor 25° en 30 s, el
+  Abejorro 21°), 18 de teclas que mueven más de un eje o que el estabilizador no paraba, la
+  guiñada del Alcotán que alabeaba, y el piloto sin manera de decir «aquí no puedo».
+- **Por qué el Azor se iba de morro**: sus góndolas empujan 4 mm detrás del centro de masas
+  (unos 440 N·m), los giróscopos se llenaban en 3 s y no se descargaban, y el reparto entre
+  toberas no las encendía nunca (40 pasos de gradiente que no llegaban y un corte al 2 %). Ahora:
+  reparto exacto por coordenadas, compensación por el empuje real, giróscopos que se descargan,
+  reparto entre motores que no cambia alabeo por un cabeceo imposible, y el estabilizador
+  mantiene la actitud con la palanca suelta. Con el gas al 60 % y la palanca suelta ninguna nave
+  se gira más de 0,1° en 30 s (antes hasta 25°).
+- **Teclado**: un retén atrapa la palanca que entra, no la que sale (Mayús y Ctrl mueven los
+  gases igual a cualquier fps); la velocidad de giro de la rueda se mide (`Spin`); Ctrl es
+  siempre el paso fino; las teclas de un asiento en un solo sitio (`ship/src/seat_keys.rs`).
+- **Piloto automático**: `ap.sin_cuerpo` (lámpara ámbar y «SIN CUERPO» en la pantalla) cuando lo
+  pedido no tiene sentido fuera de todo cuerpo; el peso que sostiene es el de ir como va (en
+  órbita, nada); SEGUIR con margen entre cerrar y apuntar, sin dar media vuelta por un empuje de
+  través, frenando contando lo que tarda en responder.
+- **Mochila tipo Space Engineers**: W empuja hacia donde miras (también arriba o abajo), sin peso
+  el ratón gira todo el cuerpo sin tope, Q y E alabean, al apagarla te quedas como estabas, con
+  peso te enderezas, y el estabilizador frena también en el espacio libre (respecto a la
+  estructura más cercana o al marco de los cuerpos). La metralleta de pruebas pasa de Q a U.
+
+Queda de esto:
+
+- **Nadie lo ha jugado.** Todo está comprobado con pruebas; los .exe de `SELENE_V39` no se han
+  recompilado (aquí no hay Windows): hay que compilar una V40.
+- La prueba de coherencia no vuela todavía con gravedad ni mira cada mando de cada panel uno a uno
+  contra su efecto (eso lo hacen a su manera `logica_mandos.rs` y `uso.rs`); se puede ampliar.
+- El Abejorro lleva la descarga de sus giróscopos en un interruptor (DESCARGA, apagado al salir):
+  con gas y sin descargar los llena hasta la mitad. Es su diseño; si molesta, encenderlo por
+  defecto.
+- La mochila sin peso: hacia dónde «se endereza» al volver a una nave o a un cuerpo es el giro de
+  siempre (`right`), a su ritmo; falta sentirlo jugando.
+
 ## V39 (2026-10-06): un solo reloj. La mochila y las naves a cualquier velocidad, de raíz
 
 Fernando: con la mochila dentro de una nave «a toda hostia» se teletransportaba, al salir pegaba

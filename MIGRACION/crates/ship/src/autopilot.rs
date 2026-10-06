@@ -17,6 +17,14 @@
 //!
 //! Everything is in the ship's own frame: nothing here knows where the ship is.
 //!
+//! What cannot be done where the ship is, it says (`Demand::lacks`, and so `ap.sin_objetivo`,
+//! `ap.sin_cuerpo`): a height or a heading past every body's reach, a climb or a landing with no
+//! ground under it, a track that is not there. It never shows itself at work doing nothing.
+//!
+//! The weight it carries is what the ship weighs going as it goes (`weight`): the pull less what
+//! going round the body takes of it. Level at orbital speed it carries nothing — falling round
+//! the body is what holds it up — and past that it must push down to keep a height.
+//!
 //! How it turns: where something weighs, by the horizon — across first, then up and down, its
 //! top kept up — so that it never ends on its back; where nothing weighs, about its own axes
 //! and without rolling.
@@ -40,6 +48,8 @@ pub struct Sight {
     /// Its velocity over the body under it, and that body's pull (exactly zero past every body).
     pub vel: Vec3,
     pub gravity: Vec3,
+    /// How far it is from the centre of the body under it (m; 0: none, or not known).
+    pub around: f32,
     /// The way its engines push as they stand (zero: it has none), what they give at full
     /// throttle (m/s²), and whether the computer swings them itself (`Flight::vectoring`).
     pub along: Vec3,
@@ -77,6 +87,20 @@ pub struct Demand {
     /// What to gain over the ground (m/s², ship frame; its weight is the computer's to carry):
     /// none, the engines and the thrusters are the pilot's.
     pub accel: Option<Vec3>,
+    /// What it lacks to do what it was asked here, if anything: the mode then asks only what it
+    /// can (often nothing), and the panel says why.
+    pub lacks: Lack,
+}
+
+/// What a mode lacks where the ship is.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Lack {
+    #[default]
+    Nothing,
+    /// A track chosen to fly on (`ap.sin_objetivo`).
+    Track,
+    /// A body under it: a ground to hold a height over, a north for a heading (`ap.sin_cuerpo`).
+    Body,
 }
 
 /// What a mode keeps from tick to tick.
@@ -86,6 +110,11 @@ pub struct Memory {
     pub held: Option<Quat>,
     /// When it was engaged (ship time).
     pub since: f64,
+    /// Flying to be with a track before keeping its nose on it (`WITH_IT`, with its margin).
+    pub closing: bool,
+    /// The end of the hull it last put along a push across it (1 the nose, −1 the tail): kept
+    /// until the other is clearly better, so that it does not swing round and back.
+    pub end: f32,
 }
 
 pub struct Mode {
@@ -151,10 +180,32 @@ const CLOSING: f32 = 300.0;
 /// keeps its nose on it: its engines push fore and aft, and a nose held on the track while it
 /// slides past would have it circling.
 const WITH_IT: f32 = 6.0;
+/// Once with it, how much more it may lack before it flies to be with it again (a share of
+/// `WITH_IT`): the margin that keeps it from switching back and forth.
+const WITH_IT_AGAIN: f32 = 2.0;
+/// How clearly (the cosine of the angle) the other end of the hull must be along a push across
+/// it before it turns round to take it on that end.
+const OTHER_END: f32 = 0.35;
+/// How long (s) its turn and its engines take to answer: what it counts on to come in to a
+/// track without going past it.
+const ANSWER: f32 = 2.0;
 
 /// Up, where something weighs.
 fn up(s: &Sight) -> Option<Vec3> {
     (s.gravity.length() > WEIGHS).then(|| -s.gravity.normalize())
+}
+
+/// What it weighs going as it goes (m/s², ship frame): the pull, less what going round the body
+/// under it at its level speed takes of it (that much of the pull is what bends its way round).
+/// It is this that the engines carry to hold a height: nothing at orbital speed.
+fn weight(s: &Sight) -> Vec3 {
+    match up(s) {
+        Some(u) if s.around > 0.0 => {
+            let level = s.vel - u * s.vel.dot(u);
+            s.gravity + u * (level.length_squared() / s.around)
+        }
+        _ => s.gravity,
+    }
 }
 
 /// The rate (rad/s) that takes out `angle` in good time, no faster than `top`.
@@ -209,8 +260,12 @@ fn turn(from: Vec3, to: Vec3, s: &Sight) -> Vec3 {
 fn within(a: Vec3, s: &Sight) -> Vec3 {
     let cap = s.accel * 0.95;
     let Some(u) = up(s) else { return a.clamp_length_max(cap) };
-    let g = s.gravity.length();
-    let v = a.dot(u).clamp(-0.9 * g, ((cap - g) * 0.8).max(0.0));
+    // (what it weighs going as it goes: less than the pull at speed, nothing in orbit, and
+    // past orbital speed it is lifted)
+    let g = -weight(s).dot(u);
+    // (down: as it weighs, by letting it fall; lifted, past orbital speed, by a share of its push)
+    let fall = if g > 0.0 { 0.9 * g } else { 0.3 * cap };
+    let v = a.dot(u).clamp(-fall, ((cap - g) * 0.8).max(0.0));
     let room = (cap * cap - (v + g) * (v + g)).max(0.0).sqrt();
     u * v + (a - u * a.dot(u)).clamp_length_max(room)
 }
@@ -219,16 +274,26 @@ fn within(a: Vec3, s: &Sight) -> Vec3 {
 /// swings its engines keeps its hull level where it weighs (turning, if the push is across its
 /// nose, to take it on its engines) and puts its nose along the push where it does not; one that
 /// cannot turns its hull to put its engines where it must push.
-fn drive(a: Vec3, face: Option<Vec3>, s: &Sight) -> Demand {
+fn drive(a: Vec3, face: Option<Vec3>, s: &Sight, m: &mut Memory) -> Demand {
     let a = within(a, s);
-    let push = a - s.gravity;
+    let push = a - weight(s);
     let rate = match (face, up(s)) {
         (Some(d), _) => aim(d, s),
         (None, Some(u)) if s.vectoring => {
             let nose = (Vec3::Z - u * u.z).try_normalize().unwrap_or(Vec3::Z);
             let across = a - u * a.dot(u);
-            // (its engines swing fore and aft: either end of the nose will do)
-            let to = if across.length() > TURN_TO_PUSH { across.normalize() * across.dot(nose).signum() } else { nose };
+            // (its engines swing fore and aft: either end of the nose will do — the one it has,
+            // unless the other is clearly along the push)
+            let to = if across.length() > TURN_TO_PUSH {
+                let d = across.normalize();
+                let along = d.dot(nose);
+                if m.end == 0.0 || along * m.end < -OTHER_END {
+                    m.end = if along >= 0.0 { 1.0 } else { -1.0 };
+                }
+                d * m.end
+            } else {
+                nose
+            };
             aim(if to == Vec3::ZERO { nose } else { to }, s)
         }
         (None, None) if s.vectoring => match push.try_normalize() {
@@ -240,18 +305,25 @@ fn drive(a: Vec3, face: Option<Vec3>, s: &Sight) -> Demand {
             _ => Vec3::ZERO,
         },
     };
-    Demand { rate: Some(rate), accel: Some(a) }
+    // (what it gains over the ground, as the flight computer counts it against the pull: level
+    // round the body takes bending its way down as it goes, and that is no push of its engines)
+    Demand { rate: Some(rate), accel: Some(a - (weight(s) - s.gravity)), ..Demand::default() }
 }
 
 fn idle() -> Demand {
     Demand::default()
 }
 
+/// Nothing it can do here, for lack of `what`.
+fn cannot(what: Lack) -> Demand {
+    Demand { lacks: what, ..Demand::default() }
+}
+
 /// The climb (m/s) that takes it to `height` over the ground: slower down than up, and slower
 /// the lower it is.
 fn climb_to(height: f32, s: &Sight) -> f32 {
     let off = height - s.altitude;
-    let g = s.gravity.length();
+    let g = up(s).map_or(0.0, |u| -weight(s).dot(u)).max(0.05);
     // (no faster than it can stop in what is left)
     let (up, down) = ((2.0 * CLIMB_STOP * g * off.abs()).sqrt(), (2.0 * CLIMB_STOP * (s.accel - g).max(0.1) * off.abs()).sqrt());
     (off * CLIMB.0).clamp(-(CLIMB.2 + CLIMB.3 * s.altitude.max(0.0)).min(CLIMB.4).min(down), CLIMB.1.min(up))
@@ -269,29 +341,32 @@ fn course(to: Option<f32>, u: Vec3, s: &Sight) -> Vec3 {
 
 /// Over the ground: gain what it lacks of `across` (a velocity on the horizon; none: as it goes,
 /// and the keys push) and of `climb` (m/s), its nose toward `face`.
-fn fly_level(across: Option<Vec3>, climb: f32, face: Option<Vec3>, u: Vec3, s: &Sight) -> Demand {
+fn fly_level(across: Option<Vec3>, climb: f32, face: Option<Vec3>, u: Vec3, s: &Sight, m: &mut Memory) -> Demand {
     let rise = s.vel.dot(u);
     let level = |v: Vec3| v - u * v.dot(u);
     let a = match across {
         Some(want) => (level(want) - level(s.vel)) / GAIN,
         None => level(s.keys) * KEYS.1,
     };
-    drive(a + u * ((climb - rise) / GAIN), face, s)
+    drive(a + u * ((climb - rise) / GAIN), face, s, m)
 }
 
 /// The holds alone: a height, a heading, a speed along the nose (or along the heading held).
 /// Where nothing weighs only the speed means anything: along the way it goes.
-fn holds(s: &Sight, _: &mut Memory) -> Demand {
+fn holds(s: &Sight, m: &mut Memory) -> Demand {
     let Some(u) = up(s) else {
-        let Some(speed) = s.hold_speed else { return idle() };
+        // (a height and a heading mean nothing here: it says so, and flies the speed if held)
+        let lacks = if s.hold_height.is_some() || s.hold_heading.is_some() { Lack::Body } else { Lack::Nothing };
+        let Some(speed) = s.hold_speed else { return cannot(lacks) };
         let way = s.vel.try_normalize().filter(|_| s.vel.length() > 0.5).unwrap_or(Vec3::Z);
-        let lacks = way * speed - s.vel;
+        let off = way * speed - s.vel;
         // (there: it coasts, and burns again only once it is a little off)
-        return if lacks.length() < 0.5 { Demand { rate: Some(Vec3::ZERO), accel: Some(Vec3::ZERO) } } else { drive(lacks / GAIN, None, s) };
+        let d = if off.length() < 0.5 { Demand { rate: Some(Vec3::ZERO), accel: Some(Vec3::ZERO), ..Demand::default() } } else { drive(off / GAIN, None, s, m) };
+        return Demand { lacks, ..d };
     };
     let to = course(s.hold_heading, u, s);
     let climb = s.hold_height.map_or(s.keys.y * KEYS.0, |h| climb_to(h, s));
-    fly_level(s.hold_speed.map(|v| to * v), climb, Some(to), u, s)
+    fly_level(s.hold_speed.map(|v| to * v), climb, Some(to), u, s, m)
 }
 
 fn attitude(s: &Sight, m: &mut Memory) -> Demand {
@@ -318,18 +393,21 @@ fn retrograde(s: &Sight, _: &mut Memory) -> Demand {
 
 /// Stops over the body under it and stays there (at the height held, if one is; else where it
 /// stops). Where nothing weighs: stops, and then lets go.
-fn brake(s: &Sight, _: &mut Memory) -> Demand {
+fn brake(s: &Sight, m: &mut Memory) -> Demand {
     match up(s) {
-        Some(u) => fly_level(Some(Vec3::ZERO), s.hold_height.map_or(0.0, |h| climb_to(h, s)), None, u, s),
-        None if s.vel.length() < 0.3 => Demand { rate: Some(Vec3::ZERO), accel: Some(Vec3::ZERO) },
-        None => drive(-s.vel / GAIN, None, s),
+        Some(u) => fly_level(Some(Vec3::ZERO), s.hold_height.map_or(0.0, |h| climb_to(h, s)), None, u, s, m),
+        None if s.vel.length() < 0.3 => Demand { rate: Some(Vec3::ZERO), accel: Some(Vec3::ZERO), ..Demand::default() },
+        None => drive(-s.vel / GAIN, None, s, m),
     }
 }
 
 /// How fast to close on something `far` metres past the range kept: as fast as it can still
 /// brake from, and backing off gently from inside it.
 fn closing(far: f32, s: &Sight) -> f32 {
-    if far >= 0.0 { (2.0 * s.accel * 0.3 * far).sqrt().min(CLOSING) } else { (far / 6.0).max(-40.0) }
+    // (as fast as it can still stop from in what is left, counting the time it takes to answer:
+    // v·ANSWER + v²/2a = far)
+    let a = (s.accel * 0.3).max(0.05);
+    if far >= 0.0 { (((a * ANSWER).powi(2) + 2.0 * a * far).sqrt() - a * ANSWER).min(CLOSING) } else { (far / 6.0).max(-40.0) }
 }
 
 /// What it lacks to be at the range kept from the track and going as it goes (m/s).
@@ -341,59 +419,62 @@ fn lacks(p: Vec3, v: Vec3, s: &Sight) -> Vec3 {
 /// Goes to the track chosen and stays with it at the range kept, going as it goes. Over the
 /// ground it flies level with its nose toward it (at the height held, if one is; else at the
 /// track's).
-fn follow(s: &Sight, _: &mut Memory) -> Demand {
-    let Some((p, v)) = s.target else { return idle() };
+fn follow(s: &Sight, m: &mut Memory) -> Demand {
+    let Some((p, v)) = s.target else { return cannot(Lack::Track) };
     let lacks = lacks(p, v, s);
     match up(s) {
         Some(u) => {
             let to = (p - u * p.dot(u)).try_normalize().filter(|_| p.length() > 30.0);
             let climb = s.hold_height.map_or(s.vel.dot(u) + lacks.dot(u), |h| climb_to(h, s));
-            // (its nose on it once it is with it; until then, where it must push)
-            let face = if (lacks - u * lacks.dot(u)).length() > WITH_IT { None } else { to.or(Some(course(None, u, s))) };
-            fly_level(Some(s.vel + lacks), climb, face, u, s)
+            // (its nose on it once it is with it; until then, where it must push — with a margin
+            // between the two, so that it does not go from one to the other and back)
+            let across = (lacks - u * lacks.dot(u)).length();
+            m.closing = if m.closing { across > WITH_IT } else { across > WITH_IT * WITH_IT_AGAIN };
+            let face = if m.closing { None } else { to.or(Some(course(None, u, s))) };
+            fly_level(Some(s.vel + lacks), climb, face, u, s, m)
         }
         // (with it: its nose on it; else on the way it must push)
-        None if lacks.length() < 0.5 => Demand { rate: Some(aim(p.normalize_or(Vec3::Z), s)), accel: Some(Vec3::ZERO) },
-        None => drive(lacks / GAIN, None, s),
+        None if lacks.length() < 0.5 => Demand { rate: Some(aim(p.normalize_or(Vec3::Z), s)), accel: Some(Vec3::ZERO), ..Demand::default() },
+        None => drive(lacks / GAIN, None, s, m),
     }
 }
 
 /// Straight up to the height held (`TAKE_OFF` with none), going nowhere, and stays there.
-fn take_off(s: &Sight, _: &mut Memory) -> Demand {
-    let Some(u) = up(s) else { return idle() };
-    fly_level(Some(Vec3::ZERO), climb_to(s.hold_height.unwrap_or(TAKE_OFF), s), Some(course(s.hold_heading, u, s)), u, s)
+fn take_off(s: &Sight, m: &mut Memory) -> Demand {
+    let Some(u) = up(s) else { return cannot(Lack::Body) };
+    fly_level(Some(Vec3::ZERO), climb_to(s.hold_height.unwrap_or(TAKE_OFF), s), Some(course(s.hold_heading, u, s)), u, s, m)
 }
 
 /// Straight down where it is, slower the lower, until it stands; then it lets its engines go.
-fn land(s: &Sight, _: &mut Memory) -> Demand {
-    let Some(u) = up(s) else { return idle() };
+fn land(s: &Sight, m: &mut Memory) -> Demand {
+    let Some(u) = up(s) else { return cannot(Lack::Body) };
     if s.grounded {
         // (standing: nothing asked of the engines — its weight is the ground's)
-        return Demand { rate: None, accel: Some(s.gravity) };
+        return Demand { rate: None, accel: Some(s.gravity), ..Demand::default() };
     }
-    fly_level(Some(Vec3::ZERO), -(LANDING.0 + LANDING.1 * s.altitude.max(0.0)).min(LANDING.2), Some(course(None, u, s)), u, s)
+    fly_level(Some(Vec3::ZERO), -(LANDING.0 + LANDING.1 * s.altitude.max(0.0)).min(LANDING.2), Some(course(None, u, s)), u, s, m)
 }
 
 /// Lead pursuit: the nose where the rounds must go, and to the range kept from the track.
-fn pursue(s: &Sight, _: &mut Memory) -> Demand {
-    let Some((p, v)) = s.target else { return idle() };
+fn pursue(s: &Sight, m: &mut Memory) -> Demand {
+    let Some((p, v)) = s.target else { return cannot(Lack::Track) };
     let lacks = lacks(p, v, s);
     // (sliding fast across the line to it, it first flies to be with it: `WITH_IT`)
     let d = p.normalize_or(Vec3::Z);
     let sliding = (lacks - d * lacks.dot(d)).length() > WITH_IT * 4.0;
-    drive(lacks / GAIN, (!sliding).then(|| s.lead.unwrap_or(d)), s)
+    drive(lacks / GAIN, (!sliding).then(|| s.lead.unwrap_or(d)), s, m)
 }
 
 /// The nose where to fire and nothing else: the engines are the pilot's.
 fn point(s: &Sight, _: &mut Memory) -> Demand {
-    let Some((p, _)) = s.target else { return idle() };
+    let Some((p, _)) = s.target else { return cannot(Lack::Track) };
     Demand { rate: Some(aim(s.lead.unwrap_or(p.normalize_or(Vec3::Z)), s)), ..idle() }
 }
 
 /// The nose on the track itself, and the range kept.
-fn keep_range(s: &Sight, _: &mut Memory) -> Demand {
-    let Some((p, v)) = s.target else { return idle() };
-    drive(lacks(p, v, s) / GAIN, Some(p.normalize_or(Vec3::Z)), s)
+fn keep_range(s: &Sight, m: &mut Memory) -> Demand {
+    let Some((p, v)) = s.target else { return cannot(Lack::Track) };
+    drive(lacks(p, v, s) / GAIN, Some(p.normalize_or(Vec3::Z)), s, m)
 }
 
 /// Across the way to whatever threatens it, at full power, the other way every few seconds.
@@ -404,12 +485,12 @@ fn evade(s: &Sight, m: &mut Memory) -> Demand {
     let flip = if ((s.t - m.since) / 2.5) as u64 % 2 == 0 { 1.0 } else { -1.0 };
     let side = threat.cross(up(s).unwrap_or(Vec3::Y)).try_normalize().unwrap_or(Vec3::X) * flip;
     let over = threat.cross(side).normalize_or(Vec3::Y);
-    drive((side * 0.8 + over * 0.6).normalize_or(side) * s.accel.max(1.0), None, s)
+    drive((side * 0.8 + over * 0.6).normalize_or(side) * s.accel.max(1.0), None, s, m)
 }
 
-fn extend(s: &Sight, _: &mut Memory) -> Demand {
-    let Some((p, _)) = s.target else { return idle() };
-    drive(-p.normalize_or(Vec3::Z) * s.accel.max(1.0), None, s)
+fn extend(s: &Sight, m: &mut Memory) -> Demand {
+    let Some((p, _)) = s.target else { return cannot(Lack::Track) };
+    drive(-p.normalize_or(Vec3::Z) * s.accel.max(1.0), None, s, m)
 }
 
 /// A hold: its switch and its wheel.
@@ -444,6 +525,7 @@ pub struct Autopilot {
     o_on: SignalId,
     o_mode: SignalId,
     o_idle: SignalId,
+    o_body: SignalId,
     /// The mode it flies (0 the holds alone, 1 a program, 2 a combat mode; its index) and what
     /// that keeps.
     flying: Option<(u8, usize)>,
@@ -459,7 +541,7 @@ impl Autopilot {
             store.claim(id, Writer::World)?;
             Ok(id)
         };
-        let (o_on, o_mode, o_idle) = (world("ap.activo")?, world("ap.modo")?, world("ap.sin_objetivo")?);
+        let (o_on, o_mode, o_idle, o_body) = (world("ap.activo")?, world("ap.modo")?, world("ap.sin_objetivo")?, world("ap.sin_cuerpo")?);
         let standoff = store.define_unit("ap.distancia", "m", 0.0).map_err(|e| e.0)?;
         // (the heading is told and set in degrees, as a compass reads)
         let (height, heading, speed) = (Hold::new(store, "altura", "m")?, Hold { on: store.define("ap.rumbo"), set: store.define("ap.rumbo_sel") }, Hold::new(store, "velocidad", "m/s")?);
@@ -476,6 +558,7 @@ impl Autopilot {
             o_on,
             o_mode,
             o_idle,
+            o_body,
             flying: None,
             memory: Memory::default(),
         }))
@@ -506,13 +589,14 @@ impl Autopilot {
         let chosen = chosen.filter(|_| flight.computer_on(store));
         if chosen != self.flying {
             self.flying = chosen;
-            self.memory = Memory { held: None, since: t };
+            self.memory = Memory { held: None, since: t, ..Memory::default() };
         }
         let Some((family, k)) = chosen else {
             if store.get(self.o_on) != 0.0 {
                 store.set(self.o_on, 0.0);
                 store.set(self.o_mode, 0.0);
                 store.set(self.o_idle, 0.0);
+                store.set(self.o_body, 0.0);
             }
             return None;
         };
@@ -525,8 +609,9 @@ impl Autopilot {
         let target = tac.and_then(Tactical::target).map(|tr| (tr.pos, tr.vel));
         store.set(self.o_on, if family == 2 { 2.0 } else { 1.0 });
         store.set(self.o_mode, if family == 0 { 0.0 } else { (k + 1) as f64 });
-        store.set(self.o_idle, if mode.target && target.is_none() { 1.0 } else { 0.0 });
         if mode.target && target.is_none() {
+            store.set(self.o_idle, 1.0);
+            store.set(self.o_body, 0.0);
             return None;
         }
         let mass = (b.mass as f32).max(1.0);
@@ -545,6 +630,7 @@ impl Autopilot {
             spin: b.spin,
             vel: b.vel,
             gravity: b.gravity,
+            around: b.around,
             along: flight.axis(machines, s),
             accel,
             vectoring: flight.vectoring(),
@@ -562,7 +648,11 @@ impl Autopilot {
             standoff: if standoff > 0.0 { standoff } else { 800.0 },
             t,
         };
-        Some((mode.fly)(&sight, &mut self.memory))
+        let d = (mode.fly)(&sight, &mut self.memory);
+        store.set(self.o_idle, if d.lacks == Lack::Track { 1.0 } else { 0.0 });
+        store.set(self.o_body, if d.lacks == Lack::Body { 1.0 } else { 0.0 });
+        // (what asks nothing leaves the ship to the pilot)
+        (d.rate.is_some() || d.accel.is_some()).then_some(d)
     }
 }
 
@@ -578,6 +668,7 @@ mod tests {
             spin: Vec3::ZERO,
             vel: Vec3::ZERO,
             gravity: Vec3::ZERO,
+            around: 0.0,
             along: Vec3::Z,
             accel: 10.0,
             vectoring: true,
@@ -683,6 +774,53 @@ mod tests {
         s.along = Vec3::Y;
         let d = brake(&s, &mut Memory::default());
         assert!(d.rate.unwrap().x < -0.1, "{:?}", d.rate);
+    }
+
+    #[test]
+    fn in_orbit_a_height_held_carries_no_weight_and_past_it_pushes_down() {
+        let mut s = turned(Quat::IDENTITY);
+        // level at the speed that goes round a body of the Moon's size at that height
+        let r = 1.7374e6 + 15.0e3;
+        s.around = r;
+        s.altitude = 15.0e3;
+        s.hold_height = Some(15.0e3);
+        let orbital = (1.62f32 * r).sqrt();
+        for (speed, push) in [(0.0f32, 1.62f32), (orbital * 0.5, 1.62 * 0.75), (orbital, 0.0), (orbital * 1.2, -1.62 * 0.44)] {
+            s.vel = Vec3::new(speed, 0.0, 0.0);
+            let d = holds(&s, &mut Memory::default());
+            // what its engines must push up (m/s²): the computer adds the pull to what is gained
+            let up = d.accel.unwrap().y - s.gravity.y;
+            assert!((up - push).abs() < 0.02, "a {speed:.0} m/s sostiene {up:.3} m/s² (y debía {push:.3})");
+        }
+    }
+
+    #[test]
+    fn following_does_not_switch_back_and_forth_between_closing_and_aiming() {
+        let mut s = turned(Quat::IDENTITY);
+        let mut m = Memory::default();
+        // (at the range kept: all it lacks is to go as it goes)
+        let p = Vec3::new(0.0, 0.0, 800.0);
+        // lacking across the line to it: a little (aims), a lot (closes), a little again (still
+        // closes, inside the margin), nearly nothing (aims again)
+        for (across, closing) in [(8.0, false), (14.0, true), (8.0, true), (5.0, false)] {
+            s.target = Some((p, Vec3::new(-across, 0.0, 0.0)));
+            follow(&s, &mut m);
+            assert_eq!(m.closing, closing, "a {across} m/s de través");
+        }
+    }
+
+    #[test]
+    fn a_push_across_its_nose_is_taken_on_the_end_it_has_until_the_other_is_clearly_better() {
+        let s = turned(Quat::IDENTITY);
+        let mut m = Memory::default();
+        // a push to port and a little ahead: the nose; then a little astern: still the nose
+        drive(Vec3::new(5.0, 0.0, 0.5), None, &s, &mut m);
+        assert_eq!(m.end, 1.0);
+        drive(Vec3::new(5.0, 0.0, -0.5), None, &s, &mut m);
+        assert_eq!(m.end, 1.0, "da la vuelta por un empuje casi de través");
+        // well astern: the tail
+        drive(Vec3::new(3.0, 0.0, -4.0), None, &s, &mut m);
+        assert_eq!(m.end, -1.0);
     }
 
     #[test]

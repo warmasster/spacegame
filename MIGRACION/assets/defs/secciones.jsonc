@@ -129,8 +129,8 @@
         "nombre": "Programa del piloto automático",
         "ayuda": "FRENAR: se para sobre el suelo y se queda sostenida. SEGUIR: va a la traza elegida (N, U) y se queda a la distancia pedida, yendo como ella. DESPEG.: sube en vertical a la altura de la rueda ALT (50 m sin ALTURA puesta). ATERRIZ.: baja en vertical donde estés, cada vez más despacio, y al posarse suelta los motores. ACTITUD: mantiene hacia donde miras. PROGR. / RETRO: el morro a favor o en contra de tu velocidad. Mover la palanca de mando manda sobre él." },
       { "id": "lamp", "kind": "lampara", "rotulo": "ACTIVO", "requiere": { "energia": "1 W" },
-        "reglas": [ { "si": "ap.sin_objetivo", "color": "ambar", "parpadeo": 1.0 }, { "si": "ap.activo == 1", "color": "verde" } ],
-        "nombre": "Piloto automático", "ayuda": "Verde: vuela él. Ámbar intermitente: el programa necesita una traza elegida y no hay ninguna." },
+        "reglas": [ { "si": "ap.sin_objetivo || ap.sin_cuerpo", "color": "ambar", "parpadeo": 1.0 }, { "si": "ap.activo == 1", "color": "verde" } ],
+        "nombre": "Piloto automático", "ayuda": "Verde: vuela él. Ámbar intermitente: no puede hacer lo pedido aquí: el programa necesita una traza elegida y no hay ninguna, o no hay cuerpo debajo (ALTURA, RUMBO, DESPEG. y ATERRIZ. fuera de todo cuerpo: VELOC. sí vale). La pantalla dice cuál." },
       { "id": "altura", "kind": "interruptor", "rotulo": "ALTURA", "bind": { "senal": "ap.altura" },
         "nombre": "Mantener altura", "ayuda": "Mantiene la altura sobre el suelo de la rueda ALT (sigue el relieve). Con cualquiera de las tres retenciones puesta el ordenador vuela los motores y mueve las góndolas: lo que no retienes sigue como va y las teclas de traslación empujan." },
       { "id": "altura_sel", "kind": "rueda", "rotulo": "ALT m", "rango": ["5 m", "25000 m"], "resolucion": "5 m", "paso": "10 m", "paso_grueso": "100 m", "paso_fino": "5 m", "defecto": "100 m", "unidad": "m",
@@ -160,7 +160,7 @@
       { "id": "distancia", "kind": "rueda", "rotulo": "DISTANCIA m", "rango": ["100 m", "5000 m"], "resolucion": "50 m", "paso": "50 m", "paso_grueso": "500 m", "paso_fino": "50 m", "defecto": "800 m", "unidad": "m", "bind": { "senal": "ap.distancia" },
         "nombre": "Distancia a mantener", "ayuda": "A qué distancia de la traza se queda el piloto (PERSEG., DISTAN. y SEGUIR)." },
       { "id": "lamp", "kind": "lampara", "rotulo": "ACTIVO", "requiere": { "energia": "1 W" },
-        "reglas": [ { "si": "ap.sin_objetivo", "color": "ambar", "parpadeo": 1.0 }, { "si": "ap.activo == 2", "color": "rojo" } ],
+        "reglas": [ { "si": "ap.sin_objetivo || ap.sin_cuerpo", "color": "ambar", "parpadeo": 1.0 }, { "si": "ap.activo == 2", "color": "rojo" } ],
         "nombre": "Piloto de combate", "ayuda": "Rojo: vuela él. Ámbar intermitente: no hay traza elegida." }
     ]
   },

@@ -12,7 +12,8 @@
 //! - `ship`: one ship at work, tick by tick, on its structure;
 //! - `panels`, `atmos`, `flight`, `blackbox`: its controls, its air, its flight computer, its log;
 //! - `exhaust`: its thrusters' nozzles and what each gives now, for whoever shows their plumes;
-//! - `scene`: what it shows besides its structure (controls, silkscreen, screens, lights, rams).
+//! - `scene`: what it shows besides its structure (controls, silkscreen, screens, lights, rams);
+//! - `seat_keys`: the keys of a seat, and what a key held sends its control.
 //!
 //! The same code runs a ship on a server or a client: its state is signals, control states,
 //! machine and actuator states and joint positions, all plain numbers (`Ship::snapshot`).
@@ -40,6 +41,7 @@ pub mod power;
 pub mod procedures;
 pub mod rooms;
 pub mod scene;
+pub mod seat_keys;
 pub mod sections;
 pub mod ship;
 pub mod sync;

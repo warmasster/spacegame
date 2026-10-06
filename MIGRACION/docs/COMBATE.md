@@ -99,7 +99,21 @@ una con su interruptor y su rueda, y programas. Está en la cara NAVEG. del tamb
 Con cualquiera puesta **el ordenador vuela los motores y mueve él las góndolas**: el casco va
 siempre horizontal. Lo que no se retiene sigue como va, y las teclas de traslación empujan
 (R/F suben y bajan si no hay ALTURA; I/K/J/L aceleran si no hay VELOC.). Fuera de todo cuerpo
-solo cuenta VELOC. (a lo largo de como vas).
+solo cuenta VELOC. (a lo largo de como vas): ALTURA y RUMBO no significan nada allí y **lo
+dice**: la lámpara ACTIVO parpadea en ámbar y la señal `ap.sin_cuerpo` se enciende (igual
+DESPEG. y ATERRIZ.); si no hay nada que volar, la nave queda para el piloto. Antes se encendía
+en verde y no hacía nada.
+
+**El peso que sostiene es el de ir como va** (`weight` en `autopilot.rs`): el tirón menos lo
+que se lleva dar la vuelta al cuerpo a su velocidad a nivel. Parado, todo su peso; a la velocidad
+de órbita, nada (caer alrededor es la órbita: ALTURA en órbita no gasta en sostenerla); más
+deprisa, tiene que empujar hacia abajo para no subir. Lo mismo en todos los modos.
+
+**SEGUIR y los modos de combate sin bandazos:** entre «ir a estar con la traza» y «el morro en
+ella» hay un margen (`WITH_IT`, `WITH_IT_AGAIN`): no salta de uno a otro y vuelta. Un empuje de
+través se toma con el extremo del casco que ya tiene puesto hasta que el otro es claramente
+mejor (`OTHER_END`), en vez de dar media vuelta cada vez que el empuje cruza el través. Se acerca
+tan deprisa como aún puede frenar contando lo que tarda en responder (`ANSWER`).
 
 **Programas** (selector PROGRAMA):
 

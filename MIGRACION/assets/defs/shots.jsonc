@@ -5,8 +5,9 @@
 // menu: changed in play from the menu (Esc), charge up to max_tnt kg, speed up to max_speed.
 // rate: automatic, rounds per second while the key is held; spread: scatter round the aim (mrad).
 {
-  // light machine gun: 7.62 mm, ~3.5 kJ a round, 12 a second while M is held
-  "metralleta": { "name": "Metralleta", "key": "Q", "energy": 3.5e3, "area": 4.6e-5, "range": 1500.0, "speed": 830.0, "rate": 12.0, "spread": 2.5,
+  // light machine gun: 7.62 mm, ~3.5 kJ a round, 12 a second while U is held (Q and E roll
+  // whoever floats with the pack)
+  "metralleta": { "name": "Metralleta", "key": "U", "energy": 3.5e3, "area": 4.6e-5, "range": 1500.0, "speed": 830.0, "rate": 12.0, "spread": 2.5,
                   "look": { "style": "trazadora", "size": 0.025 }, "impact": "impacto_ligero" },
   "bala":      { "name": "Bala", "key": "O", "energy": 2.0e5, "area": 0.002, "range": 2000.0, "speed": 900.0, "look": { "style": "trazadora", "size": 0.05 }, "impact": "impacto" },
   // thrown: they fly on their arc, are seen in flight and go off where they land

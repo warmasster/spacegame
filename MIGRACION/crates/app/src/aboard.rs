@@ -16,8 +16,6 @@ use winit::keyboard::KeyCode;
 use lunar_ship::panels::{READ, REACH};
 /// Seconds a note stays in the HUD.
 const NOTE: f32 = 2.5;
-/// Throttle-like bindings: notches per second while held.
-const RATE: f32 = 25.0;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Target {
@@ -47,14 +45,7 @@ struct Held {
     drag: bool,
 }
 
-#[derive(Clone, Copy, Debug)]
-enum Does {
-    Axis { axis: u8, value: f64 },
-    Up,
-    Down,
-    Zero,
-    Press,
-}
+use lunar_ship::seat_keys::{self, Does};
 
 #[derive(Clone, Copy, Debug)]
 struct Binding {
@@ -73,6 +64,9 @@ pub struct Aboard {
     /// Last value sent to each (control, axis) by the keys.
     axes: Vec<(usize, u8, f64)>,
     note: Option<(String, f32, bool)>,
+    /// Seconds since this began, and how fast the wheel is being spun.
+    clock: f64,
+    spin: lunar_controls::Spin,
     /// What the hand just worked sounds like (sound ids), taken by whoever plays them.
     pub heard: Vec<&'static str>,
     /// The controls the hand (or the seat's keys) changed: (ship's structure, control, the value
@@ -378,7 +372,9 @@ impl Aboard {
     /// Wheel notches: true when a control took them.
     pub fn wheel(&mut self, ships: &mut Ships, set: &Structures, notches: f32, m: Mods) -> bool {
         let Some(Aim { structure, target: Target::Control { k, .. }, .. }) = self.aim else { return false };
-        self.act(ships, set, structure, k, &Intent::Turn { notches, rate: notches.abs() * 10.0, m });
+        // (how fast it is spun, by when its notches come: a notch on its own, not at all)
+        let rate = self.spin.rate(self.clock, notches);
+        self.act(ships, set, structure, k, &Intent::Turn { notches, rate, m });
         true
     }
 
@@ -394,20 +390,16 @@ impl Aboard {
         self.bindings.clear();
         self.down.clear();
         self.axes.clear();
-        let controls = &ships.list[n].panels.controls;
-        for b in &d.mandos {
-            let (Some(key), Some(control)) = (key_named(&b.tecla), controls.iter().position(|c| c.id == b.mando)) else {
-                eprintln!("asiento {}: tecla '{}' o mando '{}' desconocidos", d.id, b.tecla, b.mando);
+        let (keys, bad) = seat_keys::keys(&ships.list[n], i);
+        for b in bad {
+            eprintln!("{b}");
+        }
+        for k in keys {
+            let Some(key) = key_named(&k.key) else {
+                eprintln!("asiento {}: tecla '{}' desconocida", d.id, k.key);
                 continue;
             };
-            let does = match (b.accion.as_deref(), b.eje) {
-                (Some("subir"), _) => Does::Up,
-                (Some("bajar"), _) => Does::Down,
-                (Some("cero"), _) => Does::Zero,
-                (Some(_), _) => Does::Press,
-                (None, axis) => Does::Axis { axis: axis.unwrap_or(0), value: b.valor.unwrap_or(1.0) },
-            };
-            self.bindings.push(Binding { key, control, does });
+            self.bindings.push(Binding { key, control: k.control, does: k.does });
         }
         self.aim = None;
         true
@@ -492,6 +484,7 @@ impl Aboard {
 
     /// Every frame: held controls count their time, seat keys drive their controls, notes fade.
     pub fn update(&mut self, dt: f32, pilot: &Pilot, ships: &mut Ships, set: &Structures) {
+        self.clock += f64::from(dt);
         if let Some(h) = &mut self.held {
             h.secs += dt;
             let (s, k, secs) = (h.structure, h.k, h.secs);
@@ -506,8 +499,7 @@ impl Aboard {
                     _ => continue,
                 };
                 if self.down.contains(&b.key) {
-                    let i = Intent::Turn { notches: sign * RATE * dt, rate: RATE, m: Mods::default() };
-                    self.act(ships, set, seat.structure, b.control, &i);
+                    self.act(ships, set, seat.structure, b.control, &seat_keys::held(sign, dt));
                 }
             }
         }

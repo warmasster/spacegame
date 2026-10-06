@@ -321,7 +321,7 @@ y en una docena de sitios del terreno, pendientes de hasta 17°).
   cada red, máquinas con procedencia, actuadores y articulaciones, caja negra.
 - **C:** agacharse (más bajo y lento, el aire te arrastra menos; no se levanta bajo un techo).
   **L:** linterna del casco. **T:** telémetro (distancia y qué es lo de la mira, nave más cercana y
-  su nivel de detalle). **F7 (debug):** naves teñidas por nivel de detalle. **Q:** metralleta.
+  su nivel de detalle). **F7 (debug):** naves teñidas por nivel de detalle. **U:** metralleta (Q y E alabean flotando con la mochila).
 - **Equipo** (`assets/defs/gear.jsonc`, `app/src/gear.rs`), con las teclas de número:
   - **1 · Soldador-escáner.** Su pantallita dice qué es lo que miras y su integridad. Clic
     mantenido: suelda (o repone lo que falta, que tarda un momento). Botón derecho: **vista de
@@ -417,7 +417,8 @@ y en una docena de sitios del terreno, pendientes de hasta 17°).
   estabilizador suelta el casco (peleando contra el suelo, las toberas paseaban la nave); reparte
   el empuje entre los motores para que pase por el centro de masas donde lo haya dejado la carga
   (`trim`); con giróscopos (`vuelo.ruedas`) gira primero con ellos y con las toberas el resto, y
-  los descarga (`vuelo.descarga`).
+  los descarga siempre que el ordenador vaya (o con su interruptor, si la nave lo tiene:
+  `vuelo.descarga`). Con la palanca suelta **mantiene la actitud** (V40, abajo).
 - **Herramientas en la mano:** se dibujan en el marco del ojo (`gear::eye_frame`), así que siguen a
   la vista también hacia arriba y hacia abajo.
 - **Tráfico** (`scenario.jsonc`: `trafico`, `core/src/traffic.rs`): 2 000 naves ligeras que van de
@@ -638,6 +639,57 @@ y en una docena de sitios del terreno, pendientes de hasta 17°).
 - **Visor** (`app/visor.rs`, `visor.jsonc`): filtro de soldar, visor solar (U) y vaho, como
   parámetros del posproceso.
 
+## Coherencia y ordenador de vuelo (V40)
+
+`crates/ship/tests/coherencia.rs` prueba cada nave que vuela como la encuentra un piloto, sin
+nombrar ninguna: lo que falla ahí es lo que un jugador llamaría «no va» o «hace cosas raras».
+
+- **Teclas mantenidas** (`ship/src/seat_keys.rs`, lo único que interpreta las teclas de un
+  asiento, para el juego y para las pruebas): una tecla mantenida gira su mando a
+  `HELD_RATE` muescas por segundo, cortadas en tantos fotogramas como haya; tiene que moverlo lo
+  mismo a 30 que a 240 fps y sacarlo de cualquier retén. Antes Mayús no sacaba los gases de CORTE:
+  cada fotograma los movía menos de lo que atrapa el retén y el retén los devolvía (cuantos más
+  fps, peor). Ahora **un retén atrapa la palanca que entra en él, nunca la que sale**
+  (`controls/mech/lever.rs`). (El retén de una rueda sí la sujeta contra una muesca: se sale
+  girando deprisa o con Ctrl.)
+- **Ruedas**: una muesca da el paso de sus datos y de su ayuda; Mayús el grueso y Ctrl el fino,
+  **que ninguna velocidad de giro multiplica** (`controls/mech/wheel.rs`). La velocidad de giro
+  de la rueda del ratón se mide (`lunar_controls::Spin`: una muesca suelta no va «deprisa»);
+  antes se inventaba como muescas × 10 y una sola muesca contaba como un giro rápido (Ctrl daba
+  40 en vez de 5).
+- **Palanca y traslación**: cada tecla gira o empuja la nave por un solo eje, en el sentido que
+  dice su ayuda, y la misma tecla hace lo mismo en todas las naves (la prueba imprime la tabla con
+  `--nocapture`); soltada, el estabilizador la para.
+- **Potencia sin giro**: con el acelerador abierto y la palanca suelta, en cada posición de las
+  góndolas, la nave no se gira sola y sus giróscopos no se quedan llenos. Lo que había: el Azor se
+  iba de morro 25° en 30 s y tenía siempre los giróscopos saturados.
+- **Piloto automático sin cuerpo**: lo que no tiene sentido fuera de todo cuerpo (ALTURA, RUMBO,
+  DESPEG., ATERRIZ.) lo dice (`ap.sin_cuerpo`) en vez de encenderse como si volara.
+
+Lo que se arregló en el ordenador de vuelo (para todas las naves):
+
+- **Reparto entre toberas** (`allocate`): mínimos cuadrados acotados por descenso por
+  coordenadas (cada tobera puesta exactamente a lo que mejor completa lo que falta), con lo que se
+  dio el tic anterior como punto de partida y un pequeño coste por lo que se gasta. Antes, 40
+  pasos de gradiente con un paso diminuto no llegaban y lo que quedaba por debajo del 2 % se
+  tiraba: **ninguna tobera del Azor se encendía nunca** para compensar sus motores. Lo que se pide
+  más allá de lo que pueden dar en un eje se recorta a lo que pueden, y un par perdido pesa más
+  que un empuje perdido (`TURN_WEIGHT`).
+- **El par de los motores se compensa por lo que empujan de verdad** (no por lo que se les pidió:
+  un motor que arranca o se apaga empuja otra cosa).
+- **Reparto entre motores** (`trim`): solo se corrige la parte del par que los motores hacen
+  distinta entre sí; la que hacen todos igual (dos góndolas a la par y el cabeceo) cambia con el
+  total, que no se toca. Antes se intercambiaba por un cabeceo imposible y dejaba ~4 000 N·m de
+  alabeo en el Azor.
+- **Mantener la actitud**: con el estabilizador y la palanca suelta, primero para el giro y luego
+  guarda la actitud en que se paró (`KEEP`); antes solo frenaba el giro y cualquier par pequeño
+  la llevaba unos grados por minuto.
+- **No se pide más giro del que se puede dar** (`can_turn`): el error de giro de cada eje se
+  limita a lo que sus toberas y giróscopos dan. Con la inercia cruzada del casco, una guiñada
+  imposible del Alcotán se comía el alabeo que debía compensarla.
+- **Giróscopos**: se descargan siempre que el ordenador vaya (o con su interruptor si la nave lo
+  tiene, como el Abejorro y el Cachalote).
+
 ## Formato
 
 `rustfmt.toml` (líneas de hasta 255, `use_small_heuristics = "Max"`) es el estilo del código: sin
@@ -647,6 +699,9 @@ y en una docena de sitios del terreno, pendientes de hasta 17°).
 
 `cargo test --workspace` (perfil de pruebas optimizado: segundos). En `crates/ship/tests/`:
 
+- `coherencia.rs`: la nave como la encuentra un piloto (teclas mantenidas a cualquier fps, pasos
+  de ruedas y retenes, cada tecla de la palanca por su eje, potencia sin giro, piloto automático
+  sin cuerpo). Ver «Coherencia y ordenador de vuelo (V40)».
 - `alcotan.rs`: se arma, arranca, presuriza, tres verdes, hidráulica, rampa, reactor, motores,
   posada y dormida.
 - `aire.rs`, `estanqueidad.rs`: el modelo de aire y la estanqueidad por vóxeles.

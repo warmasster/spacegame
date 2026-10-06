@@ -14,6 +14,6 @@ pub mod mfd;
 
 pub use def::ControlDef;
 pub use indicator::{IndState, Indicator};
-pub use intent::{Blocked, ControlState, Event, Gate, Intent, Mods, Outcome, Pose};
+pub use intent::{Blocked, ControlState, Event, Gate, Intent, Mods, Outcome, Pose, Spin};
 pub use layout::{PanelDef, PanelLayout, layout};
 pub use mech::Mechanism;

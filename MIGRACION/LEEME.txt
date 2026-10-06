@@ -1,3 +1,29 @@
+NOVEDADES V40 (codigo listo; los .exe hay que recompilarlos, todavia son los de SELENE_V39):
+PRUEBA DE COHERENCIA DE TODAS LAS NAVES (crates/ship/tests/coherencia.rs):
+teclas mantenidas a 30, 60, 144 y 240 fps, pasos de ruedas, retenes, cada
+tecla de la palanca por su eje, nave que no gira sola con gas, piloto
+automatico fuera de todo cuerpo. Encontro unas 90 incoherencias; arregladas.
+EL AZOR YA NO SE VA DE MORRO: sus motores empujan 4 mm detras del centro de
+masas, los giroscopos se llenaban en 3 s y ninguna tobera se encendia para
+compensarlo. Ahora las toberas reparten bien, compensan lo que empujan de
+verdad los motores, los giroscopos se descargan y, con la palanca suelta, la
+nave MANTIENE LA ACTITUD (antes solo frenaba el giro). Vale para todas las
+naves: ninguna se gira mas de 0,1 grados en 30 s con el gas al 60 %.
+MAYUS Y CTRL MUEVEN LOS GASES (antes el reten de CORTE los devolvia a cero en
+cada fotograma). CTRL EN LAS RUEDAS DA EL PASO FINO (5 en 5 en ALT; antes una
+sola muesca contaba como giro rapido y saltaba de 5 a 40).
+PILOTO AUTOMATICO: fuera de todo cuerpo ALTURA, RUMBO, DESPEG. y ATERRIZ. no
+pueden hacer nada y ahora LO DICEN (lampara ambar y SIN CUERPO en la
+pantalla); VELOC. si vale. En orbita ALTURA no gasta sosteniendo el peso
+(caer alrededor ya te sostiene). SEGUIR sin bandazos.
+MOCHILA COMO EN SPACE ENGINEERS: W te empuja hacia donde miras (tambien
+arriba y abajo); sin peso el raton gira todo el cuerpo sin tope y Q / E
+alabean; al apagar la mochila te quedas como estabas; con peso te enderezas;
+el estabilizador (Z) frena tambien en el espacio libre. La metralleta de
+pruebas pasa de Q a U.
+SIN PROBAR JUGANDO. Detalles: docs/NAVES.md (Coherencia y ordenador de vuelo),
+docs/COMBATE.md, docs/MOVIMIENTO.md 8, docs/PENDIENTES.md V40.
+
 NOVEDADES V38 (carpeta SELENE_V38: SeleneLauncher.exe, SeleneV38_demo.exe / _multiplayer.exe / _debug.exe):
 MOCHILA Y NAVES A CUALQUIER VELOCIDAD: con la mochila dentro de una nave que
 va deprisa ya no hay teletransportes, al salir no pega el tiron y la nave no

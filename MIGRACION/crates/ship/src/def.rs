@@ -901,8 +901,9 @@ pub struct FlightDef {
     #[serde(default)]
     pub ordenador: Option<String>,
     /// The machines that are momentum wheels (`giroscopo`): the turn is asked of them first, of
-    /// the thrusters what they cannot give. `descarga`: the signal that has the thrusters turn
-    /// the hull against the wheels while these unload what they hold.
+    /// the thrusters what they cannot give. The thrusters unload them (turn the hull against the
+    /// wheels while these give back what they hold) whenever the computer runs; `descarga`, if
+    /// given: the switch that allows it (off, the wheels keep what they take).
     #[serde(default)]
     pub ruedas: Vec<String>,
     #[serde(default)]

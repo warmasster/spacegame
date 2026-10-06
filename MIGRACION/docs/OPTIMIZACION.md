@@ -12,6 +12,18 @@ rendimiento del juego en TS están en [`../../docs/RENDIMIENTO.md`](../../docs/R
 Prioridad: **A** (se nota jugando), **B** (se nota con muchas cosas en pantalla), **C** (limpieza o
 código muerto).
 
+## V40 (2026-10-07): ordenador de vuelo
+
+- Reparto entre toberas (`flight.rs` → `allocate`): descenso por coordenadas con arranque desde el
+  tic anterior, hasta 40 barridos que paran en cuanto nada se mueve; sin reservas por tic (los
+  vectores `cols`, `u`, `warm`, `norms` se reutilizan). **0,22 µs por llamada con 16 toberas**
+  (`flight::tests::a_small_turn_is_given_whole_and_pushes_nothing`, perfil de pruebas sin
+  optimizar del todo, 10 000 llamadas en caliente). Antes eran 40 pasos fijos de gradiente.
+- `can_turn` recorre las toberas una vez más por tic para saber cuánto par dan (16 productos
+  vectoriales): sin medir aparte, del orden del reparto. Si una nave con cientos de toberas lo
+  notara, guardarlo y rehacerlo solo cuando cambie la versión de la estructura o el centro de
+  masas.
+
 ## V39 (2026-10-06): barrido de proyectiles en el reloj del mundo
 
 - `structure::motion::Sweep`: BVH de volúmenes recorridos, una construcción por loncha con

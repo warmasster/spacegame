@@ -76,6 +76,8 @@
       "empuje": 4.2, "lateral": 2.6, "frenada": 7.0, "autonomia": 45.0, "recarga": 12.0,
       "abajo": 0.6, "gasto_lado": 0.35, "gasto_freno": 0.15, "despegue": 0.35, "sosten": 0.35, "quieto": 0.05,
       "junto": { "alcance": 60.0, "mejora": 0.5, "margen": 0.25, "suavizado": 0.15, "aceleracion": 30.0 },
+      // floating where nothing weighs, Q and E roll you this fast (rad/s)
+      "alabeo": 1.2,
     },
   },
   "layout": { "radius": 1500.0, "inner": 90.0 },

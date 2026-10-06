@@ -28,7 +28,9 @@ pub struct Lever {
     default: f64,
 }
 
-/// Width of a detent's catch, as a share of the range.
+/// Width of a detent's catch, as a share of the range. A detent catches a lever coming into it
+/// (or moving within it toward it), never one leaving it: a lever moved off a detent in small
+/// steps — a key held, one notch of the wheel — goes, at any frame rate.
 const CATCH: f64 = 0.015;
 
 impl Lever {
@@ -90,8 +92,10 @@ impl Lever {
         if !fine {
             let catch = CATCH * (self.hi - self.lo);
             for (at, _) in &self.detents {
-                if (x - at).abs() < catch {
-                    if (from - at).abs() >= catch {
+                let (was, is) = ((from - at).abs(), (x - at).abs());
+                // (coming into it, or nearer it within it: it catches; going out, it lets go)
+                if is < catch && is < was {
+                    if was >= catch {
                         ev = ev.or(Some(Event::Click));
                     }
                     x = *at;
@@ -265,6 +269,29 @@ mod tests {
         let mut s = String::new();
         l.describe(&st, &mut s);
         assert!(s.ends_with("MÍN"));
+    }
+
+    #[test]
+    fn a_detent_lets_go_of_a_lever_moved_out_of_it_in_small_steps() {
+        let d: ControlDef = serde_json::from_str(
+            r#"{ "id": "acelerador", "kind": "palanca", "rango": [0.0, 1.05], "retenes": [ { "en": 0.0, "nombre": "CORTE" }, { "en": 1.0, "nombre": "100" } ] }"#,
+        )
+        .unwrap();
+        let l = Lever::new(&d).unwrap();
+        let g = Gate::default();
+        // a key held a second at 240 frames a second: 25 notches in steps of a tenth
+        let mut st = l.init();
+        for _ in 0..240 {
+            l.intent(&mut st, &Intent::Turn { notches: 25.0 / 240.0, rate: 0.0, m: Mods::default() }, &g);
+        }
+        assert!((st.x - 0.2625).abs() < 1e-6, "sale de CORTE a {}", st.x);
+        // and down out of 100
+        l.intent(&mut st, &Intent::Set { value: 1.0 }, &g);
+        l.intent(&mut st, &Intent::Turn { notches: -0.5, rate: 0.0, m: Mods::default() }, &g);
+        assert!(st.x < 1.0, "no sale de 100: {}", st.x);
+        // coming back into it, it catches
+        l.intent(&mut st, &Intent::Turn { notches: 0.4, rate: 0.0, m: Mods::default() }, &g);
+        assert_eq!(st.x, 1.0);
     }
 
     #[test]

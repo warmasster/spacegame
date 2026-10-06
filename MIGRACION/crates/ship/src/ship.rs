@@ -70,6 +70,9 @@ pub struct World {
     pub altitude: f64,
     pub speed: f64,
     pub climb: f64,
+    /// How far its centre of mass is from the centre of the body whose ground is under it (m;
+    /// 0 where there is none): what going round that body at its speed takes of its weight.
+    pub around: f64,
     /// Where its nose points on the compass (degrees from the north of the ground under it
     /// toward east, 0..360), or `NO_HEADING` where there is no north to count from: past every
     /// body's reach, at a pole, or with its nose straight up or down.
@@ -106,6 +109,7 @@ impl World {
             altitude: here.ground.map_or(NO_GROUND, |g| bodies.get(g).altitude(low).max(0.0)),
             speed: s.vel.length(),
             climb: here.up().map_or(0.0, |up| s.vel.dot(up)),
+            around: here.ground.map_or(0.0, |g| (com - bodies.get(g).center).length()),
             heading: heading.unwrap_or(NO_HEADING),
             ..World::default()
         }
@@ -114,7 +118,7 @@ impl World {
 
 impl Default for World {
     fn default() -> Self {
-        World { gravity: Vec3::new(0.0, -1.62, 0.0), sun: Vec3::Y, irradiance: 1361.0, pressure: 0.0, sink: 230.0, altitude: 0.0, speed: 0.0, climb: 0.0, heading: NO_HEADING }
+        World { gravity: Vec3::new(0.0, -1.62, 0.0), sun: Vec3::Y, irradiance: 1361.0, pressure: 0.0, sink: 230.0, altitude: 0.0, speed: 0.0, climb: 0.0, around: 0.0, heading: NO_HEADING }
     }
 }
 
@@ -777,7 +781,7 @@ impl Ship {
         s.gravity = lunar_core::structure::state::OwnGravity { g: gd.g, on: s.gravity.on + (want - s.gravity.on).clamp(-step, step) };
         // ---- 2. controls write their values; the flight computer its commands ----
         self.panels.write(&kind, s, &mut self.store, &self.ports);
-        let body = Body { mass: f64::from(s.mass), inertia: s.inertia, spin: s.rot.inverse() * s.spin, vel: (s.rot.inverse() * s.vel.as_vec3()), gravity: w.gravity };
+        let body = Body { mass: f64::from(s.mass), inertia: s.inertia, spin: s.rot.inverse() * s.spin, vel: (s.rot.inverse() * s.vel.as_vec3()), gravity: w.gravity, around: w.around as f32 };
         // (what it knows of what is round it first: the autopilot flies on it, the computer on both)
         if let Some(tac) = &mut self.tactical {
             tac.step(&mut self.store, &mut self.machines, s, self.t, dt, &mut self.plots);
@@ -1731,4 +1735,6 @@ pub struct Body {
     pub spin: Vec3,
     pub vel: Vec3,
     pub gravity: Vec3,
+    /// How far it is from the centre of the body under it (m; 0: none).
+    pub around: f32,
 }

@@ -548,6 +548,11 @@ impl State {
         if let Some(a) = action {
             self.hold(a, pressed);
         }
+        // (E, held, is also the roll right of whoever floats with the pack: a seat aimed at
+        // takes it first, below)
+        if action == Some(Action::Use) {
+            self.hold(Action::RollRight, pressed);
+        }
         if !pressed {
             self.blasts.release(key);
         }
@@ -854,6 +859,7 @@ impl State {
             boost: h(Action::FreeLook),
             jump: self.jump,
             crouch: h(Action::Crouch),
+            roll: f(h(Action::RollRight)) - f(h(Action::RollLeft)),
         };
         let view = if let Some(b) = &mut self.bench {
             b.t += dt;

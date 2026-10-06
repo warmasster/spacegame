@@ -8,6 +8,26 @@ pub struct Mods {
     pub fine: bool,
 }
 
+/// How fast a mouse wheel is being spun (notches a second, for `Intent::Turn::rate`), from when
+/// its notches come: these notches over the time since the last ones. A notch that comes on its
+/// own — more than `ALONE` s after the last — is not spun at all (rate 0), whatever the frame
+/// rate or the wheel.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Spin {
+    last: Option<f64>,
+}
+
+impl Spin {
+    pub const ALONE: f64 = 0.25;
+
+    /// `notches` turned at `now` (s, any clock that goes forward): how fast it is being spun.
+    pub fn rate(&mut self, now: f64, notches: f32) -> f32 {
+        let since = self.last.map_or(f64::INFINITY, |t| now - t);
+        self.last = Some(now);
+        if since < Self::ALONE { (f64::from(notches.abs()) / since.max(1.0 / 240.0)) as f32 } else { 0.0 }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Intent {
     /// Press (on sub-element `elem`, 0 for the whole control: keypad keys, bezel buttons).
@@ -163,5 +183,23 @@ impl ControlState {
         } else {
             self.flags &= !f;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Spin;
+
+    #[test]
+    fn a_wheel_is_spun_as_fast_as_its_notches_come_and_one_on_its_own_not_at_all() {
+        let mut s = Spin::default();
+        assert_eq!(s.rate(10.0, 1.0), 0.0, "la primera muesca");
+        assert_eq!(s.rate(11.0, 1.0), 0.0, "una muesca un segundo después");
+        // ten notches a second
+        let r = s.rate(11.1, 1.0);
+        assert!((r - 10.0).abs() < 1e-3, "{r}");
+        // two in one frame, 20 ms after the last
+        let r = s.rate(11.12, 2.0);
+        assert!((r - 100.0).abs() < 1e-2, "{r}");
     }
 }
