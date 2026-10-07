@@ -433,3 +433,63 @@ fn what_a_player_fires_the_server_decides_and_every_game_ends_alike() {
     }
     assert!(seen > 0);
 }
+
+#[test]
+fn piloting_a_ship_it_goes_where_the_server_has_it_and_the_pilot_is_not_put_right() {
+    // a ship far from every body, the player sat at its controls by their own game (the server
+    // is told), its keys held: the ship goes as the keys say in the pilot's game at once and in
+    // the server's the same, and a second player sees it there; nobody is put right
+    let cond = Conditions { delay: 0.04, jitter: 0.005, loss: 0.01, ..Conditions::default() };
+    let mut t = Table::new(2, 29, cond);
+    // (the one who watches is at the site, thousands of kilometres off: known however far)
+    (t.host.config.rule.near, t.host.config.rule.most) = (1.0e8, 1.0e8);
+    let far = DVec3::new(2.0e6, 3.0e6, -1.0e6);
+    t.host.game.watchers.push(far);
+    let id = t.host.game.ships.spawn_free(&mut t.host.game.builds, "alcotan", far, Quat::IDENTITY).unwrap();
+    t.run(0.2, 60.0, |_, _, _| {});
+    let you = t.seats[0].online.you.unwrap();
+    let n = t.host.game.ships.by_structure(id).unwrap();
+    let exit = glam::Vec3::from_array(t.host.game.ships.list[n].kind.seats[0].def.salida);
+    let (game, p) = t.host.game_and_player(you).unwrap();
+    p.pilot.put_on(&game.builds.set, id, exit);
+    t.run(2.0, 60.0, |_, _, _| {});
+    // sat down by our own game, as the use key does
+    {
+        let s = &mut t.seats[0];
+        let ships = &s.game.ships;
+        lunar_play::seats::sit(&mut s.me.pilot, ships, &s.game.builds.set, id, 0, |_, _| false).unwrap();
+    }
+    t.run(0.5, 60.0, |_, _, _| {});
+    let first = t.seats[0].online.stats.corrections;
+    assert!(t.host.player(you).unwrap().pilot.seat.is_some_and(|s| s.structure == id), "the server did not sit us");
+    // which of the seat's keys moves it ahead
+    let k = {
+        let g = &t.seats[0].game;
+        let sh = &g.ships.list[g.ships.by_structure(id).unwrap()];
+        let (keys, _) = lunar_ship::seat_keys::keys(sh, 0);
+        keys.iter().position(|k| k.key == "avanzar").expect("a key to go ahead")
+    };
+    let start = t.host.game.builds.set.get(id).unwrap().pos;
+    let mut track: Vec<(u64, DVec3)> = Vec::new();
+    for frame in 0..(6 * 60) {
+        t.seats[0].online.keys = if frame < 180 { 1 << k } else { 0 };
+        t.frame(1.0 / 60.0, |_, _, _| {});
+        let s = &t.seats[0];
+        track.push((s.game.step, s.game.builds.set.get(id).unwrap().pos));
+        let srv = (t.host.game.step, t.host.game.builds.set.get(id).unwrap().pos);
+        if frame > 30
+            && let Some(&(_, mine)) = track.iter().rev().find(|x| x.0 == srv.0)
+        {
+            assert!(mine.distance(srv.1) < 0.05, "frame {frame}: the pilot's game has the ship {:.3} m off the server's ({:?})", mine.distance(srv.1), s.online.stats);
+        }
+    }
+    let srv = t.host.game.builds.set.get(id).unwrap();
+    // (the manoeuvring jets alone: a few tenths of a metre a second in three seconds)
+    assert!(srv.pos.distance(start) > 0.3 && srv.vel.length() > 0.08, "the ship did not go: {:.2} m, {:.2} m/s", srv.pos.distance(start), srv.vel.length());
+    assert_eq!(t.seats[0].online.stats.corrections, first, "the pilot was put right ({:?})", t.seats[0].online.stats);
+    // the one who watches has it where it is
+    let w = &t.seats[1];
+    let theirs = w.game.builds.set.get(id).expect("the watcher does not know the ship");
+    let ahead = (w.game.step - t.host.game.step) as f64 * STEP;
+    assert!((theirs.pos - theirs.vel * ahead).distance(srv.pos) < 0.05, "the watcher has the ship {:.3} m off", (theirs.pos - theirs.vel * ahead).distance(srv.pos));
+}
