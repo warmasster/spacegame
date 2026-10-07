@@ -129,6 +129,13 @@ pub struct Guided {
     blind: f32,
     look_in: f32,
     pub id: u32,
+    /// Whose it is, as its launcher numbers what it lets fly (0: nobody's); it comes back with
+    /// its hit.
+    pub tag: u32,
+    /// What its seeker and motor push it with besides what pulls it, as of its last step (m/s²).
+    pub push: DVec3,
+    /// Led from outside (a copy of one flown elsewhere): no seeker of its own, this push instead.
+    pub led: Option<DVec3>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -149,8 +156,9 @@ pub struct Hit {
     /// The structure struck, if it struck one (a near miss names none).
     pub structure: Option<u64>,
     pub energy: f64,
-    /// The missile's own id (`Guided::id`).
+    /// The missile's own id (`Guided::id`) and its launcher's number for it (`Guided::tag`).
     pub id: u32,
+    pub tag: u32,
 }
 
 /// Fixed flight step (s) and how often a seeker looks again (s).
@@ -198,7 +206,7 @@ impl Flight {
             return false;
         }
         self.next = self.next.wrapping_add(1).max(1);
-        self.list.push(Guided { kind, pos: from, vel, t: 0.0, target, shooter, blind: 0.0, look_in: 0.0, id: self.next });
+        self.list.push(Guided { kind, pos: from, vel, t: 0.0, target, shooter, blind: 0.0, look_in: 0.0, id: self.next, tag: 0, push: DVec3::ZERO, led: None });
         true
     }
 
@@ -268,6 +276,15 @@ impl Flight {
         }
     }
 
+    /// The newest missile flown `secs` on at once, as `update` flies it (one let go that long
+    /// ago somewhere else, seen here only now): what it would strike on the way is not looked for.
+    pub fn catch_up(&mut self, secs: f64, bodies: &BodyRegistry, aim: impl Fn(u64) -> Option<Aim>) {
+        let Some(k) = self.list.len().checked_sub(1) else { return };
+        for _ in 0..((secs / STEP).round() as usize).min(240) {
+            let _ = self.fly(k, bodies, &aim, &mut |_, _, _| None);
+        }
+    }
+
     /// One step of missile `k`: its seeker, its steering, its motor; what it strikes.
     fn fly(&mut self, k: usize, bodies: &BodyRegistry, aim: &impl Fn(u64) -> Option<Aim>, structures: &mut impl FnMut(DVec3, DVec3, f64) -> Option<(DVec3, u64)>) -> Option<Hit> {
         let mut m = self.list[k];
@@ -305,9 +322,12 @@ impl Flight {
             // lost: it flies on with nothing to follow
             m.target = None;
         }
-        let mut a = gravity(bodies, m.pos);
+        let pull = gravity(bodies, m.pos);
+        let mut a = pull;
         let mut fuse = None;
-        if let Some(t) = visible {
+        if let Some(led) = m.led {
+            a += led;
+        } else if let Some(t) = visible {
             let (r, v) = (t.pos - m.pos, t.vel - m.vel);
             let range = r.length().max(1e-3);
             let closing = (-v.dot(r) / range).max(1.0);
@@ -329,9 +349,10 @@ impl Flight {
         } else if m.t < def.burn {
             a += nose * def.accel;
         }
+        m.push = a - pull;
         let p1 = m.pos + m.vel * STEP + a * (0.5 * STEP * STEP);
         let v1 = m.vel + a * STEP;
-        let hit = |at: DVec3, structure: Option<u64>| Hit { kind: m.kind, at, vel: v1, structure, energy: 0.5 * def.mass * v1.length_squared(), id: m.id };
+        let hit = |at: DVec3, structure: Option<u64>| Hit { kind: m.kind, at, vel: v1, structure, energy: 0.5 * def.mass * v1.length_squared(), id: m.id, tag: m.tag };
         if m.t >= def.arm {
             if let Some(at) = fuse {
                 return Some(hit(at, None));

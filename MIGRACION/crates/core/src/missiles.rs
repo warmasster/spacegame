@@ -52,6 +52,9 @@ pub enum Target {
 #[derive(Clone, Copy, Debug)]
 pub struct Missile {
     pub kind: usize,
+    /// Whose it is, as its caller numbers what it lets fly (0: nobody's); it comes back with
+    /// its strike.
+    pub tag: u32,
     pub pos: DVec3,
     pub vel: DVec3,
     /// Flight time (s).
@@ -65,6 +68,7 @@ pub struct Missile {
 #[derive(Clone, Copy, Debug)]
 pub struct Strike {
     pub kind: usize,
+    pub tag: u32,
     pub at: DVec3,
     pub vel: DVec3,
     pub target: Target,
@@ -149,8 +153,13 @@ impl Missiles {
     pub fn launch(&mut self, id: &str, from: DVec3, to: DVec3, bodies: &BodyRegistry) -> Result<(), String> {
         let kind = self.defs.iter().position(|(k, _)| k == id).ok_or_else(|| format!("unknown missile '{id}'"))?;
         let vel = self.solve(kind, from, to, bodies).ok_or_else(|| format!("{}: out of reach", self.defs[kind].1.name))?;
-        self.list.push(Missile { kind, pos: from, vel, t: 0.0, predicted: None, next_look: 0.0 });
+        self.fire(kind, from, vel, 0);
         Ok(())
+    }
+
+    /// Fire kind `kind` from `from` at `vel` (worked out already: `solve`), numbered `tag`.
+    pub fn fire(&mut self, kind: usize, from: DVec3, vel: DVec3, tag: u32) {
+        self.list.push(Missile { kind, tag, pos: from, vel, t: 0.0, predicted: None, next_look: 0.0 });
     }
 
     /// Fly every missile `dt` on (in fixed steps); the ones that land go to `strikes`.
@@ -173,7 +182,7 @@ impl Missiles {
                 match self.sweep(m.pos, p1, bodies, set) {
                     Some((at, target)) => {
                         let mass = self.defs[m.kind].1.mass;
-                        strikes.push(Strike { kind: m.kind, at, vel: v1, target, energy: 0.5 * mass * v1.length_squared() });
+                        strikes.push(Strike { kind: m.kind, tag: m.tag, at, vel: v1, target, energy: 0.5 * mass * v1.length_squared() });
                         self.list.swap_remove(k);
                     }
                     None => {

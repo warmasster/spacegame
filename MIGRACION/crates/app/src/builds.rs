@@ -5,9 +5,11 @@
 //! With other players, what is done to a structure they also have (`Structure::shared`) is
 //! decided once and done everywhere in one order: a hit or a torn plate decided here goes to
 //! `strikes` (whoever tells the others takes it from there) and is done when it comes back
-//! (`strike_done`), here as everywhere; what follows from it (a part that bursts) is done where
-//! it happens, the same in every game.
-use glam::DVec3;
+//! (`strike_done`), here as everywhere. What follows from it that hangs on what each game
+//! simulates of its own (a part that bursts or not by what it held) is said by one game — the
+//! owner of the struck ship, else whoever decided the strike — and told as any blast is; the
+//! others only see it go off.
+use glam::{DVec3, Vec3};
 use lunar_core::{
     body::BodyRegistry,
     effects::{BlastDef, Effects, ShotDef},
@@ -35,7 +37,9 @@ pub struct Builds {
     events: Vec<Event>,
     /// What burst last frame (where, the part kind that says what it lets go of): it goes off
     /// this one, so a row of drums goes up one after another.
-    bursts: Vec<(DVec3, u16)>,
+    /// Parts that burst since the last frame: where, of what kind, on what structure and where
+    /// in it, their dice, and whether the strike that broke them was decided here.
+    bursts: Vec<(DVec3, u16, u64, Vec3, u64, bool)>,
     hits: u64,
     now: f64,
     /// How many ran at each level last frame.
@@ -117,12 +121,37 @@ impl Builds {
 
     /// A strike decided in some game (this one too) done here, with the dice it was told with:
     /// every game that does it the same, in the same order, ends with the same structure.
-    pub fn strike_done(&mut self, s: &Strike, seed: u64) {
+    /// `ours`: it was decided here (what it sets off round the struck structure is ours to say).
+    /// `pose`: how the struck structure's articulations were where it was decided (none: as
+    /// they are here).
+    pub fn strike_done(&mut self, s: &Strike, seed: u64, ours: bool, pose: &[glam::Affine3A]) {
+        let from = self.events.len();
+        let (rules, events) = (&self.rules, &mut self.events);
         match *s {
-            Strike::Hit { id, hit } => {
-                self.set.hit(id, &hit, &self.rules, &mut self.events, seed);
+            Strike::Hit { id, hit } => self.set.posed(id, pose, |set| {
+                set.hit(id, &hit, rules, events, seed);
+            }),
+            Strike::Blow { id, part, push, energy } => self.set.posed(id, pose, |set| set.blow_out(id, part, push, energy, rules, events, seed)),
+        }
+        self.burst_of(from, ours);
+    }
+
+    /// How structure `id`'s articulations are posed now (what a strike decided here is told
+    /// with: `strike_done`); empty if it has none.
+    pub fn pose_of(&self, id: u64) -> &[glam::Affine3A] {
+        self.set.get(id).map_or(&[], |s| &s.bones[1..])
+    }
+
+    /// What burst of what was done since event `from`, kept with whose say the rest of it is.
+    fn burst_of(&mut self, from: usize, ours: bool) {
+        let mut k = from;
+        while k < self.events.len() {
+            if let Event::Burst { at, kind, id, local, seed } = self.events[k] {
+                self.bursts.push((at, kind, id, local, seed, ours));
+                self.events.remove(k);
+            } else {
+                k += 1;
             }
-            Strike::Blow { id, part, push, energy } => self.set.blow_out(id, part, push, energy, &self.rules, &mut self.events, seed),
         }
     }
 
@@ -133,12 +162,18 @@ impl Builds {
         self.now += dt;
         // what was let go of (a clamp opened, what held it destroyed) comes off as its own body
         self.set.separate();
-        for (at, kind) in std::mem::take(&mut self.bursts) {
+        let bursts = std::mem::take(&mut self.bursts);
+        for (at, kind, id, local, seed, ours) in bursts {
             let Some(b) = self.set.lib.catalog.parts[usize::from(kind)].def.burst.clone() else { continue };
+            // (where it is now, on what it was part of)
+            let at = self.set.get(id).map_or(at, |s| s.to_world(local));
             let _ = fx.explode_scaled(&b.effect, bodies, bodies.dominant(at), at, 1.0);
-            self.hits += 1;
-            // (it follows from a part broken the same in every game: done here as everywhere)
-            self.set.blast_done(at, b.energy, b.radius, &self.rules, &mut self.events, self.hits);
+            // (on what every game has, one says it: the rest only see it; anything else, here)
+            let say = self.set.get(id).is_none_or(|s| !s.shared || s.owned || (!s.remote && ours));
+            if say {
+                self.hits += 1;
+                self.set.blast(at, b.energy, b.radius, &self.rules, &mut self.events, seed ^ self.hits);
+            }
         }
         self.stats = self.set.simulate_with(self.now, dt, bodies, self.policy.as_ref(), &[eye], among);
         let cat = &self.set.lib.catalog;
@@ -147,8 +182,8 @@ impl Builds {
             let (at, size, material) = match e {
                 Event::Shattered { at, size, material } | Event::Chipped { at, size, material } => (at, size, material),
                 Event::Parted { .. } => continue,
-                Event::Burst { at, kind } => {
-                    self.bursts.push((at, kind));
+                Event::Burst { at, kind, id, local, seed } => {
+                    self.bursts.push((at, kind, id, local, seed, true));
                     continue;
                 }
             };

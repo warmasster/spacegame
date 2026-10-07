@@ -34,12 +34,16 @@ pub struct Round {
     pub style: u8,
     pub size: f32,
     pub seed: f32,
+    /// Whose it is, as its caller numbers what it lets fly (0: nobody's); it comes back with
+    /// its impact.
+    pub tag: u32,
 }
 
 /// Where a round ended: on the ground or on what the structure test found.
 #[derive(Clone, Copy, Debug)]
 pub struct Impact {
     pub kind: u16,
+    pub tag: u32,
     pub at: DVec3,
     /// Unit direction of flight, and its speed (m/s).
     pub dir: DVec3,
@@ -157,7 +161,7 @@ impl Rounds {
             }
             let speed = r.vel.length();
             if let Some((at, structure)) = hit {
-                out.push(Impact { kind: r.kind, at, dir, speed, structure, surface: surface.map(|h| h.surface) });
+                out.push(Impact { kind: r.kind, tag: r.tag, at, dir, speed, structure, surface: surface.map(|h| h.surface) });
                 self.list.swap_remove(k);
                 continue;
             }
@@ -182,7 +186,7 @@ impl Rounds {
 /// A round of `kind` leaving `from` along unit `dir` at `speed` m/s, for `range` m.
 #[allow(clippy::too_many_arguments)]
 pub fn round(kind: u16, from: DVec3, dir: DVec3, speed: f32, range: f32, body: BodyId, style: u8, size: f32, seed: f32) -> Round {
-    Round { pos: from, vel: dir * f64::from(speed), nose: dir * f64::from(speed), kind, body, left: range / speed.max(1.0), style, size, seed }
+    Round { pos: from, vel: dir * f64::from(speed), nose: dir * f64::from(speed), kind, body, left: range / speed.max(1.0), style, size, seed, tag: 0 }
 }
 
 #[cfg(test)]

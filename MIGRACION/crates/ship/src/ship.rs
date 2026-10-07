@@ -1706,6 +1706,15 @@ impl Ship {
         }
     }
 
+    /// What the joints were set to, put on the structure now (not on the next tick, which a
+    /// ship far off runs seldom): whatever strikes it finds its parts where its owner has them.
+    pub fn pose_now(&mut self, s: &mut Structure) {
+        if self.posed {
+            s.set_pose(&self.poses);
+            self.posed = false;
+        }
+    }
+
     /// Set a joint straight (spawning with the ramp down, tests).
     pub fn set_joint(&mut self, id: &str, q: f64) {
         if let Some(k) = self.kind.joints.iter().position(|j| j.id == id) {

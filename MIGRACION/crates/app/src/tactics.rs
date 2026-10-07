@@ -8,7 +8,11 @@
 //! Cost: nothing while no ship has a sensor on. A look is one list of things (made once for
 //! all) and, per looking ship, one pass over it: a range gate, the horizon of the body it is
 //! over, a change of frame.
-use crate::{blasts::Blasts, builds::Builds, ships::Ships};
+use crate::{
+    blasts::{Blasts, Launch, RAIL, What},
+    builds::Builds,
+    ships::Ships,
+};
 use glam::DVec3;
 use lunar_core::{
     body::BodyRegistry,
@@ -57,6 +61,8 @@ pub struct Tactics {
     next: f64,
     /// How many ships there were when their weapons were last fitted with what their rounds do.
     fitted: usize,
+    /// What the weapons let fly this frame (reused).
+    launches: Vec<Shot>,
 }
 
 /// What a structure of radius `r` reflects when nothing says otherwise (m²).
@@ -208,46 +214,38 @@ impl Tactics {
     }
 
     /// After the ships ran: what their weapons let fly leaves each from its own muzzle, with
-    /// the speed of the ship that fired it. A ship simulated in another player's game fires
-    /// here too, as its copy here does, but twins: seen to fly and strike, doing nothing (what
-    /// the real ones do its game tells). Decoys are the same everywhere: they only deceive.
-    pub fn fire(&mut self, ships: &mut Ships, builds: &Builds, bodies: &BodyRegistry, blasts: &mut Blasts) {
+    /// the speed of the ship there, through the one way anything is let fly (`Blasts::launch`,
+    /// which tells the other games). A ship simulated in another player's game fires nothing
+    /// here: what it fires comes told, as theirs fired it.
+    pub fn fire(&mut self, ships: &mut Ships, builds: &mut Builds, bodies: &BodyRegistry, blasts: &mut Blasts) {
+        let mut launches = std::mem::take(&mut self.launches);
         for sh in &mut ships.list {
             let Some(tac) = sh.tactical.as_mut().filter(|t| !t.fired.is_empty()) else { continue };
             let mut fired = std::mem::take(&mut tac.fired);
-            if let Some(s) = builds.set.get(sh.structure) {
-                let twin = s.remote;
+            if let Some(s) = builds.set.get(sh.structure).filter(|s| !s.remote) {
                 for f in &fired {
                     let w = &tac.weapons[usize::from(f.weapon)];
                     let rt = &sh.machines[w.machine];
                     let Some(part) = rt.part.and_then(|p| s.parts.get(p as usize)) else { continue };
                     let axis = part.local.transform_vector3(rt.thrust_axis).normalize_or(glam::Vec3::Z);
                     let from = s.to_world(part.center + axis * (part.radius + 0.35));
-                    let dir = (s.rot * axis).as_dvec3();
+                    let (dir, vel, by) = ((s.rot * axis).as_dvec3(), s.velocity_at(from), Some(sh.structure));
                     match w.load {
                         Load::Round => {
                             for _ in 0..f.count {
-                                if twin {
-                                    blasts.fire_twin(&w.ammo, from, dir, s.vel, bodies);
-                                } else {
-                                    blasts.fire_round(&w.ammo, from, dir, s.vel, bodies);
-                                }
+                                launches.push(Shot::Named(w.ammo.clone(), from, dir, vel, by));
                             }
                         }
                         Load::Guided => {
                             if let Some(kind) = blasts.guided.kind(&w.ammo) {
-                                if twin {
-                                    blasts.launch_twin(kind, from, s.vel + dir * 25.0, f.target, sh.structure);
-                                } else {
-                                    blasts.guided.launch(kind, from, s.vel + dir * 25.0, f.target, sh.structure);
-                                }
+                                launches.push(Shot::Launch(Launch { what: What::Guided(kind), from, dir, speed: RAIL, vel, target: f.target, by }));
                             }
                         }
                         Load::Decoy => {
                             if let Some(kind) = blasts.guided.decoy_kind(&w.ammo) {
-                                let out = f64::from(blasts.guided.decoy_defs[usize::from(kind)].1.salida);
+                                let speed = blasts.guided.decoy_defs[usize::from(kind)].1.salida;
                                 for _ in 0..f.count {
-                                    blasts.guided.release(kind, from, s.vel + dir * out);
+                                    launches.push(Shot::Launch(Launch { what: What::Decoy(kind), from, dir, speed, vel, target: None, by }));
                                 }
                             }
                         }
@@ -257,5 +255,20 @@ impl Tactics {
             fired.clear();
             tac.fired = fired;
         }
+        for l in launches.drain(..) {
+            match l {
+                Shot::Named(id, from, dir, vel, by) => blasts.fire_from(&id, from, dir, vel, by, bodies, builds),
+                Shot::Launch(l) => blasts.launch(l, bodies, builds),
+            };
+        }
+        self.launches = launches;
     }
 }
+
+/// What a ship's weapon lets fly, gathered while the ships are read and let fly after.
+pub enum Shot {
+    /// A round of a shot named in the data (scattered as that shot is).
+    Named(String, DVec3, DVec3, DVec3, Option<u64>),
+    Launch(Launch),
+}
+

@@ -85,9 +85,9 @@ impl Table {
         let bodies = &self.bodies;
         for (i, g) in self.games.iter_mut().enumerate() {
             g.blasts.tell = g.multi.connected();
-            g.multi.receive(self.now, &mut g.ships, &mut g.builds);
-            for (seen, age) in g.multi.shown.drain(..) {
-                g.blasts.show(&seen, age, bodies);
+            g.multi.receive(self.now, &mut g.ships, &mut g.builds, bodies);
+            for (by, seen, age) in g.multi.shown.drain(..) {
+                g.blasts.show(by, &seen, age, bodies, &mut g.builds);
             }
             if physics {
                 // (watched from where the player is, as in play: what is far runs at its own pace;
@@ -98,6 +98,10 @@ impl Table {
                 let (fx, mut flight) = g.blasts.flight();
                 g.builds.update(dt, bodies, fx, eye, &mut [&mut g.pilot, &mut flight]);
                 g.blasts.land_rounds(bodies, &mut g.builds);
+                // (what flies by itself: missiles, decoys)
+                let view = lunar_render::View { eye: g.pilot.position, forward: DVec3::Z, up: DVec3::Y, fov_y: 1.0, near: 0.1 };
+                let motion = lunar_core::structure::motion::Motion { at: g.pilot.position, vel: DVec3::ZERO, spin: DVec3::ZERO };
+                g.blasts.update(dt, bodies, view, motion, &mut g.builds);
             }
             after(i, g, self.now);
             g.multi.send(self.now, &g.pilot, 1.75, [0.0, 0.0], 0, false, false, &g.ships, &mut g.builds, &mut g.blasts.seen);
@@ -122,7 +126,7 @@ fn sit_at_controls(g: &mut Game, k: usize) {
 /// A ship's structure put where it is and going as fast (a test's owner doing it every frame).
 fn put(g: &mut Game, k: usize, k_at: &Kin) {
     let id = g.ships.list[k].structure;
-    let s = g.builds.set.list.iter_mut().find(|s| s.id == id).unwrap();
+    let s = g.builds.set.list.iter_mut().find(|s| s.id == id).unwrap_or_else(|| panic!("ship {k} ({}) has no structure", g.ships.list[k].kind.id));
     (s.pos, s.vel, s.rot, s.spin, s.resting) = (k_at.pos, k_at.vel, k_at.rot, k_at.spin, false);
 }
 
@@ -288,19 +292,21 @@ fn ships_shoot_each_other_at_orbital_speed_and_every_game_ends_with_the_same_dam
     let b = |g: &Game| g.ships.list[1].structure;
     let whole: Vec<Vec<(bool, u32)>> = t.games.iter().map(|g| wounds(g, b(g))).collect();
     assert!(whole.iter().all(|w| *w == whole[0]) && !whole[0].is_empty());
-    // a burst of 30 rounds, one a frame: the real ones from Ana's gun, and in the other games the
-    // same gun firing from their copy of her ship (twins: seen, doing nothing)
+    // a burst of 30 rounds, one a frame, from Ana's gun (the way any weapon lets fly: told once;
+    // the others' games fly what they are told, from their copy of her ship)
+    for g in &mut t.games {
+        g.blasts.log_ends = true;
+    }
     for _ in 0..30 {
         t.frame(1.0 / 60.0, true, |i, g, now| {
             fly(i, g, now);
-            let (a, target) = (kin_of(g, 0), kin_of(g, 1));
-            let muzzle = a.pos + pair.ahead * 12.0;
-            let dir = (target.pos - muzzle).normalize();
-            let bodies = defs().system.bodies.clone();
             if i == 0 {
-                assert!(g.blasts.fire_round("canon_20", muzzle, dir, a.vel, &bodies));
-            } else {
-                assert!(g.blasts.fire_twin("canon_20", muzzle, dir, a.vel, &bodies));
+                let (a, target) = (kin_of(g, 0), kin_of(g, 1));
+                let muzzle = a.pos + pair.ahead * 12.0;
+                let dir = (target.pos - muzzle).normalize();
+                let bodies = defs().system.bodies.clone();
+                let by = Some(g.ships.list[0].structure);
+                assert!(g.blasts.fire_from("canon_20", muzzle, dir, a.vel, by, &bodies, &mut g.builds));
             }
         });
     }
@@ -320,6 +326,29 @@ fn ships_shoot_each_other_at_orbital_speed_and_every_game_ends_with_the_same_dam
     // (and the pieces that came off are the same in every game)
     let count: Vec<usize> = t.games.iter().map(|g| g.builds.set.list.len()).collect();
     assert!(count.iter().all(|c| *c == count[0]), "structures in each game: {count:?}");
+    // every game saw every round go off, each where it did the damage, on its copy of the ship
+    same_ends(&t, ana.blasts.impact_count as usize);
+}
+
+/// Every game saw `count` things go off, the same ones on the same structures in the same places
+/// of them (to a centimetre): what every game sees go off is where the damage was done.
+fn same_ends(t: &Table, count: usize) {
+    let on = |g: &Game| -> Vec<(crate::blasts::What, Option<Vec3>)> { g.blasts.ended.iter().map(|(w, l)| (*w, l.map(|l| l.1))).collect() };
+    let first = on(&t.games[0]);
+    for (i, g) in t.games.iter().enumerate() {
+        let e = on(g);
+        assert_eq!(e.len(), count, "game {i} saw {} go off of {count}", e.len());
+        let mut worst = 0.0f32;
+        for (w, p) in &e {
+            let near = first.iter().filter(|(x, _)| x == w).map(|(_, q)| match (p, q) {
+                (Some(p), Some(q)) => p.distance(*q),
+                (None, None) => 0.0,
+                _ => f32::MAX,
+            });
+            worst = worst.max(near.fold(f32::MAX, f32::min));
+        }
+        assert!(worst < 0.01, "game {i} saw one go off {worst:.3} m from where it did");
+    }
 }
 
 #[test]
@@ -380,10 +409,10 @@ fn what_a_player_fires_leaves_their_muzzle_in_every_game_however_fast_they_go() 
         fly(i, g, now);
         if i == 0 {
             let a = kin_of(g, 0);
-            assert!(g.blasts.fire_from("cohete", a.pos + pair.ahead * 12.0 + pair.up * 2.0, pair.ahead, a.vel, &bodies, &mut g.builds));
+            assert!(g.blasts.fire_from("cohete", a.pos + pair.ahead * 12.0 + pair.up * 2.0, pair.ahead, a.vel, None, &bodies, &mut g.builds));
         }
     });
-    let rocket = t.games[0].blasts.shot_index("cohete").unwrap();
+    let Some(crate::blasts::What::Shot(rocket)) = t.games[0].blasts.what("cohete") else { panic!("no rocket") };
     let mut worst = 0.0f64;
     let mut seen = 0;
     for _ in 0..40 {
@@ -391,7 +420,7 @@ fn what_a_player_fires_leaves_their_muzzle_in_every_game_however_fast_they_go() 
         // each game's rocket, from its own copy of Ana's ship
         let from_ship = |g: &Game| {
             let a = kin_of(g, 0);
-            g.blasts.rounds.list.iter().find(|r| r.kind & 0x7fff == rocket).map(|r| r.pos - a.pos)
+            g.blasts.rounds.list.iter().find(|r| r.kind == rocket).map(|r| r.pos - a.pos)
         };
         if let (Some(hers), Some(his)) = (from_ship(&t.games[0]), from_ship(&t.games[1])) {
             worst = worst.max(hers.distance(his));
@@ -401,6 +430,187 @@ fn what_a_player_fires_leaves_their_muzzle_in_every_game_however_fast_they_go() 
     eprintln!("el cohete de Ana visto por Berto a 7,8 km/s: a {worst:.3} m de donde ella lo tiene, junto a la nave ({seen} fotogramas)");
     assert!(seen > 25, "Berto saw it in {seen} frames");
     assert!(worst < 0.5, "Berto has her rocket {worst:.3} m off");
+}
+
+/// Which of a game's ships is of kind `kind`.
+fn ship_of(g: &Game, kind: &str) -> usize {
+    g.ships.list.iter().position(|sh| sh.kind.id == kind).unwrap_or_else(|| panic!("no {kind} in the scenario"))
+}
+
+#[test]
+fn a_rocket_fired_out_of_an_open_hold_at_orbital_speed_strikes_another_ship_the_same_in_every_game() {
+    // Ana flies the Alcotán at 7.8 km/s with its ramp down; Berto stands in its hold and fires
+    // the launcher out of the back at the Abejorro, which Carla flies 160 m behind. Every game sees
+    // the rocket leave Berto's muzzle, fly out of the hold without touching the Alcotán and go off
+    // on the Abejorro where it did its damage, and every game ends with the same damage.
+    let bad = Conditions { loss: 0.03, duplicate: 0.01, delay: 0.04, jitter: 0.01 };
+    let mut t = Table::new(&["Ana", "Berto", "Carla"], 77, bad);
+    let (a, b) = (ship_of(&t.games[0], "alcotan"), ship_of(&t.games[0], "abejorro"));
+    let pair = Pair::new(&t.bodies, 7800.0);
+    sit_at_controls(&mut t.games[0], a);
+    sit_at_controls(&mut t.games[2], b);
+    let behind = Vec3::new(0.0, 0.5, -160.0);
+    let target = move |at: f64| {
+        let lead = pair.lead(at);
+        Kin { pos: lead.pos + (lead.rot * behind).as_dvec3(), ..lead }
+    };
+    let t0 = t.now;
+    for g in &mut t.games {
+        g.blasts.log_ends = true;
+        put(g, a, &pair.lead(0.0));
+        put(g, b, &target(0.0));
+    }
+    let fly = move |i: usize, g: &mut Game, now: f64| match i {
+        0 => put(g, a, &pair.lead(now - t0)),
+        2 => put(g, b, &target(now - t0)),
+        _ => {}
+    };
+    // (Berto in the hold, on its floor, before the ramp)
+    let berto = &mut t.games[1];
+    let hold = berto.ships.list[a].structure;
+    // (the room the ramp opens from: its floor, from the ship's data)
+    let floor = berto.ships.list[a].kind.rooms.iter().find(|r| r[0].z < -7.0 && r[1].z > -7.0).expect("a hold at the back")[0].y;
+    berto.pilot.put_on(&berto.builds.set, hold, Vec3::new(0.0, floor + 0.05, -7.0));
+    for _ in 0..120 {
+        t.frame(1.0 / 60.0, true, fly);
+        if t.games[0].multi.owns(t.games[0].ships.list[a].structure) && t.games[2].multi.owns(t.games[2].ships.list[b].structure) {
+            break;
+        }
+    }
+    t.run(1.0, 1.0 / 60.0, true, fly);
+    // (on its floor if the ship is up and gives weight; floating in it if not: in its frame
+    // either way, by it however fast it goes)
+    let in_hold = |g: &Game| g.builds.set.get(hold).unwrap().to_local(g.pilot.position);
+    let at = in_hold(&t.games[1]);
+    assert!(at.z < -3.4 && at.z > -9.3 && at.x.abs() < 2.0 && at.y > floor - 0.1 && at.y < floor + 3.0, "Berto is not in the hold: {at:?}");
+    let whole: Vec<(Vec<(bool, u32)>, Vec<(bool, u32)>)> = t.games.iter().map(|g| (wounds(g, g.ships.list[a].structure), wounds(g, g.ships.list[b].structure))).collect();
+    // the shot, from his eyes, at the Abejorro he sees out of the open ramp
+    let bodies = t.bodies.clone();
+    t.frame(1.0 / 60.0, true, |i, g, now| {
+        fly(i, g, now);
+        if i == 1 {
+            let s = g.builds.set.get(hold).unwrap();
+            let muzzle = s.to_world(Vec3::new(0.2, floor + 1.3, -7.6));
+            let aim = (kin_of(g, b).pos - muzzle).normalize();
+            assert!(g.blasts.fire_from("cohete", muzzle, aim, s.velocity_at(muzzle), None, &bodies, &mut g.builds));
+        }
+    });
+    let Some(crate::blasts::What::Shot(rocket)) = t.games[0].blasts.what("cohete") else { panic!() };
+    let mut worst = 0.0f64;
+    let mut seen = 0;
+    for _ in 0..150 {
+        t.frame(1.0 / 60.0, true, fly);
+        // each game's rocket, from its own copy of the Alcotán
+        let from_hold = |g: &Game| g.blasts.rounds.list.iter().find(|r| r.kind == rocket).map(|r| r.pos - kin_of(g, a).pos);
+        if let Some(his) = from_hold(&t.games[1]) {
+            for g in [&t.games[0], &t.games[2]] {
+                if let Some(theirs) = from_hold(g) {
+                    worst = worst.max(theirs.distance(his));
+                    seen += 1;
+                }
+            }
+        }
+    }
+    t.run(1.0, 1.0 / 60.0, true, fly);
+    let berto = &t.games[1];
+    eprintln!("cohete desde la bodega abierta a 7,8 km/s: los demás lo ven a {worst:.3} m de donde Berto lo tiene ({seen} vistas); {} impacto(s)", berto.blasts.impact_count);
+    assert_eq!(berto.blasts.impact_count, 1, "the rocket did not strike once");
+    assert_eq!(berto.blasts.last_impact.and_then(|i| i.surface).map(|s| s.id), Some(berto.ships.list[b].structure), "it struck something else (the hold?)");
+    assert!(seen > 100, "the others saw it in {seen} frames");
+    assert!(worst < 0.5, "the others have it {worst:.3} m off");
+    // the Alcotán untouched, the Abejorro hurt, the same in every game
+    let after: Vec<(Vec<(bool, u32)>, Vec<(bool, u32)>)> = t.games.iter().map(|g| (wounds(g, g.ships.list[a].structure), wounds(g, g.ships.list[b].structure))).collect();
+    assert_eq!(after[1].0, whole[1].0, "the hold was hurt");
+    assert!(after[1].1 != whole[1].1, "the Abejorro was not hurt");
+    for (i, w) in after.iter().enumerate() {
+        assert!(*w == after[0], "game {i} ends unlike Ana's");
+    }
+    same_ends(&t, 1);
+}
+
+#[test]
+fn a_guided_missile_flies_the_same_in_every_game_and_goes_off_where_it_struck() {
+    // Ana's ship fires a radar missile at Berto's Cachalote, 1.5 km off and weaving, all at 2 km/s; Carla
+    // watches. Every game flies it by what its own sensors see of Berto's ship and is told now and
+    // then where Ana's is: theirs stay by hers, and go off where hers struck, with the same damage.
+    let bad = Conditions { loss: 0.03, duplicate: 0.01, delay: 0.04, jitter: 0.01 };
+    let mut t = Table::new(&["Ana", "Berto", "Carla"], 88, bad);
+    let pair = Pair::new(&t.bodies, 2000.0);
+    let c = ship_of(&t.games[0], "cachalote");
+    sit_at_controls(&mut t.games[0], 0);
+    sit_at_controls(&mut t.games[1], c);
+    let target = move |at: f64| {
+        let lead = pair.lead(at);
+        let (w, a) = (1.3, 40.0);
+        Kin { pos: lead.pos + pair.ahead * 1500.0 + pair.side * (a * (w * at).sin()), vel: lead.vel + pair.side * (a * w * (w * at).cos()), ..lead }
+    };
+    let t0 = t.now;
+    for g in &mut t.games {
+        g.blasts.log_ends = true;
+        put(g, 0, &pair.lead(0.0));
+        put(g, c, &target(0.0));
+    }
+    // (each game's sensors: where its copy of Berto's ship is, bright)
+    let fly = move |i: usize, g: &mut Game, now: f64| {
+        match i {
+            0 => put(g, 0, &pair.lead(now - t0)),
+            1 => put(g, c, &target(now - t0)),
+            _ => {}
+        }
+        let id = g.ships.list[c].structure;
+        let k = kin_of(g, c);
+        g.blasts.aims.clear();
+        g.blasts.aims.push((id, lunar_core::guided::Aim { pos: k.pos, vel: k.vel, rcs: 60.0, heat: 2e7 }));
+    };
+    t.run(1.0, 1.0 / 60.0, true, fly);
+    let whole: Vec<Vec<(bool, u32)>> = t.games.iter().map(|g| wounds(g, g.ships.list[c].structure)).collect();
+    let bodies = t.bodies.clone();
+    t.frame(1.0 / 60.0, true, |i, g, now| {
+        fly(i, g, now);
+        if i == 0 {
+            let a = kin_of(g, 0);
+            let Some(crate::blasts::What::Guided(kind)) = g.blasts.what("lanza") else { panic!("no lanza") };
+            let (by, at) = (g.ships.list[0].structure, g.ships.list[c].structure);
+            let from = a.pos + pair.ahead * 14.0;
+            let l = crate::blasts::Launch { what: crate::blasts::What::Guided(kind), from, dir: pair.ahead, speed: crate::blasts::RAIL, vel: a.vel, target: Some(at), by: Some(by) };
+            assert!(g.blasts.launch(l, &bodies, &mut g.builds));
+        }
+    });
+    // how far each copy is from hers, against what no copy can do better than: how fast it
+    // closes on the ship times how far apart the games' clocks are (`follow`), and half a
+    // millisecond of its flight (each game steps it on its own fixed steps)
+    let (mut worst, mut allowed, mut over, mut seen) = (0.0f64, 0.0f64, f64::MIN, 0);
+    for _ in 0..(8.0 * 60.0) as usize {
+        t.frame(1.0 / 60.0, true, fly);
+        // each game's missile, from its own copy of Berto's ship
+        let near = |g: &Game| g.blasts.guided.list.first().map(|m| (m.pos - kin_of(g, c).pos, m.vel - kin_of(g, c).vel));
+        let clock = |g: &Game| g.multi.client.server_time(t.now).unwrap_or(t.now);
+        if let Some((hers, closing)) = near(&t.games[0]) {
+            for g in &t.games[1..] {
+                if let Some((theirs, _)) = near(g) {
+                    let apart = (clock(g) - clock(&t.games[0])).abs() + lunar_net::clock::SLEW * 0.25;
+                    let off = theirs.distance(hers);
+                    let may = 0.3 + closing.length() * (apart * 1.2 + 0.0005);
+                    if off > worst {
+                        (worst, allowed) = (off, may);
+                    }
+                    over = over.max(off - may);
+                    seen += 1;
+                }
+            }
+        }
+    }
+    let ana = &t.games[0];
+    eprintln!("misil guiado a 2 km/s contra una nave que esquiva: los demás lo ven a {worst:.2} m del de Ana (los relojes permiten {allowed:.2} m; {seen} vistas); {} final(es)", ana.blasts.ends);
+    assert!(ana.blasts.guided.list.is_empty() && t.games.iter().all(|g| g.blasts.guided.list.is_empty()), "a missile is still flying");
+    assert!(seen > 100, "the others saw it in {seen} frames");
+    assert!(over <= 0.0, "the others have it {over:.2} m further off than the clocks allow");
+    let after: Vec<Vec<(bool, u32)>> = t.games.iter().map(|g| wounds(g, g.ships.list[c].structure)).collect();
+    assert!(after[0] != whole[0], "Berto's ship was not hurt");
+    for (i, w) in after.iter().enumerate() {
+        assert!(*w == after[0], "game {i} ends unlike Ana's");
+    }
+    same_ends(&t, 1);
 }
 
 /// The game's astronaut, measured once (to draw the others).

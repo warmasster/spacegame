@@ -29,8 +29,14 @@ código muerto).
 - **Naves ajenas:** una corrección por nave ajena y fotograma (`follow::steer`: unas cuantas
   sumas y un `slerp`), y la llevada al presente de su última instantánea (`rigid_carried`, sin
   reservar). Daño: cada impacto en una estructura compartida son ≤ 42 bytes por la red y un
-  `hit` igual que sin red; los gemelos de las armas ajenas cuestan lo mismo que sus proyectiles
+  `hit` igual que sin red; las copias de los proyectiles ajenos cuestan lo mismo que los propios
   sin la parte del daño. Los disparos de los jugadores van en trozos de 20 por mensaje.
+- **Proyectiles por red:** un lanzamiento son unos 50 bytes y un final unos 40, fiables; un guiado
+  en vuelo, 10 avisos por segundo de unos 45. Un golpe lleva la postura de lo articulado de lo
+  golpeado (28 bytes por hueso, una vez por mensaje: el Cachalote, ~0,3 kB). Aplicar un golpe con
+  otra postura cuesta dos `set_pose` (y sus masas) solo cuando la postura difiere.
+- **C · `Named::Piece` se busca recorriendo la lista** de estructuras por su linaje: con cientos de
+  trozos y muchos golpes por fotograma, un mapa linaje → estructura.
 - **C · `Multi::named` busca la estructura nombrada recorriendo la lista** (y `find` de lo visto
   igual). Con decenas de naves no se nota; con cientos de impactos por fotograma convendría un
   mapa de id de red → estructura que ya se tiene (`self.ships`) para las naves.

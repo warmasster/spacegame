@@ -5,7 +5,7 @@
 //! in the same draw) and the flashes go to the renderer; missiles leave their trail, the camera
 //! shakes or follows a missile.
 use crate::builds::Builds;
-use glam::DVec3;
+use glam::{DVec3, Vec3};
 use lunar_core::{
     body::BodyRegistry,
     detonation::ChargeDef,
@@ -47,25 +47,71 @@ enum Action {
     Launch(usize),
 }
 
-/// Something this game fired or set off that the other players' games must show too (`multi`
-/// tells them; they show it with `Blasts::show`): what a player fires from their hands, what a
-/// test key sets off. (What a ship's weapons fire every game shows from its own copy of the
-/// ship: `fire_twin`.) What any of it does to the structures is not here: the game it was fired
-/// in decides it and tells it (`Builds::take_strikes`).
-#[derive(Clone, Debug, PartialEq)]
-pub enum Seen {
-    /// A round of shot `shot` (its place in `shots.jsonc`) leaving `from` along `dir` at `speed` m/s.
-    Round { shot: u16, from: DVec3, dir: DVec3, speed: f32, vel: DVec3 },
-    /// A missile of kind `kind` launched from `from` at `to`.
-    Missile { kind: u16, from: DVec3, to: DVec3 },
-    /// Explosion `id` going off at `at`, `scale` times as big, with `extra` J more.
-    Boom { id: String, at: DVec3, vel: DVec3, scale: f32, extra: f32 },
+/// What can be let fly or set off: which of the game's definitions, by its place among them.
+/// Every weapon there is or will be (a launcher in the hand, a ship's gun or rack, a test key,
+/// a script) lets fly one of these, and nothing else knows what weapon it was.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum What {
+    /// A shot of `shots.jsonc`: a round that flies, or one that strikes at once (no speed).
+    Shot(u16),
+    /// A ballistic missile (`missiles.jsonc`).
+    Missile(u16),
+    /// A guided missile (`guiados.jsonc`).
+    Guided(u16),
+    /// A decoy (`senuelos.jsonc`).
+    Decoy(u16),
+    /// An explosion of the effects' definitions, set off where it is.
+    Boom(u16),
 }
 
-/// The mark, in a round's kind, of one fired in another player's game: it flies and is seen
-/// here, and where it lands it is seen to land and does nothing (its shooter's game says what
-/// it struck).
-const FOREIGN: u16 = 0x8000;
+/// One thing let fly or set off: the one way anything is fired (`Blasts::launch`), and what the
+/// other players' games are told of it (`Seen::Launch`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Launch {
+    pub what: What,
+    pub from: DVec3,
+    /// Its own way (unit) and speed along it (m/s), besides `vel`: how fast what let it go was
+    /// going there.
+    pub dir: DVec3,
+    pub speed: f32,
+    pub vel: DVec3,
+    /// What a guided missile follows.
+    pub target: Option<u64>,
+    /// The structure it was let go from (a ship's gun, the ship a player rides): it is told in
+    /// that structure's frame, and a guided missile cannot strike it before it is armed.
+    pub by: Option<u64>,
+}
+
+/// What another player's game must be told of what is let fly here (`multi` tells it; theirs
+/// does it with `Blasts::show`). What any of it does to the structures is not here: the game it
+/// was fired in decides it and tells it (`Builds::take_strikes`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Seen {
+    /// Something let fly or set off here, numbered `tag` among ours.
+    Launch { tag: u32, launch: Launch },
+    /// Where something of ours ended (`tag`; 0: what struck at once): `what` it was, at `at`
+    /// going along `dir` at `vel` (what it struck was going at), on structure `on` (none: the
+    /// ground, or nothing), with `extra` J more in its blast. Elsewhere it ends there, so: what
+    /// every game sees go off is where the damage was done.
+    End { tag: u32, what: What, at: DVec3, dir: DVec3, vel: DVec3, on: Option<u64>, extra: f32 },
+    /// Where a guided missile of ours is now, and what its seeker and motor push it with: the
+    /// others' copies have no seeker of their own; they are led by this, and brought to it.
+    Track { tag: u32, pos: DVec3, vel: DVec3, push: DVec3 },
+}
+
+/// The mark, in a tag, of what was let fly in another player's game: it flies and is seen here,
+/// does nothing, and ends where its game says it ended (`Seen::End`).
+const FOREIGN: u32 = 1 << 31;
+/// A guided missile's own push off the rail (m/s).
+pub const RAIL: f32 = 25.0;
+/// How often where our guided missiles are is told (s); and how long the number another game
+/// gave something is remembered (s: longer than anything flies).
+const TRACK_EVERY: f64 = 0.1;
+/// A copy of another game's guided missile off by less than this (m) is put where it is told.
+const TRACK_SNAP: f64 = 10.0;
+const FORGET: f64 = 300.0;
+/// What was told longer ago than this (s) is not started here (it is over).
+const STALE: f32 = 2.0;
 
 pub struct Blasts {
     pub fx: Effects,
@@ -115,9 +161,19 @@ pub struct Blasts {
     /// (`tactics`): by id.
     pub aims: Vec<(u64, Aim)>,
     hits: Vec<Hit>,
-    /// The guided missiles in flight that are twins of one fired in another player's game: what
-    /// they strike they are seen to strike, and do nothing to.
-    twins: Vec<u32>,
+    /// The explosions a `What::Boom` names, in the order of their definitions.
+    booms: Vec<String>,
+    /// The number the next thing we let fly gets; what other games let fly, by (their player,
+    /// their number), with the number it has here and when it came.
+    next_tag: u32,
+    foreign: Vec<(u64, u32, f64)>,
+    /// Until where our guided missiles are is told again (s).
+    track_in: f64,
+    /// How many things have ended here (ours and the others'); and, kept only while `log_ends`
+    /// is on (the tests), each: what it was and on what, where in its frame.
+    pub ends: u64,
+    pub log_ends: bool,
+    pub ended: Vec<(What, Option<(u64, Vec3)>)>,
 }
 
 /// A key name of the definitions ("B", "7"...).
@@ -203,7 +259,13 @@ impl Blasts {
             decoy_looks: Vec::new(),
             aims: Vec::new(),
             hits: Vec::new(),
-            twins: Vec::new(),
+            booms: defs.explosions.iter().map(|(id, _)| id.clone()).collect(),
+            next_tag: 0,
+            foreign: Vec::new(),
+            track_in: 0.0,
+            ends: 0,
+            log_ends: false,
+            ended: Vec::new(),
             trails,
             warheads,
             missile_looks,
@@ -248,10 +310,33 @@ impl Blasts {
         Ok(())
     }
 
-    /// The number shot `id` goes by in the rounds in flight (`Round::kind`, without the mark of
-    /// another game's).
-    pub fn shot_index(&self, id: &str) -> Option<u16> {
-        self.shots.iter().position(|(s, _)| s == id).map(|i| i as u16)
+    /// What the definitions call `id`: a shot, a missile, a guided missile, a decoy or an
+    /// explosion (looked for in that order).
+    pub fn what(&self, id: &str) -> Option<What> {
+        let at = |i: Option<usize>| i.map(|i| i as u16);
+        at(self.shots.iter().position(|(s, _)| s == id))
+            .map(What::Shot)
+            .or_else(|| at(self.missiles.defs.iter().position(|(m, _)| m == id)).map(What::Missile))
+            .or_else(|| self.guided.kind(id).map(What::Guided))
+            .or_else(|| self.guided.decoy_kind(id).map(What::Decoy))
+            .or_else(|| at(self.booms.iter().position(|b| b == id)).map(What::Boom))
+    }
+
+    /// Everything the definitions say can be let fly or set off, by name.
+    pub fn every(&self) -> Vec<(String, What)> {
+        let named = |list: &mut Vec<(String, What)>, ids: &mut dyn Iterator<Item = &String>, what: fn(u16) -> What| list.extend(ids.enumerate().map(|(i, id)| (id.clone(), what(i as u16))));
+        let mut out = Vec::new();
+        named(&mut out, &mut self.shots.iter().map(|s| &s.0), What::Shot);
+        named(&mut out, &mut self.missiles.defs.iter().map(|m| &m.0), What::Missile);
+        named(&mut out, &mut self.guided.defs.iter().map(|g| &g.0), What::Guided);
+        named(&mut out, &mut self.guided.decoy_defs.iter().map(|d| &d.0), What::Decoy);
+        named(&mut out, &mut self.booms.iter(), What::Boom);
+        out
+    }
+
+    /// Whether anything of ours is still flying (rounds, missiles, guided missiles).
+    pub fn flying(&self) -> bool {
+        self.rounds.list.iter().any(|r| r.tag & FOREIGN == 0) || !self.missiles.list.is_empty() || self.guided.list.iter().any(|m| m.tag & FOREIGN == 0)
     }
 
     /// The speed shot `id` leaves at (m/s) and how far it reaches (m): what a gun's sight is
@@ -260,53 +345,147 @@ impl Blasts {
         self.shots.iter().find(|(s, _)| s == id).and_then(|(_, s)| s.speed.map(|v| (v, s.range)))
     }
 
-    /// A round of shot `id` fired from something that moves: leaving `from` along `dir`, with
-    /// the speed `vel` of what fired it besides its own. False if there is no such shot (or it
-    /// is one that strikes at once: a mounted gun fires rounds that fly).
-    /// (A ship's weapon: every game shows it from its own copy of the ship, so it is not told.)
-    pub fn fire_round(&mut self, id: &str, from: DVec3, dir: DVec3, vel: DVec3, bodies: &BodyRegistry) -> bool {
-        self.round(id, from, dir, vel, bodies, false, false)
-    }
-
-    /// What a weapon of a ship simulated in another player's game fires, as this game's copy of
-    /// that ship fires it: a round seen to fly and land (it does nothing: what the real one
-    /// struck its game tells), or a guided missile likewise. Every game shows the others' ships
-    /// firing this way, from their own copy, without a word over the network.
-    pub fn fire_twin(&mut self, id: &str, from: DVec3, dir: DVec3, vel: DVec3, bodies: &BodyRegistry) -> bool {
-        self.round(id, from, dir, vel, bodies, true, false)
-    }
-
-    /// A guided missile of kind `kind` that is a twin of another game's (`fire_twin`).
-    pub fn launch_twin(&mut self, kind: u16, from: DVec3, vel: DVec3, target: Option<u64>, shooter: u64) -> bool {
-        if !self.guided.launch(kind, from, vel, target, shooter) {
-            return false;
-        }
-        if let Some(m) = self.guided.list.last() {
-            self.twins.push(m.id);
-        }
-        true
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn round(&mut self, id: &str, from: DVec3, dir: DVec3, vel: DVec3, bodies: &BodyRegistry, twin: bool, tell: bool) -> bool {
-        let Some(i) = self.shots.iter().position(|(s, _)| s == id) else { return false };
+    /// Shot `id` leaving `from` along `dir` (scattered as the shot is), from something going at
+    /// `vel` there, structure `by`'s if it is one's: what `launch` lets fly. None if there is no
+    /// such shot.
+    pub fn shot(&mut self, id: &str, from: DVec3, dir: DVec3, vel: DVec3, by: Option<u64>) -> Option<Launch> {
+        let i = self.shots.iter().position(|(s, _)| s == id)?;
         let s = &self.shots[i].1;
-        let Some(speed) = s.speed else { return false };
-        let (range, spread) = (s.range, s.spread);
+        let (speed, spread) = (s.speed.unwrap_or(0.0), s.spread);
         self.shots_fired += 1;
-        let up = dir.any_orthonormal_vector();
-        let dir = self.scatter(&View { eye: from, forward: dir, up, fov_y: 1.0, near: 0.1 }, spread);
-        let (style, size) = self.shot_looks[i];
-        let seed = (self.shots_fired % 997) as f32 / 997.0;
-        let mut r = rounds::round(i as u16 | if twin { FOREIGN } else { 0 }, from, dir, speed, range, bodies.dominant(from), style, size, seed);
-        r.vel += vel;
-        if !self.rounds.fire(r) {
+        let dir = self.scatter(&View { eye: from, forward: dir, up: dir.any_orthonormal_vector(), fov_y: 1.0, near: 0.1 }, spread);
+        Some(Launch { what: What::Shot(i as u16), from, dir, speed, vel, target: None, by })
+    }
+
+    /// Shot `id` fired now (`shot`, then `launch`). False if there is no such shot or no room.
+    #[allow(clippy::too_many_arguments)]
+    pub fn fire_from(&mut self, id: &str, from: DVec3, dir: DVec3, vel: DVec3, by: Option<u64>, bodies: &BodyRegistry, builds: &mut Builds) -> bool {
+        self.shot(id, from, dir, vel, by).is_some_and(|l| self.launch(l, bodies, builds))
+    }
+
+    /// The one way anything is let fly or set off here, whatever fired it: it flies (or goes off)
+    /// and does what it does here, and the other games are told of it (`Seen::Launch`; where it
+    /// ends, `Seen::End`). False if there was no room for it.
+    pub fn launch(&mut self, l: Launch, bodies: &BodyRegistry, builds: &mut Builds) -> bool {
+        self.next_tag = (self.next_tag + 1) % FOREIGN;
+        let tag = self.next_tag.max(1);
+        if !self.start(&l, tag, 0.0, bodies, builds) {
             return false;
         }
-        if tell {
-            self.told(Seen::Round { shot: i as u16, from, dir, speed, vel });
+        // (what struck at once told its end already: there is nothing in flight to tell of)
+        if !matches!(l.what, What::Shot(i) if self.shots[usize::from(i)].1.speed.is_none()) {
+            self.told(Seen::Launch { tag, launch: l });
         }
         true
+    }
+
+    /// `l` started, `age` s after it was let go: ours (it does what it does), or another game's
+    /// (`tag` marked `FOREIGN`: it is seen, and does nothing).
+    fn start(&mut self, l: &Launch, tag: u32, age: f32, bodies: &BodyRegistry, builds: &mut Builds) -> bool {
+        let ours = tag & FOREIGN == 0;
+        let vel = l.vel + l.dir * f64::from(l.speed);
+        let (from, age64) = (l.from + vel * f64::from(age), f64::from(age));
+        match l.what {
+            What::Shot(i) => {
+                let Some((_, s)) = self.shots.get(usize::from(i)) else { return false };
+                if s.speed.is_none() {
+                    return ours && self.strike_at_once(usize::from(i), l, bodies, builds);
+                }
+                let (style, size) = self.shot_looks[usize::from(i)];
+                let seed = (self.shots_fired % 997) as f32 / 997.0;
+                let mut r = rounds::round(i, from, l.dir, l.speed, s.range, bodies.dominant(from), style, size, seed);
+                (r.vel, r.tag) = (vel, tag);
+                r.left -= age;
+                self.rounds.fire(r)
+            }
+            What::Missile(k) => {
+                if usize::from(k) >= self.missiles.defs.len() {
+                    return false;
+                }
+                let pool = if ours { &mut self.missiles } else { &mut self.guests };
+                pool.fire(usize::from(k), from, vel, tag);
+                true
+            }
+            What::Guided(k) => {
+                // (from where it left, flown on as it flies: it steers and burns from the start)
+                if usize::from(k) >= self.guided.defs.len() || !self.guided.launch(k, l.from, vel, l.target, l.by.unwrap_or(0)) {
+                    return false;
+                }
+                let aims = &self.aims;
+                self.guided.catch_up(age64, bodies, |id| aims.iter().find(|a| a.0 == id).map(|a| a.1));
+                // (ours: where it is and how it steers told from its first step; another game's
+                // steers by its own seeker until that game says how it steers, then is led by it)
+                if ours {
+                    self.track_in = 0.0;
+                }
+                if let Some(m) = self.guided.list.last_mut() {
+                    m.tag = tag;
+                }
+                true
+            }
+            What::Decoy(k) => usize::from(k) < self.guided.decoy_defs.len() && self.guided.release(k, from, vel),
+            What::Boom(e) => {
+                let Some(id) = self.booms.get(usize::from(e)).cloned() else { return false };
+                match self.fx.explode_moving(&id, bodies, bodies.dominant(from), Motion { at: from, vel: l.vel, spin: DVec3::ZERO }, 1.0, 0.0) {
+                    Ok(Some(d)) if ours => builds.blast(from, d),
+                    Ok(_) => {}
+                    Err(e) => {
+                        eprintln!("{e}");
+                        return false;
+                    }
+                }
+                true
+            }
+        }
+    }
+
+    /// A shot of ours that strikes at once (no speed): what it strikes along its way, ground or
+    /// structure, and its end told.
+    fn strike_at_once(&mut self, i: usize, l: &Launch, bodies: &BodyRegistry, builds: &mut Builds) -> bool {
+        let s = self.shots[i].1.clone();
+        let range = f64::from(s.range);
+        let ground = bodies.raycast(l.from, l.dir, range).map(|(_, p)| p);
+        let reach = ground.map_or(range, |p| p.distance(l.from));
+        let on = builds.set.raycast(l.from, l.dir, reach).map(|(k, _, _)| builds.set.list[k].id);
+        let at = builds.shoot(l.from, l.dir, &s, reach, self.shots_fired).or(ground);
+        if let Some(at) = at {
+            let vel = on.and_then(|id| builds.set.get(id)).map_or(DVec3::ZERO, |st| st.velocity_at(at));
+            self.end(0, What::Shot(i as u16), at, l.dir, vel, on, 0.0, bodies, builds);
+        }
+        true
+    }
+
+    /// Where something ended: what goes off there goes off (ours: with what it does to what is
+    /// round it, `builds`), and ours is told.
+    #[allow(clippy::too_many_arguments)]
+    fn end(&mut self, tag: u32, what: What, at: DVec3, dir: DVec3, vel: DVec3, on: Option<u64>, extra: f32, bodies: &BodyRegistry, builds: &mut Builds) {
+        // (a little back along its way: it goes off at the surface, not in it)
+        let (id, back, extra) = match what {
+            What::Shot(i) => match self.shots.get(usize::from(i)).and_then(|(_, s)| s.impact.clone()) {
+                Some(fx) => (fx, 0.1, 0.0),
+                None => (String::new(), 0.0, 0.0),
+            },
+            What::Missile(k) => (self.warheads.get(usize::from(k)).cloned().unwrap_or_default(), 0.5, extra),
+            What::Guided(k) => (self.guided_warheads.get(usize::from(k)).cloned().unwrap_or_default(), 0.5, 0.0),
+            What::Decoy(_) | What::Boom(_) => (String::new(), 0.0, 0.0),
+        };
+        let ours = tag & FOREIGN == 0;
+        self.ends += 1;
+        if self.log_ends {
+            // (in the frame of what it struck as it is now: one behind the world carried on to it)
+            let set = &builds.set;
+            let local = on.and_then(|id| set.get(id)).map(|s| (s.id, s.rot.inverse() * (at - (s.pos + s.vel * (set.now - s.clock).max(0.0))).as_vec3()));
+            self.ended.push((what, local));
+        }
+        if !id.is_empty() {
+            let at = at - dir * back;
+            if let (Ok(Some(d)), true) = (self.fx.explode_moving(&id, bodies, bodies.dominant(at), Motion { at, vel, spin: DVec3::ZERO }, 1.0, extra), ours) {
+                builds.blast(at, d);
+            }
+        }
+        if ours {
+            self.told(Seen::End { tag, what, at, dir, vel, on, extra });
+        }
     }
 
     /// A key went down: true when it fires something (on the next update); an automatic shot
@@ -349,18 +528,6 @@ impl Blasts {
             }
             None => false,
         }
-    }
-
-    /// Shot `id` fired now from `from` along `dir` (anyone's, not the camera's). False if there is
-    /// no such shot.
-    pub fn fire_from(&mut self, id: &str, from: DVec3, dir: DVec3, vel: DVec3, bodies: &BodyRegistry, builds: &mut Builds) -> bool {
-        let Some(i) = self.shots.iter().position(|(s, _)| s == id) else { return false };
-        if self.shots[i].1.speed.is_some() {
-            return self.round(id, from, dir, vel, bodies, false, true);
-        }
-        let up = dir.any_orthonormal_vector();
-        self.fire(Action::Shoot(i), true, bodies, &View { eye: from, forward: dir, up, fov_y: 1.0, near: 0.1 }, Motion { at: from, vel, spin: DVec3::ZERO }, builds);
-        true
     }
 
     /// The shots the menu may change, as they are now.
@@ -415,8 +582,9 @@ impl Blasts {
         builds.set.raycast(from, dir, reach).map(|(_, _, p)| p).or(ground)
     }
 
+    /// What a test key (or a script) fires, as a launch from the view.
     fn fire(&mut self, action: Action, aim: bool, bodies: &BodyRegistry, view: &View, motion: Motion, builds: &mut Builds) {
-        match action {
+        let launch = match action {
             Action::Explode(id) => {
                 let at = if aim {
                     Blasts::aim(bodies, builds, view.eye, view.forward, AIM_RANGE)
@@ -428,90 +596,77 @@ impl Blasts {
                     let probe = b.altitude(view.eye).max(0.0) + 50.0 + AIM_RANGE;
                     bodies.raycast(view.eye + ahead * self.ahead + up * 50.0, -up, probe).map(|(_, p)| p)
                 };
-                let Some(at) = at else { return };
+                let (Some(at), Some(e)) = (at, self.booms.iter().position(|b| *b == id)) else { return };
                 // pulled back a little toward the shooter: the blast goes off at the surface, not in it
-                let at = at - view.forward * 0.3;
-                match self.fx.explode(&id, bodies, bodies.dominant(at), at) {
-                    Ok(Some(d)) => builds.blast(at, d),
-                    Ok(None) => {}
-                    Err(e) => {
-                        eprintln!("{e}");
-                        return;
-                    }
-                }
-                self.told(Seen::Boom { id, at, vel: DVec3::ZERO, scale: 1.0, extra: 0.0 });
+                Launch { what: What::Boom(e as u16), from: at - view.forward * 0.3, dir: view.forward, speed: 0.0, vel: DVec3::ZERO, target: None, by: None }
             }
             Action::Launch(i) => {
                 let Some(to) = Blasts::aim(bodies, builds, view.eye, view.forward, MISSILE_RANGE) else { return };
-                let id = self.missiles.defs[i].0.clone();
                 let from = view.eye + view.forward * 2.0;
-                match self.missiles.launch(&id, from, to, bodies) {
-                    Ok(_) => self.told(Seen::Missile { kind: i as u16, from, to }),
-                    Err(e) => eprintln!("{e}"),
-                }
+                let Some(v) = self.missiles.solve(i, from, to, bodies) else {
+                    eprintln!("{}: fuera de alcance", self.missiles.defs[i].1.name);
+                    return;
+                };
+                Launch { what: What::Missile(i as u16), from, dir: v.normalize_or(view.forward), speed: v.length() as f32, vel: DVec3::ZERO, target: None, by: None }
             }
             Action::Shoot(i) => {
-                let s = self.shots[i].1.clone();
-                self.shots_fired += 1;
-                let dir = self.scatter(view, s.spread);
-                if let Some(speed) = s.speed {
-                    let from = view.eye + view.forward * 1.0;
-                    let vel = motion.velocity_at(from);
-                    let (style, size) = self.shot_looks[i];
-                    let seed = (self.shots_fired % 997) as f32 / 997.0;
-                    let mut round = rounds::round(i as u16, from, dir, speed, s.range, bodies.dominant(from), style, size, seed);
-                    round.vel += vel;
-                    if self.rounds.fire(round) {
-                        self.told(Seen::Round { shot: i as u16, from, dir, speed, vel });
-                    }
-                    return;
-                }
-                let range = f64::from(s.range);
-                let ground = bodies.raycast(view.eye, view.forward, range).map(|(_, p)| p);
-                let reach = ground.map_or(range, |p| p.distance(view.eye));
-                let at = builds.shoot(view.eye, view.forward, &s, reach, self.shots_fired).or(ground);
-                if let (Some(at), Some(fx)) = (at, &s.impact) {
-                    let at = at - view.forward * 0.1;
-                    if self.fx.explode(fx, bodies, bodies.dominant(at), at).is_ok() {
-                        self.told(Seen::Boom { id: fx.clone(), at, vel: DVec3::ZERO, scale: 1.0, extra: 0.0 });
-                    }
-                }
+                let id = self.shots[i].0.clone();
+                // (what flies leaves a little ahead of the eye; what strikes at once, from it)
+                let from = if self.shots[i].1.speed.is_some() { view.eye + view.forward * 1.0 } else { view.eye };
+                let Some(l) = self.shot(&id, from, view.forward, motion.velocity_at(from), None) else { return };
+                l
             }
-        }
+        };
+        self.launch(launch, bodies, builds);
     }
 
-    /// Something fired or set off here, kept for the other players' games while there are any.
+    /// Something for the other players' games, kept while there are any.
     fn told(&mut self, what: Seen) {
         if self.tell {
             self.seen.push(what);
         }
     }
 
-    /// Something fired or set off in another player's game `age` s ago, shown here: a round
-    /// flies on from where it is by now, a missile is launched, an explosion goes off. None of
-    /// it does anything to the structures here.
-    pub fn show(&mut self, what: &Seen, age: f32, bodies: &BodyRegistry) {
-        match what {
-            Seen::Round { shot, from, dir, speed, vel } => {
-                let Some((_, s)) = self.shots.get(usize::from(*shot)) else { return };
-                let (style, size) = self.shot_looks[usize::from(*shot)];
-                // (as far along as it has flown while the word of it came)
-                let elapsed = age.clamp(0.0, 0.25);
-                let velocity = *vel + *dir * f64::from(*speed);
-                let from = *from + velocity * f64::from(elapsed);
-                let mut round = rounds::round(*shot | FOREIGN, from, *dir, *speed, s.range, bodies.dominant(from), style, size, 0.5);
-                round.vel = velocity;
-                round.left -= elapsed;
-                self.rounds.fire(round);
+    /// What player `from`'s game told, `age` s ago, done here: what they let fly flies here from
+    /// where it is by now (seen, doing nothing), and ends where theirs ended; their guided
+    /// missiles are brought to where theirs are.
+    pub fn show(&mut self, from: u32, what: &Seen, age: f32, bodies: &BodyRegistry, builds: &mut Builds) {
+        let key = |tag: u32| (u64::from(from) << 32) | u64::from(tag);
+        match *what {
+            Seen::Launch { tag, launch } => {
+                if age > STALE {
+                    return;
+                }
+                self.next_tag = (self.next_tag + 1) % FOREIGN;
+                let here = self.next_tag.max(1) | FOREIGN;
+                self.foreign.push((key(tag), here, self.time));
+                self.start(&launch, here, age, bodies, builds);
             }
-            Seen::Missile { kind, from, to } => {
-                if let Some((id, _)) = self.guests.defs.get(usize::from(*kind)).cloned() {
-                    let _ = self.guests.launch(&id, *from, *to, bodies);
+            Seen::End { tag, what, at, dir, vel, on, extra } => {
+                // (still flying here: it ends now, where theirs did)
+                if let Some(here) = self.foreign.iter().position(|f| f.0 == key(tag)).map(|k| self.foreign.swap_remove(k).1) {
+                    self.rounds.list.retain(|r| r.tag != here);
+                    self.guests.list.retain(|m| m.tag != here);
+                    self.guided.list.retain(|m| m.tag != here);
+                }
+                if age < STALE {
+                    self.end(FOREIGN, what, at, dir, vel, on, extra, bodies, builds);
                 }
             }
-            Seen::Boom { id, at, vel, scale, extra } => {
-                let at = *at + *vel * f64::from(age.clamp(0.0, 0.25));
-                let _ = self.fx.explode_moving(id, bodies, bodies.dominant(at), Motion { at, vel: *vel, spin: DVec3::ZERO }, *scale, *extra);
+            Seen::Track { tag, pos, vel, push } => {
+                let Some(here) = self.foreign.iter().find(|f| f.0 == key(tag)).map(|f| f.1) else { return };
+                if let Some(m) = self.guided.list.iter_mut().find(|m| m.tag == here) {
+                    // where theirs is by now, carried on as it goes (what pulls it too)
+                    let age = f64::from(age.min(STALE));
+                    let a = push + bodies.field(pos).pull;
+                    let (want, want_v) = (pos + vel * age + a * (0.5 * age * age), vel + a * age);
+                    // (off by less than it flies in a frame: there at once, it cannot be seen;
+                    // further: half the way each time, no jump)
+                    let k = if m.pos.distance(want) < TRACK_SNAP { 1.0 } else { 0.5 };
+                    m.pos += (want - m.pos) * k;
+                    m.vel += (want_v - m.vel) * k;
+                    m.led = Some(push);
+                }
             }
         }
     }
@@ -541,33 +696,27 @@ impl Blasts {
     pub fn land_rounds(&mut self, bodies: &BodyRegistry, builds: &mut Builds) {
         for k in 0..self.impacts.len() {
             let i = self.impacts[k];
-            // (fired in another player's game: seen to land here; theirs says what it struck)
-            let foreign = i.kind & FOREIGN != 0;
-            let Some((_, s)) = self.shots.get(usize::from(i.kind & !FOREIGN)) else { continue };
-            if !foreign {
-                self.impact_count += 1;
-                self.last_impact = Some(i);
-                self.shots_fired += 1;
+            // (another game's: it ends where that game says, `show`)
+            if i.tag & FOREIGN != 0 {
+                continue;
             }
-            let (at, dir, vel) = match i.surface {
+            let Some((_, s)) = self.shots.get(usize::from(i.kind)) else { continue };
+            let (energy, area) = (s.energy, s.area);
+            self.impact_count += 1;
+            self.last_impact = Some(i);
+            self.shots_fired += 1;
+            let (at, dir, vel, on) = match i.surface {
                 Some(hit) => {
                     let Some(structure) = builds.set.get(hit.id) else { continue };
                     let at = structure.to_world(hit.point);
                     let dir = (structure.rot * hit.dir).as_dvec3();
                     let vel = structure.velocity_at(at);
-                    if !foreign {
-                        builds.hit(hit.id, &damage::Hit { point: hit.point - hit.dir * 0.05, dir: hit.dir, energy: s.energy, radius: 0.0, area: s.area });
-                    }
-                    (at, dir, vel)
+                    builds.hit(hit.id, &damage::Hit { point: hit.point - hit.dir * 0.05, dir: hit.dir, energy, radius: 0.0, area });
+                    (at, dir, vel, Some(hit.id))
                 }
-                None => (i.at, i.dir, DVec3::ZERO),
+                None => (i.at, i.dir, DVec3::ZERO, None),
             };
-            if let Some(fx) = &s.impact {
-                let at = at - dir * 0.1;
-                if let (Ok(Some(d)), false) = (self.fx.explode_moving(fx, bodies, bodies.dominant(at), Motion { at, vel, spin: DVec3::ZERO }, 1.0, 0.0), foreign) {
-                    builds.blast(at, d);
-                }
-            }
+            self.end(i.tag, What::Shot(i.kind), at, dir, vel, on, 0.0, bodies, builds);
         }
         self.impacts.clear();
     }
@@ -576,21 +725,18 @@ impl Blasts {
     fn fly(&mut self, dt: f64, bodies: &BodyRegistry, builds: &mut Builds) {
         self.missiles.update(dt, bodies, &mut builds.set, &mut self.strikes);
         for s in std::mem::take(&mut self.strikes) {
-            let at = s.at - s.vel.normalize_or_zero() * 0.5;
+            let on = match s.target {
+                Target::Structure(id) => Some(id),
+                Target::Ground => None,
+            };
+            let vel = on.and_then(|id| builds.set.get(id)).map_or(DVec3::ZERO, |st| st.velocity_at(s.at));
             // the impact's energy: a bigger blast for a charge, a harder hit for anything else
-            let extra = (s.energy * 0.5) as f32;
-            if let Ok(Some(d)) = self.fx.explode_with(&self.warheads[s.kind], bodies, bodies.dominant(at), at, 1.0, extra) {
-                builds.blast(at, d);
-            }
+            self.end(s.tag, What::Missile(s.kind as u16), s.at, s.vel.normalize_or_zero(), vel, on, (s.energy * 0.5) as f32, bodies, builds);
         }
-        // (the others' missiles fly on to be seen, and seen to strike; what they do is their
-        // launcher's to say)
+        // (the others' missiles fly on to be seen; they end where their game says)
         if !self.guests.list.is_empty() {
             self.guests.update(dt, bodies, &mut builds.set, &mut self.guest_strikes);
-            for s in std::mem::take(&mut self.guest_strikes) {
-                let at = s.at - s.vel.normalize_or_zero() * 0.5;
-                let _ = self.fx.explode_with(&self.warheads[s.kind], bodies, bodies.dominant(at), at, 1.0, (s.energy * 0.5) as f32);
-            }
+            self.guest_strikes.clear();
         }
         for k in 0..self.missiles.list.len() + self.guests.list.len() {
             let m = if k < self.missiles.list.len() { self.missiles.list[k] } else { self.guests.list[k - self.missiles.list.len()] };
@@ -613,25 +759,13 @@ impl Blasts {
         let (set, aims) = (&builds.set, &self.aims);
         self.guided.update(dt, bodies, |id| aims.iter().find(|a| a.0 == id).map(|a| a.1), |from, dir, len| set.raycast(from, dir, len).map(|(i, _, p)| (p, set.list[i].id)), &mut self.hits);
         for h in std::mem::take(&mut self.hits) {
-            let at = h.at - h.vel.normalize_or_zero() * 0.5;
-            let w = &self.guided_warheads[usize::from(h.kind)];
-            // (a twin of another player's: seen to go off, it does nothing here)
-            let twin = match self.twins.iter().position(|&t| t == h.id) {
-                Some(k) => {
-                    self.twins.swap_remove(k);
-                    true
-                }
-                None => false,
-            };
-            // (what it was doing relative to what it struck is not known here: its charge alone)
-            if let (Ok(Some(d)), false) = (self.fx.explode(w, bodies, bodies.dominant(at), at), twin) {
-                builds.blast(at, d);
+            // (another game's: it ends where that game says, `show`)
+            if h.tag & FOREIGN != 0 {
+                continue;
             }
-        }
-        // (twins that are no longer in flight are forgotten)
-        if !self.twins.is_empty() {
-            let list = &self.guided.list;
-            self.twins.retain(|t| list.iter().any(|m| m.id == *t));
+            let vel = h.structure.and_then(|id| builds.set.get(id)).map_or(DVec3::ZERO, |st| st.velocity_at(h.at));
+            // (what it was doing relative to what it struck is not known here: its charge alone)
+            self.end(h.tag, What::Guided(h.kind), h.at, h.vel.normalize_or_zero(), vel, h.structure, 0.0, bodies, builds);
         }
         // how many puffs a thing that has flown `t` s owes this frame, at `rate` a second
         let owed = |t: f64, rate: f64| ((t * rate).floor() - ((t - dt).max(0.0) * rate).floor()).max(0.0) as usize;
@@ -701,6 +835,25 @@ impl Blasts {
         self.fly(dt, bodies, builds);
         self.fly_guided(dt, bodies, builds);
         self.fx.update(dt as f32, bodies);
+        // now and then: where our guided missiles are, for the others; and the numbers of the
+        // others' things no longer in flight here forgotten
+        self.track_in -= dt;
+        if self.track_in <= 0.0 {
+            self.track_in = TRACK_EVERY;
+            if self.tell {
+                for m in &self.guided.list {
+                    if m.tag != 0 && m.tag & FOREIGN == 0 {
+                        self.seen.push(Seen::Track { tag: m.tag, pos: m.pos, vel: m.vel, push: m.push });
+                    }
+                }
+            }
+            if !self.foreign.is_empty() {
+                let mut flying: Vec<u32> = self.rounds.list.iter().map(|r| r.tag).chain(self.guests.list.iter().map(|m| m.tag)).chain(self.guided.list.iter().map(|m| m.tag)).filter(|t| t & FOREIGN != 0).collect();
+                flying.sort_unstable();
+                let t = self.time;
+                self.foreign.retain(|f| t - f.2 < FORGET && flying.binary_search(&f.1).is_ok());
+            }
+        }
         self.follow_view(bodies, view)
     }
 
@@ -756,12 +909,12 @@ mod tests {
         for speed in [0.0, 30.0, 300.0, 1600.0, 7800.0] {
             blasts.rounds.list.clear();
             let inherited = DVec3::new(speed, -speed * 0.3, speed * 0.2);
-            assert!(blasts.fire_from("cohete", from, DVec3::Z, inherited, bodies, &mut builds));
+            assert!(blasts.fire_from("cohete", from, DVec3::Z, inherited, None, bodies, &mut builds));
             let round = blasts.rounds.list[0];
             assert!(round.pos.distance(from) < 0.001, "el cohete nace a {} m de la boca", round.pos.distance(from));
             assert!(round.vel.distance(inherited + DVec3::Z * 150.0) < 1e-8);
             let seen = blasts.seen.pop().unwrap();
-            blasts.show(&seen, 0.1, bodies);
+            blasts.show(1, &seen, 0.1, bodies, &mut builds);
             let remote = blasts.rounds.list[1];
             assert!((remote.left - (round.left - 0.1)).abs() < 1e-5);
             assert_eq!(remote.nose, round.nose);

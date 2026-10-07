@@ -443,7 +443,8 @@ impl Gear {
                         Some(p) => view.eye + (look * self.pose.at.point(Vec3::from(p.en))).as_dvec3(),
                         None => view.eye + view.forward * 0.9 + view.forward.cross(view.up).normalize_or(DVec3::X) * 0.22 - view.up * 0.1,
                     };
-                    if blasts.fire_from(tiro, muzzle, view.forward, motion.velocity_at(muzzle), bodies, builds) {
+                    // (from whatever the player is on or beside: `multi` tells it in that frame)
+                    if blasts.fire_from(tiro, muzzle, view.forward, motion.velocity_at(muzzle), None, bodies, builds) {
                         (self.loading, self.loaded, self.fired) = (recarga, false, true);
                         self.holding.fired(hold);
                         self.holding.play(hold, "disparo");

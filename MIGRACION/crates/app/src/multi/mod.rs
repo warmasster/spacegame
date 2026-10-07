@@ -11,17 +11,19 @@
 //!   its own machines do is theirs;
 //! - **controls**: a control worked by a hand is told as "this control is now at this value"
 //!   and set the same on every copy; a ship made in play is made on every copy;
-//! - **fire and damage**: a ship's weapons fire in every game from its copy there, but only the
-//!   owner's rounds and missiles do anything: elsewhere they are twins, seen to fly and strike
-//!   (`Blasts::fire_twin`). What is done to a structure every game has (`Structure::shared`) is
-//!   decided where the round struck and told (`told::STRIKES`); every game, that one too, does it
-//!   when it comes back, in the order the server passed it on, with the dice it was told with:
-//!   every copy ends the same. What a player fires from their hands goes as `told::SEEN`, beside
-//!   what they ride.
+//! - **fire and damage**: anything let fly anywhere (a hand's launcher, a ship's gun: only its
+//!   owner's game fires it) is told once, beside what let it go, and where it ended, on what it
+//!   struck (`told::SEEN`, `blasts::Seen`): elsewhere it flies as a copy that decides nothing and
+//!   ends where it is told. What is done to a structure every game has (`Structure::shared`: the
+//!   network's ships, the scenario's, and every piece come off them) is decided where it struck
+//!   and told (`told::STRIKES`, with how what it struck was posed); every game, that one too, does
+//!   it when it comes back, in the order the server passed it on, with the dice it was told with:
+//!   every copy ends the same.
 //!
 //! Call `receive` early in a frame (before the ships run and the world steps) and `send` after.
 //!
-//! What is not told yet: loose cargo and crates, doors and clamps worked by hand at them.
+//! What is not told yet: loose cargo and crates; where each piece come off is (each game moves
+//! its own).
 mod follow;
 pub mod told;
 
@@ -100,7 +102,12 @@ pub struct Multi {
     buf: Vec<u8>,
     /// What the others fired or set off, for this game to show now (and how long ago it was):
     /// taken by whoever shows it (`Blasts::show`).
-    pub shown: Vec<(Seen, f32)>,
+    pub shown: Vec<(u32, Seen, f32)>,
+    /// What was seen, as it is read and as it goes out, surely or loosely (reused).
+    seen_in: Vec<(Seen, f32)>,
+    seen_later: Vec<(u32, Vec<u8>)>,
+    sure: Vec<(told::From, Seen)>,
+    loose: Vec<(told::From, Seen)>,
     /// What to tell the player: (text, 0 plain, 1 caution, 2 warning).
     pub said: Vec<(String, u8)>,
     /// Past the catching up on joining: what comes now is news.
@@ -142,6 +149,10 @@ impl Multi {
             struck: 0,
             buf: vec![0; lunar_net::MAX_TELL.min(1 << 16)],
             shown: Vec::new(),
+            seen_in: Vec::new(),
+            seen_later: Vec::new(),
+            sure: Vec::new(),
+            loose: Vec::new(),
             said: Vec::new(),
             live: false,
             last: None,
@@ -153,18 +164,20 @@ impl Multi {
     }
 
     /// How the network names a structure of this game, if every game has it.
-    fn name_of(&self, structure: u64) -> Option<Named> {
+    fn name_of(&self, structure: u64, set: &Structures) -> Option<Named> {
         match self.net_id(structure) {
             Some(k) => Some(Named::Ship(k)),
-            None => (structure < self.built).then_some(Named::Built(structure)),
+            None if structure < self.built => Some(Named::Built(structure)),
+            None => set.get(structure).filter(|s| s.lineage != 0 && s.shared).map(|s| Named::Piece(s.lineage)),
         }
     }
 
     /// The structure of this game the network names so.
-    fn named(&self, n: Named) -> Option<u64> {
+    fn named(&self, n: Named, set: &Structures) -> Option<u64> {
         match n {
             Named::Ship(k) => self.ships.get(k as usize).copied().flatten(),
             Named::Built(id) => (id < self.built).then_some(id),
+            Named::Piece(l) => set.list.iter().find(|s| s.lineage == l).map(|s| s.id),
         }
     }
 
@@ -227,7 +240,7 @@ impl Multi {
     /// Early in a frame, before the ships run and the world steps: what came in is done to our
     /// copy of the world (controls set, ships made, strikes done in their order), what the
     /// others fired is put in `shown`, and their ships are steered to where they are told.
-    pub fn receive(&mut self, now: f64, ships: &mut Ships, builds: &mut Builds) {
+    pub fn receive(&mut self, now: f64, ships: &mut Ships, builds: &mut Builds, bodies: &BodyRegistry) {
         // (our world is still at the last frame's moment: what is told is placed for that one,
         // and steps on with the world)
         let at = self.last.unwrap_or(now);
@@ -238,8 +251,20 @@ impl Multi {
         let on = self.client.connected();
         for s in &mut builds.set.list {
             let k = self.ships.iter().position(|x| *x == Some(s.id));
-            s.shared = on && (k.is_some() || s.id < self.built);
+            // (named by the network: a ship, what the scenario set; a piece of either is named
+            // from it when it comes off)
+            let named = match k {
+                Some(k) => Some(Named::Ship(k as u64)),
+                None => (s.id < self.built).then_some(Named::Built(s.id)),
+            };
+            match (on, named) {
+                (true, Some(n)) => s.lineage = n.code(),
+                (false, _) => s.lineage = 0,
+                _ => {}
+            }
+            s.shared = on && s.lineage != 0;
             s.remote = on && k.is_some_and(|k| !self.client.owns_thing(k as u64));
+            s.owned = on && k.is_some_and(|k| self.client.owns_thing(k as u64));
         }
         // ---- what happened
         let events: Vec<Event> = self.client.events().collect();
@@ -249,19 +274,11 @@ impl Multi {
                 Event::Left { name, .. } if self.live => self.said.push((format!("{name} se ha ido"), 0)),
                 Event::Joined { .. } | Event::Left { .. } | Event::Owner { .. } | Event::Host { .. } | Event::Direct { .. } => {}
                 Event::Synced => self.live = true,
+                // (what was seen is placed by our copies once they are where they are told: below)
+                Event::Hinted { by, data } if data.first() == Some(&told::SEEN) => self.seen_later.push((by, data)),
+                Event::Told { by, data } if data.first() == Some(&told::SEEN) => self.seen_later.push((by, data)),
                 Event::Told { by, data } => self.told(by, &data, ships, builds),
-                Event::Hinted { data, .. } => {
-                    let mut r = Reader::new(&data);
-                    if r.u8() == Ok(told::SEEN) {
-                        let now = self.client.server_time(at).unwrap_or(0.0);
-                        let set = &builds.set;
-                        let mut shown = std::mem::take(&mut self.shown);
-                        // (a structure behind the world, as it will be when it catches up: now)
-                        let find = |n: Named| self.named(n).and_then(|id| set.get(id)).map(|s| (s.pos + s.vel * (set.now - s.clock).max(0.0), s.vel));
-                        let _ = told::read_seen(&mut r, now, find, &mut shown);
-                        self.shown = shown;
-                    }
-                }
+                Event::Hinted { .. } => {}
                 Event::Chat { from, text } => {
                     let who = from.and_then(|id| self.client.name(id)).unwrap_or("Servidor").to_string();
                     self.said.push((format!("{who}: {text}"), 0));
@@ -269,10 +286,29 @@ impl Multi {
                 Event::Disconnected { reason } => self.said.push((format!("Desconectado del servidor: {reason}"), 2)),
             }
         }
-        self.follow(at, dt, ships, builds);
+        self.follow(at, dt, ships, builds, bodies);
+        let mut later = std::mem::take(&mut self.seen_later);
+        for (by, data) in later.drain(..) {
+            let mut r = Reader::new(&data[1..]);
+            self.seen_from(by, &mut r, at, builds);
+        }
+        self.seen_later = later;
     }
 
     /// Something a player told everyone (we too, for what is echoed).
+    /// What player `by` saw let fly and end (`told::SEEN`), into `shown`, placed by our copies
+    /// of the structures it was told beside, for our world's moment `at`.
+    fn seen_from(&mut self, by: u32, r: &mut Reader, at: f64, builds: &Builds) {
+        let now = self.client.server_time(at).unwrap_or(0.0);
+        let set = &builds.set;
+        let mut seen = std::mem::take(&mut self.seen_in);
+        seen.clear();
+        let find = |n: Named| self.named(n, set).and_then(|id| Some((id, frame_of(set.get(id)?, set.now))));
+        let _ = told::read_seen(r, now, find, &mut seen);
+        self.shown.extend(seen.drain(..).map(|(s, age)| (by, s, age)));
+        self.seen_in = seen;
+    }
+
     fn told(&mut self, by: u32, data: &[u8], ships: &mut Ships, builds: &mut Builds) {
         let mut r = Reader::new(data);
         match r.u8() {
@@ -306,14 +342,18 @@ impl Multi {
             }
             Ok(told::STRIKES) => {
                 self.named.clear();
-                let Ok(seed) = told::read_strikes(&mut r, &mut self.named) else { return };
+                let mut poses = Vec::new();
+                let Ok(seed) = told::read_strikes(&mut r, &mut self.named, &mut poses) else { return };
+                let ours = Some(by) == self.client.id();
                 for (i, (n, s)) in self.named.iter().enumerate() {
-                    let Some(id) = self.named(*n) else { continue };
+                    let Some(id) = self.named(*n, &builds.set) else { continue };
                     let s = match *s {
                         Strike::Hit { hit, .. } => Strike::Hit { id, hit },
                         Strike::Blow { part, push, energy, .. } => Strike::Blow { id, part, push, energy },
                     };
-                    builds.strike_done(&s, seed.wrapping_add(i as u64));
+                    // (posed as where it was decided)
+                    let pose = poses.iter().find(|p| p.0 == *n).map_or(&[][..], |p| &p.1[..]);
+                    builds.strike_done(&s, seed.wrapping_add(i as u64), ours, pose);
                 }
             }
             _ => {}
@@ -324,7 +364,7 @@ impl Multi {
     /// world's moment), over `dt` (this frame). A copy far from us that the world does not step
     /// every frame (`Structure::sim`) is put there instead, and its clock says it is at the
     /// world's moment: it has nothing to catch up with when it next steps.
-    fn follow(&mut self, now: f64, dt: f64, ships: &mut Ships, builds: &mut Builds) {
+    fn follow(&mut self, now: f64, dt: f64, ships: &mut Ships, builds: &mut Builds, bodies: &BodyRegistry) {
         let world = builds.set.now;
         for k in 0..self.ships.len() {
             let (Some(structure), false) = (self.ships[k], self.client.owns_thing(k as u64)) else { continue };
@@ -343,6 +383,11 @@ impl Multi {
                 let mut cur = Kin { pos: s.pos, vel: s.vel, rot: s.rot, spin: s.spin };
                 if s.sim == SimLevel::Active && s.clock == world {
                     follow::steer(&mut cur, &want, dt);
+                    // (and pushed as its owner's is, besides what pulls both: our copy runs the
+                    // same curve, and steering only takes out what is left)
+                    if let Some(acc) = self.client.rigid_speeding(k as u64) {
+                        cur.vel += (acc.as_dvec3() - bodies.field(cur.pos).pull) * dt;
+                    }
                 } else {
                     (cur, s.clock) = (want, world);
                 }
@@ -351,6 +396,7 @@ impl Multi {
             }
             if let Some(n) = ships.by_structure(structure) {
                 ships.list[n].set_joints(&st.joints);
+                ships.list[n].pose_now(s);
             }
         }
     }
@@ -440,15 +486,28 @@ impl Multi {
                 let id = match *s {
                     Strike::Hit { id, .. } | Strike::Blow { id, .. } => id,
                 };
-                if let Some(n) = self.name_of(id) {
+                if let Some(n) = self.name_of(id, &builds.set) {
                     self.named.push((n, *s));
                 }
             }
             let seed = (u64::from(self.client.id().unwrap_or(0)) << 40) | (self.struck & ((1 << 40) - 1));
             let mut sent = false;
             if self.client.connected() {
+                // (with how what was struck is posed here: every game does it so)
+                let mut poses: Vec<(Named, &[glam::Affine3A])> = Vec::new();
+                for s in &self.strikes {
+                    let id = match *s {
+                        Strike::Hit { id, .. } | Strike::Blow { id, .. } => id,
+                    };
+                    if let (Some(n), bones) = (self.name_of(id, &builds.set), builds.pose_of(id))
+                        && !bones.is_empty()
+                        && poses.iter().all(|p| p.0 != n)
+                    {
+                        poses.push((n, bones));
+                    }
+                }
                 let mut w = Writer::new(&mut self.buf);
-                told::write_strikes(&mut w, seed, &self.named);
+                told::write_strikes(&mut w, seed, &self.named, &poses);
                 if let Ok(n) = w.finish() {
                     sent = self.client.tell_all(&self.buf[..n]);
                 }
@@ -456,27 +515,49 @@ impl Multi {
             // (no one to tell after all: done here at once)
             if !sent {
                 for (i, s) in self.strikes.iter().enumerate() {
-                    builds.strike_done(s, seed.wrapping_add(i as u64));
+                    builds.strike_done(s, seed.wrapping_add(i as u64), true, &[]);
                 }
             }
             self.struck += self.strikes.len() as u64;
         }
-        // ---- what we fired, beside what we ride
+        // ---- what was let fly and where it ended: each in the frame of what it left (ours,
+        // with nothing said: what we ride or float by) or what it struck, surely and in order;
+        // where our guided missiles are, loosely (the next one says it again)
         if !seen.is_empty() {
-            let from = match pilot.ride.and_then(|r| Some((self.name_of(r.id)?, builds.set.get(r.id)?))) {
-                Some((named, s)) => told::From::Beside { named, pos: s.pos, vel: s.vel },
+            let ours = pilot.ride.map(|r| r.id).or(self.floating_by.and_then(|k| self.ships.get(k as usize).copied().flatten()));
+            let (mut sure, mut loose) = (std::mem::take(&mut self.sure), std::mem::take(&mut self.loose));
+            let set = &builds.set;
+            let beside = |id: Option<u64>| match id.and_then(|id| Some((self.name_of(id, set)?, set.get(id)?))) {
+                Some((named, s)) => told::From::Beside { named, frame: frame_of(s, set.now) },
                 None => told::From::World,
             };
-            if let Some(stamp) = self.client.server_time(now) {
-                for chunk in seen.chunks(told::SEEN_EACH) {
-                    let mut w = Writer::new(&mut self.buf);
-                    told::write_seen(&mut w, stamp, from, chunk);
-                    if let Ok(n) = w.finish() {
-                        self.client.hint(&self.buf[..n]);
-                    }
+            for s in seen.drain(..) {
+                match s {
+                    Seen::Launch { launch, .. } => sure.push((beside(launch.by.or(ours)), s)),
+                    Seen::End { on, .. } => sure.push((beside(on), s)),
+                    Seen::Track { .. } => loose.push((told::From::World, s)),
                 }
             }
-            seen.clear();
+            if let Some(stamp) = self.client.server_time(now) {
+                let mut buf = std::mem::take(&mut self.buf);
+                for (list, reliable) in [(&sure, true), (&loose, false)] {
+                    for chunk in list.chunks(told::SEEN_EACH) {
+                        let mut w = Writer::new(&mut buf);
+                        told::write_seen(&mut w, stamp, chunk, |id| self.name_of(id, &builds.set));
+                        if let Ok(n) = w.finish() {
+                            if reliable {
+                                self.client.tell(&buf[..n]);
+                            } else {
+                                self.client.hint(&buf[..n]);
+                            }
+                        }
+                    }
+                }
+                self.buf = buf;
+            }
+            sure.clear();
+            loose.clear();
+            (self.sure, self.loose) = (sure, loose);
         }
         self.client.update(now);
     }
@@ -484,14 +565,6 @@ impl Multi {
     /// Every ship's number and where it is.
     fn ship_places<'a>(&'a self, set: &'a Structures) -> impl Iterator<Item = (u64, DVec3)> + 'a {
         self.ships.iter().enumerate().filter_map(move |(k, s)| Some((k as u64, set.get((*s)?)?.pos)))
-    }
-
-    /// `receive` and `send` at once (tests: one frame of a game with no world to step).
-    #[cfg(test)]
-    #[allow(clippy::too_many_arguments)]
-    pub fn frame(&mut self, now: f64, pilot: &Pilot, eye_h: f64, head: [f64; 2], tool: u8, trigger: bool, outside: bool, ships: &mut Ships, builds: &mut Builds) {
-        self.receive(now, ships, builds);
-        self.send(now, pilot, eye_h, head, tool, trigger, outside, ships, builds, &mut Vec::new());
     }
 
     /// The others, as bodies: each made the first time it is told of, moved from what is told,
@@ -580,6 +653,11 @@ impl Drop for Multi {
     fn drop(&mut self) {
         self.client.close();
     }
+}
+
+/// A structure's frame now, at the world's moment `now` (one behind the world carried on to it).
+fn frame_of(s: &lunar_core::structure::state::Structure, now: f64) -> told::Frame {
+    told::Frame { pos: s.pos + s.vel * (now - s.clock).max(0.0), rot: s.rot, vel: s.vel, spin: s.spin }
 }
 
 #[cfg(test)]

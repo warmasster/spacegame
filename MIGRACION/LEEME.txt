@@ -50,6 +50,12 @@ y retrasos en la red); los disparos entre naves hacen EL MISMO DANO en todas
 las partidas; lo que disparas sale de tu boca de fuego en todas; quien flota
 junto a una nave o va de pie en una nave que pilota otro se ve donde esta; las
 puertas y anclajes que abres a mano se abren para todos.
+UN SOLO SISTEMA DE DISPAROS: todo (lanzador en la mano, canones y misiles de
+las naves, pruebas) dispara igual y se cuenta igual por la red; un arma
+nueva es solo datos. Desde la bodega abierta de una nave en orbita puedes
+meterle un cohetazo a otra nave: sale de tu boca de fuego en todas las
+partidas y estalla donde hizo el dano. El dano es identico en todas (tambien
+los trozos que salen, lo que revienta y lo que esta articulado).
 SIN PROBAR JUGANDO. Detalles: docs/NAVES.md (Coherencia y ordenador de vuelo),
 docs/COMBATE.md, docs/MOVIMIENTO.md 8, docs/MULTIJUGADOR.md (En el juego),
 docs/PENDIENTES.md V40.

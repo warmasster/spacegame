@@ -377,7 +377,7 @@ pose que le corresponde. No se ha copiado su reloj fijo: Rust conserva el del mu
   el mismo `fire_round` que las armas montadas. Se suman velocidad heredada y velocidad de
   salida de `shots.jsonc`. La vida sale del alcance y velocidad propios, no de la velocidad
   del mundo. El morro dibujado conserva la dirección de lanzamiento; no gira hacia el vector
-  de velocidad heredada. `Seen::Round` conserva ambos por separado al reproducir un disparo.
+  de velocidad heredada. `Seen::Launch` conserva ambos por separado (`dir`/`speed` y `vel`) al reproducir un disparo.
 - `Among::wake`: permite mantener en fino lo que un móvil va a atravesar, incluso lejos de
   la cámara. `Among::before`: toma las poses antes de la loncha. Son ganchos genéricos, sin
   ningún reloj adicional. `rounds::Flight` los usa y vuela en `slice` después de las estructuras.

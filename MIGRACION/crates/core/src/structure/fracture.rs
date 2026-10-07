@@ -18,6 +18,12 @@ impl Rng {
     pub fn new(seed: u64) -> Rng {
         Rng(seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1)
     }
+    /// A new seed from this one: the dice of what follows from it (the same wherever these
+    /// dice were rolled the same).
+    pub fn seed(&mut self) -> u64 {
+        u64::from(self.f32().to_bits()) << 32 | u64::from(self.f32().to_bits())
+    }
+
     pub fn f32(&mut self) -> f32 {
         self.0 ^= self.0 >> 12;
         self.0 ^= self.0 << 25;

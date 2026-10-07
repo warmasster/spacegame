@@ -225,9 +225,20 @@ pub struct Structure {
     /// Every game that has it must do the same to it in the same order (it is in a game with
     /// other players: `multi`): a hit on it decided here (`blast`, `shoot`) is not done but told
     /// (`Structures::told`), and comes back to every game, this one too, to be done
-    /// (`Structures::hit`). What follows from a hit done (a part that bursts, what comes off) is
-    /// then the same everywhere, and done where it happens.
+    /// (`Structures::hit`). What comes off of a hit done is then the same everywhere; what
+    /// follows from what is in it (a part that bursts: what it held, which each game simulates
+    /// of its own) is said by one game (`owned`, else whoever decided the hit) and told.
     pub shared: bool,
+    /// Shared, and this game has the say over it among the games (it simulates it: a ship of
+    /// the network it owns). A shared structure neither `owned` nor `remote` is the scenario's,
+    /// whose say a hit's is whoever decided it.
+    pub owned: bool,
+    /// The name every game knows it by (0: none; what names it is `multi`'s), and how many
+    /// pieces have come off it: a piece of a named structure is named from it and from its
+    /// place among them (`Structures::child_of`), the same in every game that broke it the same,
+    /// and shared as it was.
+    pub lineage: u64,
+    pub born: u32,
 }
 
 impl Part {
@@ -378,6 +389,9 @@ impl Structure {
             sums: super::contents::Sums::default(),
             remote: false,
             shared: false,
+            owned: false,
+            lineage: 0,
+            born: 0,
         };
         s.refresh();
         s

@@ -55,8 +55,9 @@ pub enum Event {
     /// A joint gave.
     Parted { at: DVec3 },
     /// A part that held something under pressure, or that burns, was destroyed: what its kind
-    /// says it lets go of (`PartKindDef::burst`) goes off there.
-    Burst { at: DVec3, kind: u16 },
+    /// says it lets go of (`PartKindDef::burst`) goes off there — at `local` of structure `id`,
+    /// with dice of its own drawn from the hit's (`seed`: the same in every game that did the hit).
+    Burst { at: DVec3, kind: u16, id: u64, local: Vec3, seed: u64 },
 }
 
 /// A piece about to become a loose structure.
@@ -76,17 +77,6 @@ impl Structures {
     /// A blast of `energy` J reaching `radius` m at world point `at`, on every structure in
     /// reach, set off here: on what is `remote` or `shared` it is told, not done (`told`).
     pub fn blast(&mut self, at: DVec3, energy: f32, radius: f32, rules: &Rules, events: &mut Vec<Event>, seed: u64) {
-        self.blast_on(at, energy, radius, rules, events, seed, true);
-    }
-
-    /// The same, done on every structure whatever it is: a blast that follows from what was done
-    /// the same in every game (a part that bursts when a hit breaks it).
-    pub fn blast_done(&mut self, at: DVec3, energy: f32, radius: f32, rules: &Rules, events: &mut Vec<Event>, seed: u64) {
-        self.blast_on(at, energy, radius, rules, events, seed, false);
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn blast_on(&mut self, at: DVec3, energy: f32, radius: f32, rules: &Rules, events: &mut Vec<Event>, seed: u64, tell: bool) {
         let mut rng = Rng::new(seed);
         let n = self.list.len();
         for k in 0..n {
@@ -96,7 +86,7 @@ impl Structures {
             }
             let hit = Hit { point: s.to_local(at), dir: Vec3::ZERO, energy, radius, area: 0.0 };
             // (a copy of what is simulated elsewhere, or what every game does in one order: told)
-            if tell && (s.remote || s.shared) {
+            if s.remote || s.shared {
                 self.told.push((s.id, hit));
                 continue;
             }
@@ -115,6 +105,28 @@ impl Structures {
         self.apply(k, hit, rules, events, &mut Rng::new(seed));
         self.tidy(rules);
         true
+    }
+
+    /// What `f` does to structure `id`, done with its articulations posed as `bones` (as they
+    /// were where it was decided: a hit told by another game), its own pose back after. What a
+    /// hit does hangs on where each part is; this way it is the same in every game that does it,
+    /// however each one's copy happens to be posed (a dish turning, a leg folding). Without such
+    /// a structure, or with bones that do not fit it, `f` as it is.
+    pub fn posed<R>(&mut self, id: u64, bones: &[Affine3A], f: impl FnOnce(&mut Structures) -> R) -> R {
+        let was = match self.index_of(id) {
+            Some(k) if !bones.is_empty() && self.list[k].bones.len() == bones.len() + 1 && self.list[k].bones[1..] != *bones => {
+                let s = &mut self.list[k];
+                let was = s.bones[1..].to_vec();
+                s.set_pose(bones);
+                Some(was)
+            }
+            _ => None,
+        };
+        let r = f(self);
+        if let (Some(was), Some(k)) = (was, self.index_of(id)) {
+            self.list[k].set_pose(&was);
+        }
+        r
     }
 
     /// A projectile from `from` along `dir` (unit) with `energy` J and cross-section `area` m²:
@@ -171,7 +183,7 @@ impl Structures {
                 events.push(Event::Shattered { at: world, size: p.radius, material });
                 // (a container with nothing left in it has nothing to let go of)
                 if !p.fragment && cat.parts[usize::from(kind)].def.burst.is_some() && !s.spent(h.part) {
-                    events.push(Event::Burst { at: world, kind });
+                    events.push(Event::Burst { at: world, kind, id: s.id, local: p.center, seed: rng.seed() });
                 }
                 s.parts[i].alive = false;
             } else if let Some((keep, chip)) = rules.fracture(cat, kind).chip(&p.shape, m, at, dir, h.energy / p.max_hp, rng) {
@@ -205,7 +217,7 @@ impl Structures {
         }
         s.refresh();
         for p in pieces {
-            self.loose(cat, p, rules.kick, rng);
+            self.loose(k, cat, p, rules.kick, rng);
         }
         self.detach(k, &parts, rules.kick);
     }
@@ -239,7 +251,7 @@ impl Structures {
         }
         events.push(Event::Shattered { at: s.to_world(p.center), size: p.radius, material });
         if !p.fragment && p.alive && cat.parts[usize::from(kind)].def.burst.is_some() && !s.spent(part) {
-            events.push(Event::Burst { at: s.to_world(p.center), kind });
+            events.push(Event::Burst { at: s.to_world(p.center), kind, id: s.id, local: p.center, seed: rng.seed() });
         }
         s.parts[i].alive = false;
         s.parts[i].working = false;
@@ -251,7 +263,7 @@ impl Structures {
         s.parted = true;
         s.refresh();
         for pc in pieces {
-            self.loose(cat, pc, rules.kick, &mut rng);
+            self.loose(k, cat, pc, rules.kick, &mut rng);
         }
         self.tidy(rules);
     }
@@ -272,8 +284,26 @@ impl Structures {
         self.list.len() - before
     }
 
-    /// A broken piece as a loose structure, thrown by its share of the damage.
-    fn loose(&mut self, cat: &Catalog, p: Piece, kick: f32, rng: &mut Rng) {
+    /// The name a piece coming off structure `k` now gets, and whether it is shared (as `k` is):
+    /// from `k`'s and from how many came off it before (`Structure::lineage`). None for what has
+    /// no name.
+    fn child_of(&mut self, k: usize) -> (u64, bool) {
+        let s = &mut self.list[k];
+        if s.lineage == 0 {
+            return (0, false);
+        }
+        s.born += 1;
+        // (splitmix64 of the two: a name of 61 bits, never 0)
+        let mut z = s.lineage ^ u64::from(s.born).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+        z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+        z ^= z >> 31;
+        ((z & ((1 << 61) - 1)).max(1), s.shared)
+    }
+
+    /// A broken piece of structure `k` as a loose structure, thrown by its share of the damage.
+    fn loose(&mut self, k: usize, cat: &Catalog, p: Piece, kick: f32, rng: &mut Rng) {
+        let (lineage, shared) = self.child_of(k);
         let (_, c) = p.shape.mass_props();
         let shape = p.shape.transformed(Affine3A::from_translation(-c));
         let (_, turn, _) = p.local.to_scale_rotation_translation();
@@ -288,6 +318,7 @@ impl Structures {
         s.vel = p.vel + (away * speed).as_dvec3();
         s.spin = rng.dir() * speed / s.radius.max(0.1) * 0.3;
         (s.clock, s.awake_until) = (self.now, self.now + LINGER);
+        (s.lineage, s.shared) = (lineage, shared);
         self.list.push(s);
     }
 
@@ -330,6 +361,7 @@ impl Structures {
         }
         for (parts, joints, energy, push, idx) in out {
             let id = self.next_id();
+            let (lineage, shared) = self.child_of(k);
             let s = &mut self.list[k];
             for &i in &idx {
                 s.parts[i].alive = false;
@@ -355,6 +387,7 @@ impl Structures {
             n.vel = s.vel + s.spin.cross(arm).as_dvec3() + (s.rot * push.normalize_or(Vec3::Y) * speed).as_dvec3();
             n.spin = s.spin;
             (n.clock, n.awake_until) = (s.clock, s.awake_until);
+            (n.lineage, n.shared) = (lineage, shared);
             self.list.push(n);
         }
         let s = &mut self.list[k];

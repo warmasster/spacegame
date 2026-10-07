@@ -1200,7 +1200,7 @@ impl State {
                 let a = r(1) * std::f64::consts::TAU;
                 let from = at + (side * a.cos() + up.cross(side) * a.sin()) * 60.0 + up * (10.0 + 30.0 * r(2));
                 let shot = shot.clone();
-                self.blasts.fire_from(&shot, from, (at - from).normalize(), glam::DVec3::ZERO, &self.world.bodies, &mut self.builds);
+                self.blasts.fire_from(&shot, from, (at - from).normalize(), glam::DVec3::ZERO, None, &self.world.bodies, &mut self.builds);
             }
             if *left <= 0.0 {
                 self.barrage = None;
@@ -1210,9 +1210,9 @@ impl State {
         // where they have them, what they struck done in its order), what they fired shown
         self.blasts.tell = self.multi.as_ref().is_some_and(|m| m.connected());
         if let Some(m) = &mut self.multi {
-            m.receive(lunar_net::now(), &mut self.ships, &mut self.builds);
-            for (seen, age) in m.shown.drain(..) {
-                self.blasts.show(&seen, age, &self.world.bodies);
+            m.receive(lunar_net::now(), &mut self.ships, &mut self.builds, &self.world.bodies);
+            for (by, seen, age) in m.shown.drain(..) {
+                self.blasts.show(by, &seen, age, &self.world.bodies, &mut self.builds);
             }
         }
         let view = self.blasts.update(dt, &self.world.bodies, view, self.pilot.motion_in(&self.builds.set), &mut self.builds);
@@ -1224,7 +1224,7 @@ impl State {
         let people = self.pilot.body();
         self.tactics.look(&mut self.ships, &self.builds, &self.world.bodies, self.world.traffic.as_ref(), &mut self.blasts);
         self.ships.update(dt, &mut self.builds, &self.world.bodies, &mut self.blasts.fx, sun, view.eye, &awake, &people);
-        self.tactics.fire(&mut self.ships, &self.builds, &self.world.bodies, &mut self.blasts);
+        self.tactics.fire(&mut self.ships, &mut self.builds, &self.world.bodies, &mut self.blasts);
         // a seat on something that moves takes whoever sits in it along
         if let Some(seat) = &mut self.pilot.seat
             && let Some(n) = self.ships.by_structure(seat.structure)

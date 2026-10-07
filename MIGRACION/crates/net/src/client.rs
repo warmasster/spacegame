@@ -457,6 +457,13 @@ impl Client {
         Some(age as f32)
     }
 
+    /// How fast a thing we do not hold is speeding up (m/s², by its two newest snapshots: what
+    /// pulls it included), if that can be told.
+    pub fn rigid_speeding(&self, id: u64) -> Option<glam::Vec3> {
+        let slot = self.things.get(&id).filter(|_| !self.owns_thing(id))?;
+        slot.snaps.speeding(|s| s.vel).map(|(_, acc)| acc.clamp_length_max(MAX_ACCEL))
+    }
+
     /// The moment (the server's clock, s) of the newest snapshot of a thing we do not hold.
     pub fn rigid_stamp(&self, id: u64) -> Option<f64> {
         self.things.get(&id).and_then(|slot| slot.snaps.newest()).map(|(stamp, _)| stamp)

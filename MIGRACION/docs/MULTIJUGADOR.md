@@ -238,28 +238,108 @@ Cada partida simula todo; la red solo la mantiene de acuerdo con las demás.
 | `multi/follow.rs` | cómo una copia sigue a lo que simula otro (`steer`) y junto a qué nave se cuenta a quien flota (`pick`) |
 | `multi/tests.rs` | la mesa de pruebas: varias partidas enteras contra un servidor real en una red en memoria |
 
-- **Naves ajenas: guiadas, no puestas.** El dueño manda su nave en el marco del mundo. Nuestra
-  copia sigue simulándose (sus mandos también llegan) y, antes de que el mundo avance, se la lleva
-  hacia donde dice el dueño con una semivida de 80 ms, igual a cualquier fps (`follow::steer`):
-  ningún salto de un frame a otro, y quien va dentro va con ella. Solo una copia muy lejos
-  (> 40 m o > 0,6 rad: una nave puesta de golpe) se pone allí de una vez; y una copia que el mundo
-  no simula a fondo (lejos: `SimLevel::Coarse`/`Dormant`) se pone exacta, con su reloj al del mundo.
+### Naves ajenas
+
+- **Guiadas, no puestas.** El dueño manda su nave en el marco del mundo. Nuestra copia sigue
+  simulándose (sus mandos también llegan) y, antes de que el mundo avance, se la lleva hacia donde
+  dice el dueño con una semivida de 80 ms, igual a cualquier fps (`follow::steer`): ningún salto de
+  un frame a otro, y quien va dentro va con ella. Solo una copia muy lejos (> 40 m o > 0,6 rad: una
+  nave puesta de golpe) se pone allí de una vez; y una copia que el mundo no simula a fondo (lejos:
+  `SimLevel::Coarse`/`Dormant`) se pone exacta, con su reloj al del mundo.
+- **Con la aceleración de su dueño.** A la copia se le da además lo que acelera la nave de verdad
+  (de sus dos últimos estados, `Client::rigid_speeding`, menos la gravedad, que su física ya pone):
+  una nave que esquiva a 7 g no se queda un metro atrás en cada viraje; la corrección solo quita lo
+  que sobra (formación maniobrando: 3–6 cm con los relojes de acuerdo).
+- **Sus articulaciones**, como las tiene el dueño (`set_joints`), puestas en la estructura en el
+  acto (`Ship::pose_now`), no en el próximo tic lento de una nave lejana.
 - **Lo que ningún marco quita**: dos partidas dicen dónde está algo en el mismo instante solo tan
   bien como coinciden sus relojes, y a 7,8 km/s cada milisegundo son 8 m. Con el reloj de arriba
-  coinciden en 1–4 ms; el error es estable y suave (no tiembla), y se prueba con esa cota física.
-- **Daño en un orden, el mismo en todas** (golpes con eco). Las estructuras que tienen todas las
-  partidas (las naves de la red y las del escenario) son `shared`: un impacto decidido aquí no se
-  aplica, se encola (`Builds::strikes`, `Strike::{Hit, Blow}`) y se manda con `tell_all`; todas
-  las partidas, también la que lo mandó, lo aplican cuando el servidor lo reenvía, en su orden y
-  con la semilla del mensaje (`strike_done`). Lo que se sigue de ello (piezas que saltan) lo hace
-  cada una por su cuenta (`blast_done`). Resultado: el mismo daño bit a bit en todas.
-- **Armas de naves ajenas: gemelos.** El arma de una nave que pilota otro dispara aquí también
-  (sus mandos llegan), pero sus balas y misiles son gemelos (`FOREIGN`, `launch_twin`): se ven,
-  explotan a la vista, no hacen daño. El daño lo decide la partida del dueño y llega como
-  `STRIKES`. Los señuelos son reales en todas.
-- **Lo que dispara un jugador** (`SEEN`, no fiable) va junto a la estructura en la que va (su
-  desplazamiento y su velocidad relativa) con la hora del servidor: cada partida lo coloca junto a
-  su propia copia de esa nave, así que sale de la boca del arma a cualquier velocidad.
+  coinciden en 1–4 ms; el error es estable y suave (no tiembla), y las pruebas lo comprueban contra
+  esa cota física (velocidad relativa × desacuerdo de los relojes), no contra un número a ojo.
+
+### Un solo sistema de proyectiles (`blasts.rs`)
+
+Todo lo que se dispara o estalla, lo dispare quien lo dispare —el lanzador en la mano, un cañón o
+un lanzamisiles de una nave, una tecla de pruebas, un guion—, es un `Launch` y sale por
+`Blasts::launch`; no hay otra manera:
+
+| Campo | Qué es |
+|---|---|
+| `what: What` | qué de los datos: `Shot(i)` (`shots.jsonc`: vuela, o golpea al momento si no tiene velocidad), `Missile(i)` (balístico), `Guided(i)` (`guiados.jsonc`), `Decoy(i)` (`senuelos.jsonc`), `Boom(i)` (una explosión de `explosions/`) |
+| `from`, `dir`, `speed` | de dónde sale, hacia dónde y su velocidad propia |
+| `vel` | la velocidad de lo que lo soltó en ese punto (giro incluido: `velocity_at`) |
+| `target` | lo que sigue un guiado |
+| `by` | la estructura de la que sale: el marco en que se cuenta (y lo que un guiado no puede golpear antes de armarse) |
+
+**Un arma nueva es solo datos.** Una entrada en `shots.jsonc` (o en `guiados.jsonc`,
+`senuelos.jsonc`, `missiles.jsonc`, `explosions/`) y quien la dispare (`gear.jsonc` para la mano,
+el componente del arma de una nave): ni `blasts` ni la red saben qué arma era. `Blasts::every()`
+lista todo lo que se puede lanzar y `Blasts::what(nombre)` lo busca por su nombre.
+
+### Lo que viaja de cada proyectil (`told::SEEN`)
+
+| Mensaje | Cuándo | Cómo | En qué marco |
+|---|---|---|---|
+| `Seen::Launch { tag, launch }` | al lanzarlo | fiable, en orden | la estructura `by` si la tienen todas; si no se dijo, la nave en que va o junto a la que flota quien disparó; si no, el mundo |
+| `Seen::End { tag, what, at, dir, vel, on, extra }` | donde acabó (incluido lo que golpea al momento) | fiable, en orden (tras su `Launch`) | la estructura golpeada `on`, tal como es ahora en cada partida |
+| `Seen::Track { tag, pos, vel, push }` | cada 0,1 s mientras vuela un guiado (el primero, tras su primer paso) | suelto: el siguiente lo repite | el mundo |
+
+En un marco, las posiciones van como desplazamientos en él (girados con él), las direcciones
+giradas y las velocidades como lo que añaden a la suya en ese punto (giro incluido). El que lo
+recibe lo pone junto a **su** copia de esa estructura tal como estaba entonces y lo lleva hasta
+ahora: desde la bodega abierta de una nave a 7,8 km/s, el cohete sale de la boca en todas las
+partidas (medido: 0,000 m).
+
+Los mensajes vistos se leen **después** de llevar las copias a donde dice su dueño (`receive`
+los guarda y los lee tras `follow`): un final cae sobre el casco ya en su sitio.
+
+### En las demás partidas
+
+- El proyectil vuela igual (su número lleva la marca `FOREIGN`) y **no decide nada**: lo que
+  golpea aquí no cuenta y desaparece sin explosión; acaba donde su partida dice que acabó, y su
+  explosión sale ahí, sobre la copia de lo que golpeó. Lo que todas ven estallar es donde se hizo
+  el daño (medido: < 1 cm en el marco de la nave golpeada).
+- Un guiado ajeno se vuela al llegar desde donde salió durante lo que tardó el aviso
+  (`Flight::catch_up`, con su buscador: así sale con lo que ya había acelerado). Hasta su primer
+  `Track` usa su buscador; desde entonces no: lo lleva el empuje que cuenta su dueño
+  (`Guided::led`), y en cada aviso se pone donde está el de verdad (si está a menos de 10 m, de
+  golpe: no se ve; si no, a medio camino cada vez).
+- **Las armas de una nave las dispara solo su dueño** (`tactics::fire`): las copias no disparan;
+  lo que disparan les llega contado.
+
+### El daño: el mismo en todas, bit a bit
+
+- **Golpes con eco.** Las estructuras que tienen todas las partidas son `shared`: un impacto
+  decidido aquí no se aplica, se encola (`Builds::strikes`, `Strike::{Hit, Blow}`) y se manda con
+  `tell_all`; todas, también la que lo mandó, lo aplican cuando el servidor lo reenvía, en su
+  orden y con la semilla del mensaje (`strike_done`).
+- **Con la postura de quien lo decidió.** El daño depende de dónde está cada pieza, y lo
+  articulado (una antena que gira, una pata que se recoge, una compuerta) no está en la misma
+  postura en todas las partidas en el mismo instante. El golpe viaja con los huesos de lo golpeado
+  tal como estaban donde se decidió (`Structure::bones`, 28 bytes por hueso, una vez por mensaje)
+  y cada partida lo aplica con esa postura y vuelve a la suya (`Structures::posed`). Vale para
+  cualquier estructura articulada, no solo naves.
+- **Lo que depende de lo que cada partida simula por su cuenta** —si una pieza revienta o no
+  según lo que llevaba dentro— lo dice una sola: el dueño de la nave golpeada
+  (`Structure::owned`), o, si es del escenario, quien decidió el golpe; y lo cuenta como cualquier
+  explosión. Las demás solo lo ven estallar. Igual que las máquinas de una nave ajena: lo que
+  revienta o arranca el aire en ella lo dice su dueño.
+- **Los trozos también se comparten.** Cada estructura con nombre en la red lleva un linaje
+  (`Structure::lineage`: la nave por su número, lo del escenario por su id); un trozo que se
+  desprende recibe el de su padre mezclado con su orden entre los que se le han desprendido
+  (`Structures::child_of`), igual en todas las partidas que lo rompieron igual, y queda compartido.
+  La red lo nombra así (`Named::Piece`): un golpe sobre un trozo también va con eco.
+
+### Cómo se nombra cada cosa en la red (`told::Named`)
+
+| Nombre | Qué | Código |
+|---|---|---|
+| `Ship(k)` | una nave por su número en la red | `k·4 + 1` |
+| `Built(id)` | lo que el escenario puso (la misma id en todas) | `id·4` |
+| `Piece(l)` | un trozo de cualquiera de ellas, por su linaje (61 bits) | `l·4 + 2` |
+
+### Otros
+
 - **Quien flota junto a una nave** se cuenta en el marco de esa nave (`ride` + `local` +
   `flag::BESIDE`): sin eso se le dibujaría donde estaba hace 100 ms (780 m atrás en órbita).
 - **Puertas y anclajes** accionados a mano (`aboard::Act`) viajan como `ACT`, fiables.
@@ -287,12 +367,15 @@ real con una red en memoria que pierde un 3 %, duplica un 1 % y retrasa 40 ± 10
 | Prueba (`app/src/multi/tests.rs`) | Qué comprueba |
 |---|---|
 | `ships_are_seen_flying_where_they_are_and_smoothly_…` | dos naves en formación a 0, 300, 2000 y 7800 m/s, a 30, 60, 144 y 240 fps: cada copia a la distancia que permiten los relojes, sin saltos (< 2 cm + lo que corrige el reloj por frame) ni giros de más de 2° |
-| `ships_shoot_each_other_at_orbital_speed_…` | 3 partidas, dos naves a 2 km/s disparándose (30 proyectiles de cañón): las tres acaban con el mismo daño, bit a bit |
+| `ships_shoot_each_other_at_orbital_speed_…` | 3 partidas, dos naves a 2 km/s disparándose (30 proyectiles de cañón): las tres acaban con el mismo daño, bit a bit, y ven estallar cada bala en el mismo punto de la nave (< 1 cm) |
+| `a_rocket_fired_out_of_an_open_hold_…` | a 7,8 km/s, un jugador en la bodega abierta de la Alcotán dispara un cohete por la rampa al Abejorro que va detrás: sale de su boca en las tres partidas (0,000 m), no toca la Alcotán, da una vez en el Abejorro, mismo daño y misma explosión en las tres |
+| `a_guided_missile_flies_the_same_…` | un guiado a 2 km/s contra el Cachalote que esquiva a 7 g, con la copia de Carla dormida por lejana: las copias van a 0,5 m del de verdad como mucho (los relojes permiten 0,84 m), estallan donde él y las tres acaban igual bit a bit (con lo que revienta y con la postura de lo articulado) |
 | `hits_from_two_shooters_at_once_…` | dos tiradores a la vez: el mismo orden en todas (sin el eco, falla) |
 | `what_a_player_fires_leaves_their_muzzle_…` | un cohete disparado a 7,8 km/s sale de la boca en todas las partidas |
 | `a_player_floating_by_a_ship_at_orbital_speed_…` | quien flota junto a una nave en órbita se dibuja a su lado (5 mm) |
 | `whoever_stands_aboard_a_ship_another_flies_…` | un pasajero de pie en una nave que pilota otro a 7,8 km/s no resbala |
 | `two_games_through_a_server_agree_…` | jugadores, mandos, puertas, naves puestas y dueños |
+| `told.rs` (`what_is_seen_beside_a_ship…`) | lanzamiento, final y aviso de un guiado en marcos que se mueven y giran: a 1,7 km/s, con la copia 6 m corrida y girada, el disparo sale de su boca y el final cae en su casco |
 | `told.rs` | cada mensaje ida y vuelta, tamaños, mensajes cortados |
 
 ## Lo que no hace (todavía)
@@ -302,6 +385,12 @@ real con una red en memoria que pierde un 3 %, duplica un 1 % y retrasa 40 ± 10
   de la otra no lo quita: las referencias mutuas se persiguen (se probó: 12 m de deriva).
 - **Carga suelta** (cajas, bidones) no se comparte todavía; ni lo que lleva otro en la mano ni
   sus gestos; quien entra tarde no recibe el estado de las máquinas (solo los mandos).
+- **Dónde está cada trozo** no se sincroniza: los trozos nacen igual y se dañan igual en todas,
+  pero cada partida los mueve con su física y se separan poco a poco.
+- **En investigación:** una bala rápida puede atravesar una nave sin chocar cuando el blanco
+  está cerca (el barrido detecta el choque un paso tarde, ya dentro del casco, o no lo detecta si
+  en ese paso lo cruza entero). Lo encontró la prueba de todas las armas, que aún no está en el
+  repositorio por eso.
 - **No se puede migrar de dirección**: si el router cambia el puerto de salida de un jugador a
   media partida, el servidor deja de reconocerlo y el jugador cae por silencio.
 - **Sin cifrado ni autenticación**: la `cookie` impide suplantar direcciones al entrar, pero

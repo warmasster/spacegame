@@ -99,6 +99,29 @@ vuelo (V40)», [`COMBATE.md`](COMBATE.md), [`MOVIMIENTO.md`](MOVIMIENTO.md) §8)
     2 km/s con el mismo daño, dos tiradores a la vez, cohete a velocidad orbital, jugador
     flotando, pasajero de pie, mandos, puertas, naves puestas y dueños (~30 s todas).
 
+- **Un solo sistema de proyectiles y sincronía exacta** (Fernando: «todo escalable, para no tener
+  que ir tocando en multijugador; la sincronización debería ser perfecta; si desde una nave abro la
+  bodega debería poder meter cohetazos a cualquier nave, con el arma que sea; el sistema de
+  proyectiles centralizado»). Detalle en [`MULTIJUGADOR.md`](MULTIJUGADOR.md) «En el juego»:
+  - todo lo que se dispara o estalla es un `Launch` y sale por `Blasts::launch` (mano, naves,
+    pruebas, guiones); un arma nueva es solo datos. Se acabaron los «gemelos» que cada partida
+    disparaba desde su copia de la nave ajena: las armas de una nave las dispara su dueño, y cada
+    lanzamiento y cada final se cuentan una vez (`Seen::Launch`/`End`/`Track`), en el marco de lo
+    que lo soltó o de lo que golpeó;
+  - lo ajeno no decide nada y estalla donde lo dice su partida; un guiado ajeno lo lleva el empuje
+    de su dueño;
+  - el daño, igual bit a bit en todas aunque la copia esté dormida, con lo articulado en otra
+    postura o con depósitos que revientan: el golpe viaja con la postura de lo golpeado; lo que
+    revienta lo dice el dueño; los trozos tienen nombre en la red y se comparten;
+  - las copias de las naves siguen también la aceleración del dueño (de 6–12 cm a 3–6 cm en
+    formación, sin quedarse atrás en los virajes);
+  - de paso: el fondo de la partida de pruebas no volaba los misiles; los mensajes vistos se
+    colocaban un fotograma tarde y antes de corregir las copias; lo que revienta usaba una semilla
+    distinta en cada partida.
+  - **Queda:** una bala rápida contra un blanco cercano puede detectarse un paso tarde o
+    atravesarlo (encontrado por la prueba de todas las armas, que recorre todo lo que hay en los
+    datos; en ello); dónde está cada trozo no se sincroniza.
+
 - **Teclas a gusto de cada uno** (Fernando: «las acciones con la F ok, pero mete cambiar
   controles… usar las flechas para algo de la nave… también tenemos numpad»):
   - las teclas son datos: `assets/defs/controles.jsonc` (las del juego y sus perfiles) y
