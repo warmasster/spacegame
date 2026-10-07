@@ -16,7 +16,7 @@ use lunar_core::view::View;
 
 /// How near and how far what is held is kept (m), and how much a wheel notch moves it.
 const NEAR: f64 = 0.9;
-const NOTCH: f64 = 0.15;
+pub const NOTCH: f64 = 0.15;
 /// Let go by itself when what is held is this far from where it should be (m): it is stuck.
 const LOST: f64 = 2.2;
 /// How hard its turning is damped (1/s).
@@ -54,6 +54,11 @@ impl Hands {
     /// The structure in the hands.
     pub fn holding(&self) -> Option<u64> {
         self.held.map(|g| g.id)
+    }
+
+    /// How far from the eye what is in the hands is held (m).
+    pub fn held_at(&self) -> Option<f64> {
+        self.held.map(|g| g.dist)
     }
 
     /// What is under the look within reach that hands might take: loose things, not ships, not

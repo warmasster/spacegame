@@ -61,6 +61,9 @@ const EYE_HALF_LIFE: f64 = 0.12;
 const EYE_SNAP: f64 = 4.0;
 /// How long before asking again for all of a structure that does not agree (steps).
 const RESYNC_EVERY: u64 = 120;
+/// A way to act along nearer the body's own look than this (the cosine of a tenth of a degree) is
+/// the look itself.
+const AIM_SAME: f64 = 0.999_998_5;
 
 /// Where a structure was at a step.
 #[derive(Clone, Copy, Debug, Default)]
@@ -145,6 +148,9 @@ pub struct Online {
     /// Pieces made here not named yet, and when.
     ours: Vec<(u64, u64)>,
     drive: Drive,
+    /// What was last said of the seat and the hands (what changed of them is said: `Act`).
+    seated: Option<(u64, usize)>,
+    holding: Option<(u64, f64)>,
     /// When each structure was last asked for again, and how many times in a row it did not
     /// agree (once is a word that overtook the one that made it).
     asked: Vec<(u64, u64, u8)>,
@@ -193,6 +199,8 @@ impl Online {
             tracks: Vec::new(),
             ours: Vec::new(),
             drive: Drive::default(),
+            seated: None,
+            holding: None,
             asked: Vec::new(),
             snap: Snap::default(),
             snap_new: false,
@@ -281,15 +289,22 @@ impl Online {
     }
 
     /// One step: what the player asks (`me.input`, the look, the suit's switches, `keys`), as it
-    /// travels, stepped and sent with what it made of the body.
+    /// travels, stepped and sent with what it made of the body. What the player did since the last
+    /// step that the server must check is said first, whoever did it here (a key, a click, a
+    /// script): sitting down and getting up, taking hold and letting go, what was let fly.
     pub fn step(&mut self, game: &mut Game, me: &mut Player) {
         let s = game.step;
+        self.said_since(game, me);
+        // (the way it acts along goes only if it is not the body's own look: from outside, the
+        // middle of the picture)
+        let own = me.pilot.view_aboard(&game.builds.set).unwrap_or_else(|| me.pilot.view()).forward;
+        let aim = me.aim.map(|v| v.forward).filter(|f| f.dot(own) < AIM_SAME).map(|f| f.as_vec3());
         let mut cmd = Cmd {
             step: s,
             input: me.input,
             yaw: me.pilot.yaw,
             pitch: me.pilot.pitch,
-            aim: me.aim.map(|v| v.forward.as_vec3()),
+            aim,
             pack: me.pilot.pack_on,
             steady: me.pilot.steady,
             lamps: me.pilot.lamps,
@@ -327,6 +342,43 @@ impl Online {
         let k = (-STEP * std::f64::consts::LN_2 / EYE_HALF_LIFE).exp();
         me.offset.0 *= k;
         me.offset.1 *= k as f32;
+    }
+
+    /// What changed since the last step that the server must be told: the seat, the hands, what
+    /// was let fly here (said as an act of this step: done there before it, as here).
+    fn said_since(&mut self, game: &mut Game, me: &Player) {
+        let s = game.step;
+        let seat = me.pilot.seat.map(|x| (x.structure, x.index));
+        if seat != self.seated {
+            if self.seated.is_some() && seat.is_none_or(|x| Some(x) != self.seated) {
+                self.act(s, &Act::Stand);
+            }
+            if let Some((ship, index)) = seat {
+                self.act(s, &Act::Sit { ship, seat: index as u16 });
+            }
+            self.seated = seat;
+        }
+        let held = me.hands.holding().zip(me.hands.held_at());
+        match (self.holding, held) {
+            (None, Some(_)) => self.act(s, &Act::Grab),
+            (Some(_), None) => self.act(s, &Act::Release),
+            (Some((a, d0)), Some((b, d1))) if a != b => {
+                self.act(s, &Act::Release);
+                self.act(s, &Act::Grab);
+                let _ = (d0, d1);
+            }
+            (Some((_, d0)), Some((_, d1))) if (d1 - d0).abs() > 1e-6 => self.act(s, &Act::Wheel(((d1 - d0) / crate::hands::NOTCH) as f32)),
+            _ => {}
+        }
+        self.holding = held;
+        // (what was let fly here: the server lets it fly; where it ends it says)
+        let mut seen = std::mem::take(&mut game.blasts.seen);
+        for x in seen.drain(..) {
+            if let Seen::Launch { launch, .. } = x {
+                self.act(s, &Act::Launch(launch));
+            }
+        }
+        game.blasts.seen = seen;
     }
 
     /// Something the player does that the server must check (sent; done here by whoever calls,

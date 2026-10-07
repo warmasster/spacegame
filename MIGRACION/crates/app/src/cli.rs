@@ -41,6 +41,9 @@ pub struct Options {
     /// The server to play with others through (`host:port`) and the name to go by there.
     pub server: Option<String>,
     pub name: Option<String>,
+    /// The server only passes on what each game says (`--relevo`, the old way): every game
+    /// simulates the world. Else the server has the game and ours predicts (`lunar_play::online`).
+    pub relay: bool,
     /// Pictures of the start-up screen at a few moments of it, into this folder, and out (no
     /// window is shown, nothing is loaded).
     pub splash_test: Option<PathBuf>,
@@ -75,6 +78,7 @@ pub const HELP: &str = "SELENE (migración Rust)
   --sin-menu                   sin menú de inicio: directo a jugar
   --servidor HOST:PUERTO       jugar con otros a través de ese servidor (edición multijugador; servidores/LunaServidor.exe)
   --nombre NOMBRE              cómo te llamas en el servidor
+  --relevo                     con un servidor que solo pasa lo que dice cada juego (LunaServidor --relevo)
   --prueba-carga CARPETA       fotos de la pantalla de carga en varios momentos, sin abrir ventana ni cargar nada
   --prueba-arranque            arranca como para jugar (carga en su hilo tras la pantalla de carga) sin enseñar ventana, hace unos fotogramas y sale
   --visible                    con --guion, --bench o --shot: enseña la ventana (por defecto corren sin ventana a la vista)
@@ -115,6 +119,7 @@ impl Options {
             no_menu: false,
             server: None,
             name: None,
+            relay: false,
             splash_test: None,
             boot_test: false,
             visible: false,
@@ -185,6 +190,7 @@ impl Options {
                     o.server = Some(value()?.clone());
                 }
                 "--nombre" => o.name = Some(value()?.clone()),
+                "--relevo" => o.relay = true,
                 "--visible" => o.visible = true,
                 "--prueba-carga" => o.splash_test = Some(PathBuf::from(value()?)),
                 "--prueba-arranque" => o.boot_test = true,

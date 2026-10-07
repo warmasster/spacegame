@@ -29,7 +29,6 @@ pub use lunar_play::{follow, told};
 use crate::{
     aboard::Aboard,
     blasts::Seen,
-    body::{Body, Stance},
     builds::{Builds, Strike},
     pilot::Pilot,
     rig::Rig,
@@ -54,17 +53,6 @@ pub struct BodySource {
     pub whole: Option<u16>,
 }
 
-/// Another player, as drawn here.
-struct Other {
-    id: u32,
-    body: Body,
-    stance: Stance,
-    /// Riding a ship: where they were in its frame last frame (their speed over its deck is
-    /// taken from how that changes: what is told of their speed is not fresh while they ride).
-    local: Option<Vec3>,
-    /// Told of this frame (the ones not told of are gone).
-    here: bool,
-}
 
 /// How far a ship we do not own may be from where its owner has it, at rest, before our copy
 /// is moved (m, and the cosine of half the angle): less than this is our own copy at rest
@@ -84,7 +72,7 @@ pub struct Multi {
     told: Vec<f64>,
     /// The ship our player floats by, if not aboard one.
     floating_by: Option<u64>,
-    others: Vec<Other>,
+    others: crate::others::Others,
     states: Vec<(u32, PlayerState)>,
     ship: RigidState,
     /// The ship whose controls we asked for (sat at them).
@@ -116,11 +104,6 @@ pub struct Multi {
     last: Option<f64>,
 }
 
-/// The way a body faces from its turn (rad from `north` toward the right) where `up` is up.
-fn facing(north: DVec3, up: DVec3, yaw: f64) -> DVec3 {
-    north * yaw.cos() + north.cross(up) * yaw.sin()
-}
-
 impl Multi {
     /// Asks the server at `addr` to let us in as `name` (it answers in a moment: `status`).
     pub fn connect(addr: &str, name: &str, ships: &Ships, builds: &Builds) -> Result<Multi, String> {
@@ -137,7 +120,7 @@ impl Multi {
             told: vec![f64::MIN; n],
             floating_by: None,
             ships: list,
-            others: Vec::new(),
+            others: Default::default(),
             states: Vec::new(),
             ship: RigidState::default(),
             flown: None,
@@ -568,71 +551,18 @@ impl Multi {
     }
 
     /// The others, as bodies: each made the first time it is told of, moved from what is told,
-    /// and drawn. `g`: how much things weigh where each is.
+    /// and drawn.
     pub fn bodies(&mut self, now: f64, dt: f64, source: &BodySource, set: &Structures, bodies: &BodyRegistry, ships: &Ships, out: &mut BodyScene) {
         self.states.clear();
         self.client.players(now, &mut self.states);
-        for o in &mut self.others {
-            o.here = false;
-        }
-        for (id, p) in &self.states {
-            let by = p.ride.and_then(|k| self.ships.get(k as usize).copied().flatten()).and_then(|id| set.get(id));
-            // (riding a ship, or floating by one: where it is in our copy of the ship)
-            let mut eye = by.map_or(p.pos, |s| s.to_world(p.local));
-            let ride = by.filter(|_| p.flags & flag::BESIDE == 0);
-            let body = bodies.get(usize::from(p.body).min(bodies.len().saturating_sub(1)) as lunar_core::body::BodyId);
-            let mut up = body.up(eye);
-            let mut ahead = facing(body.turn_from(up), up, f64::from(p.yaw));
-            // seated: the seat's eyes and the way it faces, up the ship's up
-            let seat = p.seat.and_then(|(k, i)| {
-                let structure = self.ships.get(k as usize).copied().flatten()?;
-                let (s, n) = (set.get(structure)?, ships.by_structure(structure)?);
-                let d = &ships.list[n].kind.seats.get(usize::from(i))?.def;
-                let h = d.rumbo.to_radians();
-                Some((s.to_world(Vec3::from_array(d.ojos)), (s.rot * Vec3::Y).as_dvec3(), (s.rot * Vec3::new(h.sin(), 0.0, h.cos())).as_dvec3()))
-            });
-            if let Some((at, u, a)) = seat {
-                (eye, up, ahead) = (at, u, a);
-            }
-            let known = self.others.iter().position(|o| o.id == *id);
-            // (over a ship's deck: how fast they go is how fast their place in it changes)
-            let vel = match (ride, known.and_then(|k| self.others[k].local)) {
-                (Some(s), Some(was)) if dt > 1e-6 => (s.rot * ((p.local - was) / dt as f32)).as_dvec3().clamp_length_max(12.0),
-                (Some(_), None) => DVec3::ZERO,
-                _ => p.vel.as_dvec3(),
-            };
-            let stance = Stance {
-                eye,
-                up,
-                ahead: (ahead - up * ahead.dot(up)).normalize_or(up.any_orthonormal_vector()),
-                eye_h: if seat.is_some() { 1.2 } else { f64::from(p.eye_h) },
-                vel,
-                grounded: p.flags & flag::GROUNDED != 0,
-                g: lunar_core::structure::weight::felt(bodies.field(eye).pull, eye, ride, true, ride.is_some_and(|s| s.in_rooms(s.to_local(eye)))).length(),
-                ride: ride.map(|s| s.id),
-                seated: seat.is_some(),
-                inside: false,
-                own_eyes: false,
-            };
-            let k = match known {
-                Some(k) => k,
-                None => {
-                    self.others.push(Other { id: *id, body: Body::new(source.rig.clone(), source.whole, source.whole), stance, local: None, here: true });
-                    self.others.len() - 1
-                }
-            };
-            let o = &mut self.others[k];
-            (o.stance, o.here, o.local) = (stance, true, ride.map(|_| p.local));
-            o.body.update(dt, &o.stance, set, bodies, [None, None]);
-            o.body.show(out, &o.stance);
-        }
-        self.others.retain(|o| o.here);
+        let net = &self.ships;
+        self.others.draw(&self.states, 0.0, dt, |k| net.get(k as usize).copied().flatten(), source, set, bodies, ships, out);
     }
 
     /// How many others are drawn.
     #[cfg(test)]
     pub fn others(&self) -> usize {
-        self.others.len()
+        self.others.list.len()
     }
 
     /// Whether the ship on `structure` is ours to simulate (and tell the rest of).
@@ -644,7 +574,7 @@ impl Multi {
     /// Where each of the others is (their eyes) and what they are called: for whoever writes
     /// their names.
     pub fn names(&self) -> impl Iterator<Item = (DVec3, &str)> {
-        self.others.iter().filter_map(|o| Some((o.stance.eye, self.client.name(o.id)?)))
+        self.others.list.iter().filter_map(|o| Some((o.stance.eye, self.client.name(o.id)?)))
     }
 }
 

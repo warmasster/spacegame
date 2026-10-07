@@ -2,6 +2,7 @@
 //! reorders datagrams on purpose (`lunar_net::MemoryNet`, the same every run): what one does,
 //! the others see, and see it right however fast it goes.
 use super::*;
+use crate::others::facing;
 use crate::{blasts::Blasts, content::Defs, pilot::Seat};
 use glam::Quat;
 use lunar_core::scene::Site;

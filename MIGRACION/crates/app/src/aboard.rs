@@ -52,10 +52,15 @@ struct Binding {
     key: KeyCode,
     control: usize,
     does: Does,
+    /// Which of the seat's keys it is (`seat_keys::keys`, the bit of `held_mask`).
+    slot: usize,
 }
 
 #[derive(Default)]
 pub struct Aboard {
+    /// The seat's keys work its controls step by step somewhere else (a game over a server:
+    /// `lunar_play::seats::Drive`, with `held_mask`): here they are only kept as held or not.
+    pub driven: bool,
     pub aim: Option<Aim>,
     held: Option<Held>,
     /// The seat's keys, and which are down.
@@ -346,13 +351,13 @@ impl Aboard {
             eprintln!("{b}");
         }
         let map = crate::input::keymap();
-        for k in keys {
+        for (slot, k) in keys.into_iter().enumerate() {
             if k.order {
                 if crate::input::ORDERS.iter().all(|o| o.0 != k.key) {
                     eprintln!("asiento {}: no hay orden de vuelo '{}'", d.id, k.key);
                 }
                 for &key in map.order_keys(&k.key) {
-                    self.bindings.push(Binding { key, control: k.control, does: k.does });
+                    self.bindings.push(Binding { key, control: k.control, does: k.does, slot });
                 }
                 continue;
             }
@@ -360,7 +365,7 @@ impl Aboard {
                 eprintln!("asiento {}: tecla '{}' desconocida", d.id, k.key);
                 continue;
             };
-            self.bindings.push(Binding { key, control: k.control, does: k.does });
+            self.bindings.push(Binding { key, control: k.control, does: k.does, slot });
         }
     }
 
@@ -369,7 +374,9 @@ impl Aboard {
         let mut places = Vec::new();
         if let Some(seat) = pilot.seat {
             self.down.clear();
-            self.send_axes(ships, set, seat.structure);
+            if !self.driven {
+                self.send_axes(ships, set, seat.structure);
+            }
             if let Some(n) = ships.by_structure(seat.structure) {
                 let ship = &ships.list[n];
                 places = exits(&ship.kind, seat.index);
@@ -386,6 +393,13 @@ impl Aboard {
         pilot.stand(set, &places);
     }
 
+    /// Which of the seat's keys are held (bit `k`: its `k`-th, as `seat_keys::keys` lists them):
+    /// what a game over a server says of each step (`net::Cmd::keys`) instead of working the
+    /// controls itself (`lunar_play::seats::Drive` does that, there and here alike).
+    pub fn held_mask(&self) -> u32 {
+        self.bindings.iter().filter(|b| self.down.contains(&b.key) && b.slot < lunar_play::seats::MOST_KEYS).fold(0, |m, b| m | 1 << b.slot)
+    }
+
     /// A key while seated: true when the seat took it.
     pub fn key(&mut self, key: KeyCode, pressed: bool, pilot: &Pilot, ships: &mut Ships, set: &Structures) -> bool {
         let Some(seat) = pilot.seat else { return false };
@@ -395,6 +409,9 @@ impl Aboard {
                 continue;
             }
             took = true;
+            if self.driven {
+                continue;
+            }
             match b.does {
                 Does::Zero if pressed => {
                     self.act(ships, set, seat.structure, b.control, &Intent::Set { value: 0.0 });
@@ -449,7 +466,7 @@ impl Aboard {
             let (s, k, secs) = (h.structure, h.k, h.secs);
             self.act(ships, set, s, k, &Intent::Hold { secs });
         }
-        if let Some(seat) = pilot.seat {
+        if let Some(seat) = pilot.seat.filter(|_| !self.driven) {
             self.send_axes(ships, set, seat.structure);
             for b in self.bindings.clone() {
                 let sign = match b.does {

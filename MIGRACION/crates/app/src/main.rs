@@ -25,6 +25,7 @@ mod input;
 mod inspector;
 mod multi;
 mod nav;
+mod others;
 mod perf;
 mod play;
 mod plumes;
