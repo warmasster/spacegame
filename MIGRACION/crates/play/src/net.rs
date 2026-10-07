@@ -31,6 +31,9 @@ pub const EVENTS: u8 = 4;
 /// What the server and the players' games say to each other, besides the network's own: said
 /// in the hello after the build (`V41+p2`). Another version of this is not let in.
 pub const PROTOCOL: &str = "p2";
+/// What a player's game says it is in its hello to a server that has the game (and the
+/// fingerprint of its data, `defs::fingerprint`, as the scenario): the server lets in only its own.
+pub const BUILD: &str = "V41+p2";
 
 /// The commands a `CMDS` message repeats (one lost datagram, or three, loses nothing).
 pub const REPEAT: usize = 4;

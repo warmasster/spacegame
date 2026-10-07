@@ -1,12 +1,15 @@
-//! The dedicated server: it takes players in and passes on what each says to the rest, unread
-//! (the game may say new things without this program changing). All the logic is
-//! `lunar_net::Server`; this is its socket, its clock, its settings and its console.
+//! The dedicated server. By default it has the game (`sim`): it simulates it, decides everything
+//! and tells each player's game what it needs (protocol 2, `docs/PLAN_AUTORITATIVO.md`); the
+//! network is `lunar_net::Server` on the main thread, the game is `lunar_play::host` on one of its
+//! own. With `--relevo` it only passes on what each game says to the rest, unread (the old way).
 //! - `config`: `servidor.jsonc` and the flags;
 //! - `console`: the orders typed while it runs;
-//! - `journal`: what it says, to the console and to `servidor.log`.
+//! - `journal`: what it says, to the console and to `servidor.log`;
+//! - `sim`: the game, on its thread.
 mod config;
 mod console;
 mod journal;
+mod sim;
 
 use config::Config;
 use console::Command;
@@ -20,8 +23,10 @@ use std::time::Duration;
 /// Seconds between two status lines (when there is anyone to count).
 const STATUS_EVERY: f64 = 30.0;
 /// With players, the loop sleeps this little between rounds, so an event waits at most this long
-/// to be passed on; the states go at the tick whatever this is.
+/// to be passed on; the states go at the tick whatever this is. With the game, less: what each
+/// step says goes out as soon as it is said.
 const BUSY_SLEEP: Duration = Duration::from_millis(5);
+const GAME_SLEEP: Duration = Duration::from_millis(1);
 
 /// The folder the program is in: its settings and its log live beside it.
 fn home() -> PathBuf {
@@ -65,7 +70,13 @@ fn describe(event: &ServerEvent) -> String {
 
 fn status(server: &Server, since: &ServerStats, seconds: f64) -> String {
     let s = server.stats();
-    format!("{}, {} · entra {} · sale {}", plural(server.player_count(), "jugador", "jugadores"), plural(server.thing_count(), "cosa en movimiento", "cosas en movimiento"), rate(s.bytes_in - since.bytes_in, seconds), rate(s.bytes_out - since.bytes_out, seconds))
+    format!(
+        "{}, {} · entra {} · sale {}",
+        plural(server.player_count(), "jugador", "jugadores"),
+        plural(server.thing_count(), "cosa en movimiento", "cosas en movimiento"),
+        rate(s.bytes_in - since.bytes_in, seconds),
+        rate(s.bytes_out - since.bytes_out, seconds)
+    )
 }
 
 fn main() -> ExitCode {
@@ -82,6 +93,34 @@ fn main() -> ExitCode {
         }
     };
     let mut journal = Journal::open(&dir);
+    // the game first (its data read, its scenario set): it takes a moment
+    let mut game = None;
+    let mut fixed = None;
+    if config.simula {
+        let data = match sim::find_data(&dir, config.datos.as_deref()) {
+            Ok(d) => d,
+            Err(e) => {
+                journal.say(&format!("No se puede simular la partida: {e}. (Para solo pasar lo que dice cada juego: --relevo.)"));
+                return ExitCode::FAILURE;
+            }
+        };
+        journal.say(&format!("Cargando la partida de {}…", data.display()));
+        let defs = match lunar_play::defs::Defs::load(&data.join("defs")) {
+            Ok(d) => d,
+            Err(e) => {
+                journal.say(&format!("Los datos del juego tienen un problema: {}: {}", e.file, e.message));
+                return ExitCode::FAILURE;
+            }
+        };
+        fixed = Some((lunar_play::net::BUILD.to_string(), defs.fingerprint));
+        match sim::start(defs, &data, config.trucos) {
+            Ok(s) => game = Some(s),
+            Err(e) => {
+                journal.say(&format!("No se puede montar la partida: {e}"));
+                return ExitCode::FAILURE;
+            }
+        }
+    }
     let mut socket = match Udp::bind(&format!("0.0.0.0:{}", config.puerto)) {
         Ok(s) => s,
         Err(e) => {
@@ -89,8 +128,16 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let mut server = Server::new(ServerConfig { name: config.nombre.clone(), max_players: config.max_jugadores, tick_hz: config.tasa, timeout: config.espera, ..ServerConfig::default() });
-    journal.say(&format!("Servidor «{}» en marcha en el puerto {} (UDP): hasta {}, {} envíos por segundo.", config.nombre, config.puerto, plural(config.max_jugadores, "jugador", "jugadores"), config.tasa));
+    let mut server = Server::new(ServerConfig { name: config.nombre.clone(), max_players: config.max_jugadores, tick_hz: config.tasa, timeout: config.espera, game: fixed.clone(), ..ServerConfig::default() });
+    match &fixed {
+        Some((build, data)) => journal.say(&format!(
+            "Servidor «{}» en marcha en el puerto {} (UDP): hasta {}; la partida la simula él, 60 pasos por segundo (juego {build}, datos {data:08x}).",
+            config.nombre,
+            config.puerto,
+            plural(config.max_jugadores, "jugador", "jugadores")
+        )),
+        None => journal.say(&format!("Servidor «{}» en marcha en el puerto {} (UDP): hasta {}, {} envíos por segundo; solo pasa lo que dice cada juego.", config.nombre, config.puerto, plural(config.max_jugadores, "jugador", "jugadores"), config.tasa)),
+    }
     match lan_address() {
         Some(ip) => journal.say(&format!("En esta red se entra con: --servidor {ip}:{}   (en esta misma máquina: --servidor 127.0.0.1:{})", config.puerto, config.puerto)),
         None => journal.say(&format!("En esta misma máquina se entra con: --servidor 127.0.0.1:{}", config.puerto)),
@@ -101,11 +148,59 @@ fn main() -> ExitCode {
     let orders = console::listen();
     let idle_sleep = Duration::from_secs_f64(1.0 / config.tasa as f64);
     let (mut counted_at, mut counted) = (now(), server.stats());
+    // what goes to a player through a channel not through yet (in order, before anything new)
+    let mut waiting: Vec<(u32, Vec<u8>)> = Vec::new();
     loop {
         let t = now();
         server.update(t, &mut socket);
         for e in server.events() {
             journal.say(&describe(&e));
+            if let Some(g) = &game {
+                match e {
+                    ServerEvent::Joined { id, .. } => {
+                        let _ = g.to.send(sim::In::Join(id));
+                    }
+                    ServerEvent::Left { id, .. } => {
+                        let _ = g.to.send(sim::In::Leave(id));
+                        waiting.retain(|w| w.0 != id);
+                    }
+                    _ => {}
+                }
+            }
+        }
+        if let Some(g) = &game {
+            for m in server.take_game() {
+                let _ = g.to.send(sim::In::Game(m.from, m.data));
+            }
+            // what was said before goes first
+            let mut k = 0;
+            while k < waiting.len() {
+                let id = waiting[k].0;
+                if waiting[..k].iter().all(|w| w.0 != id) && server.send_game(id, true, &waiting[k].1) {
+                    let (_, b) = waiting.remove(k);
+                    let _ = g.spare.send(b);
+                } else {
+                    k += 1;
+                }
+            }
+            while let Ok(out) = g.from.try_recv() {
+                match out {
+                    sim::Out::Send(to, true, b) => {
+                        if waiting.iter().any(|w| w.0 == to) || !server.send_game(to, true, &b) {
+                            waiting.push((to, b));
+                        } else {
+                            let _ = g.spare.send(b);
+                        }
+                    }
+                    sim::Out::Send(to, false, b) => {
+                        server.send_game(to, false, &b);
+                        let _ = g.spare.send(b);
+                    }
+                    sim::Out::Note(n) => journal.say(&n),
+                }
+            }
+            // (sent now, not at the next round)
+            server.update(now(), &mut socket);
         }
         while let Ok(line) = orders.try_recv() {
             match console::parse(&line) {
@@ -125,6 +220,9 @@ fn main() -> ExitCode {
                     journal.say(&format!("<servidor> {text}"));
                 }
                 Command::Quit => {
+                    if let Some(g) = &mut game {
+                        g.stop();
+                    }
                     server.close(&mut socket);
                     server.events().for_each(|e| journal.say(&describe(&e)));
                     journal.say("Servidor parado.");
@@ -142,7 +240,13 @@ fn main() -> ExitCode {
             (counted_at, counted) = (t, server.stats());
         }
         // Never spinning: with nobody connected a hello can wait a tick; with players, a few milliseconds.
-        std::thread::sleep(if server.player_count() == 0 { idle_sleep } else { BUSY_SLEEP });
+        std::thread::sleep(if server.player_count() == 0 {
+            idle_sleep
+        } else if game.is_some() {
+            GAME_SLEEP
+        } else {
+            BUSY_SLEEP
+        });
     }
 }
 

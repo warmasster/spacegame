@@ -18,4 +18,11 @@
 
   // Segundos sin noticias de un jugador para darlo por caído (de 2 a 300).
   "espera": 10,
+
+  // El servidor tiene la partida: la simula él y decide todo (cada juego predice lo suyo y él lo
+  // corrige). Con false solo pasa lo que dice cada juego (la forma antigua). También: --relevo
+  "simula": true,
+
+  // Dejar volar libre y poner naves donde se quiera (para pruebas). También: --trucos
+  "trucos": false,
 }

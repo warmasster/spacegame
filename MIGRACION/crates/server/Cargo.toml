@@ -7,8 +7,12 @@ publish.workspace = true
 
 [dependencies]
 lunar-net = { path = "../net" }
+lunar-play = { path = "../play" }
 serde.workspace = true
 serde_json.workspace = true
+
+[dev-dependencies]
+lunar-play = { path = "../play" }
 
 [lints]
 workspace = true

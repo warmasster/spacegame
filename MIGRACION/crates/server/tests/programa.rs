@@ -33,8 +33,11 @@ impl Program {
         writeln!(self.stdin, "{line}").expect("it listens");
     }
     /// Waits (up to 5 s) for a line that contains `what`; `each` runs meanwhile (to keep clients alive).
-    fn expect(&mut self, what: &str, mut each: impl FnMut()) -> String {
-        let until = Instant::now() + Duration::from_secs(5);
+    fn expect(&mut self, what: &str, each: impl FnMut()) -> String {
+        self.expect_within(what, 5.0, each)
+    }
+    fn expect_within(&mut self, what: &str, seconds: f64, mut each: impl FnMut()) -> String {
+        let until = Instant::now() + Duration::from_secs_f64(seconds);
         let mut from = 0;
         loop {
             while let Ok(line) = self.lines.try_recv() {
@@ -71,8 +74,8 @@ fn free_port() -> u16 {
 fn the_program_takes_players_in_obeys_its_console_and_stops() {
     let port = free_port();
     let addr = format!("127.0.0.1:{port}");
-    let mut program = Program::start(&["--puerto", &port.to_string(), "--nombre", "La Base"]);
-    assert_eq!(program.expect("en marcha", || {}), format!("Servidor «La Base» en marcha en el puerto {port} (UDP): hasta 16 jugadores, 20 envíos por segundo."));
+    let mut program = Program::start(&["--puerto", &port.to_string(), "--nombre", "La Base", "--relevo"]);
+    assert_eq!(program.expect("en marcha", || {}), format!("Servidor «La Base» en marcha en el puerto {port} (UDP): hasta 16 jugadores, 20 envíos por segundo; solo pasa lo que dice cada juego."));
     assert!(program.expect("--servidor", || {}).contains(&format!("--servidor 127.0.0.1:{port}")));
     assert_eq!(program.expect("Órdenes", || {}), "Órdenes: jugadores · expulsar <id> [motivo] · decir <texto> · salir. Para pararlo: «salir» (o cerrar esta ventana).");
     program.order("jugadores");
@@ -155,15 +158,56 @@ fn the_program_takes_players_in_obeys_its_console_and_stops() {
 fn a_port_already_taken_is_said_and_help_is_given() {
     let taken = std::net::UdpSocket::bind("0.0.0.0:0").expect("a socket");
     let port = taken.local_addr().expect("an address").port();
-    let mut program = Program::start(&["--puerto", &port.to_string()]);
+    let mut program = Program::start(&["--puerto", &port.to_string(), "--relevo"]);
     let line = program.expect("No se puede abrir el puerto", || {});
     assert!(line.starts_with(&format!("No se puede abrir el puerto {port} (UDP): ")) && line.ends_with("¿Hay ya otro servidor en marcha en este puerto?"), "{line}");
     assert!(!program.child.wait().expect("it ends").success());
 
     let out = Command::new(env!("CARGO_BIN_EXE_luna-servidor")).arg("--ayuda").output().expect("the program runs");
     assert!(out.status.success());
-    assert!(String::from_utf8_lossy(&out.stdout).starts_with("Uso: SeleneServidor [--puerto N] [--nombre TEXTO]"));
+    assert!(String::from_utf8_lossy(&out.stdout).starts_with("Uso: SeleneServidor [--puerto N] [--nombre TEXTO] [--datos CARPETA] [--relevo] [--trucos]"));
     let out = Command::new(env!("CARGO_BIN_EXE_luna-servidor")).args(["--puerto", "cero"]).output().expect("the program runs");
     assert!(!out.status.success());
     assert!(String::from_utf8_lossy(&out.stderr).starts_with("--puerto: «cero» no es un puerto (un número entre 1 y 65535)"));
+}
+
+#[test]
+fn the_program_has_the_game_and_a_player_walks_in_it() {
+    // started as it is by default: it loads the game and simulates it; a player's game comes in over
+    // UDP, is told where the game is, walks, and is never put right; one of another build is not
+    // let in, and says why
+    use lunar_play::{defs::Defs, game::Game, game::Player, online::Online};
+    let port = free_port();
+    let addr = format!("127.0.0.1:{port}");
+    let mut program = Program::start(&["--puerto", &port.to_string(), "--datos", lunar_play::root().join("assets").to_str().expect("a path")]);
+    // (the game's data is read first: a moment)
+    let line = program.expect_within("en marcha", 120.0, || {});
+    assert!(line.contains("la partida la simula él, 60 pasos por segundo"), "{line}");
+    let defs = Defs::load(&lunar_play::root().join("assets/defs")).unwrap_or_else(|e| panic!("{}: {}", e.file, e.message));
+    let mut game = Game::new(&defs, &lunar_play::root().join("assets/defs"), 500, |_| true).expect("the game");
+    let mut me = Player::new(game.bodies.clone(), &game.site, defs.scenario.player);
+    let client = Client::connect(&addr, "Ana", lunar_play::net::BUILD, defs.fingerprint).expect("a client");
+    let mut online = Online::new(client, defs.scenario.player);
+    let (mut last, mut walked) = (now(), 0.0);
+    let start = Instant::now();
+    while walked < 4.0 {
+        assert!(start.elapsed() < Duration::from_secs(20), "it never let us play: {:?}", online.status());
+        let t = now();
+        online.receive(t, &mut game, &mut me);
+        for _ in 0..online.steps(t - last) {
+            me.input = lunar_play::pilot::Input { forward: 1.0, ..Default::default() };
+            online.step(&mut game, &mut me);
+            walked += lunar_play::game::STEP;
+        }
+        last = t;
+        std::thread::sleep(Duration::from_millis(4));
+    }
+    program.expect("Entra Ana", || {});
+    assert_eq!(online.stats.corrections, 0, "{:?}", online.stats);
+    let mut old = Client::connect(&addr, "Marta", "V39", 3).expect("a client");
+    let refused = program.expect("No se deja entrar a Marta", || old.update(now()));
+    assert!(refused.contains("V41+p2") && refused.contains("V39"), "{refused}");
+    program.order("salir");
+    program.expect("Servidor parado.", || online.receive(now(), &mut game, &mut me));
+    assert!(program.child.wait().expect("it ends").success());
 }

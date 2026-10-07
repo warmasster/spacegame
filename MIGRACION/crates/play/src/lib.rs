@@ -4,6 +4,7 @@
 //! whoever plays hands it what each player asks for, and reads back what happened.
 pub mod air;
 pub mod blasts;
+pub mod bots;
 pub mod builds;
 pub mod controls;
 pub mod defs;

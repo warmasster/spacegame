@@ -17,15 +17,22 @@ pub struct Config {
     pub tasa: u8,
     /// Seconds without hearing a client after which it is dropped.
     pub espera: f64,
+    /// The server has the game (simulates it and has the say: protocol 2); else it only passes on
+    /// what each player's game says (the old way).
+    pub simula: bool,
+    /// Where the game's data is (the folder with `defs` in it); none: looked for beside the program.
+    pub datos: Option<String>,
+    /// Free flight and ships put anywhere let be (tests).
+    pub trucos: bool,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Config { puerto: lunar_net::DEFAULT_PORT, nombre: "Servidor de Selene".to_string(), max_jugadores: 16, tasa: 20, espera: 10.0 }
+        Config { puerto: lunar_net::DEFAULT_PORT, nombre: "Servidor de Selene".to_string(), max_jugadores: 16, tasa: 20, espera: 10.0, simula: true, datos: None, trucos: false }
     }
 }
 
-pub const USAGE: &str = "Uso: SeleneServidor [--puerto N] [--nombre TEXTO]\n  --puerto N      puerto UDP en el que escuchar (por defecto 47600)\n  --nombre TEXTO  nombre del servidor\nEl resto de ajustes están en servidor.jsonc, junto al programa.";
+pub const USAGE: &str = "Uso: SeleneServidor [--puerto N] [--nombre TEXTO] [--datos CARPETA] [--relevo] [--trucos]\n  --puerto N        puerto UDP en el que escuchar (por defecto 47600)\n  --nombre TEXTO    nombre del servidor\n  --datos CARPETA   dónde están los datos del juego (la carpeta assets, con defs dentro)\n  --relevo          no simular: solo pasar lo que dice cada juego (la forma antigua)\n  --trucos          dejar volar libre y poner naves (pruebas)\nEl resto de ajustes están en servidor.jsonc, junto al programa.";
 
 /// What the settings could not be read for: said to the person as it is.
 pub type Problem = String;
@@ -117,6 +124,9 @@ impl Config {
                 "max_jugadores" => self.max_jugadores = whole(v, key, 1, 64)? as usize,
                 "tasa" => self.tasa = whole(v, key, 5, 60)? as u8,
                 "espera" => self.espera = v.as_f64().filter(|s| (2.0..=300.0).contains(s)).ok_or_else(|| format!("«espera» tiene que ser un número de segundos entre 2 y 300 (pone {v})"))?,
+                "simula" => self.simula = v.as_bool().ok_or_else(|| format!("«simula» tiene que ser true o false (pone {v})"))?,
+                "trucos" => self.trucos = v.as_bool().ok_or_else(|| format!("«trucos» tiene que ser true o false (pone {v})"))?,
+                "datos" => self.datos = Some(v.as_str().map(str::to_string).ok_or_else(|| format!("«datos» tiene que ser una carpeta entre comillas (pone {v})"))?),
                 other => notes.push(format!("{FILE}: no conozco el ajuste «{other}»; lo ignoro.")),
             }
         }
@@ -133,6 +143,9 @@ impl Config {
                     self.puerto = v.parse::<u16>().ok().filter(|p| *p != 0).ok_or_else(|| format!("--puerto: «{v}» no es un puerto (un número entre 1 y 65535)"))?;
                 }
                 "--nombre" => self.nombre = args.next().ok_or("falta el texto después de --nombre")?,
+                "--datos" => self.datos = Some(args.next().ok_or("falta la carpeta después de --datos")?),
+                "--relevo" => self.simula = false,
+                "--trucos" => self.trucos = true,
                 "--ayuda" | "-h" | "--help" | "/?" => return Ok(false),
                 other => return Err(format!("no conozco la opción «{other}»")),
             }
@@ -183,7 +196,7 @@ mod tests {
         let mut d = Config::default();
         assert!(d.apply_file("{}").expect("an empty file").is_empty());
         assert_eq!(d, Config::default());
-        assert_eq!((d.puerto, d.max_jugadores, d.tasa, d.espera), (47600, 16, 20, 10.0));
+        assert_eq!((d.puerto, d.max_jugadores, d.tasa, d.espera, d.simula, d.trucos), (47600, 16, 20, 10.0, true, false));
     }
 
     #[test]
@@ -205,6 +218,8 @@ mod tests {
         let mut c = Config::default();
         assert_eq!(c.apply_flags(args(&["--puerto", "5002", "--nombre", "La Base"])), Ok(true));
         assert_eq!((c.puerto, c.nombre.as_str()), (5002, "La Base"));
+        assert_eq!(c.apply_flags(args(&["--relevo", "--trucos", "--datos", "C:/juego/assets"])), Ok(true));
+        assert_eq!((c.simula, c.trucos, c.datos.as_deref()), (false, true, Some("C:/juego/assets")));
         assert_eq!(c.apply_flags(args(&["--ayuda"])), Ok(false));
         assert_eq!(c.apply_flags(args(&["--puerto"])), Err("falta el número después de --puerto".to_string()));
         assert_eq!(c.apply_flags(args(&["--puerto", "cero"])), Err("--puerto: «cero» no es un puerto (un número entre 1 y 65535)".to_string()));
