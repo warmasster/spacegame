@@ -1,6 +1,8 @@
 // Bodies: meshes that bend with a skeleton posed on the CPU every frame (the player's own body,
 // whoever is near enough to be worth it). Each vertex follows up to four bones of its body's
-// palette; the body comes camera-relative from the CPU like a prop. Needs common.wgsl.
+// palette; the body comes camera-relative from the CPU like a prop. A bone's part of it may be
+// faded (one's own arm in front of what one aims at): drawn as a screen of dots, what is behind
+// shows through. Needs common.wgsl.
 
 struct Body {
     pos: vec4<f32>,      // camera-relative origin; w: scale
@@ -17,6 +19,8 @@ struct Bone {
 
 @group(1) @binding(0) var<storage, read> bodies: array<Body>;
 @group(1) @binding(1) var<storage, read> bones: array<Bone>;
+// how faded each bone's part is (0 solid .. 1 gone)
+@group(1) @binding(2) var<storage, read> fades: array<f32>;
 
 struct BIn {
     @location(0) pos: vec3<f32>,
@@ -35,6 +39,7 @@ struct BOut {
     @location(2) color: vec3<f32>,
     @location(3) own: vec3<f32>,
     @location(4) @interpolate(flat) inside: f32,
+    @location(5) fade: f32,
 };
 
 fn bone_point(b: Bone, p: vec3<f32>) -> vec3<f32> {
@@ -63,10 +68,12 @@ fn body_vs(v: BIn, @builtin(instance_index) ii: u32) -> BOut {
     let b = bodies[ii];
     let first = u32(b.params.y);
     var n = vec3<f32>(0.0);
+    var fade = 0.0;
     for (var k = 0; k < 4; k++) {
         let w = v.weights[k];
         if w > 0.0 {
             n += w * bone_dir(bones[first + v.joints[k]], v.nrm);
+            fade += w * fades[first + v.joints[k]];
         }
     }
     let rel = b.pos.xyz + quat_rotate(b.rot, skinned(v, first) * b.pos.w);
@@ -77,6 +84,7 @@ fn body_vs(v: BIn, @builtin(instance_index) ii: u32) -> BOut {
     o.color = srgb_to_linear(v.color.rgb);
     o.own = v.own.xyz;
     o.inside = b.params.x;
+    o.fade = fade;
     return o;
 }
 
@@ -86,8 +94,19 @@ fn body_depth_vs(v: BIn, @builtin(instance_index) ii: u32) -> @builtin(position)
     return pass_u.view_proj * vec4<f32>(b.pos.xyz + quat_rotate(b.rot, skinned(v, u32(b.params.y)) * b.pos.w), 1.0);
 }
 
+// a 4x4 ordered screen: each pixel's threshold (0..1), so that a faded part keeps as many dots
+// as it is solid, spread evenly
+fn screen(p: vec2<f32>) -> f32 {
+    let i = vec2<u32>(p) % vec2<u32>(4u);
+    var m = array<u32, 16>(0u, 8u, 2u, 10u, 12u, 4u, 14u, 6u, 3u, 11u, 1u, 9u, 15u, 7u, 13u, 5u);
+    return (f32(m[i.y * 4u + i.x]) + 0.5) / 16.0;
+}
+
 @fragment
 fn body_fs(in: BOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    if in.fade > 0.003 && screen(in.clip.xy) < in.fade {
+        discard;
+    }
     var n = normalize(in.nrm);
     if !front {
         n = -n;

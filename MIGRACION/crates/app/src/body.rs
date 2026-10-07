@@ -126,8 +126,22 @@ pub struct Body {
     /// Each wrist as it was last posed, and how far round each elbow has gone to ease it (rad).
     pub wrists: [WristPose; 2],
     swivel: [Spring; 2],
+    /// How faded each arm is (0..1): one's own arm between the eyes and what they aim at is
+    /// seen through (`look_along`); and the bones of each arm, shoulder to fingertips.
+    fade: [f32; 2],
+    arm_bones: [Vec<usize>; 2],
     clock: f64,
 }
+
+/// An arm is faded when the line of the eyes passes this near it (as far as its thickness out
+/// from its line: 1; a little more, for its cuffs and folds and a crosshair on its edge)
+/// within this far of the eyes (m); it fades in and back in these times (s), and so far (1:
+/// not drawn at all).
+const SEE_THROUGH_NEAR: f32 = 1.25;
+const SEE_THROUGH_REACH: f32 = 1.5;
+const SEE_THROUGH_IN: f32 = 0.08;
+const SEE_THROUGH_OUT: f32 = 0.25;
+const SEE_THROUGH_MOST: f32 = 0.75;
 
 /// A foot's toes go down as it leaves the ground and up before it comes down (rad).
 const TOE_OFF: f32 = 0.5;
@@ -174,6 +188,7 @@ impl Body {
         });
         let pose = Pose::rest(sk);
         let stand_eye = rig.def.ojos[1] * rig.def.escala;
+        let arm_bones = std::array::from_fn(|i| (0..sk.len()).filter(|&b| sk.under(b, rig.arms[i].upper)).collect());
         Body {
             seen,
             whole,
@@ -194,6 +209,8 @@ impl Body {
             short: [Vec3::ZERO; 2],
             wrists: Default::default(),
             swivel: Default::default(),
+            fade: [0.0; 2],
+            arm_bones,
             clock: 0.0,
             rig,
         }
@@ -467,11 +484,51 @@ impl Body {
         }
     }
 
+    /// Its own arms against the line of its eyes `look` (world, unit; none: it looks through
+    /// no eyes of its own), as posed by the last `update`: an arm in the way of what is aimed at
+    /// fades (a hand on a control does not hide the one beside it), and comes back when it is
+    /// not. Each arm is told by its bones' thickness as measured from its mesh (`bulk`).
+    pub fn look_along(&mut self, s: &Stance, look: Option<DVec3>, dt: f64) {
+        let (origin, rot) = self.frame(s);
+        let scale = self.rig.def.escala;
+        let inv = rot.inverse();
+        // the line of the eyes, in the model's axes and units
+        let line = look.map(|d| (inv * ((s.eye - origin).as_vec3() / scale), (inv * d.as_vec3()).normalize_or_zero()));
+        let reach = SEE_THROUGH_REACH / scale;
+        for i in 0..2 {
+            let hit = line.is_some_and(|(o, d)| {
+                self.rig.bulk.arms[i].iter().any(|p| {
+                    // the piece where its bone has it now
+                    let x = self.pose.model[p.bone].then(self.rig.skeleton.bind[p.bone].inverse());
+                    let (t, near) = crate::bulk::ray_to_segment(o, d, x.point(p.a), x.point(p.b));
+                    t > 0.0 && t < reach && near < p.r * SEE_THROUGH_NEAR
+                })
+            });
+            let (to, time) = if hit { (1.0, SEE_THROUGH_IN) } else { (0.0, SEE_THROUGH_OUT) };
+            self.fade[i] += (to - self.fade[i]) * (1.0 - (-dt as f32 / time).exp());
+        }
+    }
+
+    /// How faded each arm is now (0 solid .. 1).
+    #[cfg(test)]
+    pub fn fades(&self) -> [f32; 2] {
+        self.fade
+    }
+
     /// The body into `out`, as posed by the last `update`.
     pub fn show(&self, out: &mut BodyScene, s: &Stance) {
         let (origin, rot) = self.frame(s);
         let first = out.bones.len() as u32;
         self.pose.palette(&self.rig.skeleton, &mut out.bones);
+        // (only to its own eyes: from outside its arms are whole)
+        if s.own_eyes && self.fade.iter().any(|&f| f > 1e-3) {
+            out.fades.resize(out.bones.len(), 0.0);
+            for i in 0..2 {
+                for &b in &self.arm_bones[i] {
+                    out.fades[first as usize + b] = self.fade[i] * SEE_THROUGH_MOST;
+                }
+            }
+        }
         out.bodies.push(BodyDraw { mesh: if s.own_eyes { self.seen } else { self.whole }, shadow: self.whole, pos: origin, rot, scale: self.rig.def.escala, inside: s.inside, first });
     }
 }
@@ -529,23 +586,21 @@ pub fn wrist_held(range: &WristRange, own: f32, flex: f32, lean: f32, turn: f32)
     (flex / k, lean / k, palm_back * own, held)
 }
 
-/// How far past what a wrist does a turn is (rad, squared and added: 0 within it).
-fn strain(range: &WristRange, own: f32, ax: &WristAxes, d: Quat) -> f32 {
-    let (flex, lean, turn) = wrist_angles(ax, d);
-    let (f, l, t, _) = wrist_held(range, own, flex, lean, turn);
-    (flex - f).powi(2) + (lean - l).powi(2) + (turn - t).powi(2)
-}
-
 /// The elbow goes no further round than this to ease a wrist (rad), tried every so far (rad);
 /// going round costs this much (per rad², against the wrist's strain in rad²).
-const SWIVEL_MOST: f32 = 1.3;
+const SWIVEL_MOST: f32 = 1.8;
 const SWIVEL_STEP: f32 = 0.2;
 const SWIVEL_COST: f32 = 0.1;
+/// An upper arm going into the trunk costs this much (per model unit², against the wrist's
+/// strain in rad²), told by its line as thick as it is (`bulk`). (A forearm by the chest is
+/// left to rub on it: a hand on the wrist computer, two palms clapping, are close in front.)
+const TRUNK_COST: f32 = 1000.0;
 
 /// Arm `i` of a body about to be asked to put its hand's bone at `at` turned `turn` (model
 /// space), its elbow toward `pole`: what to ask of it instead so that its wrist does only what
-/// a wrist does. With a `free` elbow, the elbow goes round the line from shoulder to hand to
-/// where the wrist is strained least (never across the chest nor up over the shoulder for it);
+/// a wrist does and its upper arm goes round the trunk, not through it. With a `free` elbow,
+/// the elbow goes round the line from shoulder to hand to where the wrist is strained least
+/// and the arm clear of the trunk (never across the chest nor up over the shoulder for it);
 /// then, if the hand is still turned past what its wrist does, it is turned back to that, its
 /// palm staying where it was asked. The arm must be posed as it will be solved from.
 #[allow(clippy::too_many_arguments)]
@@ -557,12 +612,12 @@ fn ease(rig: &Rig, pose: &Pose, i: usize, at: Vec3, turn: Quat, pole: Vec3, free
     let plane = (b - a).cross(c - b);
     let fore_now = pose.model[arm.lower].rot * sk.bind[arm.lower].rot.inverse();
     // the hand's turn from rest, and where its palm is asked
-    let mut hand = (turn * sk.bind[arm.end].rot.inverse()).normalize();
+    let hand = (turn * sk.bind[arm.end].rot.inverse()).normalize();
     let grip = rig.palms[i].at - sk.bind[arm.end].pos;
     let palm = at + hand * grip;
-    // the forearm's turn from rest with the wrist at `w` and the elbow toward `pole`: what the
-    // solver will make of it (`anim::ik`)
-    let fore = |w: Vec3, pole: Vec3| -> Option<Quat> {
+    // the elbow and the wrist with the wrist asked at `w` and the elbow toward `pole`, and the
+    // plane the arm bends in: what the solver will make of it (`anim::ik`)
+    let bend = |w: Vec3, pole: Vec3| -> Option<(Vec3, Vec3, Vec3)> {
         let to = w - a;
         let far = to.length();
         if far < 1e-5 {
@@ -573,13 +628,51 @@ fn ease(rig: &Rig, pose: &Pose, i: usize, at: Vec3, turn: Quat, pole: Vec3, free
         let side = (pole - dir * pole.dot(dir)).normalize_or(dir.any_orthonormal_vector());
         let along = (l1 * l1 + d * d - l2 * l2) / (2.0 * d);
         let mid = a + dir * along + side * (l1 * l1 - along * along).max(0.0).sqrt();
-        let normal = side.cross(dir);
-        let was = if plane.length_squared() > 1e-10 { plane } else { normal };
-        Some((frame_turn(c - b, was, a + dir * d - mid, normal) * fore_now).normalize())
+        Some((mid, a + dir * d, side.cross(dir)))
     };
-    let mut at = at;
+    // the forearm's turn from rest so
+    let fore = |w: Vec3, pole: Vec3| -> Option<Quat> {
+        let (mid, wrist, normal) = bend(w, pole)?;
+        let was = if plane.length_squared() > 1e-10 { plane } else { normal };
+        Some((frame_turn(c - b, was, wrist - mid, normal) * fore_now).normalize())
+    };
+    // with the elbow toward `pole`: how far past what it does the wrist is asked (rad²), and
+    // what is left when the hand gives what is past it, turned back about its palm (where its
+    // bone goes, its turn, the wrist as it is)
+    let settle = |pole: Vec3| -> (f32, Vec3, Quat, WristPose) {
+        let (mut at, mut hand) = (at, hand);
+        let mut out = WristPose { reach: (at - a).length() / (l1 + l2).max(1e-3), ..WristPose::default() };
+        let mut past = 0.0;
+        for k in 0..3 {
+            let Some(f) = fore(at, pole) else { break };
+            let (flex, lean, turned) = wrist_angles(ax, f.inverse() * hand);
+            let (f2, l2, t2, held) = wrist_held(range, own, flex, lean, turned);
+            if k == 0 {
+                past = (flex - f2).powi(2) + (lean - l2).powi(2) + (turned - t2).powi(2);
+            }
+            (out.flex, out.lean, out.turn) = (f2.to_degrees(), l2.to_degrees(), (t2 * own).to_degrees());
+            if !held {
+                break;
+            }
+            out.held = true;
+            hand = (f * wrist_turn(ax, f2, l2, t2)).normalize();
+            at = palm - hand * grip;
+        }
+        (past, at, hand, out)
+    };
+    // how far its upper arm so goes into the trunk (`bulk`: a few points along its line, told
+    // in the chest's frame at rest against the trunk grown by the arm's thickness; squared and
+    // added)
+    let bulk = &rig.bulk;
+    let trunk = &bulk.trunks[i];
+    let to_rest = bulk.chest.filter(|_| !trunk.is_empty()).map(|k| sk.bind[k].then(pose.model[k].inverse()));
+    let into = |w: Vec3, pole: Vec3| -> f32 {
+        let (Some(x), Some((mid, ..))) = (to_rest, bend(w, pole)) else { return 0.0 };
+        [0.5, 0.75, 1.0].iter().map(|&k| trunk.depth(x.point(a.lerp(mid, k))).powi(2)).sum()
+    };
     let mut pole = pole;
-    // the elbow round the line from shoulder to hand, to where the wrist is strained least
+    // the elbow round the line from shoulder to hand, to where the wrist is strained least and
+    // the arm is clear of the trunk (with its hand as it will be when it has given)
     let dir = (at - a).normalize_or_zero();
     let mut round = 0.0;
     if free && dir != Vec3::ZERO {
@@ -587,12 +680,12 @@ fn ease(rig: &Rig, pose: &Pose, i: usize, at: Vec3, turn: Quat, pole: Vec3, free
         let cost = |by: f32| -> f32 {
             let p = Quat::from_axis_angle(dir, by) * pole;
             let side = (p - dir * p.dot(dir)).normalize_or_zero();
-            let wrist = fore(at, p).map_or(0.0, |f| strain(range, own, ax, f.inverse() * hand));
-            wrist + SWIVEL_COST * by * by + 2.0 * (side.dot(inward) - 0.25).max(0.0).powi(2) + (side.y - 0.45).max(0.0).powi(2)
+            let (wrist, settled, ..) = settle(p);
+            wrist + SWIVEL_COST * by * by + 2.0 * (side.dot(inward) - 0.25).max(0.0).powi(2) + (side.y - 0.45).max(0.0).powi(2) + TRUNK_COST * into(settled, p)
         };
         let here = cost(0.0);
         let mut best = (0.0, here);
-        // (a wrist at ease: the elbow where it always goes)
+        // (a wrist at ease and an arm clear of the trunk: the elbow where it always goes)
         if here > 1e-5 {
             let n = (SWIVEL_MOST / SWIVEL_STEP) as i32;
             for k in (-n..=n).filter(|k| *k != 0) {
@@ -614,21 +707,9 @@ fn ease(rig: &Rig, pose: &Pose, i: usize, at: Vec3, turn: Quat, pole: Vec3, free
     } else {
         *swivel = Spring::default();
     }
-    // what is still past what the wrist does, the hand gives: turned back to it about its palm
-    let mut out = WristPose { swivel: round.to_degrees(), reach: (at - a).length() / (l1 + l2).max(1e-3), ..WristPose::default() };
-    for _ in 0..3 {
-        let Some(f) = fore(at, pole) else { break };
-        let (flex, lean, turned) = wrist_angles(ax, f.inverse() * hand);
-        let (flex, lean, turned, held) = wrist_held(range, own, flex, lean, turned);
-        (out.flex, out.lean, out.turn) = (flex.to_degrees(), lean.to_degrees(), (turned * own).to_degrees());
-        if !held {
-            break;
-        }
-        out.held = true;
-        hand = (f * wrist_turn(ax, flex, lean, turned)).normalize();
-        at = palm - hand * grip;
-    }
-    (at, (hand * sk.bind[arm.end].rot).normalize(), pole, out)
+    // what is still past what the wrist does, the hand gives
+    let (_, at, hand, out) = settle(pole);
+    (at, (hand * sk.bind[arm.end].rot).normalize(), pole, WristPose { swivel: round.to_degrees(), ..out })
 }
 
 /// (for tests: the pose as it is)
@@ -677,7 +758,7 @@ mod tests {
         let root = crate::root();
         let def: RigDef = defs::load(&root.join("assets/defs/rigs/astronauta.jsonc")).unwrap_or_else(|e| panic!("{}: {}", e.file, e.message));
         let model = Rigged::load(&root.join("assets/models").join(format!("{}.glb", def.modelo))).ok()?;
-        let body = Body::new(Rig::new(def, model.skeleton).unwrap(), None, None);
+        let body = Body::new(Rig::new(def, &model).unwrap(), None, None);
         let moon: BodyDef = defs::parse("luna", include_str!("../../../assets/defs/bodies/luna.jsonc")).unwrap();
         let bodies = BodyRegistry::new(vec![Planet::from_def("luna", &moon).unwrap()]);
         let lib = lunar_core::structure::Library::load(&root.join("assets/defs/structures")).unwrap();
@@ -787,7 +868,11 @@ mod tests {
             let g = g.unwrap();
             let h = body.hands[i];
             assert!(h.at.distance(g.at) < 0.01, "la mano {i} a {:.3} m de su agarre", h.at.distance(g.at));
-            assert!((h.rot * Vec3::Y).dot(g.normal) > 0.99 && (h.rot * Vec3::X).dot(g.across) > 0.99, "la mano {i} no está girada a su agarre");
+            // turned as asked, or as far as its wrist goes and saying so (the left one reaches
+            // across the chest: its elbow goes out round the trunk, and its wrist gives)
+            let turned = (h.rot * Vec3::Y).dot(g.normal) > 0.99 && (h.rot * Vec3::X).dot(g.across) > 0.99;
+            assert!(turned || body.wrists[i].held, "la mano {i} no está girada a su agarre y su muñeca no dice que esté en su tope");
+            assert!((h.rot * Vec3::Y).dot(g.normal) > 0.9, "la mano {i} lejos de como se pidió");
             assert!(body.short[i] == Vec3::ZERO);
             // elbows down: below the line from shoulder to wrist
             let arm = body.rig.arms[i];
@@ -965,5 +1050,50 @@ mod tests {
         let ankle = body.bone_at(body.rig.legs[0].end, &s);
         let under = (s.eye - ankle).dot(s.up);
         assert!(under > 1.3 && under < s.eye_h - 0.15, "en el aire el tobillo a {under:.2} m bajo los ojos");
+    }
+
+    #[test]
+    fn an_arm_between_the_eyes_and_what_they_aim_at_is_seen_through() {
+        // (in a cockpit the hand on one control hid the ones next to it)
+        let Some((mut body, set, bodies, s)) = world() else { return };
+        let (_, rot) = body.frame(&s);
+        // the right hand on something just under the line of the eyes, half an arm ahead
+        let at = s.eye + s.ahead * 0.42 - s.up * 0.04;
+        let grip = Grip { at, normal: rot * Vec3::NEG_Y, across: rot * Vec3::X, fingers: [0.7, -0.9, 0.95, 0.95, 0.9] };
+        let frames = |body: &mut Body, look: Option<DVec3>, n: usize| {
+            for _ in 0..n {
+                body.update(1.0 / 60.0, &s, &set, &bodies, [None, Some(grip)]);
+                body.look_along(&s, look, 1.0 / 60.0);
+            }
+        };
+        // looking at it: that arm fades in a moment, the other stays
+        frames(&mut body, Some(s.ahead), 30);
+        let f = body.fades();
+        assert!(f[1] > 0.95 && f[0] < 1e-3, "mirando a la mano: {f:?}");
+        // drawn faded to its own eyes, every bone of that arm and nothing else; whole from outside
+        let mut scene = BodyScene::default();
+        body.show(&mut scene, &s);
+        let arm: Vec<usize> = (0..body.rig.skeleton.len()).filter(|&b| body.rig.skeleton.under(b, body.rig.arms[1].upper)).collect();
+        assert_eq!(scene.fades.len(), scene.bones.len());
+        for (b, &fade) in scene.fades.iter().enumerate() {
+            assert!(if arm.contains(&b) { fade > 0.5 && fade <= 1.0 } else { fade == 0.0 }, "hueso {}: {fade}", body.rig.skeleton.names[b]);
+        }
+        let mut outside = BodyScene::default();
+        body.show(&mut outside, &Stance { own_eyes: false, ..s });
+        assert!(outside.fades.iter().all(|&f| f == 0.0));
+        // looking past it (up, aside) or through no eyes of its own: back, not at once
+        frames(&mut body, Some((s.ahead + s.up * 0.8).normalize()), 3);
+        assert!(body.fades()[1] > 0.5, "vuelve de golpe: {:?}", body.fades());
+        frames(&mut body, Some((s.ahead + s.up * 0.8).normalize()), 90);
+        assert!(body.fades()[1] < 0.01, "mirando arriba: {:?}", body.fades());
+        frames(&mut body, Some(s.ahead), 30);
+        frames(&mut body, None, 90);
+        assert!(body.fades()[1] < 0.01, "sin ojos propios: {:?}", body.fades());
+        // the hanging arms are never in the way of a look ahead
+        for _ in 0..120 {
+            body.update(1.0 / 60.0, &s, &set, &bodies, [None, None]);
+            body.look_along(&s, Some(s.ahead), 1.0 / 60.0);
+        }
+        assert!(body.fades() == [0.0, 0.0] || body.fades().iter().all(|&f| f < 1e-3), "{:?}", body.fades());
     }
 }

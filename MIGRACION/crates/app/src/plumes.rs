@@ -427,7 +427,7 @@ mod tests {
             eprintln!("(sin el modelo del astronauta: nada que comprobar)");
             return;
         };
-        let mut body = Body::new(Rig::new(def, model.skeleton).unwrap(), None, None);
+        let mut body = Body::new(Rig::new(def, &model).unwrap(), None, None);
         let bodies = moon();
         let (place, sc) = site(&bodies);
         let mut pilot = Pilot::new(bodies.clone(), &place, sc.player);

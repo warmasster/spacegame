@@ -5,7 +5,9 @@
 //! A mesh is given once (`add_mesh`: its vertices follow up to four bones each); each frame the
 //! owner gives the bodies to draw and every bone of each (`lunar_core::anim::BodyScene`). A body
 //! may be one mesh to the eye and another to the sun (the player sees no helmet round the
-//! camera; the shadow on the ground has its head).
+//! camera; the shadow on the ground has its head). A bone's part of a body may be faded
+//! (`BodyScene::fades`: one's own arm in front of what one aims at): drawn as a screen of
+//! dots so that what is behind shows through, with nothing to sort; its shadow stays whole.
 use crate::{
     graph::{self, Draws, PrepareCx, RenderSystem, Stage},
     shader,
@@ -52,9 +54,14 @@ pub struct BodiesGpu {
     body_cap: usize,
     bones: wgpu::Buffer,
     bone_cap: usize,
+    fades: wgpu::Buffer,
     draws: Vec<BodyDraw>,
     staged: Vec<BodyGpu>,
     staged_bones: Vec<[f32; 12]>,
+    /// One per bone (as many as `staged_bones`), 0 where the scene says nothing.
+    staged_fades: Vec<f32>,
+    /// The fades last written are all 0 (none to write again).
+    clear: bool,
 }
 
 fn storage(device: &wgpu::Device, label: &str, bytes: usize) -> wgpu::Buffer {
@@ -83,7 +90,7 @@ impl BodiesGpu {
             ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: true }, has_dynamic_offset: false, min_binding_size: None },
             count: None,
         };
-        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some("bodies"), entries: &[entry(0), entry(1)] });
+        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some("bodies"), entries: &[entry(0), entry(1), entry(2)] });
         let pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: Some("bodies"), bind_group_layouts: &[Some(globals), Some(&layout)], immediate_size: 0 });
         const ATTRS: [wgpu::VertexAttribute; 6] = wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Unorm8x4, 3 => Unorm8x4, 4 => Uint8x4, 5 => Unorm8x4];
         let vb = [Some(wgpu::VertexBufferLayout { array_stride: 40, step_mode: wgpu::VertexStepMode::Vertex, attributes: &ATTRS })];
@@ -100,9 +107,12 @@ impl BodiesGpu {
             body_cap: 8,
             bones: storage(device, "body bones", 48 * 256),
             bone_cap: 256,
+            fades: storage(device, "body fades", 4 * 256),
             draws: Vec::new(),
             staged: Vec::new(),
             staged_bones: Vec::new(),
+            staged_fades: Vec::new(),
+            clear: false,
         }
     }
 
@@ -131,6 +141,9 @@ impl BodiesGpu {
     pub fn set(&mut self, s: &BodyScene) {
         self.draws.clone_from(&s.bodies);
         self.staged_bones.clone_from(&s.bones);
+        self.staged_fades.clear();
+        self.staged_fades.extend(s.fades.iter().take(s.bones.len()));
+        self.staged_fades.resize(s.bones.len(), 0.0);
     }
 }
 
@@ -155,13 +168,18 @@ impl RenderSystem for BodiesGpu {
         if self.staged_bones.len() > self.bone_cap {
             self.bone_cap = self.staged_bones.len().next_power_of_two();
             self.bones = storage(cx.device, "body bones", 48 * self.bone_cap);
-            rebind = true;
+            self.fades = storage(cx.device, "body fades", 4 * self.bone_cap);
+            (rebind, self.clear) = (true, false);
         }
         if rebind {
             self.group = Some(cx.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("bodies"),
                 layout: &self.layout,
-                entries: &[wgpu::BindGroupEntry { binding: 0, resource: self.bodies.as_entire_binding() }, wgpu::BindGroupEntry { binding: 1, resource: self.bones.as_entire_binding() }],
+                entries: &[
+                    wgpu::BindGroupEntry { binding: 0, resource: self.bodies.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 1, resource: self.bones.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 2, resource: self.fades.as_entire_binding() },
+                ],
             }));
         }
         if !self.staged.is_empty() {
@@ -169,6 +187,12 @@ impl RenderSystem for BodiesGpu {
         }
         if !self.staged_bones.is_empty() {
             cx.queue.write_buffer(&self.bones, 0, bytemuck::cast_slice(&self.staged_bones));
+            // (nothing faded, frame after frame: written once)
+            let clear = self.staged_fades.iter().all(|&f| f == 0.0);
+            if !(clear && self.clear) {
+                cx.queue.write_buffer(&self.fades, 0, bytemuck::cast_slice(&self.staged_fades));
+            }
+            self.clear = clear;
         }
     }
 
@@ -199,7 +223,7 @@ impl RenderSystem for BodiesGpu {
     }
 
     fn gpu_bytes(&self) -> u64 {
-        self.bodies.size() + self.bones.size() + self.vertices.as_ref().map_or(0, |(v, i)| v.size() + i.size())
+        self.bodies.size() + self.bones.size() + self.fades.size() + self.vertices.as_ref().map_or(0, |(v, i)| v.size() + i.size())
     }
 }
 

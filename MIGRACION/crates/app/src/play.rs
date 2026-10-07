@@ -302,9 +302,10 @@ impl State {
                     let seen = renderer.body_mesh(&model.without(&def.oculto));
                     let whole = renderer.body_mesh(&model.mesh);
                     // (the others' bodies are made from the same, each its own)
-                    let source = crate::multi::BodySource { def: def.clone(), skeleton: model.skeleton.clone(), whole };
-                    rig_def = Some(def.clone());
-                    Some((crate::body::Body::new(crate::rig::Rig::new(def, model.skeleton)?, seen, whole), source))
+                    let rig = crate::rig::Rig::new(def.clone(), &model)?;
+                    let source = crate::multi::BodySource { rig: rig.clone(), whole };
+                    rig_def = Some(def);
+                    Some((crate::body::Body::new(rig, seen, whole), source))
                 } else {
                     None
                 }
@@ -1335,6 +1336,8 @@ impl State {
                 inside: st.inside,
             };
             self.handwork.drive(dt, body, st, &self.builds.set, &self.world.bodies, &self.ships, grips, &doing, &here);
+            // one's own arm in front of what one aims at is seen through
+            body.look_along(st, st.own_eyes.then_some(own.forward), dt);
             self.wrist_look = self.handwork.look(body, st, &own);
         }
         self.hands.update(dt, &mut self.builds, &own, motion);

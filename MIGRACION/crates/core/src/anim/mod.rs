@@ -43,11 +43,16 @@ pub struct BodyScene {
     /// Every bone of every body: the rows of the 3×4 matrix that takes a vertex at rest to where
     /// the bone has it now, in the body's model space.
     pub bones: Vec<[f32; 12]>,
+    /// How faded each bone's part of its body is (0 solid, 1 as faded as a body is drawn), in
+    /// the order of `bones`; it may be shorter (what is past its end is solid). Whoever sees
+    /// through their own arm to what it is in front of fades it.
+    pub fades: Vec<f32>,
 }
 
 impl BodyScene {
     pub fn clear(&mut self) {
         self.bodies.clear();
         self.bones.clear();
+        self.fades.clear();
     }
 }

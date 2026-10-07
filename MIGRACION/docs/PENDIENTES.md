@@ -64,6 +64,21 @@ vuelo (V40)», [`COMBATE.md`](COMBATE.md), [`MOVIMIENTO.md`](MOVIMIENTO.md) §8)
   la nave (50 Hz), no al fotograma; el jugador y lo que vive entre estructuras van por lonchas del
   mundo (`MOVIMIENTO.md`). No se encontró nada más con un umbral o un redondeo por fotograma.
 
+- **Dos cosas de jugabilidad** (Fernando: «el brazo en las cabinas puede tapar controles»; «con
+  el lanzacohetes el codo izquierdo se mete en el pecho»). El cuerpo se mide de su propia malla
+  (`app/src/bulk.rs`: el frente del tronco y el grosor de cada hueso del brazo), así que vale
+  para cualquier traje:
+  - **El brazo que tapa lo que miras se transparenta**: con la mira sobre tu propio brazo (a tus
+    ojos, en cualquier sitio), ese brazo entero se dibuja como una trama al 25 % y se ven los
+    mandos de detrás; vuelve en un cuarto de segundo. Por hueso (`BodyScene::fades`), en el
+    shader de cuerpos con trama ordenada (sin ordenar transparencias); la sombra sigue entera.
+  - **El codo rodea el tronco**: el giro del codo (`body.rs`, `ease`) cuenta lo que el brazo se
+    mete en el tronco del lado contrario, con la mano ya asentada en su tope de muñeca. Con el
+    lanzacohetes el brazo izquierdo se metía 12 cm en el pecho; ahora 0 mirando recto, abajo y
+    arriba (`handwork.rs`, `an_arm_on_a_tool_goes_round_the_trunk_not_through_it`). Medido: el
+    cuerpo entero con las dos manos forzadas sigue en unos 42 µs por fotograma.
+  - Fotos: `tools/camara/brazo.jsonc`, `tools/camara/codo.jsonc`.
+
 Queda de esto:
 
 - **Nadie lo ha jugado.** Todo está comprobado con pruebas; los .exe de `SELENE_V39` no se han

@@ -14,12 +14,12 @@ use crate::{
     body::{Body, Stance},
     builds::Builds,
     pilot::Pilot,
-    rig::{Rig, RigDef},
+    rig::Rig,
     ships::Ships,
 };
 use glam::{DVec3, Vec3};
 use lunar_core::{
-    anim::{BodyScene, skeleton::Skeleton},
+    anim::BodyScene,
     body::BodyRegistry,
     structure::set::Structures,
 };
@@ -28,8 +28,8 @@ use lunar_net::{Client, Event, Frame, PlayerState, Reader, RigidState, Status, W
 /// What a body is made from: one for each of the others.
 #[derive(Clone)]
 pub struct BodySource {
-    pub def: RigDef,
-    pub skeleton: Skeleton,
+    /// Its rig, as measured once (each body a copy).
+    pub rig: Rig,
     /// Its mesh in the renderer, whole (seen from outside).
     pub whole: Option<u16>,
 }
@@ -314,8 +314,7 @@ impl Multi {
             let k = match known {
                 Some(k) => k,
                 None => {
-                    let Ok(rig) = Rig::new(source.def.clone(), source.skeleton.clone()) else { continue };
-                    self.others.push(Other { id: *id, body: Body::new(rig, source.whole, source.whole), stance, local: None, here: true });
+                    self.others.push(Other { id: *id, body: Body::new(source.rig.clone(), source.whole, source.whole), stance, local: None, here: true });
                     self.others.len() - 1
                 }
             };
@@ -388,9 +387,9 @@ mod tests {
     fn two_games_through_a_server_agree_on_players_controls_and_ships() {
         let root = crate::root();
         let defs = Defs::load(&root.join("assets/defs")).unwrap_or_else(|e| panic!("{}: {}", e.file, e.message));
-        let rig: RigDef = lunar_core::defs::load(&root.join("assets/defs/rigs/astronauta.jsonc")).unwrap_or_else(|e| panic!("{}: {}", e.file, e.message));
+        let rig: crate::rig::RigDef = lunar_core::defs::load(&root.join("assets/defs/rigs/astronauta.jsonc")).unwrap_or_else(|e| panic!("{}: {}", e.file, e.message));
         let Ok(model) = crate::rig::Rigged::load(&root.join("assets/models").join(format!("{}.glb", rig.modelo))) else { return };
-        let source = BodySource { def: rig, skeleton: model.skeleton, whole: None };
+        let source = BodySource { rig: Rig::new(rig, &model).unwrap(), whole: None };
         // a server and two games, on a network of their own
         let net = MemoryNet::new(11);
         let mut link = net.endpoint();

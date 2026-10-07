@@ -4,7 +4,7 @@ const TERRAIN_COMMON: &str = include_str!("../src/shaders/terrain_common.wgsl");
 
 #[test]
 fn shaders_validate() {
-    let sets: [(&str, Vec<&str>); 11] = [
+    let sets: [(&str, Vec<&str>); 12] = [
         ("terrain", vec![COMMON, TERRAIN_COMMON, include_str!("../src/shaders/terrain.wgsl")]),
         ("terrain gen", vec![TERRAIN_COMMON, include_str!("../src/shaders/terrain_gen.wgsl")]),
         ("sky", vec![COMMON, include_str!("../src/shaders/sky.wgsl")]),
@@ -16,6 +16,7 @@ fn shaders_validate() {
         ("plumes", vec![COMMON, include_str!("../src/shaders/plumes.wgsl")]),
         ("structures", vec![COMMON, include_str!("../src/shaders/structure.wgsl")]),
         ("props", vec![COMMON, include_str!("../src/shaders/props.wgsl")]),
+        ("bodies", vec![COMMON, include_str!("../src/shaders/bodies.wgsl")]),
     ];
     let mut failed = Vec::new();
     for (name, parts) in sets {

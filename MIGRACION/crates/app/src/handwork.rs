@@ -921,7 +921,7 @@ mod tests {
         let dir = root.join("assets/defs");
         let (_, def, kit) = test_kit();
         let model = Rigged::load(&root.join("assets/models").join(format!("{}.glb", def.modelo))).ok()?;
-        let body = Body::new(Rig::new(def, model.skeleton).unwrap(), None, None);
+        let body = Body::new(Rig::new(def, &model).unwrap(), None, None);
         let mut lib = lunar_core::structure::Library::load(&dir.join("structures")).unwrap();
         let (kinds, bps) = lunar_ship::ShipLibrary::load(&dir, &mut lib.catalog).unwrap_or_else(|e| panic!("{}: {}", e.file, e.message));
         lib.blueprints.extend(bps);
@@ -1199,5 +1199,89 @@ mod tests {
         eprintln!("aplaudir: entre palma y palma de {:.1} a {:.1} cm; {}", nearest * 100.0, farthest * 100.0, g.wrists());
         assert!(nearest < 0.02 && nearest > -0.015, "las palmas quedan a {:.3} m", nearest);
         assert!(farthest > 0.15, "no se separan: {farthest:.3} m");
+    }
+
+    /// How far into the trunk each arm of the body is as last posed (model units): its vertices
+    /// as the renderer would place them (from halfway down the upper arm: what is by the
+    /// armpit is always against it) against the trunk's front as the renderer would place it
+    /// (`bulk::Trunk` of the posed mesh, the bones' lines and thickness the solver goes by), all
+    /// in the chest's frame (a chest turned to reach is told from its own sides), and where the
+    /// worst is.
+    fn arms_into_trunk(g: &Stage, model: &Rigged, st: &Stance) -> [(f32, Vec3, String); 2] {
+        let mut scene = lunar_core::anim::BodyScene::default();
+        g.body.show(&mut scene, st);
+        let (sk, rig) = (&g.body.rig.skeleton, &g.body.rig);
+        let chest = rig.bulk.chest.unwrap();
+        let to_chest = sk.bind[chest].then(g.body.xf(chest).inverse());
+        let mut posed = model.mesh.clone();
+        for (i, p) in posed.pos.iter_mut().enumerate() {
+            let v = Vec3::from(model.mesh.pos[i]);
+            let mut o = Vec3::ZERO;
+            for k in 0..4 {
+                let b = &scene.bones[usize::from(model.mesh.joints[i][k])];
+                o += model.mesh.weights[i][k] * Vec3::new(b[0] * v.x + b[1] * v.y + b[2] * v.z + b[3], b[4] * v.x + b[5] * v.y + b[6] * v.z + b[7], b[8] * v.x + b[9] * v.y + b[10] * v.z + b[11]);
+            }
+            *p = to_chest.point(o).to_array();
+        }
+        let strongest = |i: usize| {
+            let w = posed.weights[i];
+            usize::from(posed.joints[i][(0..4).max_by(|&a, &b| w[a].total_cmp(&w[b])).unwrap()])
+        };
+        let trunk_bones: Vec<usize> = std::iter::once(rig.pelvis).chain(rig.spine.iter().copied()).collect();
+        let trunk = crate::bulk::Trunk::measure(&posed, &trunk_bones);
+        std::array::from_fn(|side| {
+            let (arm, own) = (rig.arms[side], if side == 0 { 1.0 } else { -1.0 });
+            let trunk = trunk.grown(0.0, own, rig.bulk.side);
+            let (head, elbow) = (sk.bind[arm.upper].pos, sk.bind[arm.lower].pos);
+            let mut worst = (0.0f32, Vec3::ZERO, String::new());
+            for i in 0..posed.pos.len() {
+                let b = strongest(i);
+                if !sk.under(b, arm.upper) || (b == arm.upper && (Vec3::from(model.mesh.pos[i]) - head).dot(elbow - head) < 0.5 * (elbow - head).length_squared()) {
+                    continue;
+                }
+                let p = Vec3::from(posed.pos[i]);
+                let d = trunk.depth(p);
+                if d > worst.0 {
+                    worst = (d, p, sk.names[b].clone());
+                }
+            }
+            worst
+        })
+    }
+
+    #[test]
+    fn an_arm_on_a_tool_goes_round_the_trunk_not_through_it() {
+        // (the left elbow went into the chest holding the launcher's front grip: its upper arm
+        // 14 cm into the trunk)
+        let Some(mut g) = stage("abejorro") else { return };
+        let model = Rigged::load(&crate::root().join("assets/models/astronauta.glb")).unwrap();
+        let tools: Vec<crate::gear::ToolDef> = lunar_core::defs::parse("gear", include_str!("../../../assets/defs/gear.jsonc")).unwrap();
+        let st = g.standing();
+        let doing = Doing { look: st.ahead, ..Doing::default() };
+        // with nothing in its hands: as far as a hanging arm is "in" (its sleeve by its side)
+        g.frames(60, &st, &doing);
+        let rest = arms_into_trunk(&g, &model, &st);
+        eprintln!("sin nada: izq {:.3} ({}), der {:.3} ({})", rest[0].0, rest[0].2, rest[1].0, rest[1].2);
+        assert!(rest[0].0 < 0.005 && rest[1].0 < 0.005, "colgando, el brazo ya está dentro: lo que se mide no es lo que se busca");
+        for pitch in [0.0f64, -25.0, 30.0] {
+            for t in tools.iter().filter(|t| !t.sujecion.manos.is_empty()) {
+                let p = pitch.to_radians();
+                let forward = st.ahead * p.cos() + st.up * p.sin();
+                let view = lunar_render::View { eye: st.eye, forward, up: st.up, fov_y: 1.0, near: 0.1 };
+                let mut holding = crate::holding::Holding::default();
+                let doing = Doing { look: forward, ..Doing::default() };
+                for _ in 0..90 {
+                    let pose = holding.update(1.0 / 60.0, &t.sujecion, crate::gear::eye_frame(&view), crate::gear::level_frame(&view), Default::default(), Vec3::ZERO, false);
+                    let grips = crate::gear::Gear::grips_of(&pose, &view, &g.body, &st);
+                    g.cockpits.update(1.0 / 60.0, &g.kit.cockpit, &g.ships, &g.set, st.eye, Some(g.id));
+                    g.hands.drive(1.0 / 60.0, &mut g.body, &st, &g.set, &g.bodies, &g.ships, &g.cockpits, grips, &doing);
+                }
+                let into = arms_into_trunk(&g, &model, &st);
+                eprintln!("{} mirando {pitch:+}°: izq {:.3} ({} en {:.2?}), der {:.3} ({}); {}; codos {:.0}° {:.0}°", t.id, into[0].0, into[0].2, into[0].1, into[1].0, into[1].2, g.wrists(), g.body.wrists[0].swivel, g.body.wrists[1].swivel);
+                for side in 0..2 {
+                    assert!(into[side].0 <= 0.02, "{} mirando {pitch}°: el brazo {side} se mete {:.3} en el tronco ({} en {:?})", t.id, into[side].0, into[side].2, into[side].1);
+                }
+            }
+        }
     }
 }

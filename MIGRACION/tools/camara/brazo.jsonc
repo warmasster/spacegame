@@ -1,0 +1,27 @@
+// One's own arm in front of what one aims at is seen through (V40): sat at the Alcotán's
+// controls, the right hand on the stick, the crosshair on it from four ways (a: the stick's top,
+// b: the hand, c: the forearm, d: the upper arm). Faded, the controls behind it show.
+// Run: luna --guion tools/camara/brazo.jsonc → out/camara/brazo_*.png
+{
+  "registro": "out/camara/brazo.log",
+  "naves": ["alcotan"],
+  "pasos": [
+    { "nave": "alcotan" },
+    { "esperar": 2.0 },
+    { "linterna": true },
+    { "sentar": "piloto" },
+    { "esperar": 1.5 },
+    { "mirar_a": [0.15, 0.75, 5.05] },
+    { "esperar": 0.6 },
+    { "foto": "out/camara/brazo_a.png" },
+    { "mirar_a": [0.08, 0.73, 5.05] },
+    { "esperar": 0.6 },
+    { "foto": "out/camara/brazo_b.png" },
+    { "mirar_a": [0.0, 0.68, 4.95] },
+    { "esperar": 0.6 },
+    { "foto": "out/camara/brazo_c.png" },
+    { "mirar_a": [-0.1, 0.6, 4.8] },
+    { "esperar": 0.6 },
+    { "foto": "out/camara/brazo_d.png" }
+  ]
+}

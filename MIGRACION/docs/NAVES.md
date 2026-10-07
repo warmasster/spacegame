@@ -480,9 +480,12 @@ y en una docena de sitios del terreno, pendientes de hasta 17°).
   pie dura según la gravedad; parado, un pie fuera de sitio o girado se recoloca.
 - **El cuerpo (`app/body.rs`):** cuelga de los ojos (la cámara) y pisa donde dice la marcha; las
   caderas bajan lo que haga falta para que las piernas lleguen; las manos van a donde se les pide
-  (`Grip`) con el codo abajo, y si el brazo no llega gira el torso y adelanta el hombro. Sentado,
-  se sienta. Se dibuja con `render/bodies.rs` (piel con cuatro huesos por vértice, sombra propia);
-  a sus propios ojos sin casco ni aro del cuello (`oculto`).
+  (`Grip`) con el codo abajo, y si el brazo no llega gira el torso y adelanta el hombro. El codo
+  rodea el tronco en vez de atravesarlo, y un brazo propio entre los ojos y lo que se mira se
+  transparenta; las dos cosas con el tronco y el grosor de los brazos medidos de la malla
+  (`app/bulk.rs`). Sentado, se sienta. Se dibuja con `render/bodies.rs` (piel con cuatro huesos
+  por vértice, desvanecido por hueso con trama, sombra propia); a sus propios ojos sin casco ni
+  aro del cuello (`oculto`).
 - **Herramientas (`app/holding.rs`, `gear.jsonc` → `sujecion`):** dónde se sujeta, cuánto pesa en
   la mano (`inercia`, `paso`), `retroceso`, sus piezas móviles, sus puntos (agarres, boca,
   recámara), las manos en reposo, el gatillo y sus **clips** (`sacar`, `guardar`, `disparo`,

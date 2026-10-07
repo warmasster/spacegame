@@ -326,7 +326,8 @@ pub struct WristAxes {
     pub lean: Vec3,
 }
 
-/// A rig ready to pose: its skeleton and what is what in it.
+/// A rig ready to pose: its skeleton, what is what in it and what of it takes up room.
+#[derive(Clone)]
 pub struct Rig {
     pub def: RigDef,
     pub skeleton: Skeleton,
@@ -343,6 +344,8 @@ pub struct Rig {
     pub points: BTreeMap<String, (usize, Xf)>,
     /// Where each hand rests seated (a body point), if anywhere.
     pub seated_hands: [Option<(usize, Xf)>; 2],
+    /// Its trunk and its arms' thickness, measured from its mesh (`bulk`).
+    pub bulk: crate::bulk::Bulk,
 }
 
 /// The turn that takes a hand at rest (`palm`) to a place a hand may be at: palm facing `normal`,
@@ -352,7 +355,9 @@ pub fn palm_turn(palm: &Palm, normal: Vec3, across: Vec3) -> Quat {
 }
 
 impl Rig {
-    pub fn new(def: RigDef, skeleton: Skeleton) -> Result<Rig, String> {
+    /// The rig of `model` as `def` says.
+    pub fn new(def: RigDef, model: &Rigged) -> Result<Rig, String> {
+        let skeleton = model.skeleton.clone();
         let sk = &skeleton;
         let pelvis = sk.find(&def.pelvis)?;
         let spine = def.columna.iter().map(|n| sk.find(n)).collect::<Result<Vec<_>, _>>()?;
@@ -429,7 +434,8 @@ impl Rig {
                 seated_hands[i] = Some(*points.get(name).ok_or_else(|| format!("sentado: no hay punto '{name}'"))?);
             }
         }
-        Ok(Rig { def, skeleton, pelvis, spine, legs, toes, arms, clavicles, fingers, palms, wrists, points, seated_hands })
+        let bulk = crate::bulk::Bulk::measure(sk, &model.mesh, pelvis, &spine, arms.map(|a| [a.upper, a.lower, a.end]));
+        Ok(Rig { def, skeleton, pelvis, spine, legs, toes, arms, clavicles, fingers, palms, wrists, points, seated_hands, bulk })
     }
 }
 
@@ -443,7 +449,7 @@ mod tests {
         let def: RigDef = lunar_core::defs::load(&root.join("assets/defs/rigs/astronauta.jsonc")).unwrap_or_else(|e| panic!("{}: {}", e.file, e.message));
         let path = crate::content::find_asset(&root.join("assets"), &format!("models/{}.glb", def.modelo));
         let model = Rigged::load(&path).ok()?;
-        let rig = Rig::new(def, model.skeleton.clone()).unwrap_or_else(|e| panic!("{e}"));
+        let rig = Rig::new(def, &model).unwrap_or_else(|e| panic!("{e}"));
         Some((rig, model))
     }
 

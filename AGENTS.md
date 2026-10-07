@@ -133,16 +133,6 @@ Las teclas de un asiento se interpretan solo en `ship/src/seat_keys.rs`. Un orde
 deja nada al estabilizador que pueda compensar al momento (el par real de los motores) ni pide
 más giro del que sus toberas y giróscopos dan.
 
-**Coherencia de las naves en Rust** ([`migracion/docs/NAVES.md`](migracion/docs/NAVES.md) «Coherencia
-y ordenador de vuelo»): toda nave que vuela pasa `crates/ship/tests/coherencia.rs` (lo que un
-piloto llamaría «no va»: teclas mantenidas, pasos de ruedas, retenes, cada tecla por su eje, nave
-que no gira sola con gas, piloto automático que dice lo que no puede). Lo que dependa de los
-fotogramas se prueba a 30, 60, 144 y 240 fps; una tecla mantenida manda `seat_keys::held(signo, dt)`
-y el mando hace de eso un movimiento continuo (un retén atrapa lo que entra en él, no lo que sale).
-Las teclas de un asiento se interpretan solo en `ship/src/seat_keys.rs`. Un ordenador de vuelo no
-deja nada al estabilizador que pueda compensar al momento (el par real de los motores) ni pide
-más giro del que sus toberas y giróscopos dan.
-
 **Soltar y disparar en Rust:** se entrega posición y velocidad de mundo del punto de salida
 (`structure::motion::Motion`, `Pilot::motion_in`), incluido el giro del portador, nunca la
 velocidad relativa del jugador. No se desplaza otra vez una boca ya calculada. Lo balístico

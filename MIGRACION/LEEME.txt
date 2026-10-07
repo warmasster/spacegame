@@ -30,6 +30,10 @@ EL AZOR, MAS EPICO: alas en flecha de 11,2 m de punta a punta (antes 5,4), en
 dos paneles por lado con la gondola girando en el hueco; canards, derivas mas
 altas, misiles DARDO bajo las alas y luces en las puntas. El panel exterior
 (ASIENTO, BAHIA) esta ahora en la pata izquierda, a la altura de los ojos.
+TU BRAZO YA NO TAPA LOS MANDOS: si la mira cae sobre tu propio brazo, ese
+brazo se vuelve translucido y ves lo que hay detras; vuelve al apartar la
+vista. CON EL LANZACOHETES el codo izquierdo ya no se mete en el pecho: rodea
+el tronco (medido de la malla del traje, vale para cualquier herramienta).
 SIN PROBAR JUGANDO. Detalles: docs/NAVES.md (Coherencia y ordenador de vuelo),
 docs/COMBATE.md, docs/MOVIMIENTO.md 8, docs/PENDIENTES.md V40.
 

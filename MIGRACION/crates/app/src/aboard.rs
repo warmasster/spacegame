@@ -680,7 +680,7 @@ mod tests {
             let s = set.get(id).unwrap();
             for seat in &kind.seats {
                 let d = &seat.def;
-                let mut body = Body::new(Rig::new(def.clone(), model.skeleton.clone()).unwrap(), None, None);
+                let mut body = Body::new(Rig::new(def.clone(), &model).unwrap(), None, None);
                 let yaw = d.rumbo.to_radians();
                 let (ahead, side) = (glam::Vec3::new(yaw.sin(), 0.0, yaw.cos()), glam::Vec3::new(yaw.cos(), 0.0, -yaw.sin()));
                 let stance = Stance {
