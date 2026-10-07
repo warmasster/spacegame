@@ -387,8 +387,9 @@ real con una red en memoria que pierde un 3 %, duplica un 1 % y retrasa 40 ± 10
 - **Carga suelta** (cajas, bidones) no se comparte todavía; ni lo que lleva otro en la mano ni
   sus gestos; quien entra tarde no recibe el estado de las máquinas (solo los mandos).
 - **El servidor no simula nada** (a diferencia de la versión web, cuyo servidor tiene la verdad de
-  los objetos sueltos y un núcleo del mundo). Cómo llegar ahí, por fases:
-  [`PLAN_SERVIDOR_MUNDO.md`](PLAN_SERVIDOR_MUNDO.md).
+  los objetos sueltos y un núcleo del mundo). Cómo llegar a un servidor que simula y decide
+  todo, por fases: [`PLAN_AUTORITATIVO.md`](PLAN_AUTORITATIVO.md); el mundo vivo encima,
+  [`PLAN_SERVIDOR_MUNDO.md`](PLAN_SERVIDOR_MUNDO.md) (fases 6–8).
 - **Dónde está cada trozo** no se sincroniza: los trozos nacen igual y se dañan igual en todas,
   pero cada partida los mueve con su física y se separan poco a poco.
 

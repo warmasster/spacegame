@@ -6,6 +6,15 @@ Lista viva de lo que Fernando ha pedido y aún no está hecho. Lo de rendimiento
 **Regla para todos los agentes:** si haces algo de esta lista, táchalo en el mismo cambio, con la
 fecha y una línea de cómo quedó. Si queda a medias, apunta qué falta.
 
+## Servidor autoritativo (pedido el 2026-10-07)
+
+Fernando: «necesito que el juego sea con servidor autoritativo, que sincronice todo… primero
+analiza y planea todo a la perfección». Planeado, sin empezar:
+[`PLAN_AUTORITATIVO.md`](PLAN_AUTORITATIVO.md) (12 fases: paso fijo, simulación sin gráficos para
+N jugadores, servidor que simula, comandos arriba y estado abajo, interés, daño, naves, carga,
+entrar tarde, sin conexión en el proceso, seguridad; la gráfica del servidor, solo para mirar).
+Faltan sus decisiones (§8 del plan).
+
 ## V40 (2026-10-07): prueba de coherencia, ordenador de vuelo, teclas, mochila, piloto automático
 
 Fernando: el Azor «se inclina hacia abajo» y lleva los giróscopos siempre saturados; Mayús no sube

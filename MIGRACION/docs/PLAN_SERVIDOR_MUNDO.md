@@ -14,6 +14,11 @@ documento dice cómo llevarla a Rust, pieza a pieza, sin romper lo que funciona.
 Es un plan, no un compromiso cerrado: cada fase termina con algo que se puede jugar y medir, y al
 final de cada una se decide si se sigue igual.
 
+**Sustituido en parte (2026-10-07):** las fases 0 a 5 las reemplaza
+[`PLAN_AUTORITATIVO.md`](PLAN_AUTORITATIVO.md), en el que el servidor no vigila sino que decide
+todo (también cómo se mueven las naves y los jugadores, con predicción en el cliente). Las fases
+6 a 8 (núcleo del mundo, personas, galaxia) siguen valiendo y van encima de aquel.
+
 ---
 
 ## 0. Principios
