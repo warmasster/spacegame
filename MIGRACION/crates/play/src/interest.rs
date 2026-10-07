@@ -10,7 +10,8 @@
 //! - **pinned**: what the player rides, sits in or floats by is known whatever its size;
 //! - **in turn**: each step every known thing that moves gains priority by how much it matters
 //!   (big, near, fast); a snapshot takes the highest first and those start again from nothing.
-//!   What has come to rest goes a few times more, then not until it moves.
+//!   What has come to rest is told so once, surely and exactly (`rests`), and not again until it
+//!   moves.
 //!
 //! The same rule for every kind of thing that will be (ships, pieces, crates, asteroids): it only
 //! asks where a thing is, how big it is and how it moves.
@@ -128,7 +129,9 @@ impl Interest {
         }
         for &id in &came[from..] {
             if let Err(i) = self.known.binary_search_by_key(&id, |k| k.id) {
-                self.known.insert(i, Known { id, out: 0.0, prio: f32::MAX, resting: false, rest_told: 0 });
+                // (what is told whole comes as it is, at rest or not: `Event::Made`)
+                let resting = set.get(id).is_some_and(|s| s.resting);
+                self.known.insert(i, Known { id, out: 0.0, prio: f32::MAX, resting, rest_told: 0 });
             }
         }
     }
@@ -145,23 +148,27 @@ impl Interest {
         }
     }
 
+    /// What known has come to rest since it was last asked, into `out` (to be told so, exactly);
+    /// and what was at rest and moves again, known to move.
+    pub fn rests(&mut self, set: &Structures, out: &mut Vec<u64>) {
+        for kn in &mut self.known {
+            let Some(s) = set.get(kn.id).filter(|s| !s.anchored) else { continue };
+            if s.resting && !kn.resting {
+                out.push(kn.id);
+            }
+            kn.resting = s.resting;
+        }
+    }
+
     /// The known things to go in the next snapshot, highest priority first, into `out` (their
-    /// places in `known`): what moves, and what has just come to rest a few times more.
-    pub fn take(&mut self, set: &Structures, rule: &Rule, out: &mut Vec<usize>) {
+    /// places in `known`): what moves (what rests was told so, `rests`; what is anchored never
+    /// moves: its place came with it).
+    pub fn take(&mut self, set: &Structures, _rule: &Rule, out: &mut Vec<usize>) {
         self.order.clear();
         for (i, kn) in self.known.iter_mut().enumerate() {
-            // (what is anchored never moves: its place came with it)
             let Some(s) = set.get(kn.id).filter(|s| !s.anchored) else { continue };
-            let still = s.resting;
-            if still {
-                if !kn.resting {
-                    (kn.resting, kn.rest_told) = (true, 0);
-                }
-                if kn.rest_told >= rule.rest_told {
-                    continue;
-                }
-            } else {
-                kn.resting = false;
+            if s.resting || kn.resting {
+                continue;
             }
             self.order.push((kn.prio, i as u32));
         }

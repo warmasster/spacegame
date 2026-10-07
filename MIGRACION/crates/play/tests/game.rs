@@ -15,7 +15,7 @@ fn defs() -> &'static Defs {
 }
 
 fn new_game() -> Game {
-    Game::new(defs(), &lunar_play::root().join("assets/defs"), 4000, |_| true).unwrap()
+    Game::new_apart(defs(), &lunar_play::root().join("assets/defs"), 4000, |_| true).unwrap()
 }
 
 fn new_player(game: &Game) -> Player {

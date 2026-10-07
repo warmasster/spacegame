@@ -13,7 +13,7 @@ use std::time::Instant;
 #[test]
 fn sixteen_players_in_the_scenario_the_step_stays_short() {
     let defs = Defs::load(&lunar_play::root().join("assets/defs")).unwrap_or_else(|e| panic!("{}: {}", e.file, e.message));
-    let game = Game::new(&defs, &lunar_play::root().join("assets/defs"), 256, |_| true).unwrap();
+    let game = Game::new_apart(&defs, &lunar_play::root().join("assets/defs"), 256, |_| true).unwrap();
     let mut host = Host::new(game, defs.scenario.player, HostConfig::default());
     let net = MemoryNet::new(3);
     net.conditions(Conditions { delay: 0.03, jitter: 0.01, loss: 0.01, ..Conditions::default() });

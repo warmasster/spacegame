@@ -66,6 +66,12 @@ pub struct Effects {
     pending: Vec<PendingCrater>,
     scratch: Vec<Burst>,
     rng: u64,
+    /// Explosions dig their craters (else they are only seen: the ground is someone else's to
+    /// change, a server's, and comes told).
+    pub dig: bool,
+    /// Every crater dug, kept while `keep_dug` is on (for whoever tells the others of them).
+    pub keep_dug: bool,
+    pub dug: Vec<(crate::body::BodyId, Crater)>,
 }
 
 impl Effects {
@@ -85,6 +91,9 @@ impl Effects {
             pending: Vec::with_capacity(MAX_PENDING),
             scratch: Vec::with_capacity(32),
             rng: 0x9e37_79b9_7f4a_7c15,
+            dig: true,
+            keep_dug: false,
+            dug: Vec::new(),
         }
     }
 
@@ -178,8 +187,12 @@ impl Effects {
         }
         if let Some(c) = crater.filter(|c| altitude < f64::from(c.radius)) {
             let crater = Crater { dir: up, radius: f64::from(c.radius), depth: f64::from(c.depth), rim: f64::from(c.rim), seed: f64::from(self.rnd()), ground: b.height(up) };
-            if c.delay <= 0.0 || self.pending.len() == MAX_PENDING {
+            if !self.dig {
+            } else if c.delay <= 0.0 || self.pending.len() == MAX_PENDING {
                 b.edit(|d| d.add(crater, b.radius));
+                if self.keep_dug {
+                    self.dug.push((body, crater));
+                }
             } else {
                 self.pending.push(PendingCrater { body, crater, left: c.delay });
             }
@@ -257,6 +270,9 @@ impl Effects {
             if c.left <= 0.0 {
                 let b = bodies.get(c.body);
                 b.edit(|d| d.add(c.crater, b.radius));
+                if self.keep_dug {
+                    self.dug.push((c.body, c.crater));
+                }
             }
         }
         self.pending.retain(|c| c.left > 0.0);

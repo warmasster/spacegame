@@ -340,6 +340,11 @@ impl Blasts {
 
     /// The speed shot `id` leaves at (m/s) and how far it reaches (m): what a gun's sight is
     /// worked out with.
+    /// How many rounds a second shot kind `i` fires while its key is held (none: one a press).
+    pub fn shot_rate(&self, i: u16) -> Option<f32> {
+        self.shots.get(usize::from(i)).and_then(|(_, s)| s.rate)
+    }
+
     pub fn shot_speed(&self, id: &str) -> Option<(f32, f32)> {
         self.shots.iter().find(|(s, _)| s == id).and_then(|(_, s)| s.speed.map(|v| (v, s.range)))
     }

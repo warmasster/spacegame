@@ -177,6 +177,19 @@ impl Deform {
         &self.craters
     }
 
+    /// Every crater as `craters` says (oldest first), in place of what there was: the ground as
+    /// another game has it (a player who comes in late is told the server's).
+    pub fn replace(&mut self, craters: &[Crater]) {
+        let old = std::mem::take(&mut self.craters);
+        for c in &old {
+            self.changed(c.dir, c.reach());
+        }
+        self.craters.extend(craters.iter().take(MAX_CRATERS).copied());
+        for c in craters.iter().take(MAX_CRATERS) {
+            self.changed(c.dir, c.reach());
+        }
+    }
+
     /// Regions changed after version `seen`; None when the log no longer reaches back that far
     /// (the caller then refreshes everything).
     pub fn changes_since(&self, seen: u64) -> Option<impl Iterator<Item = (DVec3, f64)> + '_> {

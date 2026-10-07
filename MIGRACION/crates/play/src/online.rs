@@ -50,6 +50,12 @@ pub const LOCAL_IDS: u64 = 1 << 40;
 const ORPHAN: u64 = 90;
 /// Steps a frame takes at most (catching up).
 const MOST_STEPS: u32 = 8;
+/// Off by less than this (m, m/s, rad, rad/s) is off by no more than a snapshot's rounding
+/// (`lunar_net::RigidState`: 1/4096 m, 1/1024 m/s, the turn's 15 bits, 1/4096 rad/s).
+const AGREE_POS: f64 = 5e-4;
+const AGREE_VEL: f64 = 3e-3;
+const AGREE_TURN: f32 = 2.5e-4;
+const AGREE_SPIN: f32 = 1e-3;
 /// What is off by more than this (m, rad) is put where the server has it at once.
 const SNAP_OFF: f64 = 40.0;
 const SNAP_TURN: f32 = 0.6;
@@ -397,10 +403,16 @@ impl Online {
         }
         let mut events = std::mem::take(&mut self.events);
         events.clear();
-        let Ok(at) = net::read_events(&mut r, &mut events) else {
-            self.stats.garbled += 1;
-            self.events = events;
-            return;
+        let at = match net::read_events(&mut r, &mut events) {
+            Ok(at) => at,
+            Err(e) => {
+                if std::env::var("LUNAR_DEBUG").is_ok() {
+                    eprintln!("events garbled: {e:?} after {} events ({} bytes): {:?}", events.len(), data.len(), events.last().map(|e| std::mem::discriminant(e)));
+                }
+                self.stats.garbled += 1;
+                self.events = events;
+                return;
+            }
         };
         for e in events.drain(..) {
             self.event(e, at, game, me);
@@ -424,7 +436,12 @@ impl Online {
                 self.snap_new = true;
             }
             Ok(()) => {}
-            Err(_) => self.stats.garbled += 1,
+            Err(e) => {
+                if std::env::var("LUNAR_DEBUG").is_ok() {
+                    eprintln!("snapshot garbled: {e:?} ({} bytes)", data.len());
+                }
+                self.stats.garbled += 1;
+            }
         }
     }
 
@@ -530,6 +547,26 @@ impl Online {
                 self.stats.denied += 1;
                 self.said.push((why, 1));
             }
+            Event::Rest { id, pos, rot } => {
+                let world = game.builds.set.now;
+                if let Some(k) = game.builds.set.index_of(id) {
+                    let s = &mut game.builds.set.list[k];
+                    (s.pos, s.rot, s.vel, s.spin) = (pos, rot, DVec3::ZERO, Vec3::ZERO);
+                    (s.clock, s.resting) = (world, true);
+                    self.forget_track(id);
+                }
+            }
+            Event::Crater { body, crater } => {
+                if usize::from(body) < game.bodies.len() {
+                    let b = game.bodies.get(body);
+                    b.edit(|d| d.add(crater, b.radius));
+                }
+            }
+            Event::Ground { body, craters } => {
+                if usize::from(body) < game.bodies.len() {
+                    game.bodies.get(body).edit(|d| d.replace(&craters));
+                }
+            }
         }
     }
 
@@ -578,9 +615,8 @@ impl Online {
             s.resting = true;
         } else {
             // (as it was then, carried on to now)
-            let pull = game.bodies.field(s.pos).pull;
             (s.resting, s.still) = (false, 0.0);
-            coast(s, pull, game.step.saturating_sub(at) as f64 * STEP);
+            carry(s, &game.bodies, game.step.saturating_sub(at) as f64 * STEP);
         }
         s.clock = game.builds.set.now;
         if !systems.is_empty()
@@ -739,16 +775,22 @@ impl Online {
                 continue;
             }
             let off = had.map(|h| (want.pos - h.pos, want.vel - h.vel, want.rot * h.rot.inverse(), want.spin - h.spin));
-            // (both at rest and agreeing: left asleep)
-            if off.is_some_and(|(dp, dv, dr, _)| dp.length_squared() < 1e-8 && dv.length_squared() < 1e-8 && dr.angle_between(Quat::IDENTITY) < 1e-5) {
+            // (off by no more than what a snapshot can say: left as it is. Brought to the snapshot's
+            // rounding instead, a ship's hull would move a millimetre this way and that, and what
+            // stands on it with it)
+            if off.is_some_and(|(dp, dv, dr, dw)| dp.length() < AGREE_POS && dv.length() < AGREE_VEL && dr.angle_between(Quat::IDENTITY) < AGREE_TURN && dw.length() < AGREE_SPIN) {
+                continue;
+            }
+            // (put where the server had it at a step after this one's: this one is older news)
+            if off.is_none() && track.is_some_and(|t| snap.step < self.tracks[t].fixed) {
                 continue;
             }
             let far = off.is_none_or(|o| o.0.length() > SNAP_OFF || o.2.angle_between(Quat::IDENTITY) > SNAP_TURN) || s.sim != SimLevel::Active;
             if far {
-                // (put where the server has it, carried on to now)
+                // (put where the server has it, carried on to now: what is kept of where it was is
+                // of another way, and goes; snapshots older than this are left)
                 (s.pos, s.rot, s.vel, s.spin) = (want.pos, want.rot, want.vel, want.spin);
-                let pull = bodies.field(s.pos).pull;
-                coast(s, pull, now.saturating_sub(snap.step) as f64 * STEP);
+                carry(s, &bodies, now.saturating_sub(snap.step) as f64 * STEP);
                 (s.clock, s.resting, s.still) = (world, false, 0.0);
                 if let Some(t) = track {
                     for p in self.tracks[t].poses.iter_mut() {
@@ -802,6 +844,15 @@ impl Online {
             }
         }
     }
+}
+
+/// Structure `s`, as the server had it `t` s ago, carried on to now as it flies: on its way, pulled
+/// as it is where it is; but what is near the ground only on its way (it lies or slides on it: it
+/// does not fall into it).
+fn carry(s: &mut lunar_core::structure::state::Structure, bodies: &lunar_core::body::BodyRegistry, t: f64) {
+    let here = bodies.field(s.pos);
+    let low = here.ground.is_some_and(|g| bodies.get(g).altitude(s.to_world(s.center)) < f64::from(s.radius) + 1.0);
+    coast(s, if low { DVec3::ZERO } else { here.pull }, t);
 }
 
 /// Ship `n`'s systems, told as they were at the end of step `at`, run on to this game's step (it is

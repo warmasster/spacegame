@@ -695,3 +695,8 @@ silueta lejana, oclusión. Falta:
   generan mandos** (conectar un aparato a un panel y que salgan sus mandos según el tipo del
   puerto), arrastrar con el ratón (hoy por pasos), mover paneles y nodos desde F6, vista de rayos X
   y de redes, marcar en rojo lo que falla la comprobación.
+
+- [ ] (2026-10-07) Trozos que siguen rodando segundos y segundos tras una explosión junto al Abejorro:
+  son grupos sueltos que guardan el origen de la nave (a decenas de metros de su pieza), así que su
+  `pos` salta al girar aunque su centro apenas se mueva. Ver si `detach` debería poner el origen en
+  el centro de masas del grupo (como `loose`), y por qué no se paran.

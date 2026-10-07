@@ -625,6 +625,33 @@ pub enum Event {
         id: u64,
         delta: Vec<u8>,
     },
+    /// A crater dug in the ground of body `body` (the ground is the server's: every game digs it
+    /// the same, in the order it was dug).
+    Crater { body: u16, crater: lunar_core::deform::Crater },
+    /// Every crater of body `body`, oldest first, in place of what your game has (on coming in).
+    Ground { body: u16, craters: Vec<lunar_core::deform::Crater> },
+    /// Structure `id` came to rest here, exactly (snapshots no longer tell of it until it moves).
+    Rest { id: u64, pos: DVec3, rot: Quat },
+}
+
+fn write_crater(w: &mut Writer, c: &lunar_core::deform::Crater) {
+    for x in [c.dir.x, c.dir.y, c.dir.z, c.radius, c.depth, c.rim, c.seed, c.ground] {
+        w.f64(x);
+    }
+}
+
+fn read_crater(r: &mut Reader) -> Wire<lunar_core::deform::Crater> {
+    let mut v = [0.0; 8];
+    for x in &mut v {
+        *x = r.f64()?;
+        if !x.is_finite() {
+            return Err(WireError::Value);
+        }
+    }
+    // (as it was said, to the last bit, if it is a way at all)
+    let dir = DVec3::new(v[0], v[1], v[2]);
+    let dir = if (dir.length() - 1.0).abs() < 1e-6 { dir } else { dir.try_normalize().ok_or(WireError::Value)? };
+    Ok(lunar_core::deform::Crater { dir, radius: v[3].clamp(0.0, 1e5), depth: v[4].clamp(-1e4, 1e4), rim: v[5].clamp(0.0, 1e4), seed: v[6].clamp(0.0, 1.0), ground: v[7] })
 }
 
 fn blob(w: &mut Writer, b: &[u8]) {
@@ -650,6 +677,9 @@ fn event_room(e: &Event) -> usize {
         Event::Said { about, text, .. } => about.len() + text.len() + 32,
         Event::Denied(t) => t.len() + 8,
         Event::State { delta, .. } => delta.len() + 16,
+        Event::Ground { craters, .. } => craters.len() * 64 + 16,
+        Event::Crater { .. } => 72,
+        Event::Rest { .. } => 56,
         _ => 0,
     }
 }
@@ -668,11 +698,18 @@ pub fn write_events(step: u64, events: &[Event], out: &mut Vec<u8>) {
 /// many encodes once (`events_message` puts them in one).
 pub fn append_event(e: &Event, out: &mut Vec<u8>) {
     let from = out.len();
-    out.resize(from + event_room(e), 0);
-    let mut w = Writer::new(&mut out[from..]);
-    write_event(&mut w, e);
-    let n = w.finish().unwrap_or(0);
-    out.truncate(from + n);
+    // (an event is never left half written: with more room, again, until it fits)
+    let mut room = event_room(e);
+    loop {
+        out.resize(from + room, 0);
+        let mut w = Writer::new(&mut out[from..]);
+        write_event(&mut w, e);
+        if let Ok(n) = w.finish() {
+            out.truncate(from + n);
+            return;
+        }
+        room *= 2;
+    }
 }
 
 /// `n` events appended by `append_event` (`bytes`), of the end of step `step` (what they say is
@@ -759,6 +796,23 @@ fn write_event(w: &mut Writer, e: &Event) {
             w.var(*id);
             blob(w, delta);
         }
+        Event::Crater { body, crater } => {
+            w.u8(13);
+            w.u16(*body);
+            write_crater(w, crater);
+        }
+        Event::Ground { body, craters } => {
+            w.u8(14);
+            w.u16(*body);
+            w.var(craters.len() as u64);
+            craters.iter().for_each(|c| write_crater(w, c));
+        }
+        Event::Rest { id, pos, rot } => {
+            w.u8(15);
+            w.var(*id);
+            pos.to_array().iter().for_each(|x| w.f64(*x));
+            rot.to_array().iter().for_each(|x| w.f32(*x));
+        }
     }
 }
 
@@ -810,6 +864,28 @@ pub fn read_events(r: &mut Reader, out: &mut Vec<Event>) -> Wire<u64> {
             10 => Event::Systems { ship: r.var()?, data: read_blob(r)? },
             11 => Event::Denied(r.str(1024)?.to_string()),
             12 => Event::State { id: r.var()?, delta: read_blob(r)? },
+            13 => Event::Crater { body: r.u16()?, crater: read_crater(r)? },
+            14 => {
+                let body = r.u16()?;
+                let n = r.var()?;
+                if n > 4096 {
+                    return Err(WireError::Long);
+                }
+                let mut craters = Vec::with_capacity(n as usize);
+                for _ in 0..n {
+                    craters.push(read_crater(r)?);
+                }
+                Event::Ground { body, craters }
+            }
+            15 => {
+                let id = r.var()?;
+                let pos = DVec3::new(r.f64()?, r.f64()?, r.f64()?);
+                let rot = Quat::from_xyzw(r.f32()?, r.f32()?, r.f32()?, r.f32()?);
+                if !pos.is_finite() || !rot.is_finite() {
+                    return Err(WireError::Value);
+                }
+                Event::Rest { id, pos, rot: rot.normalize() }
+            }
             _ => return Err(WireError::Value),
         };
         out.push(e);
@@ -918,6 +994,9 @@ mod tests {
             Event::Systems { ship: 7, data: vec![0; 300] },
             Event::Denied("no llegas".into()),
             Event::State { id: 4, delta: vec![2, 0, 0] },
+            Event::Crater { body: 0, crater: lunar_core::deform::Crater { dir: DVec3::Y, radius: 6.0, depth: 2.0, rim: 0.25, seed: 0.5, ground: 12.0 } },
+            Event::Rest { id: 9, pos: DVec3::new(1.7e6, 1.0, -2.0), rot: Quat::IDENTITY },
+            Event::Ground { body: 1, craters: vec![lunar_core::deform::Crater { dir: DVec3::X, radius: 1.0, depth: 0.5, rim: 0.1, seed: 0.1, ground: -3.0 }; 3] },
         ];
         let mut out = Vec::new();
         write_events(4321, &events, &mut out);

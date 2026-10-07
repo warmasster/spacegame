@@ -107,6 +107,25 @@ impl Body {
         })
     }
 
+    /// The same body with the ground as it was made (none of its craters): for a game of its own
+    /// in a process that has others (a server with a player's game in it, the tests).
+    pub fn fresh(&self) -> Body {
+        Body {
+            id: self.id.clone(),
+            name: self.name.clone(),
+            center: self.center,
+            radius: self.radius,
+            gravity: self.gravity,
+            reach: self.reach,
+            band: self.band,
+            north: self.north,
+            horizon_depth: self.horizon_depth,
+            terrain_cache: self.terrain_cache,
+            surface: self.surface.clone(),
+            deform: RwLock::default(),
+        }
+    }
+
     /// The ground's run-time changes (read).
     pub fn deform(&self) -> RwLockReadGuard<'_, Deform> {
         self.deform.read().unwrap_or_else(|e| e.into_inner())
@@ -234,6 +253,11 @@ pub struct BodyRegistry {
 }
 
 impl BodyRegistry {
+    /// The same bodies, each with its ground as it was made (`Body::fresh`): a game's own.
+    pub fn fresh(&self) -> BodyRegistry {
+        BodyRegistry { bodies: self.bodies.iter().map(Body::fresh).collect(), by_reach: self.by_reach.clone() }
+    }
+
     pub fn new(bodies: Vec<Body>) -> BodyRegistry {
         assert!(bodies.len() < usize::from(BodyId::MAX));
         let mut by_reach: Vec<BodyId> = (0..bodies.len() as BodyId).collect();

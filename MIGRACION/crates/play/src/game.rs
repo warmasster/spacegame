@@ -132,6 +132,8 @@ pub struct Out {
     pub strikes: Vec<(Strike, u64, Vec<Affine3A>)>,
     /// What came into being this step (pieces off what was struck, what a ship let go of), by id.
     pub made: Vec<u64>,
+    /// Said by the server: the craters dug this step, in the order they were dug.
+    pub craters: Vec<(lunar_core::body::BodyId, lunar_core::deform::Crater)>,
 }
 
 pub struct Game {
@@ -201,6 +203,17 @@ impl Game {
         })
     }
 
+    /// The same, with ground of its own (`BodyRegistry::fresh`): what it digs is dug in it alone.
+    /// Whatever runs more than one game in a process (a server and a player's game in one, the
+    /// tests) makes each so: the bodies of `defs` are shared with whoever draws them.
+    pub fn new_apart(defs: &Defs, dir: &Path, particles: usize, wanted: impl Fn(&str) -> bool) -> Result<Game, String> {
+        let mut game = Game::new(defs, dir, particles, wanted)?;
+        let bodies = Arc::new(game.bodies.fresh());
+        game.site = Site::from_def(&defs.scenario.site, &bodies)?;
+        game.bodies = bodies;
+        Ok(game)
+    }
+
     /// The time of the game (s since it began): of the step last taken.
     pub fn time(&self) -> f64 {
         self.step as f64 * STEP
@@ -212,6 +225,10 @@ impl Game {
         self.out.said.clear();
         self.out.strikes.clear();
         self.out.made.clear();
+        self.out.craters.clear();
+        // (the ground is the server's: a player's game over one digs nothing of its own)
+        self.blasts.fx.dig = self.say != Say::Client;
+        self.blasts.fx.keep_dug = self.say == Say::Server;
         self.builds.set.sun = self.sun;
         self.mark();
         let bodies = self.bodies.clone();
@@ -279,6 +296,7 @@ impl Game {
             p.hands.update(dt, &mut self.builds, &view, motion);
         }
         self.strike();
+        self.out.craters.append(&mut self.blasts.fx.dug);
         self.out.made.extend(self.builds.set.list.iter().filter(|s| s.id >= made_from).map(|s| s.id));
         self.step += 1;
         if let Some(t) = &mut self.traffic {

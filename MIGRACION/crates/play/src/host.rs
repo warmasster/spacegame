@@ -52,6 +52,8 @@ const CONTROL_REACH: f64 = 8.0;
 const LAUNCH_SLIP: f64 = 50.0;
 /// Hit points a second a hand may mend, as a share of what the part has (a welder's best and some).
 const MEND_RATE: f32 = 0.5;
+/// Steps between two things of a kind with no rate of its own let fly by one player (a reload).
+const RELOAD: u64 = 12;
 
 #[derive(Clone, Debug)]
 pub struct HostConfig {
@@ -118,15 +120,18 @@ struct Peer {
     interest: Interest,
     came: Vec<u64>,
     went: Vec<u64>,
+    rested: Vec<u64>,
     /// Events for them, encoded (`net::append_event`), and how many.
     events: Vec<u8>,
     count: u32,
     /// What goes out to them this step: a snapshot, the events.
     quick: Vec<u8>,
     sure: Vec<u8>,
-    /// What may be let fly and mended now (refilled each step).
+    /// What may be let fly and mended now (refilled each step), and when each kind of thing was
+    /// last let fly (step): nothing goes faster than its kind can.
     launches: f32,
     mend: f32,
+    fired: Vec<(crate::blasts::What, u64)>,
     /// (reused)
     snap: Snap,
     order: Vec<usize>,
@@ -151,12 +156,14 @@ impl Peer {
             interest: Interest::default(),
             came: Vec::new(),
             went: Vec::new(),
+            rested: Vec::new(),
             events: Vec::new(),
             count: 0,
             quick: Vec::new(),
             sure: Vec::new(),
             launches: 0.0,
             mend: 0.0,
+            fired: Vec::new(),
             snap: Snap::default(),
             order: Vec::new(),
         }
@@ -261,6 +268,13 @@ impl Host {
         }
         let mut peer = Peer::new(id);
         peer.tell(&Event::Hello { step: self.game.step, you: id, sun: self.game.sun, region: self.config.region });
+        // (the ground as it is: every crater dug so far)
+        for (b, body) in self.game.bodies.iter() {
+            let craters = body.deform().craters().to_vec();
+            if !craters.is_empty() {
+                peer.tell(&Event::Ground { body: b, craters });
+            }
+        }
         // (what the scenario set that is no more: their game has it from the start)
         let set = &self.game.builds.set;
         for gone in 1..self.game.builds.scenario_end {
@@ -469,6 +483,7 @@ impl Host {
             }
         }
         // ---- 6. what happened
+        self.craters();
         self.strikes();
         self.know();
         self.seen();
@@ -550,8 +565,21 @@ impl Host {
             }
             Act::Launch(mut l) => {
                 let peer = &mut self.peers[k];
-                if peer.launches < 1.0 {
+                // (no faster than its kind: a gun its rate, the rest a reload's worth; what only a
+                // test key sets off, only where tests are let be)
+                let every = match l.what {
+                    crate::blasts::What::Shot(i) => g.blasts.shot_rate(i).map_or(RELOAD, |r| (1.0 / f64::from(r.max(0.1)) / STEP).floor() as u64),
+                    crate::blasts::What::Boom(_) if !self.config.cheats => return Err(NOT_ALLOWED),
+                    _ => RELOAD,
+                };
+                let last = peer.fired.iter().position(|f| f.0 == l.what);
+                let now = g.step;
+                if peer.launches < 1.0 || last.is_some_and(|i| now < peer.fired[i].1 + every.saturating_sub(every / 5)) {
                     return Err(TOO_FAST);
+                }
+                match last {
+                    Some(i) => peer.fired[i].1 = now,
+                    None => peer.fired.push((l.what, now)),
                 }
                 // (from the hand, going as the body goes, at the speed its kind has)
                 if l.from.distance(eye) > HAND_REACH {
@@ -647,6 +675,18 @@ impl Host {
         }
     }
 
+    /// The craters dug in the last step, to everyone (the ground is everyone's), in the order dug.
+    fn craters(&mut self) {
+        for k in 0..self.game.out.craters.len() {
+            let (body, crater) = self.game.out.craters[k];
+            self.encoded.clear();
+            net::append_event(&Event::Crater { body, crater }, &mut self.encoded);
+            for peer in &mut self.peers {
+                peer.tell_bytes(&self.encoded);
+            }
+        }
+    }
+
     /// The strikes of the last step, to whoever knows what each struck; what they did taken as told.
     fn strikes(&mut self) {
         let strikes = std::mem::take(&mut self.game.out.strikes);
@@ -707,6 +747,8 @@ impl Host {
             let from = peer.came.len();
             peer.interest.update(&rule, set, p.position, p.velocity_in(set), &pinned[k], dt, &mut peer.came, &mut peer.went);
             peer.interest.owe(set, p.position, &pinned[k], dt);
+            peer.rested.clear();
+            peer.interest.rests(set, &mut peer.rested);
             // (what their game has as the server does, from the start, is not told: what the
             // scenario set, anchored, untouched)
             let mut i = from;
@@ -749,6 +791,15 @@ impl Host {
                 self.peers[k].tell(&Event::Gone { id });
             }
             self.peers[k].went = went;
+            // (what came to rest, where it rests, to the last bit)
+            let rested = std::mem::take(&mut self.peers[k].rested);
+            for &id in &rested {
+                if let Some(s) = self.game.builds.set.get(id) {
+                    let e = Event::Rest { id, pos: s.pos, rot: s.rot };
+                    self.peers[k].tell(&e);
+                }
+            }
+            self.peers[k].rested = rested;
         }
     }
 

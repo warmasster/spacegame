@@ -63,7 +63,7 @@ pub fn find_data(home: &Path, said: Option<&str>) -> Result<PathBuf, String> {
 /// The game of `data` (its `defs`), started on a thread of its own.
 pub fn start(defs: Defs, data: &Path, cheats: bool) -> Result<Sim, String> {
     // (the server draws nothing: room for a few particles, for what the effects keep count of)
-    let game = Game::new(&defs, &data.join("defs"), 256, |_| true)?;
+    let game = Game::new_apart(&defs, &data.join("defs"), 256, |_| true)?;
     let host = Host::new(game, defs.scenario.player, HostConfig { cheats, ..HostConfig::default() });
     let (to, inbox) = channel();
     let (outbox, from) = channel();

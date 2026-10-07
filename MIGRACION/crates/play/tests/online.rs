@@ -21,7 +21,7 @@ fn defs() -> &'static Defs {
 }
 
 fn new_game() -> Game {
-    Game::new(defs(), &lunar_play::root().join("assets/defs"), 2000, |_| true).unwrap()
+    Game::new_apart(defs(), &lunar_play::root().join("assets/defs"), 2000, |_| true).unwrap()
 }
 
 /// A player's game: its connection, its world, its body; and where the body was at each step
@@ -73,6 +73,24 @@ impl Table {
         }
         assert!(t.seats.iter().all(|s| s.online.live()), "{:?}", t.seats.iter().map(|s| s.online.status()).collect::<Vec<_>>());
         t
+    }
+
+    /// One more player comes in (until their game is in the game).
+    fn join(&mut self, name: &str) -> usize {
+        let addr = self.link.addr();
+        let client = lunar_net::Client::with_transport(Box::new(self.net.endpoint()), addr, name, BUILD, defs().fingerprint);
+        let game = new_game();
+        let me = Player::new(game.bodies.clone(), &game.site, defs().scenario.player);
+        self.seats.push(Seat { online: Online::new(client, defs().scenario.player), game, me, path: Vec::new(), said: Vec::new() });
+        let k = self.seats.len() - 1;
+        for _ in 0..600 {
+            self.frame(1.0 / 60.0, |_, _, _| {});
+            if self.seats[k].online.live() {
+                break;
+            }
+        }
+        assert!(self.seats[k].online.live(), "{name} never got in: {:?}", self.seats[k].online.status());
+        k
     }
 
     /// One frame of `dt` s for everyone: the server's steps that are due, and each player's game
@@ -334,4 +352,84 @@ fn standing_in_a_ship_at_any_speed_the_body_is_never_put_right() {
         assert_eq!(t.seats[0].online.stats.corrections, first, "at {speed} m/s, standing: {:?} {:?}", t.seats[0].online.stats, t.host.stats);
         assert!(t.off_aboard(0, 120) < 1e-3, "at {speed} m/s our game has us {:.4} m off in the ship", t.off_aboard(0, 120));
     }
+}
+
+#[test]
+fn what_a_player_fires_the_server_decides_and_every_game_ends_alike() {
+    // a charge of 100 kg from the player's hands at a ship standing at the site, and a second player
+    // watching: the server lets it fly and decides what it does; each game does the same strikes
+    // with the same dice, so the ship ends the same in all three, and each piece that came off is
+    // in each game with the server's name for it
+    let cond = Conditions { delay: 0.04, jitter: 0.01, loss: 0.02, ..Conditions::default() };
+    let mut t = Table::new(2, 23, cond);
+    t.run(1.0, 60.0, |_, _, _| {});
+    let target = {
+        let s = &t.seats[0];
+        let eye = s.me.pilot.position;
+        let set = &s.game.builds.set;
+        s.game.ships.list.iter().filter_map(|sh| set.get(sh.structure)).min_by(|a, b| a.pos.distance(eye).total_cmp(&b.pos.distance(eye))).map(|x| x.id).unwrap()
+    };
+    let before = t.host.game.builds.set.list.len();
+    {
+        let s = &mut t.seats[0];
+        let set = &s.game.builds.set;
+        let st = set.get(target).unwrap();
+        let eye = s.me.pilot.position;
+        let dir = (st.to_world(st.center) - eye).normalize();
+        let bodies = s.game.bodies.clone();
+        assert!(s.game.blasts.fire_from("personalizado", eye + dir, dir, DVec3::ZERO, None, &bodies, &mut s.game.builds));
+    }
+    t.run(4.0, 60.0, |_, _, _| {});
+    assert!(t.host.game.struck > 0, "the server struck nothing");
+    let made = t.host.game.builds.set.list.len() - before;
+    assert!(made > 0, "nothing came off");
+    let site = t.host.game.builds.set.get(target).map_or(DVec3::ZERO, |s| s.pos);
+    let site = if site == DVec3::ZERO { t.seats[0].me.pilot.position } else { site };
+    // (what each structure near it is: what is there and works of it, each joint, what its
+    // ship's systems keep that must be the same)
+    let digest = |g: &Game, id: u64| {
+        let s = g.builds.set.get(id)?;
+        let sh = g.ships.by_structure(id).map(|n| &g.ships.list[n]);
+        Some(lunar_ship::sync::Digest::of(sh, s).hash)
+    };
+    let near: Vec<u64> = t.host.game.builds.set.list.iter().filter(|s| s.pos.distance(site) < 300.0).map(|s| s.id).collect();
+    for (k, s) in t.seats.iter().enumerate() {
+        for &id in &near {
+            assert_eq!(digest(&s.game, id), digest(&t.host.game, id), "player {k}: structure {id} is not the server's ({:?})", s.online.stats);
+            assert_eq!(s.game.builds.set.get(id).map(|x| x.lineage), t.host.game.builds.set.get(id).map(|x| x.lineage));
+        }
+        // (and nothing near it the server does not have, ours unnamed least of all)
+        for st in s.game.builds.set.list.iter().filter(|x| x.pos.distance(site) < 300.0) {
+            assert!(near.contains(&st.id), "player {k} has structure {} the server does not ({:?})", st.id, s.online.stats);
+        }
+    }
+    assert!(t.seats[0].online.stats.strikes > 0 && t.seats[1].online.stats.strikes > 0);
+    // one who comes now sees each structure as it is and every piece where it lies, and the ground
+    // as the blast left it
+    let late = t.join("tarde");
+    t.run(2.0, 60.0, |_, _, _| {});
+    let s = &t.seats[late];
+    for &id in &near {
+        assert_eq!(digest(&s.game, id), digest(&t.host.game, id), "the one who came late has structure {id} otherwise ({:?})", s.online.stats);
+    }
+    let ground = |g: &Game| g.bodies.get(g.site.body).deform().craters().to_vec();
+    assert!(!ground(&t.host.game).is_empty(), "the blast dug nothing");
+    for (k, s) in t.seats.iter().enumerate() {
+        assert_eq!(ground(&s.game), ground(&t.host.game), "player {k} has the ground otherwise");
+    }
+    let s = &t.seats[late];
+    let mut seen = 0;
+    for st in &t.host.game.builds.set.list {
+        if st.id >= t.host.game.builds.scenario_end && st.pos.distance(site) < 300.0 {
+            let mine = s.game.builds.set.get(st.id).unwrap_or_else(|| panic!("the one who came late has no piece {}", st.id));
+            // (where its middle is: what is at rest, where it rests; what still rolls, within what
+            // it rolls in the moment our game is ahead of the server's, and some)
+            let ahead = (s.game.step - t.host.game.step) as f64 * STEP;
+            let (a, b) = (mine.to_world(mine.center), st.to_world(st.center));
+            let most = if st.resting { 0.002 } else { 0.05 + (st.vel.length() + f64::from(st.spin.length() * st.radius)) * (ahead + 0.3) };
+            assert!(a.distance(b) < most, "piece {} is {:.3} m off ({most:.3} at most): server rest {} vel {:.2} spin {:.2}; ours rest {} ({:?})", st.id, a.distance(b), st.resting, st.vel.length(), st.spin.length(), mine.resting, s.online.stats);
+            seen += 1;
+        }
+    }
+    assert!(seen > 0);
 }
