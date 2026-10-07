@@ -120,7 +120,10 @@ vuelo (V40)», [`COMBATE.md`](COMBATE.md), [`MOVIMIENTO.md`](MOVIMIENTO.md) §8)
     distinta en cada partida.
   - prueba de **todas las armas de los datos** (`every_weapon_in_the_data_…`): las 26 que hay,
     cada una contra un blanco nuevo en red; un arma nueva queda probada sola;
-  - **Queda:** dónde está cada trozo no se sincroniza (cada partida los mueve con su física).
+  - **Queda:** dónde está cada trozo no se sincroniza (cada partida los mueve con su física): lo
+    arregla que el servidor tenga los objetos sueltos, fase 2 de
+    [`PLAN_SERVIDOR_MUNDO.md`](PLAN_SERVIDOR_MUNDO.md) (el plan de llevar a Rust el servidor con el
+    mundo dentro de la versión web, pieza a pieza).
 
 - **Teclas a gusto de cada uno** (Fernando: «las acciones con la F ok, pero mete cambiar
   controles… usar las flechas para algo de la nave… también tenemos numpad»):
