@@ -5,7 +5,7 @@ use super::{catalog::Catalog, state::Structure};
 use glam::Vec3;
 
 /// A hit on a structure, in its frame.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Hit {
     pub point: Vec3,
     /// Travel direction (unit) of a projectile; ignored by blasts.

@@ -29,11 +29,14 @@ pub enum Does {
     Press,
 }
 
-/// A key of a seat, as its data names it ("W", "Mayús"), the control it works (index among the
-/// ship's controls) and what it does to it.
+/// A key of a seat, as its data names it: a key ("G", "Mayús") or, `order`, a flight order
+/// whose keys are the player's ("gases_mas"); which of the seat's bindings it is (`binding`),
+/// the control it works (index among the ship's controls) and what it does to it.
 #[derive(Clone, Debug)]
 pub struct SeatKey {
     pub key: String,
+    pub order: bool,
+    pub binding: usize,
     pub control: usize,
     pub does: Does,
 }
@@ -43,9 +46,17 @@ pub struct SeatKey {
 pub fn keys(ship: &Ship, seat: usize) -> (Vec<SeatKey>, Vec<String>) {
     let (mut out, mut bad) = (Vec::new(), Vec::new());
     let Some(s) = ship.kind.seats.get(seat) else { return (out, bad) };
-    for b in &s.def.mandos {
+    for (binding, b) in s.def.mandos.iter().enumerate() {
+        let (key, order) = match (&b.orden, b.tecla.is_empty()) {
+            (Some(o), true) => (o.clone(), true),
+            (None, false) => (b.tecla.clone(), false),
+            _ => {
+                bad.push(format!("asiento {}: mando '{}': o una tecla o una orden de vuelo", s.def.id, b.mando));
+                continue;
+            }
+        };
         let Some(control) = ship.panels.controls.iter().position(|c| c.id == b.mando) else {
-            bad.push(format!("asiento {}: tecla '{}': no hay mando '{}'", s.def.id, b.tecla, b.mando));
+            bad.push(format!("asiento {}: tecla '{key}': no hay mando '{}'", s.def.id, b.mando));
             continue;
         };
         let does = match (b.accion.as_deref(), b.eje) {
@@ -54,12 +65,12 @@ pub fn keys(ship: &Ship, seat: usize) -> (Vec<SeatKey>, Vec<String>) {
             (Some("cero"), _) => Does::Zero,
             (Some("pulsar"), _) => Does::Press,
             (Some(a), _) => {
-                bad.push(format!("asiento {}: tecla '{}': acción '{a}' (subir, bajar, cero o pulsar)", s.def.id, b.tecla));
+                bad.push(format!("asiento {}: tecla '{key}': acción '{a}' (subir, bajar, cero o pulsar)", s.def.id));
                 continue;
             }
             (None, axis) => Does::Axis { axis: axis.unwrap_or(0), value: b.valor.unwrap_or(1.0) },
         };
-        out.push(SeatKey { key: b.tecla.clone(), control, does });
+        out.push(SeatKey { key, order, binding, control, does });
     }
     (out, bad)
 }

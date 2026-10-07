@@ -851,8 +851,13 @@ fn exit_drop() -> f32 {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BindingDef {
-    /// A key name ("W", "Espacio", "Flecha arriba", "Raton X"...).
+    /// A key name ("G", "Espacio", "Flecha arriba"...): a key of this seat's own. Or none, and
+    /// `orden` instead: one of the flight orders every ship shares (pitch, throttle, fire...),
+    /// its key the player's (`app::input::ORDERS`).
+    #[serde(default)]
     pub tecla: String,
+    #[serde(default)]
+    pub orden: Option<String>,
     /// Control id (`panel/control`) and what the key does: an axis value while held (`eje`,
     /// `valor`), a press, or a turn.
     pub mando: String,

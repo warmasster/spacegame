@@ -39,6 +39,10 @@ pub mod flag {
     pub const VISOR: u16 = 1 << 10;
     /// The second use of the tool in hand is on (the right button's: a view, an aim).
     pub const SECOND: u16 = 1 << 11;
+    /// `ride` and `local` say where the player is beside a thing, not aboard it (floating by a
+    /// ship that flies): placed by it as it is where they are drawn, however fast both go, and
+    /// going on their own.
+    pub const BESIDE: u16 = 1 << 12;
 }
 
 /// The keys the server arbitrates (`Client::claim`): whose a thing is, who sits where. The lowest

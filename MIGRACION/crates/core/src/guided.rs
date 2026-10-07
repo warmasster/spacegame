@@ -149,6 +149,8 @@ pub struct Hit {
     /// The structure struck, if it struck one (a near miss names none).
     pub structure: Option<u64>,
     pub energy: f64,
+    /// The missile's own id (`Guided::id`).
+    pub id: u32,
 }
 
 /// Fixed flight step (s) and how often a seeker looks again (s).
@@ -329,7 +331,7 @@ impl Flight {
         }
         let p1 = m.pos + m.vel * STEP + a * (0.5 * STEP * STEP);
         let v1 = m.vel + a * STEP;
-        let hit = |at: DVec3, structure: Option<u64>| Hit { kind: m.kind, at, vel: v1, structure, energy: 0.5 * def.mass * v1.length_squared() };
+        let hit = |at: DVec3, structure: Option<u64>| Hit { kind: m.kind, at, vel: v1, structure, energy: 0.5 * def.mass * v1.length_squared(), id: m.id };
         if m.t >= def.arm {
             if let Some(at) = fuse {
                 return Some(hit(at, None));

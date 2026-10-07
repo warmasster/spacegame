@@ -27,6 +27,14 @@ pub struct Info<'a> {
     pub missile: String,
 }
 
+/// What the Controls tab waits for: a key for action (or flight order, `flight`) `id`, to be
+/// its only one or one more (`add`); or the keys changed, to be saved.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Capture {
+    Key { flight: bool, id: String, add: bool },
+    Save,
+}
+
 pub struct Ui {
     pub ctx: egui::Context,
     state: egui_winit::State,
@@ -58,8 +66,11 @@ pub struct Ui {
     /// and of the test shots (debug), as their data says.
     pub seat_keys: Vec<(String, String, String)>,
     pub test_keys: String,
-    /// The suit's tools: (key, name and what its buttons do).
-    pub tool_keys: Vec<(String, String)>,
+    /// The suit's tools, by number: name and what its buttons do.
+    pub tool_keys: Vec<String>,
+    /// The key the Controls tab waits for (`Capture`), and what the last change said.
+    pub capture: Option<Capture>,
+    pub keys_said: Vec<String>,
     /// The sound card (or why there is no sound), for the Controls tab.
     pub sound: String,
     /// The menu is open over the start menu (not over a game going on).
@@ -91,7 +102,7 @@ impl Ui {
         let ctx = egui::Context::default();
         crate::hud::style(&ctx);
         let state = egui_winit::State::new(ctx.clone(), egui::ViewportId::ROOT, window, Some(window.scale_factor() as f32), None, None);
-        Ui { ctx, state, stats: false, menu: false, advanced: false, edit: settings, preset, landed, flying, npcs, sun, controls, realtime: false, apply: false, regenerate: false, shots: Vec::new(), shots_changed: false, hud: Hud::default(), panels: false, tab: Tab::Controls, seat_keys: Vec::new(), test_keys: String::new(), tool_keys: Vec::new(), sound: String::new(), at_start: false, ask: None }
+        Ui { ctx, state, stats: false, menu: false, advanced: false, edit: settings, preset, landed, flying, npcs, sun, controls, realtime: false, apply: false, regenerate: false, shots: Vec::new(), shots_changed: false, hud: Hud::default(), panels: false, tab: Tab::Controls, seat_keys: Vec::new(), test_keys: String::new(), tool_keys: Vec::new(), capture: None, keys_said: Vec::new(), sound: String::new(), at_start: false, ask: None }
     }
 
     /// Nothing fades in or out: what a picture is taken of is there at once (a script's).
@@ -163,12 +174,16 @@ impl Ui {
                 job.append(crate::GAME, 0.0, egui::TextFormat { font_id: egui::FontId::proportional(34.0), color: crate::hud::TEXT, extra_letter_spacing: 9.0, ..Default::default() });
                 ui.label(job);
                 ui.add_space(6.0);
-                ui.vertical(|ui| {
-                    ui.add_space(9.0);
-                    let mut job = egui::text::LayoutJob::default();
-                    job.append(if self.at_start { "OPCIONES Y CONTROLES" } else { "SISTEMAS DEL TRAJE  ·  EN PAUSA" }, 0.0, egui::TextFormat { font_id: egui::FontId::proportional(12.5), color: crate::hud::DIM, extra_letter_spacing: 2.4, ..Default::default() });
-                    ui.label(job);
-                });
+                // (what it is, where there is room for it beside the ways out: never over them)
+                let mut job = egui::text::LayoutJob::default();
+                job.append(if self.at_start { "OPCIONES Y CONTROLES" } else { "SISTEMAS DEL TRAJE  ·  EN PAUSA" }, 0.0, egui::TextFormat { font_id: egui::FontId::proportional(12.5), color: crate::hud::DIM, extra_letter_spacing: 2.4, ..Default::default() });
+                let g = ui.painter().layout_job(job);
+                if ui.available_width() > g.size().x + if self.at_start { 300.0 } else { 470.0 } {
+                    ui.vertical(|ui| {
+                        ui.add_space(9.0);
+                        ui.label(g);
+                    });
+                }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.label(egui::RichText::new(if self.at_start { "volver" } else { "volver al juego" }).color(crate::hud::DIM));
                     crate::hud::key_label(ui, "Esc");
@@ -245,8 +260,8 @@ impl Ui {
         });
     }
 
-    /// The keys, as the table of keys has them (`input::BINDINGS`), the seats' as their ship's
-    /// data has them, and the mouse's settings.
+    /// The keys as they stand (`input::keymap`), each with what changes it; the seats' own as
+    /// their ship's data has them; the mouse's settings.
     fn controls_tab(&mut self, ui: &mut egui::Ui) {
         crate::hud::section(ui, "Ratón y sonido");
         ui.horizontal(|ui| {
@@ -257,38 +272,91 @@ impl Ui {
             ui.add(egui::Slider::new(&mut self.controls.volume, 0.0..=1.5).text("Volumen"));
             ui.label(egui::RichText::new(&self.sound).color(crate::hud::DIM).small());
         });
-        let row = |ui: &mut egui::Ui, key: &str, what: &str| {
-            crate::hud::key_label(ui, key);
+        // the keys: a profile, all undone, what does not hold together
+        crate::hud::section(ui, "Teclas");
+        let map = input::keymap().clone();
+        let mut reset: Option<Option<String>> = None;
+        ui.horizontal(|ui| {
+            let now = map.profile().map(str::to_string);
+            let name = |p: &Option<String>| p.as_ref().and_then(|p| map.profiles().into_iter().find(|x| &x.0 == p)).map_or("Las del juego".to_string(), |x| x.1);
+            egui::ComboBox::from_label("Perfil").selected_text(name(&now)).show_ui(ui, |ui| {
+                for p in std::iter::once(None).chain(map.profiles().into_iter().map(|p| Some(p.0))) {
+                    if ui.selectable_label(p == now, name(&p)).clicked() && p != now {
+                        reset = Some(p);
+                    }
+                }
+            });
+            if ui.button("Restablecer todo").on_hover_text("Las teclas del perfil, sin nada de lo que has cambiado").clicked() {
+                reset = Some(now);
+            }
+        });
+        ui.label(egui::RichText::new("Cambiar: pulsa la tecla nueva (Esc: dejarlo, Retroceso: sin tecla). +: otra tecla más. Se guarda en ajustes/controles.jsonc").color(crate::hud::DIM).small());
+        for p in map.problems.iter().chain(&self.keys_said) {
+            ui.label(egui::RichText::new(p).color(crate::hud::CAUTION).small());
+        }
+        if let Some(p) = reset {
+            input::change_keymap(|k| k.reset(p));
+            self.keys_said = vec!["Teclas restablecidas".into()];
+            self.capture = Some(Capture::Save);
+        }
+        let mut capture = None;
+        let waiting = self.capture.clone();
+        let row = |ui: &mut egui::Ui, key: &str, what: &str, change: Option<(bool, &str)>, capture: &mut Option<Capture>| {
+            ui.horizontal(|ui| {
+                let asked = change.is_some_and(|(f, id)| matches!(&waiting, Some(Capture::Key { flight, id: i, .. }) if *flight == f && i == id));
+                crate::hud::key_label(ui, if asked { "pulsa una tecla…" } else { key });
+                if let Some((flight, id)) = change {
+                    if ui.small_button("Cambiar").clicked() {
+                        *capture = Some(Capture::Key { flight, id: id.to_string(), add: false });
+                    }
+                    if ui.small_button("+").on_hover_text("Otra tecla más").clicked() {
+                        *capture = Some(Capture::Key { flight, id: id.to_string(), add: true });
+                    }
+                }
+            });
             // (a long line folds: the window keeps its width)
             ui.scope(|ui| {
-                ui.set_max_width(500.0);
+                ui.set_max_width(460.0);
                 ui.add(egui::Label::new(what).wrap());
             });
             ui.end_row();
         };
         let title = |ui: &mut egui::Ui, text: &str| crate::hud::section(ui, text);
         // the keys in one column of one width, whatever the group
-        let grid = |id: &str| egui::Grid::new(id).num_columns(2).min_col_width(205.0).spacing([16.0, 6.0]).striped(true);
+        let grid = |id: &str| egui::Grid::new(id).num_columns(2).min_col_width(250.0).spacing([16.0, 6.0]).striped(true);
         for g in input::Group::ALL {
-            let rows: Vec<&input::Binding> = input::BINDINGS.iter().filter(|b| b.group == g && !(crate::DEMO && b.debug)).collect();
-            if rows.is_empty() {
+            let acts: Vec<&input::ActionDef> = input::ACTIONS.iter().filter(|a| a.group == g && !(crate::DEMO && a.debug)).collect();
+            if acts.is_empty() {
                 continue;
             }
             title(ui, g.title());
             grid(g.title()).show(ui, |ui| {
-                for b in rows {
-                    row(ui, b.shown, b.what);
+                for n in input::NOTES.iter().filter(|n| n.group == g) {
+                    row(ui, n.shown, n.what, None, &mut capture);
                 }
-                if g == input::Group::Manos {
-                    for (key, what) in &self.tool_keys {
-                        row(ui, key, what);
-                    }
+                for a in acts {
+                    let what = match a.action {
+                        input::Action::Tool(k) => match self.tool_keys.get(usize::from(k)) {
+                            Some(t) => t.as_str(),
+                            None => continue,
+                        },
+                        _ => a.what,
+                    };
+                    row(ui, &map.shown(a.action), what, Some((false, a.id)), &mut capture);
                 }
                 if g == input::Group::Pruebas && !self.test_keys.is_empty() {
-                    row(ui, "Disparos", &self.test_keys);
+                    row(ui, "Disparos", &self.test_keys, None, &mut capture);
                 }
             });
         }
+        // at the controls of any ship: the flight orders
+        title(ui, "A LOS MANDOS DE UNA NAVE (todas)");
+        grid("vuelo").show(ui, |ui| {
+            for (id, what) in input::ORDERS {
+                let keys: Vec<&str> = map.order_keys(id).iter().map(|k| input::key_name(*k)).collect();
+                row(ui, &if keys.is_empty() { "—".to_string() } else { keys.join(" o ") }, what, Some((true, id)), &mut capture);
+            }
+        });
         // the seats with keys of their own
         let mut seat = "";
         for (name, _, _) in &self.seat_keys {
@@ -299,10 +367,39 @@ impl Ui {
             title(ui, &format!("SENTADO · {}", name.to_uppercase()));
             grid(name).show(ui, |ui| {
                 for (_, key, what) in self.seat_keys.iter().filter(|k| &k.0 == name) {
-                    row(ui, key, what);
+                    row(ui, key, what, None, &mut capture);
                 }
             });
         }
+        if capture.is_some() {
+            self.capture = capture;
+        }
+    }
+
+    /// A key pressed with the menu open, while the Controls tab waits for one: true if it took
+    /// it. Whoever saves the keys looks for `Capture::Save` after.
+    pub fn captured(&mut self, key: winit::keyboard::KeyCode) -> bool {
+        use winit::keyboard::KeyCode as K;
+        let Some(Capture::Key { flight, id, add }) = self.capture.clone() else { return false };
+        self.capture = None;
+        if key == K::Escape {
+            return true;
+        }
+        let map = input::keymap();
+        let mut keys: Vec<K> = if !add {
+            Vec::new()
+        } else if flight {
+            map.order_keys(&id).to_vec()
+        } else {
+            input::ACTIONS.iter().find(|a| a.id == id).map(|a| map.keys_of(a.action).collect()).unwrap_or_default()
+        };
+        drop(map);
+        if key != K::Backspace && !keys.contains(&key) {
+            keys.push(key);
+        }
+        self.keys_said = input::change_keymap(|k| k.set(flight, &id, &keys));
+        self.capture = Some(Capture::Save);
+        true
     }
 
     /// The scene's counts and the test shots (debug build).

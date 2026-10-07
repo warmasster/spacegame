@@ -48,8 +48,10 @@ enum Action {
 }
 
 /// Something this game fired or set off that the other players' games must show too (`multi`
-/// tells them; they show it with `Blasts::show`). What it does to the structures is not here:
-/// that is decided once, by whoever simulates each one.
+/// tells them; they show it with `Blasts::show`): what a player fires from their hands, what a
+/// test key sets off. (What a ship's weapons fire every game shows from its own copy of the
+/// ship: `fire_twin`.) What any of it does to the structures is not here: the game it was fired
+/// in decides it and tells it (`Builds::take_strikes`).
 #[derive(Clone, Debug, PartialEq)]
 pub enum Seen {
     /// A round of shot `shot` (its place in `shots.jsonc`) leaving `from` along `dir` at `speed` m/s.
@@ -61,7 +63,8 @@ pub enum Seen {
 }
 
 /// The mark, in a round's kind, of one fired in another player's game: it flies and is seen
-/// here, and where it lands it does nothing (its shooter's game says what it struck).
+/// here, and where it lands it is seen to land and does nothing (its shooter's game says what
+/// it struck).
 const FOREIGN: u16 = 0x8000;
 
 pub struct Blasts {
@@ -112,6 +115,9 @@ pub struct Blasts {
     /// (`tactics`): by id.
     pub aims: Vec<(u64, Aim)>,
     hits: Vec<Hit>,
+    /// The guided missiles in flight that are twins of one fired in another player's game: what
+    /// they strike they are seen to strike, and do nothing to.
+    twins: Vec<u32>,
 }
 
 /// A key name of the definitions ("B", "7"...).
@@ -197,6 +203,7 @@ impl Blasts {
             decoy_looks: Vec::new(),
             aims: Vec::new(),
             hits: Vec::new(),
+            twins: Vec::new(),
             trails,
             warheads,
             missile_looks,
@@ -241,6 +248,12 @@ impl Blasts {
         Ok(())
     }
 
+    /// The number shot `id` goes by in the rounds in flight (`Round::kind`, without the mark of
+    /// another game's).
+    pub fn shot_index(&self, id: &str) -> Option<u16> {
+        self.shots.iter().position(|(s, _)| s == id).map(|i| i as u16)
+    }
+
     /// The speed shot `id` leaves at (m/s) and how far it reaches (m): what a gun's sight is
     /// worked out with.
     pub fn shot_speed(&self, id: &str) -> Option<(f32, f32)> {
@@ -250,7 +263,32 @@ impl Blasts {
     /// A round of shot `id` fired from something that moves: leaving `from` along `dir`, with
     /// the speed `vel` of what fired it besides its own. False if there is no such shot (or it
     /// is one that strikes at once: a mounted gun fires rounds that fly).
+    /// (A ship's weapon: every game shows it from its own copy of the ship, so it is not told.)
     pub fn fire_round(&mut self, id: &str, from: DVec3, dir: DVec3, vel: DVec3, bodies: &BodyRegistry) -> bool {
+        self.round(id, from, dir, vel, bodies, false, false)
+    }
+
+    /// What a weapon of a ship simulated in another player's game fires, as this game's copy of
+    /// that ship fires it: a round seen to fly and land (it does nothing: what the real one
+    /// struck its game tells), or a guided missile likewise. Every game shows the others' ships
+    /// firing this way, from their own copy, without a word over the network.
+    pub fn fire_twin(&mut self, id: &str, from: DVec3, dir: DVec3, vel: DVec3, bodies: &BodyRegistry) -> bool {
+        self.round(id, from, dir, vel, bodies, true, false)
+    }
+
+    /// A guided missile of kind `kind` that is a twin of another game's (`fire_twin`).
+    pub fn launch_twin(&mut self, kind: u16, from: DVec3, vel: DVec3, target: Option<u64>, shooter: u64) -> bool {
+        if !self.guided.launch(kind, from, vel, target, shooter) {
+            return false;
+        }
+        if let Some(m) = self.guided.list.last() {
+            self.twins.push(m.id);
+        }
+        true
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn round(&mut self, id: &str, from: DVec3, dir: DVec3, vel: DVec3, bodies: &BodyRegistry, twin: bool, tell: bool) -> bool {
         let Some(i) = self.shots.iter().position(|(s, _)| s == id) else { return false };
         let s = &self.shots[i].1;
         let Some(speed) = s.speed else { return false };
@@ -260,12 +298,14 @@ impl Blasts {
         let dir = self.scatter(&View { eye: from, forward: dir, up, fov_y: 1.0, near: 0.1 }, spread);
         let (style, size) = self.shot_looks[i];
         let seed = (self.shots_fired % 997) as f32 / 997.0;
-        let mut r = rounds::round(i as u16, from, dir, speed, range, bodies.dominant(from), style, size, seed);
+        let mut r = rounds::round(i as u16 | if twin { FOREIGN } else { 0 }, from, dir, speed, range, bodies.dominant(from), style, size, seed);
         r.vel += vel;
         if !self.rounds.fire(r) {
             return false;
         }
-        self.told(Seen::Round { shot: i as u16, from, dir, speed, vel });
+        if tell {
+            self.told(Seen::Round { shot: i as u16, from, dir, speed, vel });
+        }
         true
     }
 
@@ -316,7 +356,7 @@ impl Blasts {
     pub fn fire_from(&mut self, id: &str, from: DVec3, dir: DVec3, vel: DVec3, bodies: &BodyRegistry, builds: &mut Builds) -> bool {
         let Some(i) = self.shots.iter().position(|(s, _)| s == id) else { return false };
         if self.shots[i].1.speed.is_some() {
-            return self.fire_round(id, from, dir, vel, bodies);
+            return self.round(id, from, dir, vel, bodies, false, true);
         }
         let up = dir.any_orthonormal_vector();
         self.fire(Action::Shoot(i), true, bodies, &View { eye: from, forward: dir, up, fov_y: 1.0, near: 0.1 }, Motion { at: from, vel, spin: DVec3::ZERO }, builds);
@@ -501,32 +541,30 @@ impl Blasts {
     pub fn land_rounds(&mut self, bodies: &BodyRegistry, builds: &mut Builds) {
         for k in 0..self.impacts.len() {
             let i = self.impacts[k];
-            // (fired in another player's game: theirs says what it struck)
-            if i.kind & FOREIGN != 0 {
-                continue;
+            // (fired in another player's game: seen to land here; theirs says what it struck)
+            let foreign = i.kind & FOREIGN != 0;
+            let Some((_, s)) = self.shots.get(usize::from(i.kind & !FOREIGN)) else { continue };
+            if !foreign {
+                self.impact_count += 1;
+                self.last_impact = Some(i);
+                self.shots_fired += 1;
             }
-            self.impact_count += 1;
-            self.last_impact = Some(i);
-            let s = &self.shots[usize::from(i.kind)].1;
-            self.shots_fired += 1;
             let (at, dir, vel) = match i.surface {
                 Some(hit) => {
                     let Some(structure) = builds.set.get(hit.id) else { continue };
                     let at = structure.to_world(hit.point);
                     let dir = (structure.rot * hit.dir).as_dvec3();
                     let vel = structure.velocity_at(at);
-                    builds.hit(hit.id, &damage::Hit { point: hit.point - hit.dir * 0.05, dir: hit.dir, energy: s.energy, radius: 0.0, area: s.area });
+                    if !foreign {
+                        builds.hit(hit.id, &damage::Hit { point: hit.point - hit.dir * 0.05, dir: hit.dir, energy: s.energy, radius: 0.0, area: s.area });
+                    }
                     (at, dir, vel)
                 }
                 None => (i.at, i.dir, DVec3::ZERO),
             };
             if let Some(fx) = &s.impact {
                 let at = at - dir * 0.1;
-                let blast = self.fx.explode_moving(fx, bodies, bodies.dominant(at), Motion { at, vel, spin: DVec3::ZERO }, 1.0, 0.0);
-                if self.tell && blast.is_ok() {
-                    self.seen.push(Seen::Boom { id: fx.clone(), at, vel, scale: 1.0, extra: 0.0 });
-                }
-                if let Ok(Some(d)) = blast {
+                if let (Ok(Some(d)), false) = (self.fx.explode_moving(fx, bodies, bodies.dominant(at), Motion { at, vel, spin: DVec3::ZERO }, 1.0, 0.0), foreign) {
                     builds.blast(at, d);
                 }
             }
@@ -541,18 +579,18 @@ impl Blasts {
             let at = s.at - s.vel.normalize_or_zero() * 0.5;
             // the impact's energy: a bigger blast for a charge, a harder hit for anything else
             let extra = (s.energy * 0.5) as f32;
-            let blast = self.fx.explode_with(&self.warheads[s.kind], bodies, bodies.dominant(at), at, 1.0, extra);
-            if self.tell && blast.is_ok() {
-                self.seen.push(Seen::Boom { id: self.warheads[s.kind].clone(), at, vel: DVec3::ZERO, scale: 1.0, extra });
-            }
-            if let Ok(Some(d)) = blast {
+            if let Ok(Some(d)) = self.fx.explode_with(&self.warheads[s.kind], bodies, bodies.dominant(at), at, 1.0, extra) {
                 builds.blast(at, d);
             }
         }
-        // (the others' missiles fly on to be seen; what they strike is their launcher's to say)
+        // (the others' missiles fly on to be seen, and seen to strike; what they do is their
+        // launcher's to say)
         if !self.guests.list.is_empty() {
             self.guests.update(dt, bodies, &mut builds.set, &mut self.guest_strikes);
-            self.guest_strikes.clear();
+            for s in std::mem::take(&mut self.guest_strikes) {
+                let at = s.at - s.vel.normalize_or_zero() * 0.5;
+                let _ = self.fx.explode_with(&self.warheads[s.kind], bodies, bodies.dominant(at), at, 1.0, (s.energy * 0.5) as f32);
+            }
         }
         for k in 0..self.missiles.list.len() + self.guests.list.len() {
             let m = if k < self.missiles.list.len() { self.missiles.list[k] } else { self.guests.list[k - self.missiles.list.len()] };
@@ -577,14 +615,23 @@ impl Blasts {
         for h in std::mem::take(&mut self.hits) {
             let at = h.at - h.vel.normalize_or_zero() * 0.5;
             let w = &self.guided_warheads[usize::from(h.kind)];
+            // (a twin of another player's: seen to go off, it does nothing here)
+            let twin = match self.twins.iter().position(|&t| t == h.id) {
+                Some(k) => {
+                    self.twins.swap_remove(k);
+                    true
+                }
+                None => false,
+            };
             // (what it was doing relative to what it struck is not known here: its charge alone)
-            let blast = self.fx.explode(w, bodies, bodies.dominant(at), at);
-            if self.tell && blast.is_ok() {
-                self.seen.push(Seen::Boom { id: w.clone(), at, vel: DVec3::ZERO, scale: 1.0, extra: 0.0 });
-            }
-            if let Ok(Some(d)) = blast {
+            if let (Ok(Some(d)), false) = (self.fx.explode(w, bodies, bodies.dominant(at), at), twin) {
                 builds.blast(at, d);
             }
+        }
+        // (twins that are no longer in flight are forgotten)
+        if !self.twins.is_empty() {
+            let list = &self.guided.list;
+            self.twins.retain(|t| list.iter().any(|m| m.id == *t));
         }
         // how many puffs a thing that has flown `t` s owes this frame, at `rate` a second
         let owed = |t: f64, rate: f64| ((t * rate).floor() - ((t - dt).max(0.0) * rate).floor()).max(0.0) as usize;

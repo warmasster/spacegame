@@ -321,9 +321,12 @@ y en una docena de sitios del terreno, pendientes de hasta 17°).
   rodillas, cabeza) son datos: `scenario.jsonc`, `player.cuerpo`.
 - **Mira + clic:** acciona el mando apuntado (2,4 m). Mantener = tirar / armar. Rueda = girar
   (Mayús grueso, Ctrl fino). Palancas: mantén clic y arrastra.
-- **E:** sentarse en el asiento apuntado. **Espacio:** levantarse. Sentado, las teclas del asiento
+- **F:** sentarse en el asiento apuntado. **Espacio:** levantarse. Sentado, las teclas del asiento
   (datos: `asientos[].mandos`) mueven sus mandos (palanca de vuelo, guiñada, traslación,
-  acelerador).
+  acelerador). Cada uno dice o una **orden de vuelo** (`"orden": "cabecear_abajo"`, la misma en
+  todas las naves; su tecla es la del jugador, `assets/defs/controles.jsonc` → `vuelo`) o, si es
+  propio de esa nave, una tecla fija (`"tecla": "P"`). Las órdenes están en `app/src/input.rs`
+  (`ORDERS`); una nueva es una fila allí y su tecla en `controles.jsonc`.
 - **G:** catálogo (naves y, en la versión debug, todas las estructuras). Elige, apunta, clic para
   colocar; rueda gira, Mayús+rueda acerca/aleja en el espacio; clic derecho o G suelta. Sin suelo
   bajo la mira, la pone flotando delante (órbita, espacio).
@@ -331,7 +334,7 @@ y en una docena de sitios del terreno, pendientes de hasta 17°).
   cada red, máquinas con procedencia, actuadores y articulaciones, caja negra.
 - **C:** agacharse (más bajo y lento, el aire te arrastra menos; no se levanta bajo un techo).
   **L:** linterna del casco. **T:** telémetro (distancia y qué es lo de la mira, nave más cercana y
-  su nivel de detalle). **F7 (debug):** naves teñidas por nivel de detalle. **U:** metralleta (Q y E alabean flotando con la mochila).
+  su nivel de detalle). **F7 (debug):** naves teñidas por nivel de detalle. **U:** metralleta (Q y E alabean flotando con la mochila). **F9 (debug):** vuelo libre.
 - **Equipo** (`assets/defs/gear.jsonc`, `app/src/gear.rs`), con las teclas de número:
   - **1 · Soldador-escáner.** Su pantallita dice qué es lo que miras y su integridad. Clic
     mantenido: suelda (o repone lo que falta, que tarda un momento). Botón derecho: **vista de
@@ -344,8 +347,12 @@ y en una docena de sitios del terreno, pendientes de hasta 17°).
   el mando cuando estás en el aire de verdad (un salto, un empuje, o más de 0,35 s sin suelo): un
   escalón o el borde de la rampa siguen siendo andar. Gasta gas (45 s a todo empuje) y se rellena
   a bordo de una nave.
-- **Teclas** (`app/src/input.rs`): una tabla dice qué hace cada tecla; el juego la usa para actuar
-  y el menú para listarla, así que no pueden discrepar. Una tecla nueva es una fila.
+- **Teclas** (`app/src/input.rs`): una tabla dice qué hace cada acción (`ACTIONS`) y otra las
+  órdenes de vuelo (`ORDERS`); qué teclas las hacen son datos (`assets/defs/controles.jsonc`, con
+  perfiles, y encima `ajustes/controles.jsonc`, lo que cambia el jugador desde el menú). El juego
+  y el menú leen el mismo `Keymap`, así que no pueden discrepar. Una acción nueva es una fila y su
+  tecla en el archivo; una tecla que no existe, una acción que no es ninguna o una tecla dada dos
+  veces se dicen en el menú y en el registro.
 - **HUD** (`app/src/hud.rs`): quien tiene algo que enseñar dice qué es (un indicador del traje, una
   ranura de herramienta, una ficha, un aviso), nunca dónde: cada clase de cosa tiene su sitio y el
   centro queda libre. Traje abajo a la izquierda (el gas de la mochila, con su tecla), herramientas
@@ -357,8 +364,9 @@ y en una docena de sitios del terreno, pendientes de hasta 17°).
   `navegacion.jsonc`: norte en superficie, marcha y radial en órbita, la nave y el sol en
   espacio libre), que se funden al cambiar de régimen ([`MOVIMIENTO.md`](MOVIMIENTO.md) §9). Un tema para todo, escalado a la
   ventana, y el mismo para las ventanas (`hud::style`).
-- **Menú (Esc)** con pestañas: CONTROLES (la tabla de teclas, las herramientas del traje, las
-  teclas de los asientos de la nave más cercana tal como las dan sus datos —`asientos[].mandos[].ayuda`—
+- **Menú (Esc)** con pestañas: CONTROLES (cada acción y cada orden de vuelo con su tecla y
+  «Cambiar» / «+», el perfil, «Restablecer todo», las herramientas del traje, las teclas propias
+  de los asientos de la nave más cercana tal como las dan sus datos —`asientos[].mandos[].ayuda`—
   y la sensibilidad del ratón), GRÁFICOS y, en debug, ESCENA Y PRUEBAS.
 - **Asientos y sus paneles:** `asientos[].paneles` dice qué paneles se trabajan desde cada asiento.
   `diag::seat_reach` comprueba que cada mando e instrumento de esos paneles se ve desde los ojos

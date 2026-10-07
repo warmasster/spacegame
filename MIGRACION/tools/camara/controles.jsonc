@@ -1,0 +1,13 @@
+// The Controls tab: the keys as they stand, each with what changes it, the profile and the
+// flight orders of every ship.
+// Run: luna --guion tools/camara/controles.jsonc → out/camara/controles_*.png
+{
+  "registro": "out/camara/controles.log",
+  "pasos": [
+    { "nave": "azor" },
+    { "esperar": 1.0 },
+    { "menu": "controles" },
+    { "esperar": 0.5 },
+    { "foto": "out/camara/controles_menu.png" }
+  ]
+}

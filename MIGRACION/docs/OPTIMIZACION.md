@@ -24,6 +24,24 @@ código muerto).
   notara, guardarlo y rehacerlo solo cuando cambie la versión de la estructura o el centro de
   masas.
 
+## V40 (2026-10-07): multijugador y teclas
+
+- **Naves ajenas:** una corrección por nave ajena y fotograma (`follow::steer`: unas cuantas
+  sumas y un `slerp`), y la llevada al presente de su última instantánea (`rigid_carried`, sin
+  reservar). Daño: cada impacto en una estructura compartida son ≤ 42 bytes por la red y un
+  `hit` igual que sin red; los gemelos de las armas ajenas cuestan lo mismo que sus proyectiles
+  sin la parte del daño. Los disparos de los jugadores van en trozos de 20 por mensaje.
+- **C · `Multi::named` busca la estructura nombrada recorriendo la lista** (y `find` de lo visto
+  igual). Con decenas de naves no se nota; con cientos de impactos por fotograma convendría un
+  mapa de id de red → estructura que ya se tiene (`self.ships`) para las naves.
+- **C · Teclas:** `input::shown` hace una `String` cada vez que la pide el HUD (el gas de la
+  mochila, una por herramienta): unas 10 cadenas cortas por fotograma, como el resto de los
+  textos del HUD. Si el HUD se pasa a cadenas guardadas, guardarlas también (cambian solo cuando
+  el jugador cambia una tecla). Buscar qué hace una tecla es recorrer ~60 pares: nada.
+- **C · Pruebas:** `Defs::load` tarda unos 12 s en el perfil de pruebas (las naves con sus
+  modelos); las del multijugador lo cargan una vez para todas (`OnceLock`), pero cada binario de
+  pruebas que lo usa lo paga. Si se juntan más, cachear en disco lo compilado de las naves.
+
 ## V39 (2026-10-06): barrido de proyectiles en el reloj del mundo
 
 - `structure::motion::Sweep`: BVH de volúmenes recorridos, una construcción por loncha con

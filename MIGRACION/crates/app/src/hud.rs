@@ -157,7 +157,7 @@ pub const TEXT: Color32 = Color32::from_rgb(234, 241, 246);
 pub const DIM: Color32 = Color32::from_rgb(146, 162, 176);
 pub const ACCENT: Color32 = Color32::from_rgb(108, 216, 242);
 const GOOD: Color32 = Color32::from_rgb(116, 234, 160);
-const CAUTION: Color32 = Color32::from_rgb(255, 192, 72);
+pub const CAUTION: Color32 = Color32::from_rgb(255, 192, 72);
 const WARNING: Color32 = Color32::from_rgb(255, 98, 82);
 /// The top and the bottom of a plate of glass (premultiplied).
 const GLASS: (Color32, Color32) = (Color32::from_rgba_premultiplied(16, 22, 29, 238), Color32::from_rgba_premultiplied(6, 9, 12, 246));

@@ -275,7 +275,7 @@ impl Gear {
                 ToolKind::Soldador { .. } => crate::hud::Icon::Welder,
                 ToolKind::Lanzador { .. } => crate::hud::Icon::Launcher,
             };
-            out.push(crate::hud::Slot { key: (k + 1).to_string(), name: t.nombre.clone(), held, bar, note, icon });
+            out.push(crate::hud::Slot { key: crate::input::shown(crate::input::Action::Tool(k as u8)), name: t.nombre.clone(), held, bar, note, icon });
         }
     }
 

@@ -171,7 +171,7 @@ Caza monoplaza de 11 m y 13 t, posado en horizontal sobre tres patas largas.
 - **Entrar** (V40): el Azor está sobre patas largas, con la panza a 2,1 m del suelo: se pasa por
   debajo de pie. ASIENTO, en el panel exterior a babor tras el ala, abre las **dos compuertas de
   la panza** y, solo con las dos abiertas, baja el asiento en su plataforma **hasta el suelo**
-  (los mástiles se alargan con mangas telescópicas). Te sientas (E) de pie, sin agacharte, y lo
+  (los mástiles se alargan con mangas telescópicas). Te sientas (F) de pie, sin agacharte, y lo
   subes con el botón ASIENTO del **reposabrazos derecho**, que baja y sube con el asiento, o con
   **P**; al llegar arriba las compuertas se cierran. También desde la repisa de la derecha.
   Levantarte con el asiento abajo te deja en el suelo junto a la nave; con él arriba, en la

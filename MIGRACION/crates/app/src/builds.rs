@@ -1,6 +1,12 @@
 //! The structures of the scenario in play (core::structure): set round the site at the start,
 //! hurt by blasts and shots, their loose pieces falling and settling, what breaks shown by its
 //! material's effect, all handed to the renderer every frame.
+//!
+//! With other players, what is done to a structure they also have (`Structure::shared`) is
+//! decided once and done everywhere in one order: a hit or a torn plate decided here goes to
+//! `strikes` (whoever tells the others takes it from there) and is done when it comes back
+//! (`strike_done`), here as everywhere; what follows from it (a part that bursts) is done where
+//! it happens, the same in every game.
 use glam::DVec3;
 use lunar_core::{
     body::BodyRegistry,
@@ -34,6 +40,21 @@ pub struct Builds {
     now: f64,
     /// How many ran at each level last frame.
     pub stats: SimStats,
+    /// What was decided here to be done to shared structures, not done yet: for whoever tells
+    /// the others (`take_strikes`).
+    strikes: Vec<Strike>,
+    /// The structures the scenario sets round the site have ids below this: the same in every
+    /// game that starts with it (how the network names them).
+    pub scenario_end: u64,
+}
+
+/// Something decided in one game to be done to a structure every game has, in its own frame.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Strike {
+    /// A hit (a round, a blast's share).
+    Hit { id: u64, hit: lunar_core::structure::damage::Hit },
+    /// Part `part` blown out along `push` with `energy` J (the air behind a plate).
+    Blow { id: u64, part: u32, push: glam::Vec3, energy: f32 },
 }
 
 impl Builds {
@@ -51,7 +72,8 @@ impl Builds {
         for p in &scenario.structures {
             set.place(&p.build, bodies, site.body, site.at(p.east, p.north), p.yaw.to_radians(), p.lift)?;
         }
-        Ok(Builds { set, rules, policy: Box::new(DistancePolicy::default()), events: Vec::new(), bursts: Vec::new(), hits: 0, now: 0.0, stats: SimStats::default() })
+        let scenario_end = set.next_free();
+        Ok(Builds { scenario_end, set, rules, policy: Box::new(DistancePolicy::default()), events: Vec::new(), bursts: Vec::new(), hits: 0, now: 0.0, stats: SimStats::default(), strikes: Vec::new() })
     }
 
     pub fn blast(&mut self, at: DVec3, d: BlastDef) {
@@ -59,8 +81,13 @@ impl Builds {
         self.set.blast(at, d.energy, d.radius, &self.rules, &mut self.events, self.hits);
     }
 
-    /// Part `part` of structure `id` blown out along `push` (its frame) with `energy` J.
+    /// Part `part` of structure `id` blown out along `push` (its frame) with `energy` J, decided
+    /// here (told instead, if every game must do it).
     pub fn blow_out(&mut self, id: u64, part: u32, push: glam::Vec3, energy: f32) {
+        if self.set.get(id).is_some_and(|s| s.shared) {
+            self.strikes.push(Strike::Blow { id, part, push, energy });
+            return;
+        }
         self.hits += 1;
         self.set.blow_out(id, part, push, energy, &self.rules, &mut self.events, self.hits);
     }
@@ -70,11 +97,33 @@ impl Builds {
         self.set.shoot(from, dir, s.energy, s.area, max, &self.rules, &mut self.events, seed)
     }
 
-    /// A hit on structure `id` given in its own frame (where it struck was decided in another
-    /// player's game: `multi`), done to it here: this game simulates it.
+    /// A hit on structure `id` given in its own frame, decided here (a round of ours struck it):
+    /// done, or told instead if every game must do it.
     pub fn hit(&mut self, id: u64, hit: &lunar_core::structure::damage::Hit) {
+        if self.set.get(id).is_some_and(|s| s.remote || s.shared) {
+            self.strikes.push(Strike::Hit { id, hit: *hit });
+            return;
+        }
         self.hits += 1;
         self.set.hit(id, hit, &self.rules, &mut self.events, self.hits);
+    }
+
+    /// What was decided here to be done to shared structures since this was last asked, into
+    /// `out` (in the order it was decided).
+    pub fn take_strikes(&mut self, out: &mut Vec<Strike>) {
+        out.extend(self.set.told.drain(..).map(|(id, hit)| Strike::Hit { id, hit }));
+        out.append(&mut self.strikes);
+    }
+
+    /// A strike decided in some game (this one too) done here, with the dice it was told with:
+    /// every game that does it the same, in the same order, ends with the same structure.
+    pub fn strike_done(&mut self, s: &Strike, seed: u64) {
+        match *s {
+            Strike::Hit { id, hit } => {
+                self.set.hit(id, &hit, &self.rules, &mut self.events, seed);
+            }
+            Strike::Blow { id, part, push, energy } => self.set.blow_out(id, part, push, energy, &self.rules, &mut self.events, seed),
+        }
     }
 
     /// Structures run at their level (watched from `eye`), and what lives among them is stepped
@@ -88,7 +137,8 @@ impl Builds {
             let Some(b) = self.set.lib.catalog.parts[usize::from(kind)].def.burst.clone() else { continue };
             let _ = fx.explode_scaled(&b.effect, bodies, bodies.dominant(at), at, 1.0);
             self.hits += 1;
-            self.set.blast(at, b.energy, b.radius, &self.rules, &mut self.events, self.hits);
+            // (it follows from a part broken the same in every game: done here as everywhere)
+            self.set.blast_done(at, b.energy, b.radius, &self.rules, &mut self.events, self.hits);
         }
         self.stats = self.set.simulate_with(self.now, dt, bodies, self.policy.as_ref(), &[eye], among);
         let cat = &self.set.lib.catalog;

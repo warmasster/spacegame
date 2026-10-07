@@ -1,0 +1,102 @@
+// Las teclas del juego. Lo que hace cada acción y cada orden de vuelo lo dice el juego
+// (crates/app/src/input.rs: ACTIONS, ORDERS); aquí, qué teclas las hacen. Lo que cambie el
+// jugador (menú Esc, CONTROLES) se guarda aparte, en ajustes/controles.jsonc, y va por encima.
+//
+// Nombres de teclas: letras y números ("W", "4"), "F1".."F12", "Espacio", "Mayús",
+// "Mayús derecha", "Ctrl", "Ctrl derecha", "Alt", "Alt Gr", "Tab", "Intro", "Retroceso", "Esc",
+// "Flecha arriba/abajo/izquierda/derecha", "Inicio", "Fin", "Re Pág", "Av Pág", "Insert",
+// "Supr", "Num 0".."Num 9", "Num +", "Num -", "Num *", "Num /", "Num Intro", "Num ,".
+{
+  // a pie (y lo de siempre: menú, vista...)
+  "teclas": {
+    "adelante": ["W"],
+    "atras": ["S"],
+    "izquierda": ["A"],
+    "derecha": ["D"],
+    "correr": ["Mayús", "Mayús derecha"],
+    "saltar": ["Espacio"],
+    "agacharse": ["C"],
+    "mirar_libre": ["Alt", "Alt Gr"],
+    "mochila": ["J"],
+    "bajar": ["Ctrl"],
+    "alabear_izquierda": ["Q"],
+    "alabear_derecha": ["E"],
+    "estabilizador": ["Z"],
+    "linterna": ["L"],
+    "telemetro": ["T"],
+    "usar": ["F"],
+    "herramienta_1": ["1"],
+    "herramienta_2": ["2"],
+    "herramienta_3": ["3"],
+    "herramienta_4": ["4"],
+    "herramienta_5": ["5"],
+    "herramienta_6": ["6"],
+    "herramienta_7": ["7"],
+    "herramienta_8": ["8"],
+    "herramienta_9": ["9"],
+    "gestos": ["Tab"],
+    "muneca": ["Y"],
+    "vista": ["V"],
+    "menu": ["Esc"],
+    "catalogo": ["G"],
+    "reiniciar": ["R"],
+    "rendimiento": ["F3"],
+    "pantalla_completa": ["F11"],
+    "foto": ["F12"],
+    "vuelo_libre": ["F9"],
+    "inspector": ["F4"],
+    "editor": ["F6"],
+    "nivel_detalle": ["F7"],
+    "ejes_manos": ["F8"],
+    "seguir_misil": ["K"]
+  },
+  // a los mandos de una nave, cualquiera (lo que es solo de una nave lo dice su asiento)
+  "vuelo": {
+    "cabecear_abajo": ["W", "Num 8"],
+    "cabecear_arriba": ["S", "Num 2"],
+    "alabear_izquierda": ["Q", "Num 7"],
+    "alabear_derecha": ["E", "Num 9"],
+    "guinar_izquierda": ["A", "Num 4"],
+    "guinar_derecha": ["D", "Num 6"],
+    "subir": ["R", "Re Pág"],
+    "bajar": ["F", "Av Pág"],
+    "avanzar": ["I", "Flecha arriba"],
+    "retroceder": ["K", "Flecha abajo"],
+    "desplazar_izquierda": ["J", "Flecha izquierda"],
+    "desplazar_derecha": ["L", "Flecha derecha"],
+    "gases_mas": ["Mayús", "Num +"],
+    "gases_menos": ["Ctrl", "Num -"],
+    "gases_cero": ["X", "Num 0"],
+    "disparar": ["H", "Num Intro"],
+    "fijar_objetivo": ["B", "Num 5"],
+    "objetivo_siguiente": ["N", "Num *"],
+    "objetivo_cercano": ["U", "Num /"],
+    "senuelos": ["M", "Num ,"]
+  },
+  // otras formas de jugar, enteras: lo que dicen va por encima de lo de arriba
+  "perfiles": {
+    "space_engineers": {
+      "nombre": "Como Space Engineers",
+      "teclas": {
+        "mochila": ["X"]
+      },
+      // W/S/A/D llevan la nave (traslación), Q/E alabean, las flechas y el teclado numérico
+      // apuntan el morro
+      "vuelo": {
+        "avanzar": ["W"],
+        "retroceder": ["S"],
+        "desplazar_izquierda": ["A"],
+        "desplazar_derecha": ["D"],
+        "subir": ["R", "Re Pág"],
+        "bajar": ["C", "Av Pág"],
+        "alabear_izquierda": ["Q", "Num 7"],
+        "alabear_derecha": ["E", "Num 9"],
+        "cabecear_abajo": ["Flecha arriba", "Num 8"],
+        "cabecear_arriba": ["Flecha abajo", "Num 2"],
+        "guinar_izquierda": ["Flecha izquierda", "Num 4"],
+        "guinar_derecha": ["Flecha derecha", "Num 6"],
+        "gases_cero": ["X", "Num 0"]
+      }
+    }
+  }
+}

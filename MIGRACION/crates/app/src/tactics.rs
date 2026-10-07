@@ -208,12 +208,15 @@ impl Tactics {
     }
 
     /// After the ships ran: what their weapons let fly leaves each from its own muzzle, with
-    /// the speed of the ship that fired it.
+    /// the speed of the ship that fired it. A ship simulated in another player's game fires
+    /// here too, as its copy here does, but twins: seen to fly and strike, doing nothing (what
+    /// the real ones do its game tells). Decoys are the same everywhere: they only deceive.
     pub fn fire(&mut self, ships: &mut Ships, builds: &Builds, bodies: &BodyRegistry, blasts: &mut Blasts) {
         for sh in &mut ships.list {
             let Some(tac) = sh.tactical.as_mut().filter(|t| !t.fired.is_empty()) else { continue };
             let mut fired = std::mem::take(&mut tac.fired);
-            if let Some(s) = builds.set.get(sh.structure).filter(|s| !s.remote) {
+            if let Some(s) = builds.set.get(sh.structure) {
+                let twin = s.remote;
                 for f in &fired {
                     let w = &tac.weapons[usize::from(f.weapon)];
                     let rt = &sh.machines[w.machine];
@@ -224,12 +227,20 @@ impl Tactics {
                     match w.load {
                         Load::Round => {
                             for _ in 0..f.count {
-                                blasts.fire_round(&w.ammo, from, dir, s.vel, bodies);
+                                if twin {
+                                    blasts.fire_twin(&w.ammo, from, dir, s.vel, bodies);
+                                } else {
+                                    blasts.fire_round(&w.ammo, from, dir, s.vel, bodies);
+                                }
                             }
                         }
                         Load::Guided => {
                             if let Some(kind) = blasts.guided.kind(&w.ammo) {
-                                blasts.guided.launch(kind, from, s.vel + dir * 25.0, f.target, sh.structure);
+                                if twin {
+                                    blasts.launch_twin(kind, from, s.vel + dir * 25.0, f.target, sh.structure);
+                                } else {
+                                    blasts.guided.launch(kind, from, s.vel + dir * 25.0, f.target, sh.structure);
+                                }
                             }
                         }
                         Load::Decoy => {

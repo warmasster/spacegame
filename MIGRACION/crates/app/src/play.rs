@@ -93,8 +93,10 @@ impl Starting {
         self.last = now;
         let size = self.window.inner_size();
         let snap = self.boot.snapshot();
-        let (prims, textures) = splash_frame(&self.ctx, &mut self.splash, &snap, dt, (size.width, size.height));
-        self.gpu.draw(&crate::splash_gpu::Frame { primitives: &prims, textures: &textures, pixels_per_point: 1.0 })
+        let (prims, mut textures) = splash_frame(&self.ctx, &mut self.splash, &snap, dt, (size.width, size.height));
+        let drawn = self.gpu.draw(&crate::splash_gpu::Frame { primitives: &prims, textures: &textures, pixels_per_point: 1.0 });
+        textures.clear();
+        drawn
     }
 }
 
@@ -128,8 +130,10 @@ fn splash_pictures(window: Arc<Window>, dir: &std::path::Path) -> Result<(), Box
         // (what is shown settled; at the end, a moment with everything done)
         let frames = (0..90).map(|_| Snapshot { finished: false, ..snap.clone() }).chain((0..10).filter(|_| snap.finished).map(|_| snap.clone()));
         for snap in frames {
-            let (prims, textures) = splash_frame(&ctx, &mut splash, &snap, 1.0 / 60.0, (size.width, size.height));
-            gpu.draw(&crate::splash_gpu::Frame { primitives: &prims, textures: &textures, pixels_per_point: 1.0 })?;
+            let (prims, mut textures) = splash_frame(&ctx, &mut splash, &snap, 1.0 / 60.0, (size.width, size.height));
+            let drawn = gpu.draw(&crate::splash_gpu::Frame { primitives: &prims, textures: &textures, pixels_per_point: 1.0 });
+            textures.clear();
+            drawn?;
         }
         let (w, h, rgb) = gpu.picture()?;
         lunar_render::capture::write_png(&dir.join(format!("carga_{}.png", n + 1)), w, h, &rgb)?;
@@ -329,7 +333,7 @@ impl State {
         lap("naves");
         // with others: the server asked to let us in (it answers while we play)
         let multi = match &o.server {
-            Some(addr) => Some(crate::multi::Multi::connect(addr, o.name.as_deref().unwrap_or("Jugador"), &fleet)?),
+            Some(addr) => Some(crate::multi::Multi::connect(addr, o.name.as_deref().unwrap_or("Jugador"), &fleet, &builds)?),
             None => None,
         };
         let preset_name = preset.map_or("personalizado".into(), |p| p.name().to_string());
@@ -472,7 +476,7 @@ impl State {
             (0..self.ships.list.len()).filter_map(d).min_by(|a, b| a.1.total_cmp(&b.1)).map(|x| x.0)
         });
         self.ui.seat_keys = near.map(|n| crate::aboard::seat_keys(&self.ships.list[n].kind)).unwrap_or_default();
-        self.ui.tool_keys = self.gear.tools.iter().enumerate().map(|(k, t)| ((k + 1).to_string(), format!("{} — {}", t.nombre, self.gear.help(k)))).collect();
+        self.ui.tool_keys = self.gear.tools.iter().enumerate().map(|(k, t)| format!("{} — {}", t.nombre, self.gear.help(k))).collect();
         self.ui.test_keys = if crate::DEMO { String::new() } else { self.blasts.help() };
     }
 
@@ -519,6 +523,10 @@ impl State {
     }
 
     fn key(&mut self, key: KeyCode, pressed: bool, repeat: bool) {
+        // the Controls tab waiting for a key: it is that one's
+        if self.ui.menu && pressed && !repeat && self.ui.captured(key) {
+            return;
+        }
         // the start menu: its own few keys (none while something is being written in it)
         if self.start.is_some() {
             if !pressed || self.ui.ctx.egui_wants_keyboard_input() {
@@ -548,11 +556,6 @@ impl State {
         let action = input::action(key, crate::DEMO);
         if let Some(a) = action {
             self.hold(a, pressed);
-        }
-        // (E, held, is also the roll right of whoever floats with the pack: a seat aimed at
-        // takes it first, below)
-        if action == Some(Action::Use) {
-            self.hold(Action::RollRight, pressed);
         }
         if !pressed {
             self.blasts.release(key);
@@ -590,15 +593,16 @@ impl State {
             }
             Action::Jetpack => {
                 let (text, level) = match self.pilot.toggle_pack() {
-                    Some(true) => ("Mochila encendida · Espacio: subir · Ctrl: bajar", Level::Good),
-                    Some(false) => ("Mochila apagada", Level::Off),
-                    None => ("Este traje no lleva mochila", Level::Caution),
+                    Some(true) => (format!("Mochila encendida · {}: subir · {}: bajar", input::shown(Action::Jump), input::shown(Action::Down)), Level::Good),
+                    Some(false) => ("Mochila apagada".into(), Level::Off),
+                    None => ("Este traje no lleva mochila".into(), Level::Caution),
                 };
-                self.ui.hud.notice("mochila", text, level, 3.5);
+                self.ui.hud.notice("mochila", &text, level, 3.5);
             }
             Action::Steady => {
                 let on = self.pilot.toggle_steady();
-                self.ui.hud.notice("mochila", if on { "Estabilizador de la mochila: al soltar las teclas te frena y mantiene tu altura (Ctrl: bajar)" } else { "Estabilizador apagado: sigues con la velocidad que lleves" }, if on { Level::Good } else { Level::Caution }, 3.5);
+                let text = if on { format!("Estabilizador de la mochila: al soltar las teclas te frena y mantiene tu altura ({}: bajar)", input::shown(Action::Down)) } else { "Estabilizador apagado: sigues con la velocidad que lleves".into() };
+                self.ui.hud.notice("mochila", &text, if on { Level::Good } else { Level::Caution }, 3.5);
             }
             Action::Menu if self.spawner.open || self.spawner.placing() => self.spawner.cancel(),
             Action::Menu => {
@@ -824,6 +828,14 @@ impl State {
             self.blasts.fx.particles.set_capacity(self.renderer.particle_capacity());
             self.renderer.set_sun(self.ui.sun, dragging);
             self.preset_name = self.ui.preset.map_or("personalizado".into(), |p| p.name().to_string());
+        }
+        if self.ui.capture == Some(crate::ui::Capture::Save) {
+            self.ui.capture = None;
+            if let Err(e) = input::save_players() {
+                self.ui.keys_said.push(format!("No se han podido guardar: {e}"));
+            }
+            self.aboard.rebind(&self.pilot, &self.ships);
+            self.menu_lists();
         }
         if self.ui.shots_changed {
             self.ui.shots_changed = false;
@@ -1194,6 +1206,15 @@ impl State {
                 self.barrage = None;
             }
         }
+        // with others: what they told is done here before anything runs (their ships brought to
+        // where they have them, what they struck done in its order), what they fired shown
+        self.blasts.tell = self.multi.as_ref().is_some_and(|m| m.connected());
+        if let Some(m) = &mut self.multi {
+            m.receive(lunar_net::now(), &mut self.ships, &mut self.builds);
+            for (seen, age) in m.shown.drain(..) {
+                self.blasts.show(&seen, age, &self.world.bodies);
+            }
+        }
         let view = self.blasts.update(dt, &self.world.bodies, view, self.pilot.motion_in(&self.builds.set), &mut self.builds);
         self.perf.lap(perf::SHOTS);
         let sun = self.renderer.sun().direction();
@@ -1408,8 +1429,14 @@ impl State {
         // nobody's business
         let scripted = self.script.as_mut().map(|sc| std::mem::take(&mut sc.changed)).unwrap_or_default();
         match &mut self.multi {
-            Some(m) => self.aboard.changed.drain(..).chain(scripted).for_each(|(structure, k, value)| m.control(structure, k, value)),
-            None => self.aboard.changed.clear(),
+            Some(m) => {
+                self.aboard.changed.drain(..).chain(scripted).for_each(|(structure, k, value)| m.control(structure, k, value));
+                self.aboard.acts.drain(..).for_each(|(structure, act)| m.act(structure, act));
+            }
+            None => {
+                self.aboard.changed.clear();
+                self.aboard.acts.clear();
+            }
         }
         self.spawner.update(&self.world.bodies, &self.builds, view.eye, view.forward, view.up, self.pilot.heading());
         // what is seen: from inside a ship's rooms only what its windows and open doors show
@@ -1460,7 +1487,7 @@ impl State {
         if let Some(m) = &mut self.multi {
             let tool = self.gear.held.map_or(0, |k| k as u8 + 1);
             let now = lunar_net::now();
-            m.frame(now, &self.pilot, self.pilot.eye_over_feet(), [self.look.yaw, self.look.pitch], tool, self.gear.trigger, outside, &mut self.ships, &mut self.builds);
+            m.send(now, &self.pilot, self.pilot.eye_over_feet(), [self.look.yaw, self.look.pitch], tool, self.gear.trigger, outside, &self.ships, &mut self.builds, &mut self.blasts.seen);
             if let Some(source) = &self.body_source {
                 m.bodies(now, dt, source, &self.builds.set, &self.world.bodies, &self.ships, &mut self.figures);
             }
@@ -1556,7 +1583,7 @@ impl State {
                 // with others: the server written in the menu is asked to let us in
                 Some(crate::start::Action::Connect) => {
                     if let Some((addr, name)) = self.start.as_ref().map(|st| (st.server.trim().to_string(), st.name.trim().to_string())) {
-                        match crate::multi::Multi::connect(&addr, if name.is_empty() { "Jugador" } else { &name }, &self.ships) {
+                        match crate::multi::Multi::connect(&addr, if name.is_empty() { "Jugador" } else { &name }, &self.ships, &self.builds) {
                             Ok(m) => self.multi = Some(m),
                             Err(e) => self.ui.hud.notice("red", &format!("No se puede conectar a {addr}: {e}"), Level::Warning, 6.0),
                         }

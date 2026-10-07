@@ -12,8 +12,8 @@ use crate::throttle::{HEARTBEAT, NEVER};
 use crate::wire::Writer;
 use glam::{DVec3, Vec3};
 
-/// The first pings come close together, to know the server's clock soon; then one every so often keeps it.
-const QUICK_PINGS: u32 = 6;
+/// The first pings come close together, to know the server's clock soon (until enough answers
+/// came back: some are lost, or overtaken and dropped); then one every so often keeps it.
 const QUICK_EVERY: f64 = 0.15;
 const PING_EVERY: f64 = 2.0;
 
@@ -38,8 +38,7 @@ impl Client {
 
     pub(super) fn send(&mut self, now: f64) {
         if now >= self.next_ping {
-            self.pings += 1;
-            self.next_ping = now + if self.pings < QUICK_PINGS { QUICK_EVERY } else { PING_EVERY };
+            self.next_ping = now + if self.clock.settled() { PING_EVERY } else { QUICK_EVERY };
             let mut buf = [0u8; 16];
             let n = encoded(&mut buf, |w| Msg::Ping { t: micros(now) }.encode(w));
             self.channel.send_unreliable(&buf[..n]);

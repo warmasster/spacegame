@@ -219,9 +219,15 @@ pub struct Structure {
     /// that what a part holds can change them without going over every part (`contents`).
     pub(crate) sums: super::contents::Sums,
     /// It is simulated somewhere else (another player's game) and this is a copy that follows:
-    /// nothing breaks or comes off it here by itself (`Structures::separate`, the hits of
-    /// `blast_where` and `shoot_where`); what happens to it is told by whoever simulates it.
+    /// where it goes and what its own machines do (a tank that bursts, a plate the air tears
+    /// out) are told by whoever simulates it.
     pub remote: bool,
+    /// Every game that has it must do the same to it in the same order (it is in a game with
+    /// other players: `multi`): a hit on it decided here (`blast`, `shoot`) is not done but told
+    /// (`Structures::told`), and comes back to every game, this one too, to be done
+    /// (`Structures::hit`). What follows from a hit done (a part that bursts, what comes off) is
+    /// then the same everywhere, and done where it happens.
+    pub shared: bool,
 }
 
 impl Part {
@@ -371,6 +377,7 @@ impl Structure {
             weighings: 0,
             sums: super::contents::Sums::default(),
             remote: false,
+            shared: false,
         };
         s.refresh();
         s

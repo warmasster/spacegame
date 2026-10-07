@@ -23,7 +23,7 @@ el estabilizador (Z) frena tambien en el espacio libre. La metralleta de
 pruebas pasa de Q a U.
 ENTRAR AL AZOR DE PIE: patas mas largas (la panza a 2,1 m: se pasa por debajo
 sin agacharse). ASIENTO abre dos compuertas en la panza y solo entonces baja
-el asiento hasta el suelo; te sientas (E) y lo subes con el boton ASIENTO del
+el asiento hasta el suelo; te sientas (F) y lo subes con el boton ASIENTO del
 reposabrazos derecho (baja contigo) o con P. Al subir, las compuertas se
 cierran.
 EL AZOR, MAS EPICO: alas en flecha de 11,2 m de punta a punta (antes 5,4), en
@@ -34,8 +34,25 @@ TU BRAZO YA NO TAPA LOS MANDOS: si la mira cae sobre tu propio brazo, ese
 brazo se vuelve translucido y ves lo que hay detras; vuelve al apartar la
 vista. CON EL LANZACOHETES el codo izquierdo ya no se mete en el pecho: rodea
 el tronco (medido de la malla del traje, vale para cualquier herramienta).
+TECLAS A TU GUSTO: menu Esc, CONTROLES: "Cambiar" junto a cada accion (pulsa
+la tecla nueva; Esc deja, Retroceso la quita), "+" para una tecla mas, perfil
+y "Restablecer todo". Se guarda en ajustes/controles.jsonc (las del juego en
+assets/defs/controles.jsonc). Cambian: F USAR / SENTARSE (E queda para
+alabear con la mochila); vuelo libre de pruebas en F9. A LOS MANDOS de
+cualquier nave las teclas son las mismas y tuyas: letras de siempre, mas las
+FLECHAS (trasladar la nave) y el TECLADO NUMERICO (8/2 cabeceo, 4/6 guinada,
+7/9 alabeo, + y - gases, 0 cortar, Intro disparar, 5 fijar), Re Pag / Av Pag
+subir y bajar. Perfil "Como Space Engineers": W/S/A/D mueven la nave, R/C
+suben y bajan, Q/E alabean, las flechas apuntan el morro, X la mochila.
+MULTIJUGADOR: las naves de los demas se ven volar suaves y en su sitio a
+cualquier velocidad (probado de 0 a 7800 m/s, de 30 a 240 fps, con perdidas
+y retrasos en la red); los disparos entre naves hacen EL MISMO DANO en todas
+las partidas; lo que disparas sale de tu boca de fuego en todas; quien flota
+junto a una nave o va de pie en una nave que pilota otro se ve donde esta; las
+puertas y anclajes que abres a mano se abren para todos.
 SIN PROBAR JUGANDO. Detalles: docs/NAVES.md (Coherencia y ordenador de vuelo),
-docs/COMBATE.md, docs/MOVIMIENTO.md 8, docs/PENDIENTES.md V40.
+docs/COMBATE.md, docs/MOVIMIENTO.md 8, docs/MULTIJUGADOR.md (En el juego),
+docs/PENDIENTES.md V40.
 
 NOVEDADES V38 (carpeta SELENE_V38: SeleneLauncher.exe, SeleneV38_demo.exe / _multiplayer.exe / _debug.exe):
 MOCHILA Y NAVES A CUALQUIER VELOCIDAD: con la mochila dentro de una nave que

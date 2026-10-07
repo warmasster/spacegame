@@ -103,6 +103,9 @@ pub(crate) const HULL: u8 = 0;
 pub(crate) const JOINTS: u8 = 1;
 
 /// The most bytes `tell`, `tell_all` and `tell_to` take in one go.
+/// What a thing carried on past its newest snapshot may be taken to be speeding up by at most
+/// (m/s²): more is a jump told as a change of speed, not a push.
+pub const MAX_ACCEL: f32 = 150.0;
 pub const MAX_TELL: usize = MAX_MESSAGE - FRAMING;
 /// The most bytes `hint` takes.
 pub const MAX_HINT: usize = MAX_UNRELIABLE - FRAMING;
@@ -128,7 +131,6 @@ pub struct Client {
     next_send: f64,
     clock: ServerClock,
     next_ping: f64,
-    pings: u32,
     delay: Delay,
     last_update: f64,
     peers: Vec<Peer>,
@@ -188,7 +190,6 @@ impl Client {
             next_send: 0.0,
             clock: ServerClock::new(),
             next_ping: 0.0,
-            pings: 0,
             delay: Delay::new(),
             last_update: 0.0,
             peers: Vec::new(),
@@ -434,11 +435,25 @@ impl Client {
     /// in seconds. This is what to steer a local simulation of the thing towards; `rigid_into` is
     /// what to draw when nothing simulates it. Its place is in the frame it was told in (`frame`).
     pub fn rigid_now(&self, id: u64, now: f64, out: &mut RigidState) -> Option<f32> {
+        self.rigid_carried(id, now, EXTRAPOLATE, out)
+    }
+
+    /// `rigid_now`, carried on as far as `most` seconds: what to steer a copy toward that this
+    /// game simulates as well (it goes on by itself meanwhile: a late word is still worth
+    /// carrying all the way to now, not stopping short of it).
+    pub fn rigid_carried(&self, id: u64, now: f64, most: f64, out: &mut RigidState) -> Option<f32> {
         let slot = self.things.get(&id).filter(|_| !self.owns_thing(id))?;
         let (stamp, state) = slot.snaps.newest()?;
         let age = (self.clock.server_time(now) - stamp).max(0.0);
         out.set(state);
-        out.carry(age.min(EXTRAPOLATE) as f32);
+        // (and as it was speeding up: a ship that turns or brakes is not carried straight on)
+        let dt = age.min(most) as f32;
+        out.carry(dt);
+        if let Some((_, acc)) = slot.snaps.speeding(|s| s.vel) {
+            let acc = acc.clamp_length_max(MAX_ACCEL);
+            out.pos += (acc * (0.5 * dt * dt)).as_dvec3();
+            out.vel += acc * dt;
+        }
         Some(age as f32)
     }
 
@@ -486,6 +501,11 @@ impl Client {
     pub fn delay(&self) -> f32 {
         self.delay.seconds() as f32
     }
+    /// Whether our estimate of the server's clock is past its first pings (it only slides now).
+    pub fn clock_settled(&self) -> bool {
+        self.clock.settled()
+    }
+
     /// The server's clock when ours says `now` (`None` until it has been measured).
     pub fn server_time(&self, now: f64) -> Option<f64> {
         self.clock.known().then(|| self.clock.server_time(now))

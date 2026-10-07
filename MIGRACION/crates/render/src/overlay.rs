@@ -10,6 +10,14 @@ pub struct UiFrame {
     pub pixels_per_point: f32,
 }
 
+impl Drop for UiFrame {
+    /// Its textures were handed to the GPU when it was drawn, or are gone with a frame not drawn
+    /// (egui asks for them to be let go of on purpose).
+    fn drop(&mut self) {
+        self.textures.clear();
+    }
+}
+
 pub struct Overlay {
     renderer: egui_wgpu::Renderer,
 }

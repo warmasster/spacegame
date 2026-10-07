@@ -79,6 +79,51 @@ vuelo (V40)», [`COMBATE.md`](COMBATE.md), [`MOVIMIENTO.md`](MOVIMIENTO.md) §8)
     cuerpo entero con las dos manos forzadas sigue en unos 42 µs por fotograma.
   - Fotos: `tools/camara/brazo.jsonc`, `tools/camara/codo.jsonc`.
 
+- **Multijugador: naves, disparos y daño** (Fernando: «verifícame todo en multijugador… disparos
+  entre naves a alta velocidad, verse volar bien»). Detalle en [`MULTIJUGADOR.md`](MULTIJUGADOR.md)
+  «En el juego»:
+  - las naves ajenas se **guían** hacia donde dice su dueño (semivida 80 ms, igual a cualquier
+    fps) en vez de ponerse: sin saltos a ninguna velocidad, y quien va dentro va con ellas;
+  - **daño con eco**: lo que se le hace a una estructura que tienen todas las partidas se manda y
+    se aplica en todas (también en la que disparó) en el orden del servidor y con la semilla del
+    mensaje: el mismo daño bit a bit. Las armas de naves ajenas disparan gemelos que se ven y no
+    hacen daño;
+  - los disparos de los jugadores van junto a la nave en la que van (salen de la boca a 7,8
+    km/s); quien flota junto a una nave se cuenta en el marco de esa nave;
+  - el reloj: media de los pings más rápidos, corrección a 0,5 ms/s, pings deprisa hasta
+    asentarse; lo llevado al presente cuenta la aceleración;
+  - puertas y anclajes a mano viajan (`ACT`): antes se apuntaban en una lista que nadie leía y
+    que crecía sin fin;
+  - pruebas en `app/src/multi/tests.rs`: partidas enteras contra el servidor real en una red que
+    pierde, duplica y retrasa; vuelo de 0 a 7800 m/s a 30–240 fps, tres partidas disparándose a
+    2 km/s con el mismo daño, dos tiradores a la vez, cohete a velocidad orbital, jugador
+    flotando, pasajero de pie, mandos, puertas, naves puestas y dueños (~30 s todas).
+
+- **Teclas a gusto de cada uno** (Fernando: «las acciones con la F ok, pero mete cambiar
+  controles… usar las flechas para algo de la nave… también tenemos numpad»):
+  - las teclas son datos: `assets/defs/controles.jsonc` (las del juego y sus perfiles) y
+    `ajustes/controles.jsonc` (lo que cambia el jugador; solo las diferencias). Lo que hace cada
+    acción sigue en el código (`input::ACTIONS`); qué teclas, en datos;
+  - menú Esc → CONTROLES: cada acción con «Cambiar» (pulsa la tecla; Esc deja, Retroceso quita)
+    y «+» (otra más), perfil y «Restablecer todo». Una tecla dada se le quita a lo que la tenía
+    y se dice;
+  - **órdenes de vuelo**: los asientos ya no nombran W, S, Mayús…: nombran una orden
+    (`cabecear_abajo`, `gases_mas`, `disparar`…, `input::ORDERS`) y la tecla es la del jugador,
+    igual en todas las naves. Solo lo propio de una nave lleva tecla fija (P la plataforma del
+    Azor, G el agarre del Abejorro);
+  - por defecto: **F usar** (E queda solo para alabear con la mochila), las **flechas** trasladan
+    la nave, el **teclado numérico** es la palanca (8/2 cabeceo, 4/6 guiñada, 7/9 alabeo, +/-
+    gases, 0 cortar, Intro disparar, 5 fijar), Re Pág / Av Pág suben y bajan; vuelo libre de
+    pruebas pasa de F a F9;
+  - perfil **«Como Space Engineers»**: W/S/A/D trasladan la nave, R/C suben y bajan, Q/E
+    alabean, las flechas apuntan el morro, X la mochila;
+  - pruebas: las teclas del juego y de cada perfil sin choques, los nombres de teclas, cambiar
+    y guardar y volver a leer, cada orden de cada asiento existe y no pisa una tecla propia, y
+    sentado las flechas y el teclado numérico mueven los mandos. Foto: `tools/camara/controles.jsonc`;
+  - de paso: el juego en debug abortaba al abrir el menú desde un guion (egui pide soltar a
+    propósito las texturas de un frame: `UiFrame` lo hace al tirarse), y en la cabecera del menú
+    se pisaban dos textos en ventanas estrechas.
+
 Queda de esto:
 
 - **Nadie lo ha jugado.** Todo está comprobado con pruebas; los .exe de `SELENE_V39` no se han
@@ -128,7 +173,8 @@ Queda de esto:
   poses de una misma loncha. La carga ya es física de estructuras. Falta trasladar también
   misiles estratégicos/guiados y revisar el resto de emisores; las explosiones de los cohetes
   ya heredan también el movimiento. La réplica de jugadores no se revisó aquí.
-- `crates/app/src/multi/old.rs` es una copia vieja que no se compila: borrarla.
+- ~~`crates/app/src/multi/old.rs` es una copia vieja que no se compila: borrarla.~~ Borrada
+  (2026-10-07), con `things.rs` y `kinds.rs`, que tampoco se usaban.
 
 ## V39 (2026-10-06): cohetes y cajas a velocidad orbital
 
@@ -307,12 +353,11 @@ Hecho (cada cosa con sus pruebas; 501 en total, más 139 del launcher):
 
 Queda de esto (lo dejaron a medias los agentes que se pararon; por hacer, uno a uno):
 
-- **Multijugador al 100 %.** Está hecha la base (protocolo 2, servidor que pasa todo sin leerlo,
-  registro de clases de mensaje en `app/src/multi/kinds.rs`, las cosas del mundo con su dueño en
-  `things.rs`, instantánea de una nave en `ship/src/sync.rs`), pero el juego sigue usando lo de la
-  V35 (`multi/mod.rs`): **no** se comparten aún la carga suelta, los daños, los disparos, las
-  puertas a mano, la herramienta ni los gestos de los otros, ni el estado de las máquinas al
-  entrar tarde. Falta escribir el envío y la recepción por clases (`tell`/`told`) y enchufarlo.
+- **Multijugador al 100 %.** Hechos en la V40 los daños, los disparos, las naves a cualquier
+  velocidad, quien flota o va de pie en una nave ajena y las puertas a mano (`multi/told.rs`,
+  `follow.rs`). **No** se comparten aún la carga suelta, la herramienta ni los gestos de los
+  otros, ni el estado de las máquinas al entrar tarde (`ship/src/sync.rs` tiene la instantánea
+  de una nave, sin enchufar).
 - **Herramientas nuevas** (tableta de procedimientos, multímetro, cámara de fotos, balizas): sin
   empezar. Hay modelo de la tableta (`assets/models/tableta.glb`) y el registro de procedimientos
   ya da lo que la tableta necesita.

@@ -1,6 +1,7 @@
 /.local/
 /target/
 /out/
+/ajustes/
 /respaldos/
 /fotos/
 /*.exe
@@ -8,5 +9,6 @@
 /SELENE_V*/
 !/SELENE_V39/
 /SELENE_V39/out/
+/SELENE_V39/ajustes/
 /.mcp.json
 **/__pycache__/

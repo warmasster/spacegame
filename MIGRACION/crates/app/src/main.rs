@@ -101,6 +101,10 @@ fn main() {
             println!("sonido: {}", sounds.status);
             return Ok(());
         }
+        // the player's keys (a script plays with the game's own, whatever the player changed)
+        if o.script.is_none() {
+            input::load_players();
+        }
         play::run(o).map_err(|e| e.to_string())
     });
     if let Err(e) = result {

@@ -77,6 +77,19 @@ impl<T: Snap> SnapBuffer<T> {
             (s.stamp, &s.state)
         })
     }
+    /// How the thing was speeding up between its two newest snapshots, if it moved along between
+    /// them (`speed` gives a state's velocity): what carries it on past the newest more truly than
+    /// its velocity alone.
+    pub fn speeding(&self, speed: impl Fn(&T) -> glam::Vec3) -> Option<(f64, glam::Vec3)> {
+        if self.len < 2 {
+            return None;
+        }
+        let (a, b) = (self.at(self.len - 2), self.at(self.len - 1));
+        let gap = b.stamp - a.stamp;
+        // (after a silence nothing is known of how it changed)
+        (!b.held && gap > 1e-3 && gap < 0.5).then(|| (gap, (speed(&b.state) - speed(&a.state)) / gap as f32))
+    }
+
     /// Adds the snapshot of moment `stamp` if it is newer than all we have (an older one is of no
     /// use any more) and gives its place to be filled.
     pub fn push(&mut self, stamp: f64, held: bool) -> Option<&mut T> {

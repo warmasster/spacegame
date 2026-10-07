@@ -87,55 +87,19 @@ pub enum Act {
 }
 
 /// The signal a hand orders closure `c` of `sh` by.
-fn closure_order(sh: &lunar_ship::Ship, c: usize) -> Option<String> {
+pub(crate) fn closure_order(sh: &lunar_ship::Ship, c: usize) -> Option<String> {
     let plan = sh.kind.closures.get(c)?;
     Some(plan.order.clone().unwrap_or_else(|| format!("{}.mano", plan.id)))
 }
 
-/// A key name of the seat definitions ("W", "Mayús", "Espacio", "Flecha arriba"...).
-pub fn key_named(name: &str) -> Option<KeyCode> {
-    use KeyCode::*;
-    const LETTERS: [KeyCode; 26] = [
-        KeyA, KeyB, KeyC, KeyD, KeyE, KeyF, KeyG, KeyH, KeyI, KeyJ, KeyK, KeyL, KeyM, KeyN, KeyO, KeyP, KeyQ, KeyR, KeyS, KeyT, KeyU, KeyV, KeyW, KeyX, KeyY,
-        KeyZ,
-    ];
-    const DIGITS: [KeyCode; 10] = [Digit0, Digit1, Digit2, Digit3, Digit4, Digit5, Digit6, Digit7, Digit8, Digit9];
-    let n = name.trim().to_lowercase();
-    let mut ch = n.chars();
-    if let (Some(c), None) = (ch.next(), ch.next()) {
-        return match c {
-            'a'..='z' => Some(LETTERS[c as usize - 'a' as usize]),
-            '0'..='9' => Some(DIGITS[c as usize - '0' as usize]),
-            _ => None,
-        };
-    }
-    Some(match n.as_str() {
-        "mayús" | "mayus" | "shift" => ShiftLeft,
-        "ctrl" | "control" => ControlLeft,
-        "alt" => AltLeft,
-        "espacio" | "space" => Space,
-        "tab" | "tabulador" => Tab,
-        "intro" | "enter" => Enter,
-        "retroceso" => Backspace,
-        "flecha arriba" => ArrowUp,
-        "flecha abajo" => ArrowDown,
-        "flecha izquierda" => ArrowLeft,
-        "flecha derecha" => ArrowRight,
-        "inicio" => Home,
-        "fin" => End,
-        "re pág" | "re pag" => PageUp,
-        "av pág" | "av pag" => PageDown,
-        _ => return None,
-    })
-}
-
-/// The keys of a ship's seats, for the list of controls: (seat, keys, what they do), as its data
+/// The keys of a ship's seats that are its own (not flight orders, whose keys are the player's
+/// and the same in every ship), for the list of controls: (seat, keys, what they do), as its data
 /// says. Keys that do the same (the two ways of an axis) share a line.
 pub fn seat_keys(kind: &lunar_ship::kind::ShipKind) -> Vec<(String, String, String)> {
     let mut out: Vec<(String, String, String)> = Vec::new();
     for s in &kind.seats {
         let seat = format!("{} — {}", kind.def.nombre, s.def.nombre);
-        for b in &s.def.mandos {
+        for b in s.def.mandos.iter().filter(|b| b.orden.is_none()) {
             let what = b.ayuda.clone().unwrap_or_else(|| match (b.accion.as_deref(), b.eje) {
                 (Some(a), _) => format!("{}: {a}", b.mando),
                 (None, e) => format!("{}: eje {}", b.mando, e.unwrap_or(0)),
@@ -378,7 +342,8 @@ impl Aboard {
         true
     }
 
-    /// E: sit on the seat aimed at.
+    /// The use key: sit on the seat aimed at. Its keys: its own, and the player's for each of
+    /// its flight orders (`input::Keymap::order_keys`).
     pub fn use_key(&mut self, pilot: &mut Pilot, ships: &Ships, set: &Structures) -> bool {
         let Some(Aim { structure, target: Target::Seat(i), .. }) = self.aim else { return false };
         let Some(n) = ships.by_structure(structure) else { return false };
@@ -386,7 +351,23 @@ impl Aboard {
         let d = &kind.seats[i].def;
         let v = |a: [f32; 3]| glam::Vec3::from_array(a);
         pilot.sit(set, Seat { structure, index: i, eyes: ships.list[n].seat_eyes(i), heading: d.rumbo.to_radians(), exit: v(d.salida) });
-        // the seat's keys
+        self.bind(ships, n, i);
+        self.aim = None;
+        true
+    }
+
+    /// The keys of the seat sat on again, as they stand now (the player changed them).
+    pub fn rebind(&mut self, pilot: &Pilot, ships: &Ships) {
+        if let Some(seat) = pilot.seat
+            && let Some(n) = ships.by_structure(seat.structure)
+        {
+            self.bind(ships, n, seat.index);
+        }
+    }
+
+    /// The keys of seat `i` of ship `n`.
+    fn bind(&mut self, ships: &Ships, n: usize, i: usize) {
+        let d = &ships.list[n].kind.seats[i].def;
         self.bindings.clear();
         self.down.clear();
         self.axes.clear();
@@ -394,15 +375,23 @@ impl Aboard {
         for b in bad {
             eprintln!("{b}");
         }
+        let map = crate::input::keymap();
         for k in keys {
-            let Some(key) = key_named(&k.key) else {
+            if k.order {
+                if crate::input::ORDERS.iter().all(|o| o.0 != k.key) {
+                    eprintln!("asiento {}: no hay orden de vuelo '{}'", d.id, k.key);
+                }
+                for &key in map.order_keys(&k.key) {
+                    self.bindings.push(Binding { key, control: k.control, does: k.does });
+                }
+                continue;
+            }
+            let Some(key) = crate::input::key_named(&k.key) else {
                 eprintln!("asiento {}: tecla '{}' desconocida", d.id, k.key);
                 continue;
             };
             self.bindings.push(Binding { key, control: k.control, does: k.does });
         }
-        self.aim = None;
-        true
     }
 
     /// Get up (the seat's keys let go): to where its ship says one gets off (`exits`).
@@ -533,7 +522,7 @@ impl Aboard {
                     out.prompt = Some(Prompt { key: String::new(), text: short(&c), level: Level::of(c.level) });
                     out.card = Some(card(c, ""));
                 }
-                Target::Seat(i) => out.prompt = Some(Prompt { key: "E".into(), text: format!("Sentarse · {}", sh.kind.seats[i].def.nombre), level: Level::Normal }),
+                Target::Seat(i) => out.prompt = Some(Prompt { key: crate::input::shown(crate::input::Action::Use), text: format!("Sentarse · {}", sh.kind.seats[i].def.nombre), level: Level::Normal }),
                 Target::Closure(c) => {
                     let plan = &sh.kind.closures[c];
                     let open = sh.signal(&format!("{}.abierta", plan.id)).unwrap_or(0.0);
@@ -554,7 +543,7 @@ impl Aboard {
         {
             let d = &ships.list[n].kind.seats[seat.index].def;
             let keys = if self.bindings.is_empty() { "" } else { " · Sus teclas de vuelo: Esc, CONTROLES" };
-            out.hints.push(format!("{} · Espacio: levantarse{keys}", d.nombre));
+            out.hints.push(format!("{} · {}: levantarse{keys}", d.nombre, crate::input::shown(crate::input::Action::Jump)));
         }
         // what the hand was just told (why a control will not move): where it is looking
         if let Some((t, _, warn)) = &self.note {
@@ -599,32 +588,38 @@ mod tests {
     use super::*;
 
     #[test]
-    fn key_names() {
-        assert_eq!(key_named("W"), Some(KeyCode::KeyW));
-        assert_eq!(key_named("Mayús"), Some(KeyCode::ShiftLeft));
-        assert_eq!(key_named("Flecha arriba"), Some(KeyCode::ArrowUp));
-        assert_eq!(key_named("nada"), None);
-    }
-
-    #[test]
     fn the_list_of_a_seats_keys_is_its_data() {
         let defs = crate::root().join("assets/defs");
         let mut lib = lunar_core::structure::Library::load(&defs.join("structures")).unwrap();
         let (ships, _) = lunar_ship::ShipLibrary::load(&defs, &mut lib.catalog).unwrap_or_else(|e| panic!("{}: {}", e.file, e.message));
-        let kind = ships.get("alcotan").unwrap();
-        let rows = seat_keys(kind);
-        // every key of every seat is a key the game knows, and says what it does in words
-        for s in &kind.seats {
-            for b in &s.def.mandos {
-                assert!(key_named(&b.tecla).is_some(), "tecla '{}'", b.tecla);
-                assert!(b.ayuda.is_some(), "la tecla {} del asiento {} no dice qué hace", b.tecla, s.def.id);
+        let map = crate::input::keymap();
+        let mut orders = 0;
+        for kind in &ships.kinds {
+            for s in &kind.seats {
+                let own: Vec<KeyCode> = s.def.mandos.iter().filter_map(|b| crate::input::key_named(&b.tecla)).collect();
+                // every key of every seat is a key the game knows or a flight order, says what it
+                // does in words, and no order's key is one of the seat's own
+                for b in &s.def.mandos {
+                    assert!(b.ayuda.is_some(), "{}: el mando {} del asiento {} no dice qué hace", kind.id, b.mando, s.def.id);
+                    match &b.orden {
+                        Some(o) => {
+                            orders += 1;
+                            assert!(b.tecla.is_empty() && crate::input::ORDERS.iter().any(|x| x.0 == o), "{}: orden '{o}'", kind.id);
+                            for k in map.order_keys(o) {
+                                assert!(!own.contains(k), "{}: {} es de la orden {o} y del asiento {}", kind.id, crate::input::key_name(*k), s.def.id);
+                            }
+                        }
+                        None => assert!(crate::input::key_named(&b.tecla).is_some(), "{}: tecla '{}'", kind.id, b.tecla),
+                    }
+                }
             }
         }
-        // the two ways of an axis share a line
-        let pitch = rows.iter().find(|r| r.1 == "W / S").expect("W / S");
-        assert!(pitch.0.contains("piloto") && pitch.2.contains("cabeceo"), "{pitch:?}");
-        assert!(rows.iter().any(|r| r.1 == "X" && r.2.contains("cero")));
-        assert!(rows.len() < kind.seats.iter().map(|s| s.def.mandos.len()).sum::<usize>());
+        assert!(orders > 40, "{orders}");
+        // the list has only what is a seat's own; the two ways of an axis would share a line
+        let rows = seat_keys(ships.get("azor").unwrap());
+        assert!(rows.iter().any(|r| r.1 == "P" && r.0.contains("Azor") && r.2.contains("plataforma")), "{rows:?}");
+        assert!(rows.iter().all(|r| r.1.len() == 1), "{rows:?}");
+        assert!(seat_keys(ships.get("alcotan").unwrap()).is_empty());
     }
 
     use lunar_core::{
@@ -799,6 +794,34 @@ mod tests {
             if let Some(card) = hud.card {
                 assert!(card.hint.contains("herramienta") && !card.hint.contains("accionar ("), "{}", card.hint);
             }
+        }
+    }
+
+    #[test]
+    fn sat_at_the_controls_the_flight_orders_are_the_players_keys_arrows_and_number_pad_too() {
+        let (mut set, mut pilot, kind, id) = standing("alcotan");
+        let font = lunar_core::font::Font::parse(&std::fs::read_to_string(crate::root().join("assets/fonts/serigrafia.json")).unwrap()).unwrap();
+        let mut ships = Ships::new(vec![kind.clone()], font);
+        let mut ship = lunar_ship::Ship::new(kind.clone(), id, 7).unwrap_or_else(|e| panic!("{e}"));
+        ship.update(&mut set.list[0], &lunar_ship::World::default(), 0.0);
+        ships.list.push(ship);
+        let seat = kind.seats.iter().position(|s| !s.def.mandos.is_empty()).unwrap();
+        let mut aboard = Aboard { aim: Some(Aim { structure: id, target: Target::Seat(seat) }), ..Aboard::default() };
+        assert!(aboard.use_key(&mut pilot, &ships, &set));
+        let control = |name: &str| ships.list[0].panels.controls.iter().position(|c| c.id == name).unwrap();
+        let has = |key: KeyCode, c: usize, axis: u8, sign: f64| aboard.bindings.iter().any(|b| b.key == key && b.control == c && matches!(b.does, Does::Axis { axis: a, value } if a == axis && value * sign > 0.0));
+        let (stick, slide) = (control("lateral/palanca"), control("lateral/traslacion"));
+        // the letters, the arrows and the number pad, each as the game's keys say
+        assert!(has(KeyCode::KeyW, stick, 0, 1.0) && has(KeyCode::Numpad8, stick, 0, 1.0) && has(KeyCode::Numpad2, stick, 0, -1.0));
+        assert!(has(KeyCode::ArrowUp, slide, 0, 1.0) && has(KeyCode::ArrowLeft, slide, 1, 1.0) && has(KeyCode::ArrowRight, slide, 1, -1.0));
+        let throttle = control("pedestal/acelerador");
+        assert!(aboard.bindings.iter().any(|b| b.key == KeyCode::NumpadAdd && b.control == throttle && b.does == Does::Up));
+        // the seat takes its keys; standing up, the menu and the view are still the game's
+        let mut ships = ships;
+        assert!(aboard.key(KeyCode::ArrowUp, true, &pilot, &mut ships, &set));
+        assert!(aboard.key(KeyCode::ArrowUp, false, &pilot, &mut ships, &set));
+        for k in [KeyCode::Space, KeyCode::Escape, KeyCode::KeyV] {
+            assert!(!aboard.key(k, true, &pilot, &mut ships, &set), "{k:?}");
         }
     }
 

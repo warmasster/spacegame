@@ -157,13 +157,16 @@ naves puestas y 340 dueños son 81 kB en 75 datagramas y 0,43 s con un 10 % de p
 
 ## Reloj e interpolación
 
-- **Un solo reloj**: cada cliente estima el reloj del servidor con `Ping`/`Pong` (se queda con
-  el ping más rápido de los últimos 8; las correcciones se deslizan a 10 ms/s en vez de saltar)
-  y sella sus estados con esa hora, en microsegundos. El servidor respeta el sello (acotado:
+- **Un solo reloj**: cada cliente estima el reloj del servidor con `Ping`/`Pong` (guarda los
+  últimos 16; la estimación es la media de los que tardaron como mucho 2 ms más que el más
+  rápido; mientras no tiene bastantes, pregunta deprisa; las correcciones se deslizan a 0,5 ms/s
+  en vez de saltar, `clock::SLEW`) y sella sus estados con esa hora, en microsegundos. El servidor respeta el sello (acotado:
   ni más de 2 s atrás ni más de 0,1 s adelante).
 - **Los demás se dibujan en el pasado** (`snap.rs`): unos 100 ms. Entre dos instantáneas se
   mezcla (posiciones en línea recta, ángulos y rotaciones por el camino corto); pasada la más
-  nueva se sigue con su velocidad **250 ms como mucho** y luego se congela.
+  nueva se sigue con su velocidad **250 ms como mucho** y luego se congela. Lo que se lleva al
+  presente (`rigid_carried`) usa también la aceleración que dan las dos últimas instantáneas
+  (`SnapBuffer::speeding`, acotada a 150 m/s²): una nave que gira o frena no se sale de su curva.
 - **El retraso se adapta** (`client/delay.rs`): tiene que cubrir lo vieja que llega una
   instantánea más un intervalo. Mínimo 100 ms, máximo 400 ms; crece como mucho un 10 % del
   tiempo y baja un 3 %. En red limpia se queda en 100 ms; con 30–70 ms de retardo por sentido y
@@ -224,6 +227,43 @@ for id in naves_ajenas { if let Some(s) = net.ship(id, now) { /* aplicar */ } }
 - Un rechazo o un «no responde» dejan `Status::Failed(motivo)`; `Event::Disconnected` solo sale
   si se llegó a estar dentro.
 
+## En el juego: naves, disparos y daño (`app/src/multi/`)
+
+Cada partida simula todo; la red solo la mantiene de acuerdo con las demás.
+
+| Fichero | Qué hace |
+|---|---|
+| `multi/mod.rs` | `Multi`: lo que el juego hace con la red cada frame (`receive` antes del mundo, `send` después) |
+| `multi/told.rs` | lo que las partidas se dicen aparte de los estados: un byte de tipo y sus campos, todos en una tabla (`CONTROL`, `ACT`, `SPAWN`, `STRIKES`, `SEEN`) |
+| `multi/follow.rs` | cómo una copia sigue a lo que simula otro (`steer`) y junto a qué nave se cuenta a quien flota (`pick`) |
+| `multi/tests.rs` | la mesa de pruebas: varias partidas enteras contra un servidor real en una red en memoria |
+
+- **Naves ajenas: guiadas, no puestas.** El dueño manda su nave en el marco del mundo. Nuestra
+  copia sigue simulándose (sus mandos también llegan) y, antes de que el mundo avance, se la lleva
+  hacia donde dice el dueño con una semivida de 80 ms, igual a cualquier fps (`follow::steer`):
+  ningún salto de un frame a otro, y quien va dentro va con ella. Solo una copia muy lejos
+  (> 40 m o > 0,6 rad: una nave puesta de golpe) se pone allí de una vez; y una copia que el mundo
+  no simula a fondo (lejos: `SimLevel::Coarse`/`Dormant`) se pone exacta, con su reloj al del mundo.
+- **Lo que ningún marco quita**: dos partidas dicen dónde está algo en el mismo instante solo tan
+  bien como coinciden sus relojes, y a 7,8 km/s cada milisegundo son 8 m. Con el reloj de arriba
+  coinciden en 1–4 ms; el error es estable y suave (no tiembla), y se prueba con esa cota física.
+- **Daño en un orden, el mismo en todas** (golpes con eco). Las estructuras que tienen todas las
+  partidas (las naves de la red y las del escenario) son `shared`: un impacto decidido aquí no se
+  aplica, se encola (`Builds::strikes`, `Strike::{Hit, Blow}`) y se manda con `tell_all`; todas
+  las partidas, también la que lo mandó, lo aplican cuando el servidor lo reenvía, en su orden y
+  con la semilla del mensaje (`strike_done`). Lo que se sigue de ello (piezas que saltan) lo hace
+  cada una por su cuenta (`blast_done`). Resultado: el mismo daño bit a bit en todas.
+- **Armas de naves ajenas: gemelos.** El arma de una nave que pilota otro dispara aquí también
+  (sus mandos llegan), pero sus balas y misiles son gemelos (`FOREIGN`, `launch_twin`): se ven,
+  explotan a la vista, no hacen daño. El daño lo decide la partida del dueño y llega como
+  `STRIKES`. Los señuelos son reales en todas.
+- **Lo que dispara un jugador** (`SEEN`, no fiable) va junto a la estructura en la que va (su
+  desplazamiento y su velocidad relativa) con la hora del servidor: cada partida lo coloca junto a
+  su propia copia de esa nave, así que sale de la boca del arma a cualquier velocidad.
+- **Quien flota junto a una nave** se cuenta en el marco de esa nave (`ride` + `local` +
+  `flag::BESIDE`): sin eso se le dibujaría donde estaba hace 100 ms (780 m atrás en órbita).
+- **Puertas y anclajes** accionados a mano (`aboard::Act`) viajan como `ACT`, fiables.
+
 ## Pruebas
 
 `tools/cargo.ps1 test -p lunar-net -p luna-servidor --target-dir target/red` — 73 pruebas, casi
@@ -241,12 +281,27 @@ todas con la red en memoria (deterministas):
 | `net/tests/bandwidth.rs` (2) | las cifras de arriba |
 | `server/src` (10), `server/tests/programa.rs` (2) | ajustes, órdenes, fechas; el `.exe` arrancado de verdad, con dos clientes y sus órdenes por consola |
 
+Y en el juego (`cargo test -p lunar-app -- multi::`, ~30 s, partidas enteras contra el servidor
+real con una red en memoria que pierde un 3 %, duplica un 1 % y retrasa 40 ± 10 ms):
+
+| Prueba (`app/src/multi/tests.rs`) | Qué comprueba |
+|---|---|
+| `ships_are_seen_flying_where_they_are_and_smoothly_…` | dos naves en formación a 0, 300, 2000 y 7800 m/s, a 30, 60, 144 y 240 fps: cada copia a la distancia que permiten los relojes, sin saltos (< 2 cm + lo que corrige el reloj por frame) ni giros de más de 2° |
+| `ships_shoot_each_other_at_orbital_speed_…` | 3 partidas, dos naves a 2 km/s disparándose (30 proyectiles de cañón): las tres acaban con el mismo daño, bit a bit |
+| `hits_from_two_shooters_at_once_…` | dos tiradores a la vez: el mismo orden en todas (sin el eco, falla) |
+| `what_a_player_fires_leaves_their_muzzle_…` | un cohete disparado a 7,8 km/s sale de la boca en todas las partidas |
+| `a_player_floating_by_a_ship_at_orbital_speed_…` | quien flota junto a una nave en órbita se dibuja a su lado (5 mm) |
+| `whoever_stands_aboard_a_ship_another_flies_…` | un pasajero de pie en una nave que pilota otro a 7,8 km/s no resbala |
+| `two_games_through_a_server_agree_…` | jugadores, mandos, puertas, naves puestas y dueños |
+| `told.rs` | cada mensaje ida y vuelta, tamaños, mensajes cortados |
+
 ## Lo que no hace (todavía)
 
-- **Naves que vuelan juntas a mucha velocidad**: las ajenas se dibujan ~100 ms en el pasado y
-  en coordenadas del mundo; a velocidad orbital eso son cientos de metros respecto a la propia.
-  `ship_now` da la estimación al presente, pero cada ms de error de reloj son 1,7 m a 1,7 km/s.
-  El arreglo de verdad es mandar el estado en un marco que se mueva con las naves.
+- **Naves que vuelan juntas a mucha velocidad**: ya se ven suaves y en su sitio (arriba); queda
+  el error de los relojes (1–4 ms: unos metros a 7,8 km/s, estable). Contar cada nave en el marco
+  de la otra no lo quita: las referencias mutuas se persiguen (se probó: 12 m de deriva).
+- **Carga suelta** (cajas, bidones) no se comparte todavía; ni lo que lleva otro en la mano ni
+  sus gestos; quien entra tarde no recibe el estado de las máquinas (solo los mandos).
 - **No se puede migrar de dirección**: si el router cambia el puerto de salida de un jugador a
   media partida, el servidor deja de reconocerlo y el jugador cae por silencio.
 - **Sin cifrado ni autenticación**: la `cookie` impide suplantar direcciones al entrar, pero

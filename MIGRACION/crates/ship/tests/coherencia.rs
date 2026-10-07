@@ -260,7 +260,7 @@ fn each_key_of_the_stick_moves_the_ship_about_one_axis_the_way_it_says() {
         for (seat, keys, _) in seats(&base) {
             for key in &keys {
                 let Does::Axis { axis, value } = key.does else { continue };
-                let help = kind.seats[seat].def.mandos.iter().find(|b| b.tecla == key.key).and_then(|b| b.ayuda.clone()).unwrap_or_default();
+                let help = kind.seats[seat].def.mandos.get(key.binding).and_then(|b| b.ayuda.clone()).unwrap_or_default();
                 // a fresh ship for every key, its engines running: how it goes on its own (its
                 // engines at idle push a little), and then with the key held as long. (A key
                 // whose help says it works with a mode on — «con MANTENER» — with that mode.)

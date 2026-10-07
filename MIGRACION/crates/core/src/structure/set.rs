@@ -42,9 +42,10 @@ pub struct Structures {
     pub(crate) watch: Vec<DVec3>,
     /// Something is held (`hold`): held structures follow their holders after every step.
     pub(crate) any_held: bool,
-    /// Hits that struck copies of what is simulated elsewhere (`Structure::remote`), each in its
-    /// structure's own frame: not applied here, kept for whoever tells them to who simulates it
-    /// (who takes them from here). Nothing is ever put in it with no remote structure about.
+    /// Hits decided here on what is simulated elsewhere or done in one order by every game
+    /// (`Structure::remote`, `Structure::shared`), each in its structure's own frame: not done
+    /// here, kept for whoever tells them (`multi` takes them from here and every game, this one
+    /// too, does them when they come back). Nothing is ever put in it with no such structure.
     pub told: Vec<(u64, super::damage::Hit)>,
 }
 
@@ -53,6 +54,11 @@ impl Structures {
         // checked when the library loaded
         let machines = Machines::new(&lib.catalog).unwrap_or_else(|e| panic!("{e}"));
         Structures { list: Vec::new(), lib, next: 1, groups: Groups::default(), now: 0.0, sun: DVec3::Y, machines, solver: Solver::default(), physics: Default::default(), due: Default::default(), watch: Vec::new(), any_held: false, told: Vec::new() }
+    }
+
+    /// The id the next structure made will have (none is taken).
+    pub fn next_free(&self) -> u64 {
+        self.next
     }
 
     pub fn next_id(&mut self) -> u64 {

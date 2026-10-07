@@ -73,8 +73,20 @@ struct Piece {
 }
 
 impl Structures {
-    /// A blast of `energy` J reaching `radius` m at world point `at`, on every structure in reach.
+    /// A blast of `energy` J reaching `radius` m at world point `at`, on every structure in
+    /// reach, set off here: on what is `remote` or `shared` it is told, not done (`told`).
     pub fn blast(&mut self, at: DVec3, energy: f32, radius: f32, rules: &Rules, events: &mut Vec<Event>, seed: u64) {
+        self.blast_on(at, energy, radius, rules, events, seed, true);
+    }
+
+    /// The same, done on every structure whatever it is: a blast that follows from what was done
+    /// the same in every game (a part that bursts when a hit breaks it).
+    pub fn blast_done(&mut self, at: DVec3, energy: f32, radius: f32, rules: &Rules, events: &mut Vec<Event>, seed: u64) {
+        self.blast_on(at, energy, radius, rules, events, seed, false);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn blast_on(&mut self, at: DVec3, energy: f32, radius: f32, rules: &Rules, events: &mut Vec<Event>, seed: u64, tell: bool) {
         let mut rng = Rng::new(seed);
         let n = self.list.len();
         for k in 0..n {
@@ -83,8 +95,8 @@ impl Structures {
                 continue;
             }
             let hit = Hit { point: s.to_local(at), dir: Vec3::ZERO, energy, radius, area: 0.0 };
-            // (a copy of what is simulated elsewhere: whoever simulates it says what the hit does)
-            if s.remote {
+            // (a copy of what is simulated elsewhere, or what every game does in one order: told)
+            if tell && (s.remote || s.shared) {
                 self.told.push((s.id, hit));
                 continue;
             }
@@ -112,7 +124,7 @@ impl Structures {
         let (k, _, at) = self.raycast(from, dir, max)?;
         let s = &self.list[k];
         let hit = Hit { point: s.to_local(at - dir * 0.05), dir: s.dir_to_local(dir), energy, radius: 0.0, area };
-        if s.remote {
+        if s.remote || s.shared {
             self.told.push((s.id, hit));
             return Some(at);
         }
@@ -250,9 +262,9 @@ impl Structures {
     pub fn separate(&mut self) -> usize {
         let before = self.list.len();
         for k in 0..before {
-            // (of a copy of what is simulated elsewhere nothing comes off by itself: its pieces are
-            // told by whoever simulates it)
-            if std::mem::take(&mut self.list[k].parted) && !self.list[k].remote {
+            // (a copy of what is simulated elsewhere too: what was done to it was done the same in
+            // every game, and what no longer holds comes off the same)
+            if std::mem::take(&mut self.list[k].parted) {
                 self.detach(k, &[], 0.0);
                 self.list[k].resting = false;
             }
