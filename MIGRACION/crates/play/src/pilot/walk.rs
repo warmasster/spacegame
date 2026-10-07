@@ -187,11 +187,18 @@ impl Pilot {
     /// The body as spheres in the world (none in free flight or seated): what a door, a ramp or
     /// a hoist stops at.
     pub fn body(&self) -> Vec<(DVec3, f32)> {
+        let mut out = Vec::new();
+        self.body_into(&mut out);
+        out
+    }
+
+    /// The same, added to `out` (what a step does for every player, with nothing new made).
+    pub fn body_into(&self, out: &mut Vec<(DVec3, f32)>) {
         if self.flying || self.seat.is_some() {
-            return Vec::new();
+            return;
         }
         let feet = self.position - self.up * self.eye_h;
-        self.spheres().iter().map(|h| (feet + self.up * *h, self.def.cuerpo.radio)).collect()
+        out.extend(self.spheres().iter().map(|h| (feet + self.up * *h, self.def.cuerpo.radio)));
     }
 
     /// Crouched (or on the way down or up).

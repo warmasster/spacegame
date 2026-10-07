@@ -21,6 +21,7 @@ const BODY: u8 = 2;
 const JOINTS: u8 = 4;
 const FRAME: u8 = 8;
 const TURNS: u8 = 16;
+const RESTING: u8 = 32;
 
 /// The frame a state is told in.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -60,6 +61,8 @@ pub struct RigidState {
     /// Angular velocity, rad/s.
     pub spin: Vec3,
     pub joints: Vec<f32>,
+    /// At rest where it is (not only still: what rests is not stepped until something wakes it).
+    pub resting: bool,
 }
 
 impl RigidState {
@@ -91,7 +94,7 @@ impl RigidState {
             Frame::Beside(_) => FRAME,
             Frame::Aboard(_) => FRAME | TURNS,
         };
-        w.u8(if moving { MOVING } else { 0 } | if self.body != 0 { BODY } else { 0 } | joints | frame);
+        w.u8(if moving { MOVING } else { 0 } | if self.body != 0 { BODY } else { 0 } | joints | frame | if self.resting { RESTING } else { 0 });
         if self.body != 0 {
             w.u8(self.body);
         }
@@ -137,9 +140,10 @@ impl RigidState {
     /// state that brings no joints leaves this one with none.
     pub fn decode_rigid(&mut self, r: &mut Reader) -> Wire<()> {
         let bits = r.u8()?;
-        if bits & !(MOVING | BODY | JOINTS | FRAME | TURNS) != 0 || bits & (FRAME | TURNS) == TURNS {
+        if bits & !(MOVING | BODY | JOINTS | FRAME | TURNS | RESTING) != 0 || bits & (FRAME | TURNS) == TURNS {
             return Err(WireError::Value);
         }
+        self.resting = bits & RESTING != 0;
         self.body = if bits & BODY != 0 { r.u8()? } else { 0 };
         self.frame = match (bits & FRAME != 0, bits & TURNS != 0) {
             (false, _) => Frame::World,
@@ -172,6 +176,7 @@ impl RigidState {
         out.id = near.id;
         out.body = near.body;
         out.frame = near.frame;
+        out.resting = near.resting;
         if a.body == b.body && a.frame == b.frame {
             out.pos = a.pos.lerp(b.pos, t as f64);
             out.rot = a.rot.slerp(b.rot, t);
@@ -195,7 +200,7 @@ impl RigidState {
 
     /// Copies the rigid part of `from` and takes `joints` for its joints.
     pub fn set_with(&mut self, from: &RigidState, joints: &[f32]) {
-        (self.id, self.body, self.frame, self.pos, self.rot, self.vel, self.spin) = (from.id, from.body, from.frame, from.pos, from.rot, from.vel, from.spin);
+        (self.id, self.body, self.frame, self.pos, self.rot, self.vel, self.spin, self.resting) = (from.id, from.body, from.frame, from.pos, from.rot, from.vel, from.spin, from.resting);
         self.joints.clear();
         self.joints.extend_from_slice(joints);
     }

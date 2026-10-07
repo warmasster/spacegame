@@ -1219,7 +1219,7 @@ impl State {
             if self.bench.is_none() {
                 self.game.tick(&mut [&mut self.me]);
             } else {
-                self.game.tick(&mut []);
+                self.game.tick::<&mut lunar_play::game::Player>(&mut []);
             }
             // what a ship tells whoever is working it: shown to the one who rides it or stands by it
             for (ship, about, text, level) in self.game.out.said.drain(..) {

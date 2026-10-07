@@ -12,6 +12,28 @@ rendimiento del juego en TS están en [`../../docs/RENDIMIENTO.md`](../../docs/R
 Prioridad: **A** (se nota jugando), **B** (se nota con muchas cosas en pantalla), **C** (limpieza o
 código muerto).
 
+## V41b (2026-10-07): el servidor que simula (`lunar_play::host`) y el jugador que predice (`online`)
+
+- **Codificado una vez** (`net::append_event`): lo que va a muchos (un golpe, lo que nace, lo
+  disparado) se escribe una vez y se copia a la cola de cada uno; `Made` se hace una vez por paso
+  aunque lo conozcan diez.
+- **Por jugador, en todos los hilos**: el interés y las instantáneas de cada jugador se hacen en
+  paralelo (`par_iter_mut`), sin reservar en el camino caliente (instantáneas, órdenes y listas
+  reutilizadas por jugador).
+- **Lo anclado no viaja** en instantáneas; lo que reposa, tres veces y no más hasta que se mueva.
+- **A · Pendiente:** `Ships::update` reserva por paso un `HashMap`, dos `Vec` y a veces un
+  `HashSet` (emparejar naves con su estructura). Ahora corre en servidor y clientes 60 veces por
+  segundo: emparejar por índice (las estructuras están en orden de id) con un búfer reutilizado.
+- **B · Pendiente:** `lunar_net::Server` copia cada mensaje del juego que llega (`GameIn::data`,
+  un `Vec` por datagrama: 60 por segundo y jugador). Un banco de búferes que vuelvan.
+- **B · Pendiente:** el interés recorre todas las estructuras por jugador y paso (fuerza bruta). Con
+  16 jugadores y mil cosas son 16 000 distancias por paso (decenas de µs); con decenas de miles,
+  una rejilla (la de la física) y actualizar cada jugador cada 4 pasos, escalonado.
+- **C · Pendiente:** `sync::Digest::of` reserva una lista por máquina; va una vez por paso (la nave
+  del turno) en el servidor y una por instantánea en el cliente.
+- **Medido:** `Pilot::body` reservaba una lista por jugador y paso: ahora `body_into` sobre la de
+  `Game` (cero reservas).
+
 ## V41 (2026-10-07): paso fijo, dibujo entre pasos, barrido, `lunar-play`
 
 Fernando: «acuérdate de hiperoptimizar todo» y «aprovechar la mayor cantidad de hilos posible».

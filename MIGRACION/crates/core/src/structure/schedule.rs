@@ -92,14 +92,20 @@ pub struct SimStats {
 /// Where a free structure is after `t` s of flight from its state now, pulled all the while as
 /// it is pulled where it is (`pull`, world, m/s²): the catch-up of a sleeper.
 pub fn coast(s: &mut Structure, pull: DVec3, t: f64) {
+    (s.pos, s.vel, s.rot) = coasted(s, pull, t);
+}
+
+/// Where structure `s` would be, how fast it would go and how it would be turned after `t` s of
+/// flight from its state now (`coast`, without moving it): what one stepped now and then (its
+/// `clock` behind the world's) is at the world's moment.
+pub fn coasted(s: &Structure, pull: DVec3, t: f64) -> (DVec3, DVec3, Quat) {
     if s.anchored || s.resting || s.held.is_some() || t <= 0.0 {
-        return;
+        return (s.pos, s.vel, s.rot);
     }
     let com = s.to_world(s.com);
     let com_new = com + s.vel * t + pull * (0.5 * t * t);
-    s.vel += pull * t;
-    s.rot = (Quat::from_scaled_axis(s.spin * t as f32) * s.rot).normalize();
-    s.pos = com_new - (s.rot * s.com).as_dvec3();
+    let rot = (Quat::from_scaled_axis(s.spin * t as f32) * s.rot).normalize();
+    (com_new - (rot * s.com).as_dvec3(), s.vel + pull * t, rot)
 }
 
 impl Structures {

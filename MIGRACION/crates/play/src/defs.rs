@@ -33,6 +33,8 @@ pub struct Defs {
     pub ships: Vec<Arc<ShipKind>>,
     /// The silkscreen font (`assets/fonts/serigrafia`): metrics and its R8 atlas.
     pub font: (Font, Vec<u8>),
+    /// A few bytes of all of it (`fingerprint`): two machines play together only with the same.
+    pub fingerprint: u32,
 }
 
 impl Defs {
@@ -57,8 +59,41 @@ impl Defs {
             missiles: defs::load::<std::collections::BTreeMap<String, MissileDef>>(&defs::file(dir, "missiles"))?.into_iter().collect(),
             ships: ships.kinds,
             font: load_font(&dir.join("../fonts/serigrafia"))?,
+            fingerprint: fingerprint(dir),
         })
     }
+}
+
+/// A few bytes of every definition under `dir` (each file's path from there and what it says,
+/// in the order of their paths, the ends of its lines as they are on any machine): what the
+/// server and every player's game must agree on before they play (`lunar_net::ServerConfig::game`).
+pub fn fingerprint(dir: &Path) -> u32 {
+    fn walk(dir: &Path, base: &Path, out: &mut Vec<(String, std::path::PathBuf)>) {
+        let Ok(rd) = std::fs::read_dir(dir) else { return };
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                walk(&p, base, out);
+            } else if p.extension().is_some_and(|x| x == "jsonc" || x == "json") {
+                let rel = p.strip_prefix(base).unwrap_or(&p).to_string_lossy().replace('\\', "/");
+                out.push((rel, p));
+            }
+        }
+    }
+    let mut files = Vec::new();
+    walk(dir, dir, &mut files);
+    files.sort();
+    let mut h = 0x811c_9dc5u32;
+    let mut eat = |b: u8| h = (h ^ u32::from(b)).wrapping_mul(0x0100_0193);
+    for (rel, p) in files {
+        rel.bytes().for_each(&mut eat);
+        eat(0);
+        if let Ok(bytes) = std::fs::read(&p) {
+            bytes.into_iter().filter(|b| *b != b'\r').for_each(&mut eat);
+        }
+        eat(0);
+    }
+    h
 }
 
 /// A signed-distance font: `<path>.json` metrics and `<path>.bin` atlas (R8, width × height).

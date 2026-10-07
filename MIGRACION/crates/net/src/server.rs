@@ -38,11 +38,15 @@ pub struct ServerConfig {
     pub max_keys: u32,
     /// Things in motion whose newest state is kept at once (more are not passed on).
     pub max_things: usize,
+    /// A server that has the game itself: the build and the scenario (the fingerprint of its
+    /// data) it plays. A hello of any other is refused, whoever comes first. None: the first to
+    /// come says what game this is.
+    pub game: Option<(String, u32)>,
 }
 
 impl Default for ServerConfig {
     fn default() -> Self {
-        ServerConfig { name: "Servidor de Selene".to_string(), max_players: 16, tick_hz: 20, timeout: 10.0, max_keys: 4096, max_things: 16384 }
+        ServerConfig { name: "Servidor de Selene".to_string(), max_players: 16, tick_hz: 20, timeout: 10.0, max_keys: 4096, max_things: 16384, game: None }
     }
 }
 

@@ -266,6 +266,7 @@ fn rigid_states_round_trip_within_their_quantisation() {
             vel: if i % 3 == 0 { Vec3::ZERO } else { Vec3::new(dice.signed() as f32, dice.signed() as f32, dice.signed() as f32) * 1700.0 },
             spin: if i % 3 == 0 { Vec3::ZERO } else { Vec3::new(dice.signed() as f32, dice.signed() as f32, dice.signed() as f32) * 2.0 },
             joints: (0..dice.below(41)).map(|_| (dice.signed() * 3.2) as f32).collect(),
+            resting: i % 7 == 0 && i % 3 == 0,
         };
         let bytes = written(|w| s.encode(w));
         let b = RigidState::decode(&mut Reader::new(&bytes)).expect("a thing");
@@ -348,7 +349,9 @@ fn sizes_on_the_wire() {
     assert_eq!(written(|w| walker(10.0).encode(w)).len(), 26);
     assert_eq!(written(|w| still.encode(w)).len(), 22);
     // what the game tells costs what it says plus this
-    for (what, m) in [("told to everyone", Msg::Tell { echo: false, data: &[0; 12] }), ("as it is passed on", Msg::Told { by: 3, data: &[0; 12] }), ("to one player", Msg::To { player: 3, data: &[0; 12] }), ("a key asked for", Msg::Claim { key: key::thing(77) })] {
+    for (what, m) in
+        [("told to everyone", Msg::Tell { echo: false, data: &[0; 12] }), ("as it is passed on", Msg::Told { by: 3, data: &[0; 12] }), ("to one player", Msg::To { player: 3, data: &[0; 12] }), ("a key asked for", Msg::Claim { key: key::thing(77) })]
+    {
         println!("{what}: {} bytes as a message", written(|w| m.encode(w)).len());
     }
 }
@@ -480,7 +483,10 @@ fn batches_of_states_round_trip() {
         seen.push((e.source, e.sub, e.stamp, e.held, e.raw.len()));
     }
     let k = Source::Thing(key::thing(2));
-    assert_eq!(seen, [(Source::Player(7), 0, 8_950_000, false, praw.len()), (k, 1, 8_950_000, false, jraw.len()), (k, 0, 8_950_000, true, sraw.len()), (Source::Player(8), 0, 8_990_000, false, praw.len()), (Source::Player(9), 0, 9_000_500, false, praw.len())]);
+    assert_eq!(
+        seen,
+        [(Source::Player(7), 0, 8_950_000, false, praw.len()), (k, 1, 8_950_000, false, jraw.len()), (k, 0, 8_950_000, true, sraw.len()), (Source::Player(8), 0, 8_990_000, false, praw.len()), (Source::Player(9), 0, 9_000_500, false, praw.len())]
+    );
 
     // A full message refuses the entry and stays whole.
     let mut small = [0u8; 40];

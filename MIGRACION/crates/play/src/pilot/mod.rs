@@ -28,6 +28,7 @@
 //! against itself, however fast it goes (`walk::passing`). Every number of how the body moves is
 //! the scenario's data (`PlayerDef`: `cuerpo`, `mochila`, `linterna`).
 use glam::{DQuat, DVec3, Quat, Vec3};
+use lunar_core::view::View;
 use lunar_core::{
     body::{BodyId, BodyRegistry},
     scenario::PlayerDef,
@@ -39,21 +40,20 @@ use lunar_core::{
         weight,
     },
 };
-use lunar_core::view::View;
 use std::sync::Arc;
 
 #[cfg(test)]
 mod frames;
+mod pack;
 #[cfg(test)]
 mod shots;
-mod pack;
 mod state;
 #[cfg(test)]
 mod tests;
 mod walk;
 
 pub use pack::Hold;
-pub use state::Garbled;
+pub use state::{Garbled, Summary};
 
 #[derive(Default, Clone, Copy, Debug, PartialEq)]
 pub struct Input {
@@ -541,11 +541,7 @@ impl Pilot {
     }
 
     pub fn motion_in(&self, set: &Structures) -> lunar_core::structure::motion::Motion {
-        lunar_core::structure::motion::Motion {
-            at: self.position,
-            vel: self.velocity_in(set),
-            spin: self.ride.and_then(|ride| set.get(ride.id)).map_or(DVec3::ZERO, |structure| structure.spin.as_dvec3()),
-        }
+        lunar_core::structure::motion::Motion { at: self.position, vel: self.velocity_in(set), spin: self.ride.and_then(|ride| set.get(ride.id)).map_or(DVec3::ZERO, |structure| structure.spin.as_dvec3()) }
     }
 
     /// Speed up (m/s) on foot or in the air.

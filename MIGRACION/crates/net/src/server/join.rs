@@ -42,6 +42,14 @@ impl Server {
         }
         let refusal = if self.sessions.len() >= self.config.max_players {
             Some(text::full(self.config.max_players))
+        } else if let Some((b, sc)) = &self.config.game {
+            if build != b {
+                Some(text::build(b, build))
+            } else if scenario != *sc {
+                Some(text::scenario(*sc, scenario))
+            } else {
+                None
+            }
         } else if self.sessions.is_empty() {
             // The first to come says what game this is.
             None

@@ -114,6 +114,45 @@ impl Structures {
         self.next - 1
     }
 
+    /// The ids of what is made from now on start at `from` at least (a player's game over a
+    /// server names its own from far above the server's: `rename` gives them the server's).
+    pub fn reserve(&mut self, from: u64) {
+        self.next = self.next.max(from);
+    }
+
+    /// Structure `old` is called `new` from now on, and so is it wherever another names it (what
+    /// holds it, what it is a load of). False (and nothing changed) if there is no `old` or there
+    /// is a `new` already.
+    pub fn rename(&mut self, old: u64, new: u64) -> bool {
+        if old == new || self.index_of(new).is_some() {
+            return false;
+        }
+        let Some(k) = self.index_of(old) else { return false };
+        // (kept in the order of the ids)
+        let mut moved = self.list.remove(k);
+        moved.id = new;
+        let at = self.list.partition_point(|x| x.id < new);
+        self.list.insert(at, moved);
+        for s in &mut self.list {
+            if let Some(h) = &mut s.held
+                && h.by == old
+            {
+                h.by = new;
+            }
+            for l in &mut s.loads {
+                if l.id == old {
+                    l.id = new;
+                }
+            }
+        }
+        for t in &mut self.told {
+            if t.0 == old {
+                t.0 = new;
+            }
+        }
+        true
+    }
+
     /// The library grew (part kinds appended: a ship rebuilt by the editor): what is kept per part
     /// kind follows it.
     pub fn library_changed(&mut self) -> Result<(), String> {
@@ -127,7 +166,20 @@ impl Structures {
     }
 
     pub fn get(&self, id: u64) -> Option<&Structure> {
-        self.list.iter().find(|s| s.id == id)
+        self.index_of(id).map(|k| &self.list[k])
+    }
+
+    /// Structure `s` put among the others where its id goes (they are kept in the order of their
+    /// ids: `index_of`). False (and not put) if there is one with its id already.
+    pub fn insert(&mut self, s: Structure) -> bool {
+        match self.list.binary_search_by_key(&s.id, |x| x.id) {
+            Ok(_) => false,
+            Err(i) if self.list.iter().all(|x| x.id != s.id) => {
+                self.list.insert(i, s);
+                true
+            }
+            Err(_) => false,
+        }
     }
 
     /// Blueprint `id` standing on the ground of `body` at unit direction `dir`, turned `yaw` (rad,

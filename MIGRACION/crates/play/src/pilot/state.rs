@@ -1,10 +1,14 @@
 //! The body's state as bytes and back, whole (`write_state` / `read_state`: what the server sends a
 //! player whose game went astray, to be put as it is and stepped on from there), and in a few
-//! bytes (`digest`: what a player's game says it got at each step, for the server to compare).
+//! bytes (`summary`: what a player's game says it got at each step, for the server to compare;
+//! `digest`: a hash of it, to compare two runs).
 //!
-//! The digest is of what holds where the body is: aboard, its place and speed in what carries it
+//! The summary is of what holds where the body is: aboard, its place and speed in what carries it
 //! (a copy of a ship a hair off the server's does not make the body differ); else, in the world.
-//! Rounded to a tenth of a millimetre: differences in the last bits do not count, real ones do.
+//! It is compared within a millimetre (`Summary::near`), not bit for bit: two games never have
+//! every structure the same to the last bit (they are put right toward each other), and a body
+//! beside one may differ by that much; a hash of it rounded would tell such a difference now and
+//! then, whenever it fell across a rounding.
 use super::{Hold, Pilot, Ride, Seat};
 use glam::{DVec3, Quat, Vec3};
 
@@ -191,6 +195,17 @@ impl Pilot {
         Ok(())
     }
 
+    /// Where the body is and how it goes, as a player's game says it to the server for it to
+    /// compare with its own (`Summary::near`).
+    pub fn summary(&self) -> Summary {
+        let flags = u8::from(self.grounded) | u8::from(self.pack_on) << 1 | u8::from(self.flying) << 2 | u8::from(self.seat.is_some()) << 3;
+        let (ride, pos) = match self.ride {
+            Some(r) => (Some(r.id), r.local.as_dvec3()),
+            None => (None, self.position),
+        };
+        Summary { flags, ride, pos, vel: self.vel.as_vec3(), fuel: self.fuel as f32 }
+    }
+
     /// A few bytes of where the body is and how it goes, for two games to compare at one step:
     /// aboard, in what carries it; else in the world; to a tenth of a millimetre (and of a
     /// millimetre a second).
@@ -216,5 +231,70 @@ impl Pilot {
         eat(u64::from(self.grounded) | u64::from(self.pack_on) << 1 | u64::from(self.flying) << 2 | u64::from(self.seat.is_some()) << 3);
         eat(q(self.fuel));
         h
+    }
+}
+
+/// Where a body is and how it goes, in a few bytes (`Pilot::summary`): aboard, in what carries it;
+/// else, in the world.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Summary {
+    /// Standing on something, the pack on, in free flight, seated.
+    pub flags: u8,
+    pub ride: Option<u64>,
+    pub pos: DVec3,
+    pub vel: Vec3,
+    pub fuel: f32,
+}
+
+/// How far two summaries may be and still be of the same body (m, m/s, of the tank).
+pub const NEAR_POS: f64 = 1e-3;
+pub const NEAR_VEL: f32 = 5e-3;
+pub const NEAR_FUEL: f32 = 1e-3;
+/// Steps per metre, per m/s and of the tank of a summary as it travels.
+const POS_UNITS: f64 = 8192.0;
+const VEL_UNITS: f32 = 2048.0;
+const FUEL_UNITS: f32 = 65535.0;
+
+impl Summary {
+    /// Of the same body: the same flags and frame, and within `NEAR_*` of each other.
+    pub fn near(&self, other: &Summary) -> bool {
+        self.flags == other.flags && self.ride == other.ride && self.pos.distance(other.pos) <= NEAR_POS && self.vel.distance(other.vel) <= NEAR_VEL && (self.fuel - other.fuel).abs() <= NEAR_FUEL
+    }
+
+    /// As it travels (`write`, `read`): what the server compares.
+    pub fn travelled(self) -> Summary {
+        let p = |x: f64| (x * POS_UNITS).round() / POS_UNITS;
+        let v = |x: f32| (x * VEL_UNITS).round() / VEL_UNITS;
+        Summary { pos: DVec3::new(p(self.pos.x), p(self.pos.y), p(self.pos.z)), vel: Vec3::new(v(self.vel.x), v(self.vel.y), v(self.vel.z)), fuel: (self.fuel.clamp(0.0, 1.0) * FUEL_UNITS).round() / FUEL_UNITS, ..self }
+    }
+
+    pub fn write(&self, w: &mut lunar_net::Writer) {
+        w.u8(self.flags);
+        w.var(self.ride.map_or(0, |r| r + 1));
+        for x in self.pos.to_array() {
+            w.zig((x * POS_UNITS).round() as i64);
+        }
+        for x in self.vel.to_array() {
+            w.zig((x * VEL_UNITS).round() as i64);
+        }
+        w.u16((self.fuel.clamp(0.0, 1.0) * FUEL_UNITS).round() as u16);
+    }
+
+    pub fn read(r: &mut lunar_net::Reader) -> Result<Summary, lunar_net::WireError> {
+        let flags = r.u8()?;
+        let ride = match r.var()? {
+            0 => None,
+            n => Some(n - 1),
+        };
+        let mut pos = [0.0; 3];
+        for x in &mut pos {
+            *x = r.zig()? as f64 / POS_UNITS;
+        }
+        let mut vel = [0.0; 3];
+        for x in &mut vel {
+            *x = r.zig()? as f32 / VEL_UNITS;
+        }
+        let fuel = f32::from(r.u16()?) / FUEL_UNITS;
+        Ok(Summary { flags, ride, pos: DVec3::from_array(pos), vel: Vec3::from_array(vel), fuel })
     }
 }

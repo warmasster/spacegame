@@ -50,12 +50,22 @@ pub fn walker(east: f64) -> PlayerState {
 }
 
 pub fn ship(id: u64, east: f64, joints: usize) -> RigidState {
-    RigidState { id, body: 0, frame: Frame::World, pos: on_the_moon(east) + DVec3::Y * 20.0, rot: Quat::from_rotation_y(0.4), vel: Vec3::new(3.0, -1.0, 12.0), spin: Vec3::new(0.01, 0.2, 0.0), joints: (0..joints).map(|j| j as f32 * 0.05).collect() }
+    RigidState {
+        id,
+        body: 0,
+        frame: Frame::World,
+        pos: on_the_moon(east) + DVec3::Y * 20.0,
+        rot: Quat::from_rotation_y(0.4),
+        vel: Vec3::new(3.0, -1.0, 12.0),
+        spin: Vec3::new(0.01, 0.2, 0.0),
+        joints: (0..joints).map(|j| j as f32 * 0.05).collect(),
+        resting: false,
+    }
 }
 
 /// A crate lying in the hold of thing `ship`, where `at` says (its frame).
 pub fn cargo(id: u64, ship: u64, at: Vec3) -> RigidState {
-    RigidState { id, body: 0, frame: Frame::Aboard(ship), pos: at.as_dvec3(), rot: Quat::from_rotation_y(0.2), vel: Vec3::ZERO, spin: Vec3::ZERO, joints: Vec::new() }
+    RigidState { id, body: 0, frame: Frame::Aboard(ship), pos: at.as_dvec3(), rot: Quat::from_rotation_y(0.2), vel: Vec3::ZERO, spin: Vec3::ZERO, joints: Vec::new(), resting: false }
 }
 
 pub const BUILD: &str = "V36";

@@ -6,13 +6,13 @@
 //! structures as a blast.
 use crate::builds::Builds;
 use glam::{DVec3, Vec3};
+use lunar_core::structure::state::Structure;
 use lunar_core::{
     body::{BodyId, BodyRegistry},
     effect_defs::BlastDef,
     effects::Effects,
     font::Font,
 };
-use lunar_core::structure::state::Structure;
 use lunar_ship::{Pace, Ship, ShipKind, World};
 use rayon::prelude::*;
 use std::{
@@ -235,6 +235,23 @@ impl Ships {
             }
             lunar_ship::cargo::serve(sh, &mut builds.set);
         }
+    }
+
+    /// The systems of ship `n` alone run `ticks` ticks of `dt` s in full, where its structure is
+    /// (nothing else moves): what a copy told of how the ship was some steps ago does to be of
+    /// now (`online`).
+    pub fn catch_up(&mut self, n: usize, ticks: u32, builds: &mut Builds, bodies: &BodyRegistry, sun: DVec3, dt: f64) {
+        let Some(sh) = self.list.get_mut(n) else { return };
+        let Some(k) = builds.set.index_of(sh.structure) else { return };
+        let s = &mut builds.set.list[k];
+        for _ in 0..ticks {
+            let com = s.to_world(s.com);
+            let low = s.to_world(Vec3::new(0.0, sh.keel(s), 0.0));
+            let w = World { sun: s.rot.inverse() * sun.as_vec3(), irradiance: sunlight(bodies, com, sun), pressure: ambient_pressure(bodies, com), sink: 230.0, ..World::at(s, bodies, low) };
+            sh.run(s, &w, dt, Pace::Full);
+        }
+        sh.torn.clear();
+        sh.bursts.clear();
     }
 
     /// The ship on structure `id`.

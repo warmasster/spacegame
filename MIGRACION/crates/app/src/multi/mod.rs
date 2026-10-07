@@ -224,7 +224,7 @@ impl Multi {
         let Some(s) = set.get(structure) else { return };
         let joints = ships.by_structure(structure).map(|n| ships.list[n].joints.iter().map(|j| j.q as f32).collect()).unwrap_or_default();
         // (the wire still has a byte for the body a thing is at: nothing is ruled by it any more)
-        let state = RigidState { id: 0, body: 0, frame: Frame::World, pos: s.pos, rot: s.rot, vel: s.vel.as_vec3(), spin: s.spin, joints };
+        let state = RigidState { id: 0, body: 0, frame: Frame::World, pos: s.pos, rot: s.rot, vel: s.vel.as_vec3(), spin: s.spin, joints, resting: false };
         let mut buf = [0u8; 1200];
         let mut w = Writer::new(&mut buf);
         told::write_spawn(&mut w, kind, &state);
