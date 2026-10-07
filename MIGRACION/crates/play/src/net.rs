@@ -20,6 +20,7 @@ use crate::{
 };
 use glam::{DVec3, Quat, Vec3};
 use lunar_net::{PlayerState, Reader, RigidState, WireError, Writer};
+use lunar_core::structure::hold::Held;
 use lunar_ship::sync::Digest;
 
 /// What travels: the kind of a message, its first byte.
@@ -72,6 +73,9 @@ pub struct Cmd {
     /// Seated: which of the seat's keys are held (bit `k`: its `k`-th key, as
     /// `lunar_ship::seat_keys::keys` lists them).
     pub keys: u32,
+    /// Floating where nothing weighs, the mouse turns the whole body: its way up and the way its
+    /// turn is counted from (`Pilot::body_frame`), as the player left them.
+    pub frame: Option<[Vec3; 2]>,
 }
 
 impl Cmd {
@@ -85,6 +89,13 @@ impl Cmd {
         (self.yaw, self.pitch) = (look(self.yaw), look(self.pitch));
         self.head = self.head.map(|h| ((f64::from(h) * HEAD_UNITS).round().clamp(-32767.0, 32767.0) / HEAD_UNITS) as f32);
         self.aim = self.aim.map(|a| a.normalize_or(Vec3::Z));
+        // (made a frame first, then rounded: what travels is what it is, and travels so again)
+        self.frame = self.frame.map(|[up, fore]| {
+            let q = |v: Vec3| Vec3::from_array(v.to_array().map(|x| (x * FRAME_UNITS).round().clamp(-FRAME_UNITS, FRAME_UNITS) / FRAME_UNITS));
+            let up = up.normalize_or(Vec3::Y);
+            let fore = (fore - up * fore.dot(up)).normalize_or(up.any_orthonormal_vector());
+            [q(up), q(fore)]
+        });
         self
     }
 
@@ -114,6 +125,9 @@ impl Cmd {
         }
         if self.aim.is_some() {
             mask |= CHANGED_AIM;
+        }
+        if self.frame.is_some() {
+            mask |= CHANGED_FRAME;
         }
         if differs(than.is_some_and(|t| head(t) != head(self))) {
             mask |= CHANGED_HEAD;
@@ -153,12 +167,19 @@ impl Cmd {
         if mask & CHANGED_KEYS != 0 {
             w.var(u64::from(self.keys));
         }
+        if let Some(f) = self.frame {
+            for v in f {
+                for x in v.to_array() {
+                    w.u16((x * FRAME_UNITS).round().clamp(-FRAME_UNITS, FRAME_UNITS) as i16 as u16);
+                }
+            }
+        }
     }
 
     /// What `write` wrote, the one after it being `than` (none: it went whole).
     fn read(r: &mut Reader, step: u64, than: Option<&Cmd>) -> Wire<Cmd> {
         let mask = r.u8()?;
-        if (than.is_none() && mask & WHOLE != WHOLE) || mask & !(WHOLE | CHANGED_AIM) != 0 {
+        if (than.is_none() && mask & WHOLE != WHOLE) || mask & !(WHOLE | CHANGED_AIM | CHANGED_FRAME) != 0 {
             return Err(WireError::Value);
         }
         let mut c = than.copied().unwrap_or_default();
@@ -194,6 +215,15 @@ impl Cmd {
         if mask & CHANGED_KEYS != 0 {
             c.keys = r.var32()?;
         }
+        c.frame = if mask & CHANGED_FRAME != 0 {
+            let mut f = [Vec3::ZERO; 2];
+            for v in &mut f {
+                *v = Vec3::new(f32::from(r.u16()? as i16), f32::from(r.u16()? as i16), f32::from(r.u16()? as i16)) / FRAME_UNITS;
+            }
+            Some(f)
+        } else {
+            None
+        };
         Ok(c)
     }
 }
@@ -206,6 +236,9 @@ const CHANGED_AIM: u8 = 8;
 const CHANGED_HEAD: u8 = 16;
 const CHANGED_HAND: u8 = 32;
 const CHANGED_KEYS: u8 = 64;
+const CHANGED_FRAME: u8 = 128;
+/// Steps of each axis of the body's frame as it travels.
+const FRAME_UNITS: f32 = 32767.0;
 /// What a command that goes whole has.
 const WHOLE: u8 = CHANGED_FLAGS | CHANGED_AXES | CHANGED_LOOK | CHANGED_HEAD | CHANGED_HAND | CHANGED_KEYS;
 /// Steps per radian of the head's own turn (it only shows).
@@ -583,6 +616,7 @@ pub enum Event {
         vel: Vec3,
         spin: Vec3,
         resting: bool,
+        held: Option<Held>,
         make: Vec<u8>,
         state: Vec<u8>,
         systems: Vec<u8>,
@@ -632,6 +666,35 @@ pub enum Event {
     Ground { body: u16, craters: Vec<lunar_core::deform::Crater> },
     /// Structure `id` came to rest here, exactly (snapshots no longer tell of it until it moves).
     Rest { id: u64, pos: DVec3, rot: Quat },
+    /// Structure `id` is held so now (none: let go): by what, which bone of it, and where in it.
+    Hold { id: u64, held: Option<Held> },
+}
+
+fn write_held(w: &mut Writer, h: &Option<Held>) {
+    match h {
+        Some(h) => {
+            w.var(h.by + 1);
+            w.u16(h.bone);
+            w.vec3(h.pos);
+            h.rot.to_array().iter().for_each(|x| w.f32(*x));
+        }
+        None => w.var(0),
+    }
+}
+
+fn read_held(r: &mut Reader) -> Wire<Option<Held>> {
+    Ok(match r.var()? {
+        0 => None,
+        by => {
+            let bone = r.u16()?;
+            let pos = r.vec3()?;
+            let rot = Quat::from_xyzw(r.f32()?, r.f32()?, r.f32()?, r.f32()?);
+            if !pos.is_finite() || !rot.is_finite() {
+                return Err(WireError::Value);
+            }
+            Some(Held { by: by - 1, bone, pos, rot })
+        }
+    })
 }
 
 fn write_crater(w: &mut Writer, c: &lunar_core::deform::Crater) {
@@ -680,6 +743,7 @@ fn event_room(e: &Event) -> usize {
         Event::Ground { craters, .. } => craters.len() * 64 + 16,
         Event::Crater { .. } => 72,
         Event::Rest { .. } => 56,
+        Event::Hold { .. } => 56,
         _ => 0,
     }
 }
@@ -739,7 +803,7 @@ fn write_event(w: &mut Writer, e: &Event) {
             w.var(*step);
             blob(w, state);
         }
-        Event::Made { id, lineage, born, ship, seed, pos, rot, vel, spin, resting, make, state, systems } => {
+        Event::Made { id, lineage, born, ship, seed, pos, rot, vel, spin, resting, held, make, state, systems } => {
             w.u8(3);
             w.var(*id);
             w.var(*lineage);
@@ -751,6 +815,7 @@ fn write_event(w: &mut Writer, e: &Event) {
             w.vec3(*vel);
             w.vec3(*spin);
             w.u8(u8::from(*resting));
+            write_held(w, held);
             blob(w, make);
             blob(w, state);
             blob(w, systems);
@@ -807,6 +872,11 @@ fn write_event(w: &mut Writer, e: &Event) {
             w.var(craters.len() as u64);
             craters.iter().for_each(|c| write_crater(w, c));
         }
+        Event::Hold { id, held } => {
+            w.u8(16);
+            w.var(*id);
+            write_held(w, held);
+        }
         Event::Rest { id, pos, rot } => {
             w.u8(15);
             w.var(*id);
@@ -841,7 +911,8 @@ pub fn read_events(r: &mut Reader, out: &mut Vec<Event>) -> Wire<u64> {
                 if !pos.is_finite() || !rot.is_finite() || !vel.is_finite() || !spin.is_finite() {
                     return Err(WireError::Value);
                 }
-                Event::Made { id, lineage, born, ship, seed, pos, rot: rot.normalize(), vel, spin, resting, make: read_blob(r)?, state: read_blob(r)?, systems: read_blob(r)? }
+                let held = read_held(r)?;
+                Event::Made { id, lineage, born, ship, seed, pos, rot: rot.normalize(), vel, spin, resting, held, make: read_blob(r)?, state: read_blob(r)?, systems: read_blob(r)? }
             }
             4 => Event::Gone { id: r.var()? },
             5 => Event::Strikes(read_blob(r)?),
@@ -886,6 +957,7 @@ pub fn read_events(r: &mut Reader, out: &mut Vec<Event>) -> Wire<u64> {
                 }
                 Event::Rest { id, pos, rot: rot.normalize() }
             }
+            16 => Event::Hold { id: r.var()?, held: read_held(r)? },
             _ => return Err(WireError::Value),
         };
         out.push(e);
@@ -927,6 +999,7 @@ mod tests {
                 lamps: false,
                 fly: false,
                 keys: if k == 0 { 0b1010 } else { 0 },
+                frame: (k == 1).then_some([Vec3::new(0.0, 0.8, 0.6), Vec3::X]),
             })
             .collect();
         let mut out = Vec::new();
@@ -984,7 +1057,7 @@ mod tests {
         let events = vec![
             Event::Hello { step: 99, you: 3, sun: DVec3::Y, region: 7 },
             Event::Correct { step: 98, state: vec![1, 2, 3] },
-            Event::Made { id: 77, lineage: 5, born: 2, ship: "abejorro".into(), seed: 11, pos: DVec3::new(1.5e6, 2.0, 3.0), rot: Quat::IDENTITY, vel: Vec3::X, spin: Vec3::ZERO, resting: true, make: vec![9; 40], state: vec![], systems: vec![1] },
+            Event::Made { id: 77, lineage: 5, born: 2, ship: "abejorro".into(), seed: 11, pos: DVec3::new(1.5e6, 2.0, 3.0), rot: Quat::IDENTITY, vel: Vec3::X, spin: Vec3::ZERO, resting: true, held: Some(Held { by: 6, bone: 2, pos: Vec3::Y, rot: Quat::IDENTITY }), make: vec![9; 40], state: vec![], systems: vec![1] },
             Event::Gone { id: 77 },
             Event::Strikes(vec![3, 1, 2]),
             Event::Seen(vec![4]),
@@ -996,6 +1069,8 @@ mod tests {
             Event::State { id: 4, delta: vec![2, 0, 0] },
             Event::Crater { body: 0, crater: lunar_core::deform::Crater { dir: DVec3::Y, radius: 6.0, depth: 2.0, rim: 0.25, seed: 0.5, ground: 12.0 } },
             Event::Rest { id: 9, pos: DVec3::new(1.7e6, 1.0, -2.0), rot: Quat::IDENTITY },
+            Event::Hold { id: 9, held: None },
+            Event::Hold { id: 9, held: Some(Held { by: 1 << 40, bone: 0, pos: Vec3::new(1.0, -2.0, 3.0), rot: Quat::from_rotation_y(0.3) }) },
             Event::Ground { body: 1, craters: vec![lunar_core::deform::Crater { dir: DVec3::X, radius: 1.0, depth: 0.5, rim: 0.1, seed: 0.1, ground: -3.0 }; 3] },
         ];
         let mut out = Vec::new();

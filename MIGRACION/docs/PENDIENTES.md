@@ -700,3 +700,14 @@ silueta lejana, oclusión. Falta:
   son grupos sueltos que guardan el origen de la nave (a decenas de metros de su pieza), así que su
   `pos` salta al girar aunque su centro apenas se mueva. Ver si `detach` debería poner el origen en
   el centro de masas del grupo (como `loose`), y por qué no se paran.
+- [ ] (2026-10-07) Servidor autoritativo: quien va de pie en una nave que todavía bota sobre sus
+  patas (recién posada, recién creada) recibe correcciones mientras bota: la copia de la nave en su
+  juego se endereza hacia instantáneas redondeadas y no bota igual que la del servidor. Medido: 8
+  correcciones en 2 s en la bodega del Cachalote recién creado; 0 con la nave ya en reposo. Idea:
+  la nave que lleva al jugador, sin corregir mientras el desvío sea menor que lo que el cuerpo
+  tolera, o su estado exacto (no redondeado) mientras alguien la pisa.
+- [ ] (2026-10-07) Servidor autoritativo: tras una corrección el cuerpo se vuelve a dar contra el
+  mundo como está ahora (`Game::step_alone`), no como estaba en cada paso repetido: junto a piezas
+  de una nave que se mueven (sus huesos) salen 2–3 correcciones más al aterrizar. El plan (§3.3)
+  guardaba «las poses de lo cercano» por paso: guardar los huesos de la nave que lleva al jugador
+  en su `Track` y ponerlos durante la repetición.

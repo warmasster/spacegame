@@ -195,6 +195,9 @@ pub struct Host {
     /// What each structure was last told as (parts and joints), to tell only what changed of it by
     /// a hand (`Event::State`); by id.
     shadows: Vec<(u64, u64, Shadow)>,
+    /// What holds each structure, as last told (by id): what changed is told (`Event::Hold`), and
+    /// the systems of the ships that took or let go (their clamps' lists).
+    helds: Vec<(u64, Option<lunar_core::structure::hold::Held>)>,
     /// What every player is drawn from this step (theirs left out of their own snapshot).
     states: Vec<(u32, PlayerState)>,
     /// (reused)
@@ -227,6 +230,7 @@ impl Host {
             players: Vec::new(),
             peers: Vec::new(),
             shadows: Vec::new(),
+            helds: Vec::new(),
             states: Vec::new(),
             cmds_in: Vec::new(),
             due: Vec::new(),
@@ -484,6 +488,7 @@ impl Host {
         }
         // ---- 6. what happened
         self.craters();
+        self.holds();
         self.strikes();
         self.know();
         self.seen();
@@ -672,6 +677,43 @@ impl Host {
                     }
                 }
             }
+        }
+    }
+
+    /// What came to be held or was let go in the last step, to whoever knows it, and the ships that
+    /// took or let go of it all over again (what their clamps hold is in their systems).
+    fn holds(&mut self) {
+        let set = &self.game.builds.set;
+        self.helds.retain(|h| set.index_of(h.0).is_some());
+        let mut ships: Vec<u64> = Vec::new();
+        for s in &set.list {
+            let i = match self.helds.binary_search_by_key(&s.id, |h| h.0) {
+                Ok(i) => i,
+                Err(i) => {
+                    self.helds.insert(i, (s.id, s.held));
+                    continue;
+                }
+            };
+            if self.helds[i].1 == s.held {
+                continue;
+            }
+            let was = std::mem::replace(&mut self.helds[i].1, s.held);
+            ships.extend(was.map(|h| h.by).into_iter().chain(s.held.map(|h| h.by)));
+            self.encoded.clear();
+            net::append_event(&Event::Hold { id: s.id, held: s.held }, &mut self.encoded);
+            for peer in &mut self.peers {
+                if peer.interest.knows(s.id) {
+                    peer.tell_bytes(&self.encoded);
+                }
+            }
+        }
+        ships.sort_unstable();
+        ships.dedup();
+        for ship in ships {
+            let Some(n) = self.game.ships.by_structure(ship) else { continue };
+            let mut data = Vec::new();
+            lunar_ship::sync::write_ship(&self.game.ships.list[n], &|x| Some(x), &mut data);
+            self.tell_knowing(ship, &Event::Systems { ship, data }, None);
         }
     }
 
@@ -946,6 +988,10 @@ pub(crate) fn apply(c: &Cmd, p: &mut Player, cheats: bool) {
     if cheats && c.fly != p.pilot.flying {
         p.pilot.toggle_flight();
     }
+    // (floating, the mouse turned the whole body: as the player left it)
+    if let Some([up, fore]) = c.frame {
+        p.pilot.set_body_frame(up.as_dvec3(), fore.as_dvec3());
+    }
     p.aim = c.aim.map(|dir| {
         let v = p.pilot.view();
         View { forward: dir.as_dvec3(), ..v }
@@ -1015,5 +1061,5 @@ pub fn made(g: &Game, id: u64) -> Option<Event> {
     let (pos, vel, rot) = coasted(s, g.bodies.field(s.pos).pull, set.now - s.clock);
     // (at rest, still: it is to rest where it is in every game)
     let (vel, spin) = if s.resting { (Vec3::ZERO, Vec3::ZERO) } else { (vel.as_vec3(), s.spin) };
-    Some(Event::Made { id, lineage: s.lineage, born: s.born, ship, seed, pos, rot, vel, spin, resting: s.resting, make, state, systems })
+    Some(Event::Made { id, lineage: s.lineage, born: s.born, ship, seed, pos, rot, vel, spin, resting: s.resting, held: s.held, make, state, systems })
 }

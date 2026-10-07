@@ -204,6 +204,34 @@ impl Structures {
         true
     }
 
+    /// Structure `id` held exactly as `held` says (its frame in the bone's of what holds it),
+    /// whatever held it before; none: let go. What another game says of it (a server: every game
+    /// has what is held held by the same, at the same place). False if it could not be.
+    pub fn hold_as(&mut self, id: u64, held: Option<Held>) -> bool {
+        let Some(a) = self.index_of(id) else { return false };
+        if self.list[a].held == held {
+            return true;
+        }
+        if self.list[a].held.is_some() {
+            self.let_go(id);
+        }
+        let Some(h) = held else { return true };
+        let Some(b) = self.index_of(h.by).filter(|&b| b != a) else { return false };
+        let (pos, rot) = h.place(&self.list[b]);
+        let s = &mut self.list[a];
+        s.held = Some(h);
+        (s.force, s.torque) = (Vec3::ZERO, Vec3::ZERO);
+        let load = Load { id, mass: s.mass, at: pos + rot * s.com };
+        let holder = &mut self.list[b];
+        holder.loads.retain(|l| l.id != id);
+        holder.loads.push(load);
+        holder.resting = false;
+        holder.still = 0.0;
+        holder.refresh();
+        self.follow();
+        true
+    }
+
     /// Structure `id` let go by whatever holds it: free, with the speed its place had. False if
     /// nothing held it.
     pub fn let_go(&mut self, id: u64) -> bool {

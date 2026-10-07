@@ -443,6 +443,20 @@ impl Pilot {
         self.pack_on && self.def.mochila.is_some() && self.seat.is_none() && !self.flying && !self.grounded && self.weight.length() <= self.def.cuerpo.sin_peso
     }
 
+    /// The body's own frame: its way up and the level way its turn is counted from (what the
+    /// mouse turns while it floats: `look`).
+    pub fn body_frame(&self) -> (DVec3, DVec3) {
+        (self.up, self.fore)
+    }
+
+    /// The body's frame as another game says it (a player's own, whose mouse turned it).
+    pub fn set_body_frame(&mut self, up: DVec3, fore: DVec3) {
+        if let Some(up) = up.try_normalize() {
+            self.up = up;
+            self.fore = level(fore, up);
+        }
+    }
+
     /// The look made the body's: it faces where we look, its way up the look's, the head
     /// straight on it.
     fn fold_look(&mut self) {

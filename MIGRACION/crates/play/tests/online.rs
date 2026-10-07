@@ -194,7 +194,7 @@ fn walk(me: &mut Player, n: u64) {
         i.crouch = true;
     }
     if n % 7 == 0 {
-        me.pilot.look_by(0.01, 0.0);
+        me.pilot.look(5.0, 0.0);
     }
     me.input = i;
 }
@@ -492,4 +492,113 @@ fn piloting_a_ship_it_goes_where_the_server_has_it_and_the_pilot_is_not_put_righ
     let theirs = w.game.builds.set.get(id).expect("the watcher does not know the ship");
     let ahead = (w.game.step - t.host.game.step) as f64 * STEP;
     assert!((theirs.pos - theirs.vel * ahead).distance(srv.pos) < 0.05, "the watcher has the ship {:.3} m off", (theirs.pos - theirs.vel * ahead).distance(srv.pos));
+}
+
+#[test]
+fn a_crate_let_go_taken_and_dropped_ends_where_the_server_has_it() {
+    // in the hold of the Cachalote: a clamp let go by a hand, one of the crates it held taken in
+    // the bare hands, carried a moment and dropped; another player watches. Where it ends to rest
+    // is the same in every game, exactly, and nobody's hands were put right
+    let cond = Conditions { delay: 0.04, jitter: 0.005, loss: 0.01, ..Conditions::default() };
+    let mut t = Table::new(2, 31, cond);
+    // (the ship settled on its legs first, as it is when anyone comes to it)
+    let cachalote = t.host.game.ships.list.iter().find(|sh| sh.kind.id == "cachalote").expect("the Cachalote").structure;
+    for _ in 0..20 {
+        t.run(0.5, 60.0, |_, _, _| {});
+        if t.host.game.builds.set.get(cachalote).is_some_and(|s| s.resting) {
+            break;
+        }
+    }
+    // (the cargo is part of the ship until its clamp lets it go: then it is a body of its own)
+    let (ship, clamp, zone) = {
+        let g = &t.host.game;
+        let n = g.ships.list.iter().position(|sh| sh.kind.id == "cachalote").expect("the Cachalote");
+        let sh = &g.ships.list[n];
+        let c = sh.kind.clamps.iter().position(|c| c.id == "anclaje_a4").expect("the clamp of the water drums of the fourth row");
+        let s = g.builds.set.get(sh.structure).unwrap();
+        let at = sh.kind.clamps[c].zone.map_or(glam::Vec3::ZERO, |z| z.centre);
+        (sh.structure, c, s.to_world(at))
+    };
+    // (stood in the hold where the middle of the fifth row would be: it carries nothing)
+    let you = t.seats[0].online.you.unwrap();
+    let at = glam::Vec3::new(0.0, 0.05, -13.0);
+    let (game, p) = t.host.game_and_player(you).unwrap();
+    p.pilot.put_on(&game.builds.set, ship, at);
+    t.run(2.0, 60.0, |_, _, _| {});
+    let first = t.seats[0].online.stats.corrections;
+    // (put in by the server, their game does not know: one; and a few more as the body lands, its
+    // steps done again against the ship's moving parts as they are now, not as they were then)
+    assert!(first <= 4, "put in the hold, put right {first} times");
+    let made_from = t.host.game.builds.set.next_free();
+    // the clamp let go, as a hand on it does (done here and said)
+    {
+        let s = &mut t.seats[0];
+        lunar_play::controls::act(&mut s.game.ships, ship, lunar_play::controls::Act::Clamp(clamp as u16, true));
+        s.online.act(s.game.step, &lunar_play::net::Act::Hand { ship, act: lunar_play::controls::Act::Clamp(clamp as u16, true) });
+    }
+    t.run(1.5, 60.0, |_, _, _| {});
+    let cargo = t.host.game.builds.set.list.iter().filter(|s| s.id >= made_from && t.host.game.ships.by_structure(s.id).is_none()).min_by(|a, b| a.pos.distance(zone).total_cmp(&b.pos.distance(zone))).map(|s| s.id).expect("nothing came loose");
+    for (k, g) in std::iter::once(&t.host.game).chain(t.seats.iter().map(|s| &s.game)).enumerate() {
+        assert!(g.builds.set.get(cargo).is_some_and(|c| c.held.is_none()), "game {k}: the crate is not there loose");
+    }
+    // taken in the hands: looked at and grabbed, as a click does (what the look meets first of
+    // what was let go)
+    let cargo = {
+        let s = &mut t.seats[0];
+        let c = s.game.builds.set.get(cargo).unwrap();
+        let target = c.to_world(c.center);
+        s.me.pilot.look_at(target);
+        let view = s.me.pilot.view_aboard(&s.game.builds.set).unwrap_or_else(|| s.me.pilot.view());
+        let r = s.me.hands.reach(&s.game.builds.set, &s.game.ships, &view, Some(ship));
+        assert!(r.as_ref().is_some_and(|r| r.0.no.is_none()), "nothing to take there: {:?} (eye {:.2} m from the crate)", r.map(|r| r.0), view.eye.distance(target));
+        s.me.hands.grab(&s.game.builds.set, &s.game.ships, &view, Some(ship)).expect("it can be taken");
+        s.me.hands.holding().expect("taken")
+    };
+    // (carried a moment, the look turned by the mouse as it goes)
+    t.run(1.0, 60.0, |k, me, _| {
+        if k == 0 {
+            me.pilot.look(2.0, 0.0);
+        }
+    });
+    assert_eq!(t.host.player(you).unwrap().hands.holding(), Some(cargo), "the server's hands do not hold it ({:?}, told {:?}; server {:?})", t.seats[0].online.stats, t.seats[0].online.said, t.host.stats);
+    {
+        let s = &mut t.seats[0];
+        s.me.hands.release(&mut s.game.builds);
+    }
+    t.run(5.0, 60.0, |_, _, _| {});
+    let truth = t.host.game.builds.set.get(cargo).unwrap();
+    assert!(truth.resting && t.host.player(you).unwrap().hands.holding().is_none(), "the crate has not come to rest, or is still held");
+    for (k, s) in t.seats.iter().enumerate() {
+        let mine = s.game.builds.set.get(cargo).unwrap();
+        assert!(mine.resting && mine.pos == truth.pos && mine.rot == truth.rot, "player {k} has the crate {:.4} m off (resting {})", mine.pos.distance(truth.pos), mine.resting);
+    }
+    assert_eq!(t.seats[0].online.stats.corrections, first, "the one who carried it was put right ({:?})", t.seats[0].online.stats);
+}
+
+#[test]
+fn floating_with_the_pack_the_mouse_turns_the_body_and_nobody_puts_it_right() {
+    // far from every body, the pack on, nothing weighs: the mouse turns the whole body (every
+    // way, `Pilot::look`), the jets push where it looks. The server is told how the body is
+    // turned with each step, so it goes the same there: never put right
+    let cond = Conditions { delay: 0.05, jitter: 0.01, loss: 0.02, ..Conditions::default() };
+    let mut t = Table::new(1, 37, cond);
+    let far = DVec3::new(-2.0e6, 2.5e6, 1.5e6);
+    let you = t.seats[0].online.you.unwrap();
+    t.host.game.watchers.push(far);
+    let (game, p) = t.host.game_and_player(you).unwrap();
+    let _ = game;
+    p.pilot.put(far, DVec3::Y);
+    p.pilot.pack_on = true;
+    t.run(2.0, 60.0, |_, me, _| me.pilot.pack_on = true);
+    let first = t.seats[0].online.stats.corrections;
+    assert!(t.seats[0].me.pilot.floating(), "not floating");
+    t.run(6.0, 144.0, |_, me, n| {
+        me.pilot.pack_on = true;
+        me.pilot.look(if n % 120 < 60 { 3.0 } else { -2.0 }, if n % 90 < 30 { 1.5 } else { -0.5 });
+        me.input = Input { forward: if n % 200 < 120 { 1.0 } else { 0.0 }, side: if n % 300 < 50 { 1.0 } else { 0.0 }, ..Input::default() };
+    });
+    assert!(t.seats[0].me.pilot.floating());
+    assert_eq!(t.seats[0].online.stats.corrections, first, "floating, put right ({:?})", t.seats[0].online.stats);
+    assert!(t.off(0, 120) < 1e-3, "{:.4} m off", t.off(0, 120));
+    assert!(t.seats[0].me.pilot.position.distance(far) > 2.0, "the jets took us nowhere");
 }

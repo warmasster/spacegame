@@ -321,6 +321,11 @@ impl Online {
             trigger: self.trigger,
             outside: self.outside,
             gesture: self.gesture,
+            // (floating, the mouse turns the whole body: that goes too)
+            frame: me.pilot.floating().then(|| {
+                let (up, fore) = me.pilot.body_frame();
+                [up.as_vec3(), fore.as_vec3()]
+            }),
         }
         .travelled();
         cmd.step = s;
@@ -331,6 +336,13 @@ impl Online {
         self.drive.step(&me.pilot, self.keys, &mut game.ships, &game.builds.set, STEP as f32, &mut self.moved);
         game.tick(&mut [&mut *me]);
         self.stats.steps += 1;
+        // (what came into being here this step — a piece let go by a clamp, one off what was
+        // struck — is ours until the server names it, by its lineage)
+        for &id in &game.out.made {
+            if id >= LOCAL_IDS && self.ours.iter().all(|o| o.0 != id) {
+                self.ours.push((id, game.step));
+            }
+        }
         // (where everything was at this step, to be put right by the server's word of it)
         self.track(game);
         // what was asked of the last few steps, and what we made of the body
@@ -470,7 +482,20 @@ impl Online {
                     self.pending = Some((step, state));
                 }
             }
-            Event::Made { id, lineage, born, ship, seed, pos, rot, vel, spin, resting, make, state, systems } => self.made(game, at, id, lineage, born, &ship, seed, (pos, rot, vel, spin, resting), &make, &state, &systems),
+            Event::Made { id, lineage, born, ship, seed, pos, rot, vel, spin, resting, held, make, state, systems } => {
+                self.made(game, at, id, lineage, born, &ship, seed, (pos, rot, vel, spin, resting), &make, &state, &systems);
+                game.builds.set.hold_as(id, held);
+            }
+            Event::Hold { id, held } => {
+                let world = game.builds.set.now;
+                game.builds.set.hold_as(id, held);
+                if held.is_none()
+                    && let Some(k) = game.builds.set.index_of(id)
+                {
+                    game.builds.set.list[k].clock = world;
+                }
+                self.forget_track(id);
+            }
             Event::Gone { id } => {
                 remove(game, id);
                 self.stats.gone += 1;
@@ -633,11 +658,16 @@ impl Online {
     /// since; the eye's jump taken out over a moment.
     fn correct(&mut self, step: u64, state: &[u8], game: &mut Game, me: &mut Player) {
         let before = (me.pilot.position, me.pilot.ride.map(|r| (r.id, r.local)));
+        // (where the player looks is theirs, not the server's: the mouse moved since the last step)
+        let look = (me.pilot.yaw, me.pilot.pitch);
         if me.pilot.read_state(state).is_err() {
             self.stats.garbled += 1;
             return;
         }
         self.stats.corrections += 1;
+        if std::env::var("LUNAR_DEBUG").is_ok() {
+            eprintln!("correct at {step} (now {}): was {:?} -> {:?}", game.step, before, me.pilot.summary());
+        }
         let now = game.step;
         if now.saturating_sub(step + 1) < RING as u64 {
             for t in step + 1..now {
@@ -650,6 +680,7 @@ impl Online {
                 self.stats.replayed += 1;
             }
         }
+        (me.pilot.yaw, me.pilot.pitch) = look;
         // (drawn where it was, and brought to where it is)
         let after = (me.pilot.position, me.pilot.ride.map(|r| (r.id, r.local)));
         match (before.1, after.1) {
