@@ -15,6 +15,13 @@ N jugadores, servidor que simula, comandos arriba y estado abajo, interés, dañ
 entrar tarde, sin conexión en el proceso, seguridad; la gráfica del servidor, solo para mirar).
 Faltan sus decisiones (§8 del plan).
 
+- **Dos naves rápidas se atraviesan** (encontrado el 2026-10-07 al preguntar Fernando «¿y si dos naves
+  van rapidísimo y en ese paso no colisionan pero cruzan caminos?»): sí pasa, hoy y a cualquier
+  número de fotogramas. Dos bloques de 1,5 m que se acercan de frente a 200 m/s se atraviesan a
+  60 Hz; a 500 m/s, también a 240 Hz. La física solo busca contactos entre lo que ya se solapa al
+  empezar la loncha (`core/structure/physics.rs:426`). Arreglo: barrido entre estructuras, como el
+  de los proyectiles; está en la fase 1 de [`PLAN_AUTORITATIVO.md`](PLAN_AUTORITATIVO.md) (§3.1).
+
 ## V40 (2026-10-07): prueba de coherencia, ordenador de vuelo, teclas, mochila, piloto automático
 
 Fernando: el Azor «se inclina hacia abajo» y lleva los giróscopos siempre saturados; Mayús no sube

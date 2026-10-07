@@ -121,6 +121,7 @@ decide si se sigue igual.
 | 7 | **Las ids las fija el escenario o el primer cliente** | `MULTIJUGADOR.md` «Las naves del escenario no se anuncian» | `NetId` del servidor (fase 4) |
 | 8 | **Las semillas del daño salen de contadores locales** | `blasts.rs:404`, `builds.rs:175` | semilla en cada golpe, del servidor (fase 6) |
 | 9 | **El servidor no tiene mundo ni datos** | `crates/server` solo depende de `lunar-net` | cargar `Defs` y correr `lunar-play` (fase 3) |
+| 10 | **Dos estructuras rápidas se atraviesan** (pasa hoy, con o sin red): solo se buscan contactos entre las que ya se solapan al empezar la loncha | `physics.rs:426` (`grid.along(c, c, …)`: el punto de partida, no el camino) y el filtro de debajo | barrido entre estructuras (fase 1, §3.1) |
 
 ---
 
@@ -176,6 +177,23 @@ decide si se sigue igual.
   fotogramas. Hay que cambiarlo también en `CLAUDE.md` (decisión 1, §8).
 - **De regalo**: el juego deja de depender de los fotogramas también sin red (hoy un salto a 30 fps
   y a 240 fps no simula lo mismo).
+- **Que dos naves no se atraviesen no depende de los Hz, sino del barrido.** Medido el
+  2026-10-07 con dos bloques de 1,5 m que se acercan de frente, lejos de todo cuerpo:
+
+  | Se acercan a | 60 Hz | 240 Hz |
+  |---|---|---|
+  | 5 y 50 m/s | chocan | chocan |
+  | 200 m/s | **se atraviesan** | chocan |
+  | 500, 1 000, 3 000, 7 800 m/s | **se atraviesan** | **se atraviesan** |
+
+  Se atraviesan cuando lo que se acercan en un paso pasa de lo que miden juntos: a 7,8 km/s son
+  130 m por paso a 60 Hz y 33 m a 240 Hz. Para pararlo subiendo los Hz harían falta miles por
+  segundo. Hoy ya pasa (a 144 fps las lonchas son de 6,9 ms). Lo que lo arregla es lo que ya hacen
+  los proyectiles (`structure::motion::Sweep`): mirar **el camino** de cada cuerpo en el paso, no
+  solo dónde empieza, y si dos caminos se cruzan, llevar a los dos hasta el instante del contacto,
+  resolverlo ahí y seguir con lo que queda del paso. Solo cuesta cuando dos cosas rápidas están
+  cerca. Lo que importa es la velocidad **de una respecto a la otra**: dos naves en la misma
+  órbita a 7,8 km/s que se acercan a 10 m/s recorren 17 cm por paso entre ellas.
 
 ### 3.2. Tres tiempos en cada cliente
 
@@ -241,6 +259,17 @@ solo su cuerpo rígido con sus contactos (fase 7).
   inmediatos; la rotura llega medio RTT después (30–80 ms en una red normal).
 
 ### 3.5. Disparar y acertar (compensación de retraso)
+
+**Por qué hace falta, con un ejemplo.** Ana tiene 100 ms de ida y vuelta con el servidor. Luis
+corre de lado a 3 m/s. Lo que Ana ve de Luis tiene ya 100–150 ms (lo que tardó en llegarle y el
+margen para dibujarlo suave), y su disparo tarda otros 50 ms en llegar al servidor. Cuando el
+servidor lo mira, Luis ya está 45–60 cm más allá. Si el servidor juzga con dónde está Luis *ahora*, a Ana se le
+escapan disparos que en su pantalla eran perfectos («¡pero si le he dado!»). La compensación es
+que el servidor **recuerda dónde estaba cada uno** los últimos 300 ms y juzga el disparo con
+**donde Ana veía a Luis** al apretar el gatillo. El precio lo paga Luis: a veces le dan cuando en
+su pantalla ya se había metido tras una roca («me han dado detrás de la esquina»). El tope (la
+decisión 3, §8) es hasta dónde se perdona: con 200 ms, quien tiene una conexión peor que eso tiene
+que adelantar el tiro.
 
 - Tu disparo es un bit del comando del paso `P` (y el arma, la del asiento o la mano). El servidor
   lo procesa **en su paso `P`**, desde la boca de **su** nave o **su** cuerpo en ese paso, que es
@@ -414,6 +443,10 @@ interpola. Ningún comportamiento cambia salvo el que dependía de los fotograma
 **Piezas.**
 - `play.rs`: acumulador **del mundo** (uno solo), 0–4 pasos por fotograma.
 - `physics::slices` deja de partir el paso; `Among` recibe siempre 1/60.
+- **Barrido entre estructuras**: los vecinos de cada cuerpo se buscan a lo largo de su camino en
+  el paso (`grid.along(inicio, fin, radio)`: la rejilla ya sabe hacerlo); a cada pareja cuyos
+  caminos se cruzan se le calcula el instante del primer contacto (avance conservador contra el
+  árbol de cajas de sus piezas) y se resuelve ahí. Lo de los proyectiles (`Sweep`) es el modelo.
 - `lunar-ship`: `TICK = 1/60` (un tic por paso). `TIEMPOS.md` y `procedimientos.rs` lo vigilan: los
   procedimientos deben dar lo mismo (± un tic).
 - Pose anterior y actual por estructura (posición, giro, huesos), por proyectil y del jugador (en
@@ -425,7 +458,8 @@ interpola. Ningún comportamiento cambia salvo el que dependía de los fotograma
 - `MOVIMIENTO.md` §2 y `CLAUDE.md` con la regla nueva (decisión 1).
 
 **Pruebas.** Todas las de hoy (`pilot::`, `schedule`, `physics`, `coherencia`, `multi::`) sin tocar
-sus cotas. Nuevas: **el mismo guion de teclas a 30, 60, 144 y 240 fps da el mismo resumen**
+sus cotas. Nuevas: **dos bloques y dos naves de verdad que se acercan de frente de 5 a
+15 600 m/s (dos órbitas opuestas) chocan siempre**, también de refilón y girando; **el mismo guion de teclas a 30, 60, 144 y 240 fps da el mismo resumen**
 (lo que la fase 0 vio diferir); el salto del ojo por fotograma en el marco de la nave, igual o
 menor que hoy, de 0 a 7 800 m/s y de 10 a 240 fps; la sonda en el juego con los guiones de
 `tools/camara`.
