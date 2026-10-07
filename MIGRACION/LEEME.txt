@@ -1,3 +1,18 @@
+NOVEDADES V41 (en curso: el servidor que tiene la verdad, docs/PLAN_AUTORITATIVO.md):
+EL JUEGO YA NO DEPENDE DE LOS FOTOGRAMAS: el mundo avanza en pasos fijos de
+1/60 s (antes, en trozos que dependian de los FPS) y se dibuja entre los dos
+ultimos pasos, todo del mismo instante: a 30, 60, 144 o 240 FPS, o a
+trompicones, pasa exactamente lo mismo (probado: misma partida bit a bit), y
+lo que se ve no salta ni a 7,8 km/s. Los sistemas de las naves van al mismo
+reloj (un tic por paso; antes, 50 por segundo con su propio reloj).
+DOS NAVES RAPIDAS YA NO SE ATRAVIESAN: antes, dos cosas que se acercaban de
+frente a mas de unos 200 m/s pasaban una a traves de la otra sin tocarse.
+Ahora se mira el camino de cada una en el paso: chocan siempre (probado hasta
+15.600 m/s, dos orbitas opuestas) y rebotan como deben. Lo mismo contra el
+suelo: lo que cae del cielo deprisa (un asteroide) se para en el, no debajo.
+POR DENTRO: el juego sin graficos es ahora un modulo aparte (lunar-play) que
+correra igual en el servidor; admite cualquier numero de jugadores.
+
 NOVEDADES V40 (codigo listo; los .exe hay que recompilarlos, todavia son los de SELENE_V39):
 PRUEBA DE COHERENCIA DE TODAS LAS NAVES (crates/ship/tests/coherencia.rs):
 teclas mantenidas a 30, 60, 144 y 240 fps, pasos de ruedas, retenes, cada

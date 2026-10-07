@@ -3,87 +3,32 @@
 //! renderer, which only ever sees meshes, LODs and glows.
 use crate::gltf_model::GltfModel;
 use lunar_core::{
-    defs::{self, DefError},
-    effects::EffectDefs,
-    font::Font,
-    missiles::MissileDef,
-    structure::Library,
-    model::{BuiltModel, ModelDefs, ModelSource, ShapeBuilder},
-    palette::Palette,
-    scenario::ScenarioDef,
-    system::System,
+    defs::DefError,
+    model::{BuiltModel, ModelSource, ShapeBuilder},
 };
 use lunar_render::{Renderer, scene::Family};
-use lunar_ship::{ShipKind, ShipLibrary};
 use rayon::prelude::*;
 use std::{
-    sync::Arc,
     collections::HashMap,
     error::Error,
     path::{Path, PathBuf},
 };
 
-/// Every definition, loaded before the renderer exists (it needs the system's bodies).
-pub struct Defs {
-    pub system: System,
-    pub scenario: ScenarioDef,
-    pub palette: Palette,
-    pub models: ModelDefs,
-    /// Particle styles and explosions.
-    pub effects: EffectDefs,
-    /// Structure catalog and blueprints.
-    pub structures: Arc<Library>,
-    /// Long-range missiles (`missiles.jsonc`).
-    pub missiles: Vec<(String, MissileDef)>,
-    /// Ship kinds (`ships/`, `components/`, `panels/`): their parts are in the structure catalog
-    /// and their blueprints among the structures'.
-    pub ships: Vec<Arc<ShipKind>>,
-    /// The silkscreen font (`assets/fonts/serigrafia`): metrics and its R8 atlas.
-    pub font: (Font, Vec<u8>),
+pub use lunar_play::defs::Defs;
+
+/// What only the picture needs of `assets/textures`, loaded by whoever draws (the server never
+/// does): the structures' finishes and the decal atlas.
+pub struct Looks {
     /// The structures' finishes (`assets/textures/acabados`): tile size, layers, RGBA8 data.
     pub finishes: (u32, u32, Vec<u8>),
     /// The decal atlas (`assets/textures/calcas`): its names and its RGBA8 pixels.
     pub decals: (lunar_core::props::DecalAtlas, Vec<u8>),
 }
 
-impl Defs {
-    pub fn load(dir: &Path) -> Result<Defs, DefError> {
-        let mut structures = Library::load(&dir.join("structures"))?;
-        // a ship being edited (the MCP server's photos): LUNA_NAVE_EDITADA=id=file.jsonc
-        let mut instead = Vec::new();
-        if let Ok(v) = std::env::var("LUNA_NAVE_EDITADA")
-            && let Some((id, path)) = v.split_once('=')
-        {
-            instead.push((id.to_string(), defs::load(Path::new(path))?));
-        }
-        let (ships, blueprints) = ShipLibrary::load_with(dir, &mut structures.catalog, &instead)?;
-        structures.blueprints.extend(blueprints);
-        Ok(Defs {
-            system: System::load(dir)?,
-            scenario: defs::load(&defs::file(dir, "scenario"))?,
-            palette: defs::load(&defs::file(dir, "palette")).map(Palette::new)?,
-            models: ModelDefs::load(&dir.join("models"))?,
-            effects: EffectDefs::load(dir)?,
-            structures: Arc::new(structures),
-            missiles: defs::load::<std::collections::BTreeMap<String, MissileDef>>(&defs::file(dir, "missiles"))?.into_iter().collect(),
-            ships: ships.kinds,
-            font: load_font(&dir.join("../fonts/serigrafia"))?,
-            finishes: load_finishes(&dir.join("../textures/acabados"))?,
-            decals: load_decals(&dir.join("../textures/calcas"))?,
-        })
+impl Looks {
+    pub fn load(dir: &Path) -> Result<Looks, DefError> {
+        Ok(Looks { finishes: load_finishes(&dir.join("../textures/acabados"))?, decals: load_decals(&dir.join("../textures/calcas"))? })
     }
-}
-
-/// A signed-distance font: `<path>.json` metrics and `<path>.bin` atlas (R8, width × height).
-fn load_font(path: &Path) -> Result<(Font, Vec<u8>), DefError> {
-    let json = path.with_extension("json");
-    let fail = |e: String| DefError::new(json.display().to_string(), e);
-    let font = Font::parse(&std::fs::read_to_string(&json).map_err(|e| fail(e.to_string()))?).map_err(fail)?;
-    let atlas = std::fs::read(path.with_extension("bin")).map_err(|e| fail(e.to_string()))?;
-    if atlas.len() != (font.width * font.height) as usize {
-        return Err(fail(format!("atlas de {} bytes, se esperaban {}×{}", atlas.len(), font.width, font.height)));
-    }
-    Ok((font, atlas))
 }
 
 /// The finishes' layers (`tools/texturas/acabados.py`): `<path>.json` says their size and names,

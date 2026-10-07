@@ -54,6 +54,9 @@ pub enum Event {
     Hinted { by: u32, data: Vec<u8> },
     /// Something a player sent to us alone (`tell_to`).
     Direct { by: u32, data: Vec<u8> },
+    /// What the game that runs in the server said to us: reliably and in order (`Msg::Game`), or
+    /// not (`Msg::Quick`: the newest only, the late ones dropped).
+    Game { reliable: bool, data: Vec<u8> },
     /// A chat line (ours too, so everyone reads them in the same order); `None`: the server speaks.
     Chat { from: Option<u32>, text: String },
     /// The server has told us what it knows (who is here, the host, who holds what). What the
@@ -347,6 +350,27 @@ impl Client {
     /// Something for one player alone, reliably and in order.
     pub fn tell_to(&mut self, player: u32, data: &[u8]) -> bool {
         data.len() <= MAX_TELL && self.say(&Msg::To { player, data }, data.len())
+    }
+
+    /// Something for the game that runs in the server (one that has the game: it is not passed
+    /// on), reliably and in order: what our player asks for (`Msg::Game`). False if it could not
+    /// be queued.
+    pub fn send_game(&mut self, data: &[u8]) -> bool {
+        data.len() <= MAX_TELL && self.say(&Msg::Game(data), data.len())
+    }
+
+    /// The same, unreliable and sequenced (`Msg::Quick`): what is said again soon anyway (what we
+    /// ask of each step, repeated).
+    pub fn send_quick(&mut self, data: &[u8]) {
+        if !matches!(self.phase, Phase::Live) || data.len() > MAX_HINT {
+            return;
+        }
+        self.msg.resize(data.len() + FRAMING, 0);
+        let mut w = Writer::new(&mut self.msg);
+        Msg::Quick(data).encode(&mut w);
+        if let Ok(n) = w.finish() {
+            self.channel.send_unreliable(&self.msg[..n]);
+        }
     }
 
     /// Something for everyone else that may be lost (at most `MAX_HINT` bytes): what is over in a moment anyway.

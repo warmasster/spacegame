@@ -160,6 +160,8 @@ mod tag {
     pub const LEFT: u8 = 18;
     pub const SYNCED: u8 = 19;
     pub const BUNDLE: u8 = 20;
+    pub const GAME: u8 = 21;
+    pub const QUICK: u8 = 22;
 }
 
 /// Bytes a message's own framing may take before what it carries (tag, a player, flags).
@@ -211,6 +213,12 @@ pub enum Msg<'a> {
     /// Reliable, server: several reliable messages in one (each with its length before it): how a newcomer is
     /// told what the server knows without a hundred tiny messages. Read it with `Bundle`.
     Bundle(&'a [u8]),
+    /// Reliable, either way: what the game says to whoever simulates it (a client to a server
+    /// that has the game: what its player asks for; that server to a client: what happened). The
+    /// server does not pass it on: it hands it to the game that runs in it (`Server::take_game`).
+    Game(&'a [u8]),
+    /// The same, unreliable and sequenced (what the player asks of each step; states).
+    Quick(&'a [u8]),
 }
 
 /// The messages inside a `Msg::Bundle`, one after another.
@@ -261,7 +269,7 @@ fn read_opt(r: &mut Reader) -> Wire<Option<u32>> {
 impl<'a> Msg<'a> {
     /// Whether this kind of message travels reliably: one that arrives the other way is not ours.
     pub fn reliable(&self) -> bool {
-        !matches!(self, Msg::Ping { .. } | Msg::Pong { .. } | Msg::Up(_) | Msg::Down(_) | Msg::Hint(_) | Msg::Hinted { .. })
+        !matches!(self, Msg::Ping { .. } | Msg::Pong { .. } | Msg::Up(_) | Msg::Down(_) | Msg::Hint(_) | Msg::Hinted { .. } | Msg::Quick(_))
     }
 
     pub fn encode(&self, w: &mut Writer) {
@@ -352,6 +360,14 @@ impl<'a> Msg<'a> {
                 w.u8(tag::BUNDLE);
                 w.bytes(body);
             }
+            Msg::Game(body) => {
+                w.u8(tag::GAME);
+                w.bytes(body);
+            }
+            Msg::Quick(body) => {
+                w.u8(tag::QUICK);
+                w.bytes(body);
+            }
         }
     }
 
@@ -385,6 +401,8 @@ impl<'a> Msg<'a> {
             tag::LEFT => Msg::Left { id: r.var32()? },
             tag::SYNCED => Msg::Synced,
             tag::BUNDLE => Msg::Bundle(r.rest()),
+            tag::GAME => Msg::Game(r.rest()),
+            tag::QUICK => Msg::Quick(r.rest()),
             _ => return Err(WireError::Value),
         };
         if r.is_empty() { Ok(m) } else { Err(WireError::Long) }

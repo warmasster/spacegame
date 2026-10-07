@@ -1,6 +1,6 @@
 //! The structures of the scenario in play (core::structure): set round the site at the start,
 //! hurt by blasts and shots, their loose pieces falling and settling, what breaks shown by its
-//! material's effect, all handed to the renderer every frame.
+//! material's effect (whoever draws hands them to the renderer).
 //!
 //! With other players, what is done to a structure they also have (`Structure::shared`) is
 //! decided once and done everywhere in one order: a hit or a torn plate decided here goes to
@@ -22,7 +22,6 @@ use lunar_core::{
         set::Structures,
     },
 };
-use lunar_render::Renderer;
 use std::sync::Arc;
 
 /// Break effects shown per frame at most (a big blast breaks dozens of parts at once).
@@ -155,10 +154,10 @@ impl Builds {
         }
     }
 
-    /// Structures run at their level (watched from `eye`), and what lives among them is stepped
-    /// with them (`among`: the world has no other clock); what broke since the last frame shows
-    /// its material's effect.
-    pub fn update(&mut self, dt: f64, bodies: &BodyRegistry, fx: &mut Effects, eye: DVec3, among: &mut [&mut dyn Among]) {
+    /// Structures run at their level (watched from `watchers`, and from wherever what lives among
+    /// them is), and what lives among them is stepped with them (`among`: the world has no other
+    /// clock); what broke since the last step shows its material's effect.
+    pub fn update(&mut self, dt: f64, bodies: &BodyRegistry, fx: &mut Effects, watchers: &[DVec3], among: &mut [&mut dyn Among]) {
         self.now += dt;
         // what was let go of (a clamp opened, what held it destroyed) comes off as its own body
         self.set.separate();
@@ -175,7 +174,7 @@ impl Builds {
                 self.set.blast(at, b.energy, b.radius, &self.rules, &mut self.events, seed ^ self.hits);
             }
         }
-        self.stats = self.set.simulate_with(self.now, dt, bodies, self.policy.as_ref(), &[eye], among);
+        self.stats = self.set.simulate_with(self.now, dt, bodies, self.policy.as_ref(), watchers, among);
         let cat = &self.set.lib.catalog;
         let mut shown = 0;
         for e in self.events.drain(..) {
@@ -196,10 +195,5 @@ impl Builds {
                 let _ = fx.explode_scaled(effect, bodies, bodies.dominant(at), at, (size / BREAK_EFFECT_SIZE).clamp(0.5, 4.0));
             }
         }
-    }
-
-    /// This frame's structures to the renderer, seen from `eye`.
-    pub fn show(&self, r: &mut Renderer, eye: DVec3) {
-        r.set_structures(&self.set.list, &self.set.lib, eye);
     }
 }

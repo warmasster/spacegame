@@ -94,9 +94,9 @@ impl Table {
                 // the ships run their systems first, as in play)
                 let eye = g.pilot.position;
                 let awake: Vec<u64> = g.pilot.ride.map(|r| r.id).into_iter().collect();
-                g.ships.update(dt, &mut g.builds, bodies, &mut g.blasts.fx, DVec3::Y, eye, &awake, &[]);
+                g.ships.update(dt, &mut g.builds, bodies, &mut g.blasts.fx, DVec3::Y, &[eye], &awake, &[]);
                 let (fx, mut flight) = g.blasts.flight();
-                g.builds.update(dt, bodies, fx, eye, &mut [&mut g.pilot, &mut flight]);
+                g.builds.update(dt, bodies, fx, &[eye], &mut [&mut g.pilot, &mut flight]);
                 g.blasts.land_rounds(bodies, &mut g.builds);
                 // (what flies by itself: missiles, decoys)
                 let view = lunar_render::View { eye: g.pilot.position, forward: DVec3::Z, up: DVec3::Y, fov_y: 1.0, near: 0.1 };

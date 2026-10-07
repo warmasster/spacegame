@@ -3,27 +3,24 @@ use crate::{
     aboard::Aboard,
     air::AirFx,
     bench::{self, Bench},
-    blasts::Blasts,
-    builds::Builds,
     cli::Options,
     content::{Defs, Models},
     editor::Editor,
     gear::Gear,
-    hands::Hands,
     hud::{Card, Gauge, Icon, Level, Prompt},
     input::{self, Action},
     inspector::Inspector,
     perf::{self, Perf},
-    pilot::{Controls, Input, Pilot},
+    pilot::{Controls, Input},
     rangefinder::Rangefinder,
     script::Script,
-    ships::Ships,
     spawner::Spawner,
     ui::{Info, Ui},
     visibility::Visibility,
     world::{Counts, World},
 };
 use lunar_controls::Mods;
+use lunar_play::game::{Game, Player, STEP};
 use lunar_core::quality::{Preset, Settings};
 use lunar_render::{FrameInput, Renderer};
 use std::{error::Error, sync::Arc, time::Instant};
@@ -34,6 +31,10 @@ use winit::{
     keyboard::{KeyCode, PhysicalKey},
     window::{CursorGrabMode, Fullscreen, Window, WindowId},
 };
+
+/// Steps of the game a frame takes at most: a slower frame makes the game go slower, not work more
+/// (which would make the next frame slower still).
+const MAX_STEPS: u32 = 4;
 
 /// Right-button zoom: how much narrower the view gets.
 const ZOOM: f64 = 3.5;
@@ -145,13 +146,17 @@ struct State {
     window: Arc<Window>,
     renderer: Renderer,
     ui: Ui,
-    pilot: Pilot,
     defs: Defs,
     models: Models,
     world: World,
-    blasts: Blasts,
-    builds: Builds,
-    ships: Ships,
+    /// The game: what decides what happens, a step of `STEP` s at a time (`lunar_play::game`),
+    /// and the player at the keys. `due`: the time the frames owe the game (s), taken in steps.
+    game: Game,
+    me: Player,
+    due: f64,
+    /// How the ships look this frame (props, lamps), and the flashes of what goes off.
+    ships_view: crate::shipview::ShipsView,
+    blast_lights: Vec<lunar_render::Light>,
     aboard: Aboard,
     spawner: Spawner,
     inspector: Inspector,
@@ -192,8 +197,6 @@ struct State {
     /// The player's own body (if its model is there), and what of it is drawn this frame.
     body: Option<crate::body::Body>,
     figures: lunar_core::anim::BodyScene,
-    /// Bare hands on what is loose.
-    hands: Hands,
     /// What the body's hands do with no tool in them: the ships' controls, the seat's stick and
     /// throttle, gestures, the wrist computer (`handwork`). And how far the look turns to read
     /// the wrist computer, as last frame's body had it.
@@ -209,8 +212,6 @@ struct State {
     visor: crate::visor::Visor,
     /// The references one finds one's way by, and what the compass shows of them.
     nav: crate::nav::Nav,
-    /// What the ships' sensors are told and what their weapons let fly (`tactics`).
-    tactics: crate::tactics::Tactics,
     /// A picture asked for with F12: taken with the next frame.
     photo: Option<std::path::PathBuf>,
     /// What a script aims at: (ship, control).
@@ -273,23 +274,15 @@ impl State {
         let share = |n: usize| (n as f64 * sc.fleet.flying_share).floor() as usize;
         let flying = if o.scenarios.is_empty() { o.flying.unwrap_or(share(ships)) } else { share(ships) };
         let counts = Counts { ships, flying, npcs, radius: o.radius.unwrap_or(sc.layout.radius) };
-        let world = World::new(&mut renderer, &defs, &models, counts, o.bench.is_none() && scenarios.is_empty())?;
+        let traffic = World::traffic(&defs, o.bench.is_none() && scenarios.is_empty())?;
+        let world = World::new(&mut renderer, &defs, &models, counts, traffic.as_ref())?;
         lap("mundo");
-        let mut blasts = Blasts::new(&defs.effects, lunar_core::missiles::Missiles::new(defs.missiles.clone()), renderer.particle_capacity())?;
-        blasts.set_guided(lunar_core::guided::Flight::load(&root.join("assets/defs"))?)?;
-        if let Some(e) = &o.explode {
-            // ID or ID@metres ahead
-            let (id, m) = e.split_once('@').map_or((e.as_str(), 40.0), |(id, m)| (id, m.parse().unwrap_or(40.0)));
-            blasts.fire_ahead(id, m);
-        }
-        renderer.set_particle_styles(&blasts.fx.particles.styles);
-        let effect_ids: Vec<&str> = defs.effects.explosions.iter().map(|(id, _)| id.as_str()).collect();
-        let mut builds = Builds::new(defs.structures.clone(), &defs.scenario, &world.site, &world.bodies, &effect_ids)?;
         let (font, atlas) = &defs.font;
         renderer.set_font_atlas(font.width, font.height, atlas);
-        let (size, layers, data) = &defs.finishes;
+        let looks = crate::content::Looks::load(&root.join("assets/defs"))?;
+        let (size, layers, data) = &looks.finishes;
         renderer.set_finishes(*size, *layers, data);
-        let (atlas, pixels) = &defs.decals;
+        let (atlas, pixels) = &looks.decals;
         renderer.set_decal_atlas(atlas.size, pixels);
         let mut gear = Gear::load(&root.join("assets/defs/gear.jsonc"), font.clone())?;
         gear.models(&defs.structures.catalog.models, &mut renderer)?;
@@ -325,15 +318,20 @@ impl State {
             None => None,
         };
         let wanted = |kind: &str| script.as_ref().and_then(|s| s.only.as_ref()).is_none_or(|only| only.iter().any(|k| k == kind));
-        let mut fleet = Ships::new(defs.ships.clone(), font.clone());
-        crate::tactics::Tactics::check(&fleet, &blasts)?;
-        for a in defs.scenario.ships.iter().filter(|a| wanted(&a.ship)) {
-            fleet.spawn(&mut builds, &world.bodies, &a.ship, world.site.body, world.site.at(a.east, a.north), a.yaw.to_radians())?;
+        // the game: the scenario's structures and ships round its site, its traffic
+        let mut game = Game::new(&defs, &root.join("assets/defs"), renderer.particle_capacity(), wanted)?;
+        crate::blastview::check_keys(&game.blasts)?;
+        if let Some(e) = &o.explode {
+            // ID or ID@metres ahead
+            let (id, m) = e.split_once('@').map_or((e.as_str(), 40.0), |(id, m)| (id, m.parse().unwrap_or(40.0)));
+            game.blasts.fire_ahead(id, m);
         }
+        renderer.set_particle_styles(&game.blasts.fx.particles.styles);
+        game.traffic = traffic;
         lap("naves");
         // with others: the server asked to let us in (it answers while we play)
         let multi = match &o.server {
-            Some(addr) => Some(crate::multi::Multi::connect(addr, o.name.as_deref().unwrap_or("Jugador"), &fleet, &builds)?),
+            Some(addr) => Some(crate::multi::Multi::connect(addr, o.name.as_deref().unwrap_or("Jugador"), &game.ships, &game.builds)?),
             None => None,
         };
         let preset_name = preset.map_or("personalizado".into(), |p| p.name().to_string());
@@ -341,17 +339,17 @@ impl State {
         let bench = o.bench.map(|secs| Bench::new(secs, format!("{ships}+{npcs}"), &world.crowd.home, world.site, world.bodies.clone(), (player.fov.to_radians(), player.near)));
         let controls = Controls::new(&player);
         let mut ui = Ui::new(&window, renderer.settings.clone(), preset, ships - flying.min(ships), flying, npcs, renderer.sun(), controls);
-        ui.shots = blasts.editable();
+        ui.shots = game.blasts.editable();
         if o.script.is_some() {
             ui.instant();
         }
         let renderer_name = renderer.adapter().to_string();
-        let pilot = Pilot::new(world.bodies.clone(), &world.site, player);
-        let spawner = Spawner::new(&fleet, &builds, crate::DEMO);
-        let air = AirFx::new(&blasts.fx);
-        let mut dust = crate::dust::Dust::new(&blasts.fx);
+        let me = Player::new(world.bodies.clone(), &world.site, player);
+        let spawner = Spawner::new(&game.ships, &game.builds, crate::DEMO);
+        let air = AirFx::new(&game.blasts.fx);
+        let mut dust = crate::dust::Dust::new(&game.blasts.fx);
         let prints = crate::footprints::Footprints::load(&root.join("assets/defs/huellas.jsonc"), &mut dust, &mut renderer)?;
-        let plumes = crate::plumes::Plumes::new(&blasts.fx, &renderer)?;
+        let plumes = crate::plumes::Plumes::new(&game.blasts.fx, &renderer)?;
         let visor = crate::visor::Visor::load(&root.join("assets/defs/visor.jsonc"))?;
         let nav = crate::nav::Nav::load(&root.join("assets/defs/navegacion.jsonc"))?;
         // (pictures and benches are taken in silence)
@@ -361,7 +359,7 @@ impl State {
         // the start menu: what a game opens with (a script, a bench, a picture go straight in)
         let straight = o.no_menu || o.script.is_some() || o.bench.is_some() || o.shot.is_some() || o.look.is_some() || o.explode.is_some();
         let start = (!straight).then(|| {
-            let mut st = crate::start::Start::new(&fleet, &builds.set, false);
+            let mut st = crate::start::Start::new(&game.ships, &game.builds.set, false);
             if let Some(addr) = &o.server {
                 st.server = addr.clone();
             }
@@ -375,13 +373,14 @@ impl State {
             window,
             renderer,
             ui,
-            pilot,
             defs,
             models,
             world,
-            blasts,
-            builds,
-            ships: fleet,
+            game,
+            me,
+            due: 0.0,
+            ships_view: crate::shipview::ShipsView::default(),
+            blast_lights: Vec::with_capacity(lunar_core::effects::MAX_FLASHES),
             aboard: Aboard::default(),
             spawner,
             inspector: Inspector::default(),
@@ -414,7 +413,6 @@ impl State {
             body_source,
             body,
             figures: lunar_core::anim::BodyScene::default(),
-            hands: Hands::new(player.manos),
             handwork,
             wrist_look: None,
             sounds,
@@ -422,7 +420,6 @@ impl State {
             prints,
             plumes,
             visor,
-            tactics: crate::tactics::Tactics::default(),
             photo: None,
             script_aim: None,
             editor: Editor::default(),
@@ -438,7 +435,9 @@ impl State {
 
     fn new_world(&mut self, counts: Counts) -> Result<(), Box<dyn Error>> {
         self.counts = counts;
-        self.world = World::new(&mut self.renderer, &self.defs, &self.models, counts, self.bench.is_none())?;
+        // (a bench's numbers are the fleet's: no traffic)
+        self.game.traffic = World::traffic(&self.defs, self.bench.is_none())?;
+        self.world = World::new(&mut self.renderer, &self.defs, &self.models, counts, self.game.traffic.as_ref())?;
         Ok(())
     }
 
@@ -470,42 +469,42 @@ impl State {
     /// What the Controls tab lists besides the table of keys: the tools of the suit, the keys of
     /// the seats of the ship at hand (the one you are on, or the nearest) and the test shots'.
     fn menu_lists(&mut self) {
-        let at = self.pilot.position;
-        let near = self.pilot.ride.and_then(|r| self.ships.by_structure(r.id)).or_else(|| {
-            let d = |n: usize| self.builds.set.get(self.ships.list[n].structure).map(|s| (n, s.to_world(s.center).distance_squared(at)));
-            (0..self.ships.list.len()).filter_map(d).min_by(|a, b| a.1.total_cmp(&b.1)).map(|x| x.0)
+        let at = self.me.pilot.position;
+        let near = self.me.pilot.ride.and_then(|r| self.game.ships.by_structure(r.id)).or_else(|| {
+            let d = |n: usize| self.game.builds.set.get(self.game.ships.list[n].structure).map(|s| (n, s.to_world(s.center).distance_squared(at)));
+            (0..self.game.ships.list.len()).filter_map(d).min_by(|a, b| a.1.total_cmp(&b.1)).map(|x| x.0)
         });
-        self.ui.seat_keys = near.map(|n| crate::aboard::seat_keys(&self.ships.list[n].kind)).unwrap_or_default();
+        self.ui.seat_keys = near.map(|n| crate::aboard::seat_keys(&self.game.ships.list[n].kind)).unwrap_or_default();
         self.ui.tool_keys = self.gear.tools.iter().enumerate().map(|(k, t)| format!("{} — {}", t.nombre, self.gear.help(k))).collect();
-        self.ui.test_keys = if crate::DEMO { String::new() } else { self.blasts.help() };
+        self.ui.test_keys = if crate::DEMO { String::new() } else { self.game.blasts.help() };
     }
 
     /// Out of the start menu and into play, at the place chosen in it.
     fn begin(&mut self) {
         let Some(st) = self.start.take() else { return };
         let place = st.place().unwrap_or(crate::start::Where::Here);
-        if place != crate::start::Where::Here && self.pilot.seat.is_some() {
-            self.aboard.stand(&mut self.pilot, &mut self.ships, &self.builds.set);
+        if place != crate::start::Where::Here && self.me.pilot.seat.is_some() {
+            self.aboard.stand(&mut self.me.pilot, &mut self.game.ships, &self.game.builds.set);
         }
         match place {
             crate::start::Where::Here => {}
-            crate::start::Where::Spawn => self.pilot.reset(),
+            crate::start::Where::Spawn => self.me.pilot.reset(),
             // on the ground astern of it (where ramps are), looking at it
             crate::start::Where::Beside(id) => {
                 // (on the ground under it, where it has any)
-                if let Some((s, b)) = self.builds.set.get(id).and_then(|s| Some((s, self.world.bodies.get(self.world.bodies.field(s.to_world(s.center)).ground?)))) {
+                if let Some((s, b)) = self.game.builds.set.get(id).and_then(|s| Some((s, self.world.bodies.get(self.world.bodies.field(s.to_world(s.center)).ground?)))) {
                     let centre = s.to_world(s.center);
                     let up = b.up(centre);
                     let aft = (s.rot * glam::Vec3::NEG_Z).as_dvec3();
                     let aft = (aft - up * aft.dot(up)).normalize_or(up.any_orthonormal_vector());
                     let feet = b.above_ground(b.up(centre + aft * (f64::from(s.radius) + 2.0)), 0.0);
-                    self.pilot.put(feet, b.up(feet));
-                    self.pilot.look_at(centre);
+                    self.me.pilot.put(feet, b.up(feet));
+                    self.me.pilot.look_at(centre);
                 }
             }
             crate::start::Where::Seat(structure, seat) => {
                 self.aboard.aim = Some(crate::aboard::Aim { structure, target: crate::aboard::Target::Seat(seat) });
-                self.aboard.use_key(&mut self.pilot, &self.ships, &self.builds.set);
+                self.aboard.use_key(&mut self.me.pilot, &self.game.ships, &self.game.builds.set);
             }
         }
         self.keys.fill(false);
@@ -517,7 +516,7 @@ impl State {
     /// The start menu up over the game as it is (from the menu: the game goes on behind it).
     fn to_start(&mut self) {
         self.ui.menu = false;
-        self.start = Some(crate::start::Start::new(&self.ships, &self.builds.set, true));
+        self.start = Some(crate::start::Start::new(&self.game.ships, &self.game.builds.set, true));
         self.keys.fill(false);
         self.capture_mouse(false);
     }
@@ -549,7 +548,7 @@ impl State {
             return;
         }
         // seated, the seat's keys drive its controls
-        if !repeat && self.aboard.key(key, pressed, &self.pilot, &mut self.ships, &self.builds.set) {
+        if !repeat && self.aboard.key(key, pressed, &self.me.pilot, &mut self.game.ships, &self.game.builds.set) {
             return;
         }
         // what a key does is in the table of keys (`input`), the one the Controls tab shows
@@ -557,22 +556,22 @@ impl State {
         if let Some(a) = action {
             self.hold(a, pressed);
         }
-        if !pressed {
-            self.blasts.release(key);
+        if !pressed && let Some(c) = crate::blastview::key_char(key) {
+            self.game.blasts.release(c);
         }
         if !pressed || repeat {
             return;
         }
-        if self.pilot.seat.is_some() && action == Some(Action::Jump) {
-            self.aboard.stand(&mut self.pilot, &mut self.ships, &self.builds.set);
+        if self.me.pilot.seat.is_some() && action == Some(Action::Jump) {
+            self.aboard.stand(&mut self.me.pilot, &mut self.game.ships, &self.game.builds.set);
             self.keys.fill(false);
             return;
         }
-        if action == Some(Action::Use) && self.aboard.use_key(&mut self.pilot, &self.ships, &self.builds.set) {
+        if action == Some(Action::Use) && self.aboard.use_key(&mut self.me.pilot, &self.game.ships, &self.game.builds.set) {
             self.keys.fill(false);
             return;
         }
-        if !crate::DEMO && self.blasts.key(key) {
+        if !crate::DEMO && crate::blastview::key_char(key).is_some_and(|c| self.game.blasts.key(c)) {
             return;
         }
         let Some(action) = action else { return };
@@ -592,7 +591,7 @@ impl State {
                 }
             }
             Action::Jetpack => {
-                let (text, level) = match self.pilot.toggle_pack() {
+                let (text, level) = match self.me.pilot.toggle_pack() {
                     Some(true) => (format!("Mochila encendida · {}: subir · {}: bajar", input::shown(Action::Jump), input::shown(Action::Down)), Level::Good),
                     Some(false) => ("Mochila apagada".into(), Level::Off),
                     None => ("Este traje no lleva mochila".into(), Level::Caution),
@@ -600,7 +599,7 @@ impl State {
                 self.ui.hud.notice("mochila", &text, level, 3.5);
             }
             Action::Steady => {
-                let on = self.pilot.toggle_steady();
+                let on = self.me.pilot.toggle_steady();
                 let text = if on { format!("Estabilizador de la mochila: al soltar las teclas te frena y mantiene tu altura ({}: bajar)", input::shown(Action::Down)) } else { "Estabilizador apagado: sigues con la velocidad que lleves".into() };
                 self.ui.hud.notice("mochila", &text, if on { Level::Good } else { Level::Caution }, 3.5);
             }
@@ -625,8 +624,8 @@ impl State {
                 }
             }
             // free flight is a tool: the demo is played on foot (and with what the suit carries)
-            Action::Flight => self.pilot.toggle_flight(),
-            Action::Lamp => self.pilot.lamps = !self.pilot.lamps,
+            Action::Flight => self.me.pilot.toggle_flight(),
+            Action::Lamp => self.me.pilot.lamps = !self.me.pilot.lamps,
             Action::Photo => {
                 let dir = crate::root().join("fotos");
                 let _ = std::fs::create_dir_all(&dir);
@@ -640,16 +639,16 @@ impl State {
                 let on = self.chase.toggle();
                 self.ui.hud.notice("vista", if on { "Vista desde fuera · rueda: acercar o alejar · V: volver a tus ojos" } else { "Vista desde tus ojos" }, Level::Normal, 3.5);
             }
-            Action::FollowMissile => self.blasts.follow = !self.blasts.follow,
-            Action::Reset => self.pilot.reset(),
+            Action::FollowMissile => self.game.blasts.follow = !self.game.blasts.follow,
+            Action::Reset => self.me.pilot.reset(),
             Action::Stats => self.ui.stats = !self.ui.stats,
             Action::Editor => {
-                let eye = self.pilot.position;
-                self.editor.toggle(&self.ships, &self.builds, self.pilot.ride.map(|r| r.id), eye);
+                let eye = self.me.pilot.position;
+                self.editor.toggle(&self.game.ships, &self.game.builds, self.me.pilot.ride.map(|r| r.id), eye);
                 if self.editor.open {
                     self.capture_mouse(false);
-                    if !self.pilot.flying {
-                        self.pilot.toggle_flight();
+                    if !self.me.pilot.flying {
+                        self.me.pilot.toggle_flight();
                     }
                 }
             }
@@ -673,23 +672,23 @@ impl State {
     /// crosshair and to the right, what the game tells you top right.
     fn fill_hud(&mut self, view: &lunar_render::View) {
         let hud = &mut self.ui.hud;
-        self.aboard.hud(&self.pilot, &self.ships, &self.builds.set, !self.gear.owns_click(), hud);
+        self.aboard.hud(&self.me.pilot, &self.game.ships, &self.game.builds.set, !self.gear.owns_click(), hud);
         self.handwork.hud(hud);
         // bare hands: what they hold, or what they could take
-        let standing = self.pilot.ride.map(|r| r.id);
-        if let Some(s) = self.hands.holding().and_then(|id| self.builds.set.get(id)) {
+        let standing = self.me.pilot.ride.map(|r| r.id);
+        if let Some(s) = self.me.hands.holding().and_then(|id| self.game.builds.set.get(id)) {
             hud.hints.push("Suelta el clic para dejarla · Rueda: acercar o alejar".into());
-            hud.card = Some(Card { title: s.label(&self.builds.set.lib.catalog), value: format!("{:.0} kg", s.mass), level: Level::Normal, lines: Vec::new(), hint: "Sobre un anclaje abierto: suéltala y haz clic en su palanca".into() });
+            hud.card = Some(Card { title: s.label(&self.game.builds.set.lib.catalog), value: format!("{:.0} kg", s.mass), level: Level::Normal, lines: Vec::new(), hint: "Sobre un anclaje abierto: suéltala y haz clic en su palanca".into() });
         } else if hud.prompt.is_none()
             && self.gear.held.is_none()
-            && let Some((r, _, _)) = self.hands.reach(&self.builds.set, &self.ships, view, standing)
+            && let Some((r, _, _)) = self.me.hands.reach(&self.game.builds.set, &self.game.ships, view, standing)
         {
             hud.prompt = Some(match r.no {
                 None => Prompt { key: "Clic".into(), text: format!("Coger (mantener) · {} · {:.0} kg", r.name, r.mass), level: Level::Normal },
                 Some(why) => Prompt { key: String::new(), text: format!("{} · {why}", r.name), level: Level::Off },
             });
         }
-        let p = &self.pilot;
+        let p = &self.me.pilot;
         // the suit: its jet pack
         if p.has_pack() && !p.flying {
             let fuel = p.fuel as f32;
@@ -732,9 +731,9 @@ impl State {
                 }
                 // and against the nearest ship: how far, how fast (what the pack steadies us to
                 // is the one we left; flying back to it, this is what to bring to nothing)
-                let near = self.builds.set.list.iter().filter(|s| s.owner.is_some() && s.held.is_none()).map(|s| (s.to_world(s.center).distance(p.position) - f64::from(s.radius) * 0.5, s)).filter(|(d, _)| *d < 2000.0).min_by(|a, b| a.0.total_cmp(&b.0));
+                let near = self.game.builds.set.list.iter().filter(|s| s.owner.is_some() && s.held.is_none()).map(|s| (s.to_world(s.center).distance(p.position) - f64::from(s.radius) * 0.5, s)).filter(|(d, _)| *d < 2000.0).min_by(|a, b| a.0.total_cmp(&b.0));
                 if let Some((d, s)) = near {
-                    let rel = p.velocity_in(&self.builds.set) - s.velocity_at(p.position);
+                    let rel = p.velocity_in(&self.game.builds.set) - s.velocity_at(p.position);
                     hud.readouts.push((s.name.to_uppercase(), format!("{} · {:.1} m/s", crate::rangefinder::metres(d.max(0.0)), rel.length())));
                 }
             }
@@ -749,7 +748,7 @@ impl State {
         // finds one's way by there
         if !p.flying {
             let bodies = &self.world.bodies;
-            let set = &self.builds.set;
+            let set = &self.game.builds.set;
             // what pulls here: the ship whose own gravity holds where one is; else the body that
             // has most of the place; past every body's reach, nothing
             let aboard = p.ride.map(|r| r.id).or(p.cabin).and_then(|id| set.get(id)).filter(|s| s.gravity.g > 0.0 && s.gravity.on > 0.5 && s.in_rooms(s.to_local(p.position)));
@@ -784,7 +783,7 @@ impl State {
             hud.hints.push("Clic: colocar · Rueda: girar · Mayús + rueda: distancia · Botón derecho o G: soltar".into());
         }
         if self.range.on {
-            let r = Rangefinder::read(&self.world.bodies, &self.builds, &self.ships, view, &self.renderer, &self.vis);
+            let r = Rangefinder::read(&self.world.bodies, &self.game.builds, &self.game.ships, view, &self.renderer, &self.vis);
             self.range.hud(&r, &mut hud.banner);
         }
         if let Some(m) = self.spawner.message.take() {
@@ -807,10 +806,10 @@ impl State {
                 ms: self.frame_ms,
                 parts: self.perf.now,
                 gpu: if st.gpu_timed { st.gpu_ms.iter().sum() } else { 0.0 },
-                structures: self.builds.set.list.len() as u32,
-                awake: self.builds.set.list.iter().filter(|s| !s.anchored && !s.resting && s.held.is_none()).count() as u32,
-                ships: self.ships.list.len() as u32,
-                ships_full: self.ships.full as u32,
+                structures: self.game.builds.set.list.len() as u32,
+                awake: self.game.builds.set.list.iter().filter(|s| !s.anchored && !s.resting && s.held.is_none()).count() as u32,
+                ships: self.game.ships.list.len() as u32,
+                ships_full: self.game.ships.full as u32,
                 draws: st.draws,
                 triangles: st.triangles,
                 meshed,
@@ -825,7 +824,7 @@ impl State {
         if self.ui.apply && (self.ui.realtime || !dragging) {
             self.ui.apply = false;
             self.renderer.apply(self.ui.edit.clone());
-            self.blasts.fx.particles.set_capacity(self.renderer.particle_capacity());
+            self.game.blasts.fx.particles.set_capacity(self.renderer.particle_capacity());
             self.renderer.set_sun(self.ui.sun, dragging);
             self.preset_name = self.ui.preset.map_or("personalizado".into(), |p| p.name().to_string());
         }
@@ -834,13 +833,13 @@ impl State {
             if let Err(e) = input::save_players() {
                 self.ui.keys_said.push(format!("No se han podido guardar: {e}"));
             }
-            self.aboard.rebind(&self.pilot, &self.ships);
+            self.aboard.rebind(&self.me.pilot, &self.game.ships);
             self.menu_lists();
         }
         if self.ui.shots_changed {
             self.ui.shots_changed = false;
             for e in &self.ui.shots {
-                self.blasts.set_shot(e);
+                self.game.blasts.set_shot(e);
             }
         }
         if self.ui.regenerate {
@@ -852,9 +851,9 @@ impl State {
         let f = |b: bool| f64::from(u8::from(b));
         let h = |a: Action| input::held(a).is_some_and(|i| k[i]);
         // (seated, seen from outside, the look goes all the way round the ship)
-        self.pilot.free_look = self.chase.on;
+        self.me.pilot.free_look = self.chase.on;
         // Alt held on foot: the mouse turns the head (the camera, from outside), not the body
-        let free = h(Action::FreeLook) && !self.pilot.flying && self.pilot.seat.is_none() && self.start.is_none() && self.bench.is_none();
+        let free = h(Action::FreeLook) && !self.me.pilot.flying && self.me.pilot.seat.is_none() && self.start.is_none() && self.bench.is_none();
         self.handwork.gesture_key(h(Action::Gesture) && self.start.is_none() && !self.ui.menu);
         // (the wrist computer up: the look goes to it, unless Alt has it)
         let wrist = self.wrist_look.filter(|_| !free && self.start.is_none() && self.bench.is_none());
@@ -879,37 +878,22 @@ impl State {
             b.t += dt;
             b.view()
         } else {
-            // the air on the move pulls whoever stands in it
-            self.pilot.wind = if self.pilot.seat.is_some() || self.pilot.flying {
-                glam::DVec3::ZERO
-            } else {
-                let drag = if self.pilot.crouched() { lunar_ship::atmos::DRAG_CROUCHED } else { lunar_ship::atmos::DRAG_STANDING };
-                AirFx::wind(&self.ships, &self.builds.set, self.pilot.position, drag)
-            };
-            // in the air inside a ship's rooms we go with it; outside them we are on our own.
-            // Carried, by where we are in what carries us; on our own, whatever ship's rooms we
-            // have come into (it and we are of the same instant)
-            // (any structure's rooms: what has an inside says so itself)
-            self.pilot.cabin = match self.pilot.ride {
-                Some(r) => self.builds.set.get(r.id).filter(|s| s.in_rooms(r.local)).map(|s| s.id),
-                None => self.builds.set.rooms_at(self.pilot.position),
-            };
             if self.start.is_some() {
                 input = Input::default();
             }
-            // what the keys ask of the player this frame: the world steps them, with everything
-            // else that moves among its structures (`builds.update`)
-            self.pilot.begin(input, self.ui.controls);
+            // what the keys ask of the player: the game's steps take it (`Game::tick`: the air's
+            // pull and the rooms one is in are of the step too); a jump is asked once
+            input.jump |= self.me.input.jump;
+            self.me.input = input;
+            self.me.controls = self.ui.controls;
             self.jump = false;
-            self.pilot.view()
+            self.me.pilot.view()
         };
-        self.world.update(&mut self.renderer, dt);
-        self.perf.lap(perf::WORLD);
         let mut looked = o.look.and_then(|l| self.world.look_at(l, view));
         let (mut menu, mut begin) = (None, false);
         if let Some(sc) = &mut self.script {
-            let held = self.pilot.view_aboard(&self.builds.set).unwrap_or(view);
-            if let Some(v) = sc.update(dt, &mut self.ships, &self.builds, &mut self.blasts, held) {
+            let held = self.me.pilot.view_aboard(&self.game.builds.set).unwrap_or(view);
+            if let Some(v) = sc.update(dt, &mut self.game.ships, &self.game.builds, &mut self.game.blasts, held) {
                 looked = Some(v);
             }
             if let Some((en, mira, fov)) = sc.site_camera {
@@ -920,8 +904,8 @@ impl State {
             }
             if let Some((en, mira, fov)) = sc.player_camera {
                 // by the player: their feet, the way they face, their left
-                let (feet, up) = self.pilot.feet();
-                let ahead = self.pilot.heading();
+                let (feet, up) = self.me.pilot.feet();
+                let ahead = self.me.pilot.heading();
                 let left = up.cross(ahead);
                 let at = |v: [f64; 3]| feet + left * v[0] + up * v[1] + ahead * v[2];
                 let (eye, target) = (at(en), at(mira));
@@ -939,18 +923,18 @@ impl State {
                     crate::script::Request::Down(on) => self.keys[input::held(Action::Down).unwrap_or(0)] = on,
                     crate::script::Request::Jump => self.jump = true,
                     crate::script::Request::LookAt(id, at) => {
-                        if let Some(s) = self.builds.set.get(id) {
-                            self.pilot.look_at(s.to_world(glam::Vec3::from(at)));
+                        if let Some(s) = self.game.builds.set.get(id) {
+                            self.me.pilot.look_at(s.to_world(glam::Vec3::from(at)));
                         }
                     }
                     // (standing as one weighs there, and still to the ship however it goes: put
                     // aboard one under way)
-                    crate::script::Request::Go(id, at) => self.pilot.put_on(&self.builds.set, id, glam::Vec3::from(at)),
-                    crate::script::Request::Lamp(on) => self.pilot.lamps = on,
+                    crate::script::Request::Go(id, at) => self.me.pilot.put_on(&self.game.builds.set, id, glam::Vec3::from(at)),
+                    crate::script::Request::Lamp(on) => self.me.pilot.lamps = on,
                     crate::script::Request::Crouch(on) => self.keys[input::held(Action::Crouch).unwrap_or(0)] = on,
-                    crate::script::Request::Pack(on) => self.pilot.pack_on = on && self.pilot.has_pack(),
+                    crate::script::Request::Pack(on) => self.me.pilot.pack_on = on && self.me.pilot.has_pack(),
                     crate::script::Request::Thrust(on) => self.keys[input::held(Action::Jump).unwrap_or(0)] = on,
-                    crate::script::Request::Look([yaw, pitch]) => self.pilot.look_by(yaw.to_radians(), pitch.to_radians()),
+                    crate::script::Request::Look([yaw, pitch]) => self.me.pilot.look_by(yaw.to_radians(), pitch.to_radians()),
                     crate::script::Request::Menu(tab) => menu = Some(tab),
                     crate::script::Request::Chase(m) => {
                         self.chase.set(m.is_some());
@@ -970,38 +954,38 @@ impl State {
                     crate::script::Request::Wrist(up) => self.handwork.set_wrist(up),
                     crate::script::Request::HandAxes(on) => self.handwork.axes = on,
                     crate::script::Request::Where(id) => {
-                        let (feet, _) = self.pilot.feet();
-                        let with = match (self.pilot.ride, self.pilot.beside()) {
+                        let (feet, _) = self.me.pilot.feet();
+                        let with = match (self.me.pilot.ride, self.me.pilot.beside()) {
                             (Some(_), _) => "la nave lo lleva",
                             (None, Some(_)) => "en el aire, va junto a una nave",
-                            _ if self.pilot.grounded => "en el suelo",
+                            _ if self.me.pilot.grounded => "en el suelo",
                             _ => "en el aire, por su cuenta",
                         };
-                        let line = match id.and_then(|id| self.builds.set.get(id)) {
+                        let line = match id.and_then(|id| self.game.builds.set.get(id)) {
                             Some(s) => {
-                                let (at, v) = (s.to_local(feet), self.pilot.velocity_in(&self.builds.set) - s.velocity_at(feet));
+                                let (at, v) = (s.to_local(feet), self.me.pilot.velocity_in(&self.game.builds.set) - s.velocity_at(feet));
                                 format!("jugador: pies en ({:.2}, {:.2}, {:.2}) de la nave; {with}; va a {:.2} m/s respecto a ella, que va a {:.1} m/s", at.x, at.y, at.z, v.length(), s.vel.length())
                             }
                             None => format!("jugador: {with}"),
                         };
                         sc.note(&line);
-                        sc.note(&format!("  proyectiles: {} en vuelo, {} impactos; ultimo {:?}", self.blasts.rounds.len(), self.blasts.impact_count, self.blasts.last_impact.map(|hit| (hit.at, hit.surface))));
-                        if let Some(ship) = id.and_then(|id| self.builds.set.get(id)) {
-                            for round in self.blasts.rounds.list.iter().take(4) {
+                        sc.note(&format!("  proyectiles: {} en vuelo, {} impactos; ultimo {:?}", self.game.blasts.rounds.len(), self.game.blasts.impact_count, self.game.blasts.last_impact.map(|hit| (hit.at, hit.surface))));
+                        if let Some(ship) = id.and_then(|id| self.game.builds.set.get(id)) {
+                            for round in self.game.blasts.rounds.list.iter().take(4) {
                                 sc.note(&format!("  proyectil en {:?} de la nave; velocidad relativa {:?}", ship.to_local(round.pos), ship.dir_to_local(round.vel - ship.velocity_at(round.pos))));
                             }
                         }
                         // what holds where they are: what pulls, what they weigh, which way is
                         // up for them, and what the compass reads
-                        let (p, bodies) = (&self.pilot, &self.world.bodies);
+                        let (p, bodies) = (&self.me.pilot, &self.world.bodies);
                         let here = bodies.field(p.position);
                         let (_, up) = p.feet();
                         let mut shares = String::new();
                         bodies.shares(p.position, |_, b, share, _, r| shares.push_str(&format!(" {} {:.3} (a {:.1} km de altura)", b.name, share, (r - b.radius) / 1000.0)));
-                        let deck = id.and_then(|id| self.builds.set.get(id)).map_or(String::new(), |s| format!("; su arriba está a {:.1}° del de la nave (gravedad propia {:.2} m/s² al {:.0} %)", up.angle_between((s.rot * glam::Vec3::Y).as_dvec3()).to_degrees(), s.gravity.g, s.gravity.on * 100.0));
+                        let deck = id.and_then(|id| self.game.builds.set.get(id)).map_or(String::new(), |s| format!("; su arriba está a {:.1}° del de la nave (gravedad propia {:.2} m/s² al {:.0} %)", up.angle_between((s.rot * glam::Vec3::Y).as_dvec3()).to_degrees(), s.gravity.g, s.gravity.on * 100.0));
                         sc.note(&format!("  rige:{}; tirón {:.3} m/s²; pesa {:.3} m/s² ({:.3} sobre los pies){deck}", if shares.is_empty() { " ningún cuerpo (espacio libre)" } else { &shares }, here.g(), p.weight().length(), p.weighs()));
                         let mut compass = crate::nav::Compass::default();
-                        self.nav.compass(bodies, &self.nav.who(p, &self.builds.set, &held, self.renderer.sun().direction()), &mut compass);
+                        self.nav.compass(bodies, &self.nav.who(p, &self.game.builds.set, &held, self.renderer.sun().direction()), &mut compass);
                         let scales: Vec<String> = compass.scales().iter().map(|s| format!("{} {:.0}° ({:.2})", s.name, s.heading, s.alpha)).collect();
                         let marks: Vec<String> = compass.marks().iter().map(|m| format!("{} {:+.0}°{} ({:.2})", m.text, m.bearing, if m.rise.abs() > 4.0 { format!(" ↕{:+.0}°", m.rise) } else { String::new() }, m.alpha)).collect();
                         sc.note(&format!("  brújula: escalas [{}]; marcas [{}]", scales.join(", "), marks.join(", ")));
@@ -1011,7 +995,7 @@ impl State {
                         let tool = self.gear.tool_at().map_or(String::new(), |at| format!("\n  herramienta en ({:.3}, {:.3}, {:.3}) del ojo", at.x, at.y, at.z));
                         sc.note(&format!("manos:\n  izq: {left}\n  der: {right}{tool}"));
                     }
-                    crate::script::Request::Start(on) => self.start = on.then(|| crate::start::Start::new(&self.ships, &self.builds.set, false)),
+                    crate::script::Request::Start(on) => self.start = on.then(|| crate::start::Start::new(&self.game.ships, &self.game.builds.set, false)),
                     crate::script::Request::Begin => begin = true,
                     crate::script::Request::StartPlace(n) => {
                         if let Some(st) = &mut self.start {
@@ -1025,26 +1009,26 @@ impl State {
                     }
                     crate::script::Request::Grab(true) => {
                         let v = looked.unwrap_or(view);
-                        match self.hands.grab(&self.builds.set, &self.ships, &v, None) {
-                            Ok(true) => sc.note(&format!("coger: estructura {:?}", self.hands.holding())),
+                        match self.me.hands.grab(&self.game.builds.set, &self.game.ships, &v, None) {
+                            Ok(true) => sc.note(&format!("coger: estructura {:?}", self.me.hands.holding())),
                             Ok(false) => sc.note("coger: no hay nada suelto en la mira"),
                             Err(why) => sc.note(&format!("coger: {why}")),
                         }
                     }
-                    crate::script::Request::Grab(false) => self.hands.release(&mut self.builds),
+                    crate::script::Request::Grab(false) => self.me.hands.release(&mut self.game.builds),
                     crate::script::Request::Sit(Some((structure, seat))) => {
                         self.aboard.aim = Some(crate::aboard::Aim { structure, target: crate::aboard::Target::Seat(seat) });
-                        self.aboard.use_key(&mut self.pilot, &self.ships, &self.builds.set);
+                        self.aboard.use_key(&mut self.me.pilot, &self.game.ships, &self.game.builds.set);
                     }
-                    crate::script::Request::Sit(None) => self.aboard.stand(&mut self.pilot, &mut self.ships, &self.builds.set),
+                    crate::script::Request::Sit(None) => self.aboard.stand(&mut self.me.pilot, &mut self.game.ships, &self.game.builds.set),
                     crate::script::Request::Hear => {
                         let text = self.sounds.heard();
-                        sc.note(&format!("se oye: {text}; partículas en el aire: {}", self.blasts.fx.particles.len()));
+                        sc.note(&format!("se oye: {text}; partículas en el aire: {}", self.game.blasts.fx.particles.len()));
                     }
                     crate::script::Request::Edit(v) => {
                         if !self.editor.open {
-                            let eye = sc.ship.and_then(|id| self.builds.set.get(id)).map_or(self.pilot.position, |s| s.to_world(s.center));
-                            self.editor.toggle(&self.ships, &self.builds, sc.ship, eye);
+                            let eye = sc.ship.and_then(|id| self.game.builds.set.get(id)).map_or(self.me.pilot.position, |s| s.to_world(s.center));
+                            self.editor.toggle(&self.game.ships, &self.game.builds, sc.ship, eye);
                         }
                         match serde_json::from_value::<lunar_editor::Op>(v) {
                             Ok(op) => self.editor.op(op),
@@ -1065,9 +1049,9 @@ impl State {
                                 let b = self.world.bodies.get(site.body);
                                 let pos = b.above_ground(dir, f.altura);
                                 let rot = lunar_core::scene::basis(dir, site.north * yaw.cos() + site.east * yaw.sin());
-                                self.ships.spawn_free(&mut self.builds, &f.nave, pos, rot)
+                                self.game.ships.spawn_free(&mut self.game.builds, &f.nave, pos, rot)
                             } else {
-                                self.ships.spawn(&mut self.builds, &self.world.bodies, &f.nave, site.body, dir, yaw)
+                                self.game.ships.spawn(&mut self.game.builds, &self.world.bodies, &f.nave, site.body, dir, yaw)
                             };
                             match id {
                                 Ok(_) => made += 1,
@@ -1077,14 +1061,14 @@ impl State {
                                 }
                             }
                         }
-                        sc.note(&format!("flota: {made} {} más ({} naves, {} estructuras)", f.nave, self.ships.list.len(), self.builds.set.list.len()));
+                        sc.note(&format!("flota: {made} {} más ({} naves, {} estructuras)", f.nave, self.game.ships.list.len(), self.game.builds.set.list.len()));
                     }
                     crate::script::Request::Put(id, p) => {
                         let bodies = &self.world.bodies;
-                        match (bodies.find(&p.cuerpo), self.builds.set.index_of(id)) {
+                        match (bodies.find(&p.cuerpo), self.game.builds.set.index_of(id)) {
                             (Some(body), Some(k)) => {
                                 let b = bodies.get(body);
-                                let s = &mut self.builds.set.list[k];
+                                let s = &mut self.game.builds.set.list[k];
                                 let dir = p.hacia.map_or_else(|| b.up(s.to_world(s.center)), |d| glam::DVec3::from_array(d).normalize_or(glam::DVec3::Y));
                                 let local = lunar_core::scene::Site::new(body, b, dir);
                                 let roll = glam::Quat::from_rotation_z(p.volcada.to_radians());
@@ -1096,7 +1080,7 @@ impl State {
                                 (s.resting, s.still, s.acc) = (false, 0.0, glam::DVec3::ZERO);
                                 sc.note(&format!("poner: {} a {:.1} km sobre {} ({}), a {:.0} m/s", s.name, p.altura / 1000.0, b.name, p.cuerpo, s.vel.length()));
                                 // (whoever it carries goes with it now)
-                                self.pilot.moved_with(&self.builds.set);
+                                self.me.pilot.moved_with(&self.game.builds.set);
                             }
                             (None, _) => sc.note(&format!("ERROR poner: no hay cuerpo '{}'", p.cuerpo)),
                             (_, None) => sc.note("ERROR poner: no hay nave"),
@@ -1112,10 +1096,10 @@ impl State {
                     crate::script::Request::Marks => sc.note(&format!("{}\n{}", self.prints.report(&self.renderer), self.visor.report())),
                     crate::script::Request::IntegrityView(on) => self.gear.view = on,
                     crate::script::Request::Damage { part, share } => {
-                        let id = sc.ship.or_else(|| self.ships.list.first().map(|s| s.structure));
-                        let names = id.and_then(|id| self.ships.by_structure(id)).map(|n| self.ships.list[n].kind.parts.clone()).unwrap_or_default();
+                        let id = sc.ship.or_else(|| self.game.ships.list.first().map(|s| s.structure));
+                        let names = id.and_then(|id| self.game.ships.by_structure(id)).map(|n| self.game.ships.list[n].kind.parts.clone()).unwrap_or_default();
                         let hit = lunar_ship::kind::resolve(&names, &part);
-                        if let Some(s) = id.and_then(|id| self.builds.set.list.iter_mut().find(|s| s.id == id)) {
+                        if let Some(s) = id.and_then(|id| self.game.builds.set.list.iter_mut().find(|s| s.id == id)) {
                             for &i in &hit {
                                 let p = &mut s.parts[i as usize];
                                 p.hp = p.max_hp * (1.0 - share).max(0.0);
@@ -1128,7 +1112,7 @@ impl State {
                         }
                         sc.note(&format!("dañar {part}: {} piezas al {:.0} %", hit.len(), (1.0 - share) * 100.0));
                     }
-                    crate::script::Request::Aim(k) => self.script_aim = k.and_then(|k| sc.ship.or_else(|| self.ships.list.first().map(|s| s.structure)).map(|id| (id, k))),
+                    crate::script::Request::Aim(k) => self.script_aim = k.and_then(|k| sc.ship.or_else(|| self.game.ships.list.first().map(|s| s.structure)).map(|id| (id, k))),
                     crate::script::Request::Fire(f) => self.barrage = Some((f.tiro, f.por_segundo, f.segundos, 0.0, 1)),
                     crate::script::Request::Profile(Some(p)) => {
                         let name = std::path::Path::new(&p).file_stem().map_or_else(|| p.clone(), |n| n.to_string_lossy().into_owned());
@@ -1138,7 +1122,7 @@ impl State {
                         if let Some(text) = self.perf.stop() {
                             sc.note(&text);
                             // what is still moving as it ends (a standing fleet: nothing should be)
-                            let awake: Vec<String> = self.builds.set.list.iter().filter(|s| !s.anchored && !s.resting && s.held.is_none()).take(8).map(|s| format!("{} (v {:.3} m/s, giro {:.3} rad/s, fuerza {:.0} N, par {:.0} N·m)", s.name, s.vel.length(), s.spin.length(), s.force.length(), s.torque.length())).collect();
+                            let awake: Vec<String> = self.game.builds.set.list.iter().filter(|s| !s.anchored && !s.resting && s.held.is_none()).take(8).map(|s| format!("{} (v {:.3} m/s, giro {:.3} rad/s, fuerza {:.0} N, par {:.0} N·m)", s.name, s.vel.length(), s.spin.length(), s.force.length(), s.torque.length())).collect();
                             if !awake.is_empty() {
                                 sc.note(&format!("  despiertas al acabar: {}", awake.join("; ")));
                             }
@@ -1147,7 +1131,7 @@ impl State {
                     }
                     crate::script::Request::Measure => {
                         let v = looked.unwrap_or(view);
-                        let rd = Rangefinder::read(&self.world.bodies, &self.builds, &self.ships, &v, &self.renderer, &self.vis);
+                        let rd = Rangefinder::read(&self.world.bodies, &self.game.builds, &self.game.ships, &v, &self.renderer, &self.vis);
                         let (all, full) = self.renderer.structure_pool();
                         let mut lines = vec![format!("medida desde ({:.0}, {:.0}, {:.0}):", v.eye.x, v.eye.y, v.eye.z)];
                         if let Some((d, what)) = &rd.hit {
@@ -1156,7 +1140,7 @@ impl State {
                         if let Some((k, d, lod)) = &rd.ship {
                             lines.push(format!("  nave {k} a {}: {lod}", crate::rangefinder::metres(*d)));
                         }
-                        if let Some(t) = &self.world.traffic {
+                        if let Some(t) = &self.game.traffic {
                             let (air, orbit) = t.flying(self.world.time);
                             let (near, _, _) = t.closest();
                             lines.push(format!("  tráfico: {} naves, {air} en vuelo, {orbit} en órbita; {} vuelos acabados; las dos más cercanas a {near:.0} m", t.len(), t.landed));
@@ -1181,26 +1165,26 @@ impl State {
         }
         // the start menu: the picture is of the place chosen in it, from round it
         if let Some(st) = &mut self.start {
-            looked = Some(st.view(dt, &view, &self.builds.set, &self.world.bodies));
+            looked = Some(st.view(dt, &view, &self.game.builds.set, &self.world.bodies));
         }
         let view = looked.unwrap_or(view);
         // a script's fire: rounds at the ships from all round, each from 60 m off toward one of them
         if let Some((shot, rate, left, owed, seed)) = &mut self.barrage {
             *owed += *rate * dt;
             *left -= dt;
-            let n = self.ships.list.len();
+            let n = self.game.ships.list.len();
             while *owed >= 1.0 && n > 0 {
                 *owed -= 1.0;
                 *seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
                 let r = |k: u32| ((*seed >> (11 + k * 13)) & 0x3ff) as f64 / 1023.0;
-                let Some(s) = self.builds.set.get(self.ships.list[(r(0) * n as f64) as usize % n].structure) else { continue };
+                let Some(s) = self.game.builds.set.get(self.game.ships.list[(r(0) * n as f64) as usize % n].structure) else { continue };
                 let at = s.to_world(s.center + glam::Vec3::new((r(1) as f32 - 0.5) * s.radius, (r(2) as f32 - 0.5) * s.radius * 0.4, (r(3) as f32 - 0.5) * s.radius * 1.6));
                 let up = self.world.bodies.get(self.world.bodies.dominant(at)).up(at);
                 let side = up.any_orthonormal_vector();
                 let a = r(1) * std::f64::consts::TAU;
                 let from = at + (side * a.cos() + up.cross(side) * a.sin()) * 60.0 + up * (10.0 + 30.0 * r(2));
                 let shot = shot.clone();
-                self.blasts.fire_from(&shot, from, (at - from).normalize(), glam::DVec3::ZERO, None, &self.world.bodies, &mut self.builds);
+                self.game.blasts.fire_from(&shot, from, (at - from).normalize(), glam::DVec3::ZERO, None, &self.world.bodies, &mut self.game.builds);
             }
             if *left <= 0.0 {
                 self.barrage = None;
@@ -1208,70 +1192,71 @@ impl State {
         }
         // with others: what they told is done here before anything runs (their ships brought to
         // where they have them, what they struck done in its order), what they fired shown
-        self.blasts.tell = self.multi.as_ref().is_some_and(|m| m.connected());
+        self.game.blasts.tell = self.multi.as_ref().is_some_and(|m| m.connected());
         if let Some(m) = &mut self.multi {
-            m.receive(lunar_net::now(), &mut self.ships, &mut self.builds, &self.world.bodies);
+            m.receive(lunar_net::now(), &mut self.game.ships, &mut self.game.builds, &self.world.bodies);
             for (by, seen, age) in m.shown.drain(..) {
-                self.blasts.show(by, &seen, age, &self.world.bodies, &mut self.builds);
+                self.game.blasts.show(by, &seen, age, &self.world.bodies, &mut self.game.builds);
             }
         }
-        let view = self.blasts.update(dt, &self.world.bodies, view, self.pilot.motion_in(&self.builds.set), &mut self.builds);
-        self.perf.lap(perf::SHOTS);
-        let sun = self.renderer.sun().direction();
-        self.builds.set.sun = sun;
-        // in full: the ship the player rides and the ones a tool is working on
-        let awake: Vec<u64> = self.pilot.ride.map(|r| r.id).into_iter().chain(self.script.as_ref().and_then(|sc| sc.ship)).chain(self.editor.ship()).collect();
-        let people = self.pilot.body();
-        self.tactics.look(&mut self.ships, &self.builds, &self.world.bodies, self.world.traffic.as_ref(), &mut self.blasts);
-        self.ships.update(dt, &mut self.builds, &self.world.bodies, &mut self.blasts.fx, sun, view.eye, &awake, &people);
-        self.tactics.fire(&mut self.ships, &mut self.builds, &self.world.bodies, &mut self.blasts);
-        // a seat on something that moves takes whoever sits in it along
-        if let Some(seat) = &mut self.pilot.seat
-            && let Some(n) = self.ships.by_structure(seat.structure)
-        {
-            seat.eyes = self.ships.list[n].seat_eyes(seat.index);
-        }
-        // what a ship tells whoever is working it: shown to the one who rides it or stands by it
-        for sh in &mut self.ships.list {
-            if sh.said.is_empty() {
-                continue;
+        // the game on: as many steps as the time since the last frame owes it, each exactly
+        // `STEP` s and with what the player asks of it (a slow frame takes more of them, up to
+        // `MAX_STEPS`; past that the game goes slower rather than work more)
+        self.game.sun = self.renderer.sun().direction();
+        self.game.watchers.clear();
+        self.game.watchers.push(view.eye);
+        self.game.awake.clear();
+        self.game.awake.extend(self.script.as_ref().and_then(|sc| sc.ship).into_iter().chain(self.editor.ship()));
+        // (what the hands reach for and a test key fires along: the look last drawn)
+        self.me.aim = self.last_aim;
+        self.due += dt;
+        let mut steps = 0;
+        while self.due >= STEP && steps < MAX_STEPS {
+            self.due -= STEP;
+            steps += 1;
+            // the seat's keys held, a step's worth of them
+            self.aboard.update(STEP as f32, &self.me.pilot, &mut self.game.ships, &self.game.builds.set);
+            if self.bench.is_none() {
+                self.game.tick(&mut [&mut self.me]);
+            } else {
+                self.game.tick(&mut []);
             }
-            let said = std::mem::take(&mut sh.said);
-            let here = self.pilot.ride.is_some_and(|r| r.id == sh.structure) || self.builds.set.get(sh.structure).is_some_and(|s| s.to_world(s.center).distance(view.eye) < f64::from(s.radius) + 10.0);
-            if here {
-                for (about, text, level) in said {
+            // what a ship tells whoever is working it: shown to the one who rides it or stands by it
+            for (ship, about, text, level) in self.game.out.said.drain(..) {
+                let here = self.me.pilot.ride.is_some_and(|r| r.id == ship) || self.game.builds.set.get(ship).is_some_and(|s| s.to_world(s.center).distance(view.eye) < f64::from(s.radius) + 10.0);
+                if here {
                     self.ui.hud.notice(&about, &text, [Level::Normal, Level::Caution, Level::Warning][usize::from(level.min(2))], 5.0);
                 }
             }
         }
-        self.perf.lap(perf::SHIPS);
-        // the world on, and the player with it: stepped among its structures slice by slice
-        // (`lunar_core::structure::schedule::Among`), so they are always of the same instant
-        let (effects, mut flight) = self.blasts.flight();
-        if self.bench.is_none() {
-            self.builds.update(dt, &self.world.bodies, effects, view.eye, &mut [&mut self.pilot, &mut flight]);
-        } else {
-            self.builds.update(dt, &self.world.bodies, effects, view.eye, &mut [&mut flight]);
+        if steps == MAX_STEPS {
+            self.due = self.due.min(STEP);
         }
-        self.blasts.land_rounds(&self.world.bodies, &mut self.builds);
         self.perf.lap(perf::PHYSICS);
-        let shake = self.air.frame(dt as f32, &self.ships, &self.builds.set, &self.world.bodies, &mut self.blasts.fx, view.eye);
+        // drawn between the last two steps, everything of the same instant: a share of a step
+        // behind the newest (`Game::present`, undone once the picture is made)
+        let alpha = self.due / STEP;
+        let lag = (1.0 - alpha) * STEP;
+        self.game.present(alpha, &mut [&mut self.me]);
+        self.world.update(&mut self.renderer, self.game.time() - lag, dt, self.game.traffic.as_ref());
+        let view = self.game.blasts.follow_view(&self.world.bodies, view);
+        let shake = self.air.frame(dt as f32, &self.game.ships, &self.game.builds.set, &self.world.bodies, &mut self.game.blasts.fx, view.eye);
         self.perf.lap(perf::AIR);
         // the picture is taken from where the player is now that the world has moved (seated,
         // with the ship's own turn)
-        let view = match (looked, self.bench.is_none() && !self.blasts.follow) {
-            (None, true) => self.pilot.view_aboard(&self.builds.set).unwrap_or_else(|| lunar_render::View { eye: self.pilot.eye(), ..view }),
+        let view = match (looked, self.bench.is_none() && !self.game.blasts.follow) {
+            (None, true) => self.me.pilot.view_aboard(&self.game.builds.set).unwrap_or_else(|| lunar_render::View { eye: self.me.pilot.eye(), ..view }),
             _ => view,
         };
         // from outside (V): the picture is the camera's; what is aimed at, held and worn stays the
         // body's, turned to what is under the middle of the picture
-        let outside = self.chase.on && looked.is_none() && self.bench.is_none() && !self.blasts.follow && !self.pilot.flying && !self.editor.open && self.body.is_some();
+        let outside = self.chase.on && looked.is_none() && self.bench.is_none() && !self.game.blasts.follow && !self.me.pilot.flying && !self.editor.open && self.body.is_some();
         // (looking round with Alt: the picture turns, the body's own look and aim stay)
         let looking = self.look.active() && looked.is_none();
         let (view, aim) = if outside {
-            let ship = self.pilot.seat.and_then(|seat| self.builds.set.get(seat.structure)).map(|s| (s.to_world(s.center), f64::from(s.radius)));
-            let cam = self.chase.view(dt, &self.look.apply(&view), ship, &self.builds.set, &self.world.bodies);
-            (cam, Some(if ship.is_some() || looking { view } else { self.chase.aim(&view, &cam, &self.builds.set) }))
+            let ship = self.me.pilot.seat.and_then(|seat| self.game.builds.set.get(seat.structure)).map(|s| (s.to_world(s.center), f64::from(s.radius)));
+            let cam = self.chase.view(dt, &self.look.apply(&view), ship, &self.game.builds.set, &self.world.bodies);
+            (cam, Some(if ship.is_some() || looking { view } else { self.chase.aim(&view, &cam, &self.game.builds.set) }))
         } else if looking {
             (self.look.apply(&view), Some(view))
         } else {
@@ -1290,34 +1275,34 @@ impl State {
         let want = if self.zooming && self.captured { 1.0 } else { 0.0 };
         self.zoom += (want - self.zoom) * (1.0 - (-dt * 14.0).exp());
         let view = lunar_render::View { fov_y: view.fov_y / (1.0 + self.zoom * (ZOOM - 1.0)) as f32, ..view };
-        let view = self.blasts.shaken(view);
+        let view = self.game.blasts.shaken(view);
         // the body and what it holds are the pilot's, wherever the picture is taken from
         let own = match (aim, looked) {
             (Some(aim), _) => aim,
-            (None, Some(_)) => self.pilot.view_aboard(&self.builds.set).unwrap_or_else(|| self.pilot.view()),
+            (None, Some(_)) => self.me.pilot.view_aboard(&self.game.builds.set).unwrap_or_else(|| self.me.pilot.view()),
             (None, None) => view,
         };
         self.last_aim = Some(own);
-        let stance = (self.body.is_some() && !self.pilot.flying && self.bench.is_none()).then(|| {
-            let (_, up) = self.pilot.feet();
+        let stance = (self.body.is_some() && !self.me.pilot.flying && self.bench.is_none()).then(|| {
+            let (_, up) = self.me.pilot.feet();
             // (seated, the body is the seat's: up is the ship's, however it flies)
-            let seat = self.pilot.seat.and_then(|seat| {
-                let s = self.builds.set.get(seat.structure)?;
+            let seat = self.me.pilot.seat.and_then(|seat| {
+                let s = self.game.builds.set.get(seat.structure)?;
                 Some(((s.rot * glam::Vec3::new(seat.heading.sin(), 0.0, seat.heading.cos())).as_dvec3(), (s.rot * glam::Vec3::Y).as_dvec3()))
             });
             let up = seat.map_or(up, |s| s.1);
-            let ahead = seat.map_or_else(|| self.pilot.heading(), |s| s.0);
+            let ahead = seat.map_or_else(|| self.me.pilot.heading(), |s| s.0);
             crate::body::Stance {
                 eye: own.eye,
                 up,
-                ahead: (ahead - up * ahead.dot(up)).normalize_or(self.pilot.heading()),
-                eye_h: if seat.is_some() { 1.2 } else { self.pilot.eye_over_feet() },
-                vel: self.pilot.velocity(),
-                grounded: self.pilot.grounded,
-                g: self.pilot.weighs(),
-                ride: self.pilot.ride.map(|r| r.id),
+                ahead: (ahead - up * ahead.dot(up)).normalize_or(self.me.pilot.heading()),
+                eye_h: if seat.is_some() { 1.2 } else { self.me.pilot.eye_over_feet() },
+                vel: self.me.pilot.velocity(),
+                grounded: self.me.pilot.grounded,
+                g: self.me.pilot.weighs(),
+                ride: self.me.pilot.ride.map(|r| r.id),
                 seated: seat.is_some(),
-                inside: self.pilot.cabin.is_some() || seat.is_some(),
+                inside: self.me.pilot.cabin.is_some() || seat.is_some(),
                 own_eyes: looked.is_none() && !outside,
             }
         });
@@ -1326,7 +1311,7 @@ impl State {
                 crate::holding::Steps {
                     phase: b.gait.phase as f32,
                     walk: b.gait.walk as f32,
-                    vel: self.pilot.velocity().as_vec3(),
+                    vel: self.me.pilot.velocity().as_vec3(),
                     // (what of the body carries the tool, as it was last posed)
                     carry: self.gear.rest().and_then(|name| b.carried(name, st)).map_or(glam::Vec3::ZERO, |c| crate::gear::eye_frame(&own).inverse() * c),
                 },
@@ -1334,11 +1319,11 @@ impl State {
             ),
             _ => (crate::holding::Steps::default(), glam::Vec3::ZERO),
         };
-        let motion = self.pilot.motion_in(&self.builds.set);
-        self.gear.update(dt, &own, motion, &mut self.ships, &mut self.builds, &mut self.blasts, &self.world.bodies, &mut self.renderer, steps, short);
+        let motion = self.me.pilot.motion_in(&self.game.builds.set);
+        self.gear.update(dt, &own, motion, &mut self.game.ships, &mut self.game.builds, &mut self.game.blasts, &self.world.bodies, &mut self.renderer, steps, short);
         // the visor the picture is seen through, from one's own eyes only
-        let worn = looked.is_none() && !outside && !self.pilot.flying && self.bench.is_none() && self.start.is_none();
-        self.visor.frame(dt as f32, &crate::visor::Senses::of(&self.pilot, &input, self.gear.filtering(), &own, worn), &mut self.renderer);
+        let worn = looked.is_none() && !outside && !self.me.pilot.flying && self.bench.is_none() && self.start.is_none();
+        self.visor.frame(dt as f32, &crate::visor::Senses::of(&self.me.pilot, &input, self.gear.filtering(), &own, worn), &mut self.renderer);
         if let (Some(body), Some(st)) = (&mut self.body, &stance) {
             let grips = self.gear.grips(&own, body, st);
             // the controls worked this frame: a hand goes to each
@@ -1347,24 +1332,23 @@ impl State {
                 self.handwork.worked(*structure, *k, None);
             }
             let (aim, held) = self.aboard.hand();
-            let doing = crate::handwork::Doing { seat: self.pilot.seat.map(|s| (s.structure, s.index)), look: own.forward, aim, held, carrying: self.hands.holding().is_some() };
+            let doing = crate::handwork::Doing { seat: self.me.pilot.seat.map(|s| (s.structure, s.index)), look: own.forward, aim, held, carrying: self.me.hands.holding().is_some() };
             let here = crate::handwork::Here {
                 eye: own.eye,
-                aboard: self.pilot.ride.map(|r| r.id).or(self.pilot.cabin),
-                gas: self.pilot.has_pack().then_some(self.pilot.fuel as f32),
+                aboard: self.me.pilot.ride.map(|r| r.id).or(self.me.pilot.cabin),
+                gas: self.me.pilot.has_pack().then_some(self.me.pilot.fuel as f32),
                 outside: self.sounds.kpa,
                 gravity: st.g as f32,
                 inside: st.inside,
             };
-            self.handwork.drive(dt, body, st, &self.builds.set, &self.world.bodies, &self.ships, grips, &doing, &here);
+            self.handwork.drive(dt, body, st, &self.game.builds.set, &self.world.bodies, &self.game.ships, grips, &doing, &here);
             // one's own arm in front of what one aims at is seen through
             body.look_along(st, st.own_eyes.then_some(own.forward), dt);
             self.wrist_look = self.handwork.look(body, st, &own);
         }
-        self.hands.update(dt, &mut self.builds, &own, motion);
         // the particles and the flashes, from where the picture is taken (from outside that is
         // not where the player's eyes are)
-        self.blasts.draw(&mut self.renderer, view.eye, &self.world.bodies);
+        crate::blastview::draw(&mut self.game.blasts, &mut self.blast_lights, &mut self.renderer, view.eye, &self.world.bodies, lag);
         // what all that sounds like, and the dust it raises
         if self.bench.is_none() {
             for id in std::mem::take(&mut self.aboard.heard) {
@@ -1378,37 +1362,37 @@ impl State {
             }
             let walker = self.body.as_ref().filter(|_| stance.is_some());
             let footfalls = walker.map(|b| b.gait.landed);
-            let feet = self.sounds.frame(self.ui.controls.volume, &self.pilot, &self.ships, &self.builds.set, self.gear.working(), self.hands.holding().is_some(), self.ui.menu, footfalls);
-            if (feet.step || feet.landed > 0.0) && self.pilot.ride.is_none() {
-                let (_, up) = self.pilot.feet();
+            let feet = self.sounds.frame(self.ui.controls.volume, &self.me.pilot, &self.game.ships, &self.game.builds.set, self.gear.working(), self.me.hands.holding().is_some(), self.ui.menu, footfalls);
+            if (feet.step || feet.landed > 0.0) && self.me.pilot.ride.is_none() {
+                let (_, up) = self.me.pilot.feet();
                 let hard = if feet.landed > 0.0 { 1.0 + feet.landed } else { 1.0 };
                 match walker {
                     // under the foot that came down
                     Some(b) => {
                         for i in 0..2 {
                             if b.gait.landed & (1 << i) != 0 {
-                                self.dust.step(&mut self.blasts.fx, &self.world.bodies, b.gait.feet[i].at, self.pilot.velocity(), hard);
+                                self.dust.step(&mut self.game.blasts.fx, &self.world.bodies, b.gait.feet[i].at, self.me.pilot.velocity(), hard);
                             }
                         }
                     }
                     None => {
-                        let feet_at = self.pilot.position - up * (self.pilot.altitude() + 1.0).min(3.0);
-                        self.dust.step(&mut self.blasts.fx, &self.world.bodies, feet_at, self.pilot.velocity(), hard);
+                        let feet_at = self.me.pilot.position - up * (self.me.pilot.altitude() + 1.0).min(3.0);
+                        self.dust.step(&mut self.game.blasts.fx, &self.world.bodies, feet_at, self.me.pilot.velocity(), hard);
                     }
                 }
             }
-            self.dust.frame(dt as f32, &mut self.blasts.fx, &self.world.bodies, &self.pilot, self.pilot.pack_thrust(), &self.ships, &self.builds.set, view.eye);
-            self.plumes.frame(dt as f32, &mut self.blasts.fx, &self.world.bodies, &self.pilot, self.body.as_ref().zip(stance.as_ref()), &self.ships, &self.builds.set, &mut self.renderer, &view, sun);
+            self.dust.frame(dt as f32, &mut self.game.blasts.fx, &self.world.bodies, &self.me.pilot, self.me.pilot.pack_thrust(), &self.game.ships, &self.game.builds.set, view.eye);
+            self.plumes.frame(dt as f32, &mut self.game.blasts.fx, &self.world.bodies, &self.me.pilot, self.body.as_ref().zip(stance.as_ref()), &self.game.ships, &self.game.builds.set, &mut self.renderer, &view, self.game.sun);
             // what touched the ground this frame leaves its mark on it
-            self.prints.frame(self.world.time, dt, &mut self.dust, &self.world.bodies, walker, &self.builds.set, view.eye, &mut self.renderer);
+            self.prints.frame(self.world.time, dt, &mut self.dust, &self.world.bodies, walker, &self.game.builds.set, view.eye, &mut self.renderer);
         }
         let playing = self.captured && !self.ui.menu && self.bench.is_none() && self.start.is_none();
         // (round a ship from outside nothing of it is at hand)
-        let afar = outside && self.pilot.seat.is_some();
+        let afar = outside && self.me.pilot.seat.is_some();
         if playing && !self.spawner.placing() && afar {
             self.aboard.aim = None;
         } else if playing && !self.spawner.placing() {
-            self.aboard.aim(&self.ships, &self.builds.set, own.eye, own.forward, self.pilot.seat.is_some());
+            self.aboard.aim(&self.game.ships, &self.game.builds.set, own.eye, own.forward, self.me.pilot.seat.is_some());
         } else {
             // in a script's pictures with the HUD, the control it aims at is the hand's
             let shown = self.script.as_ref().is_some_and(|sc| sc.hud);
@@ -1421,10 +1405,9 @@ impl State {
             _ => None,
         });
         let aimed = aimed.or(self.script_aim.map(|(id, k)| (id, lunar_ship::panels::Aimed::Control(k))));
-        for sh in &mut self.ships.list {
+        for sh in &mut self.game.ships.list {
             sh.panels.aimed = aimed.filter(|(id, _)| *id == sh.structure).map(|(_, a)| a);
         }
-        self.aboard.update(dt as f32, &self.pilot, &mut self.ships, &self.builds.set);
         // with others: what our hand changed (or a script's steps) goes to them; without, it is
         // nobody's business
         let scripted = self.script.as_mut().map(|sc| std::mem::take(&mut sc.changed)).unwrap_or_default();
@@ -1438,20 +1421,20 @@ impl State {
                 self.aboard.acts.clear();
             }
         }
-        self.spawner.update(&self.world.bodies, &self.builds, view.eye, view.forward, view.up, self.pilot.heading());
+        self.spawner.update(&self.world.bodies, &self.game.builds, view.eye, view.forward, view.up, self.me.pilot.heading());
         // what is seen: from inside a ship's rooms only what its windows and open doors show
-        let inside = self.pilot.ride.and_then(|r| {
-            let k = self.ships.by_structure(r.id)?;
-            let s = self.builds.set.get(r.id)?;
-            lunar_ship::atmos::room_of(&self.ships.list[k].kind, s.to_local(view.eye)).map(|_| r.id)
+        let inside = self.me.pilot.ride.and_then(|r| {
+            let k = self.game.ships.by_structure(r.id)?;
+            let s = self.game.builds.set.get(r.id)?;
+            lunar_ship::atmos::room_of(&self.game.ships.list[k].kind, s.to_local(view.eye)).map(|_| r.id)
         });
         self.perf.lap(perf::WORLD);
-        self.vis.update(&self.world.bodies, &self.builds.set, &self.builds.set.lib.catalog, view.eye, inside, self.world.time);
+        self.vis.update(&self.world.bodies, &self.game.builds.set, &self.game.builds.set.lib.catalog, view.eye, inside, self.world.time);
         self.perf.lap(perf::VISIBILITY);
         if self.editor.open {
-            self.editor.aim(&self.builds, view.eye, view.forward);
+            self.editor.aim(&self.game.builds, view.eye, view.forward);
             let before = self.editor.ship();
-            self.editor.update(&mut self.ships, &mut self.builds, &self.world.bodies);
+            self.editor.update(&mut self.game.ships, &mut self.game.builds, &self.world.bodies);
             // a ship rebuilt is a new structure: a script about it follows it
             if let Some(sc) = &mut self.script
                 && sc.ship == before
@@ -1463,14 +1446,14 @@ impl State {
         }
         self.last_view = Some(view);
         self.renderer.set_hidden_structures(&self.vis.hidden);
-        self.builds.show(&mut self.renderer, view.eye);
+        self.renderer.set_structures(&self.game.builds.set.list, &self.game.builds.set.lib, view.eye);
         let spawner = &self.spawner;
-        let lamp = self.pilot.lamp(if outside || looking { &own } else { &view });
-        let outline = if self.editor.open { self.editor.highlight(&self.ships, &self.builds) } else { lunar_core::props::PropScene::default() };
+        let lamp = self.me.pilot.lamp(if outside || looking { &own } else { &view });
+        let outline = if self.editor.open { self.editor.highlight(&self.game.ships, &self.game.builds) } else { lunar_core::props::PropScene::default() };
         let (gear, in_ship) = (&self.gear, inside.is_some());
         let hands = self.body.as_ref().filter(|_| stance.is_some()).map(|b| &b.hands);
         let handwork = &self.handwork;
-        self.ships.show(&mut self.renderer, &self.builds, view.eye, lamp, &self.vis, |scene| {
+        self.ships_view.show(&self.game.ships, &mut self.renderer, &self.game.builds, view.eye, lamp, &self.vis, |scene| {
             spawner.ghost(scene);
             gear.show(scene, &own, in_ship, hands);
             handwork.show(scene);
@@ -1485,11 +1468,9 @@ impl State {
         }
         // the others: our player and ships out, theirs in, their bodies drawn
         if let Some(m) = &mut self.multi {
-            let tool = self.gear.held.map_or(0, |k| k as u8 + 1);
             let now = lunar_net::now();
-            m.send(now, &self.pilot, self.pilot.eye_over_feet(), [self.look.yaw, self.look.pitch], tool, self.gear.trigger, outside, &self.ships, &mut self.builds, &mut self.blasts.seen);
             if let Some(source) = &self.body_source {
-                m.bodies(now, dt, source, &self.builds.set, &self.world.bodies, &self.ships, &mut self.figures);
+                m.bodies(now, dt, source, &self.game.builds.set, &self.world.bodies, &self.game.ships, &mut self.figures);
             }
             for (text, level) in m.said.drain(..) {
                 self.ui.hud.notice("red", &text, [Level::Normal, Level::Caution, Level::Warning][usize::from(level.min(2))], 5.0);
@@ -1532,7 +1513,7 @@ impl State {
         let photo = self.photo.take();
         let script_shot = self.script.as_mut().and_then(|s| s.shot.take()).or(photo);
         let shot = script_shot.as_ref().or(o.shot.as_ref().filter(|_| elapsed > o.shot_at));
-        let mode = if self.bench.is_some() { "BENCH" } else if self.pilot.flying { "VUELO" } else { "A PIE" };
+        let mode = if self.bench.is_some() { "BENCH" } else if self.me.pilot.flying { "VUELO" } else { "A PIE" };
         let ui = {
             let st = self.renderer.stats.clone();
             let info = Info {
@@ -1542,17 +1523,17 @@ impl State {
             frame_ms: self.frame_ms,
             sim_ms: self.world.sim_ms,
             mode,
-            altitude: self.pilot.altitude(),
-            speed: self.pilot.speed,
-            speed_factor: if self.pilot.flying { self.ui.controls.factor(&input) } else { 1.0 },
+            altitude: self.me.pilot.altitude(),
+            speed: self.me.pilot.speed,
+            speed_factor: if self.me.pilot.flying { self.ui.controls.factor(&input) } else { 1.0 },
             ships: self.counts.ships,
             npcs: self.counts.npcs,
-            particles: self.blasts.fx.particles.len(),
-            structures: self.builds.stats,
-            missile: self.blasts.status(&self.builds),
+            particles: self.game.blasts.fx.particles.len(),
+            structures: self.game.builds.stats,
+            missile: self.game.blasts.status(&self.game.builds),
             };
-            let (spawner, inspector, editor, ships, set) = (&mut self.spawner, &mut self.inspector, &mut self.editor, &self.ships, &self.builds.set);
-            let on = self.pilot.ride.map(|r| r.id);
+            let (spawner, inspector, editor, ships, set) = (&mut self.spawner, &mut self.inspector, &mut self.editor, &self.game.ships, &self.game.builds.set);
+            let on = self.me.pilot.ride.map(|r| r.id);
             let eye = view.eye;
             let mut picked = false;
             let (start, menu_open, adapter) = (&mut self.start, self.ui.menu, self.adapter.as_str());
@@ -1583,7 +1564,7 @@ impl State {
                 // with others: the server written in the menu is asked to let us in
                 Some(crate::start::Action::Connect) => {
                     if let Some((addr, name)) = self.start.as_ref().map(|st| (st.server.trim().to_string(), st.name.trim().to_string())) {
-                        match crate::multi::Multi::connect(&addr, if name.is_empty() { "Jugador" } else { &name }, &self.ships, &self.builds) {
+                        match crate::multi::Multi::connect(&addr, if name.is_empty() { "Jugador" } else { &name }, &self.game.ships, &self.game.builds) {
                             Ok(m) => self.multi = Some(m),
                             Err(e) => self.ui.hud.notice("red", &format!("No se puede conectar a {addr}: {e}"), Level::Warning, 6.0),
                         }
@@ -1601,8 +1582,16 @@ impl State {
             frame
         };
         self.perf.lap(perf::SCENE);
-        self.renderer.render(&FrameInput { view, time: self.world.time, ui: ui.as_ref(), capture: shot.map(|p| p.as_path()) })?;
+        let drawn = self.renderer.render(&FrameInput { view, time: self.world.time, ui: ui.as_ref(), capture: shot.map(|p| p.as_path()) });
+        // the world back at its step (what was let fly while drawing goes from there)
+        self.game.restore(&mut [&mut self.me]);
+        drawn?;
         self.perf.lap(perf::RENDER);
+        // with others: our player and ships out, as they are at the step
+        if let Some(m) = &mut self.multi {
+            let tool = self.gear.held.map_or(0, |k| k as u8 + 1);
+            m.send(lunar_net::now(), &self.me.pilot, self.me.pilot.eye_over_feet(), [self.look.yaw, self.look.pitch], tool, self.gear.trigger, outside, &self.game.ships, &mut self.game.builds, &mut self.game.blasts.seen);
+        }
         if script_shot.is_none() && shot.is_some() {
             return Ok(false);
         }
@@ -1620,7 +1609,7 @@ impl State {
                 crate::GAME,
                 self.preset_name,
                 self.fps,
-                self.counts.ships + self.world.traffic.as_ref().map_or(0, |t| t.len()),
+                self.counts.ships + self.game.traffic.as_ref().map_or(0, |t| t.len()),
                 self.counts.npcs
             ));
         }
@@ -1782,7 +1771,7 @@ impl ApplicationHandler for App {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => s.renderer.resize(size.width, size.height),
             WindowEvent::Focused(false) => {
-                s.blasts.release_all();
+                s.game.blasts.release_all();
                 s.capture_mouse(false);
                 // (what a script holds is not the keyboard's to let go)
                 if s.script.is_none() {
@@ -1801,7 +1790,7 @@ impl ApplicationHandler for App {
                 if let Some(v) = s.last_view {
                     let size = s.window.inner_size();
                     let dir = Editor::mouse_ray(&v, s.cursor.0, s.cursor.1, (size.width, size.height));
-                    s.editor.click(&s.ships, &s.builds, v.eye, dir);
+                    s.editor.click(&s.game.ships, &s.game.builds, v.eye, dir);
                 }
             }
             WindowEvent::MouseInput { state, button: MouseButton::Right, .. } if s.editor.open => s.capture_mouse(state == ElementState::Pressed),
@@ -1811,26 +1800,26 @@ impl ApplicationHandler for App {
                 if !s.captured {
                     s.capture_mouse(true);
                 } else if s.spawner.placing() {
-                    let made = s.spawner.place(&mut s.ships, &mut s.builds, &s.world.bodies);
+                    let made = s.spawner.place(&mut s.game.ships, &mut s.game.builds, &s.world.bodies);
                     // (a ship made with others about is made on their copies too)
                     if let (Some(m), Some(id)) = (&mut s.multi, made)
-                        && let Some(n) = s.ships.by_structure(id)
+                        && let Some(n) = s.game.ships.by_structure(id)
                     {
-                        let kind = s.ships.list[n].kind.id.clone();
-                        m.made(&kind, id, &s.builds.set, &s.ships);
+                        let kind = s.game.ships.list[n].kind.id.clone();
+                        m.made(&kind, id, &s.game.builds.set, &s.game.ships);
                     }
                 } else if s.gear.owns_click() {
                     // a tool whose click is its own (the welder): whatever is under it is its
                     // work, a door and a panel's controls too
                     s.gear.trigger = true;
-                } else if !s.aboard.press(&mut s.ships, &s.builds.set) {
+                } else if !s.aboard.press(&mut s.game.ships, &s.game.builds.set) {
                     // nothing of a ship under the hand: the wrist computer if it is up, the tool
                     // in the hand, or bare, what is loose
                     if s.handwork.click() {
                     } else if s.gear.held.is_some() {
                         s.gear.trigger = true;
                     } else if let Some(v) = s.last_aim.or(s.last_view)
-                        && let Err(why) = s.hands.grab(&s.builds.set, &s.ships, &v, s.pilot.ride.map(|r| r.id))
+                        && let Err(why) = s.me.hands.grab(&s.game.builds.set, &s.game.ships, &v, s.me.pilot.ride.map(|r| r.id))
                     {
                         s.ui.hud.notice("manos", &format!("No se puede coger: {why}"), Level::Caution, 2.5);
                     }
@@ -1838,8 +1827,8 @@ impl ApplicationHandler for App {
             }
             WindowEvent::MouseInput { state: ElementState::Released, button: MouseButton::Left, .. } => {
                 s.gear.trigger = false;
-                s.hands.release(&mut s.builds);
-                s.aboard.release(&mut s.ships, &s.builds.set);
+                s.me.hands.release(&mut s.game.builds);
+                s.aboard.release(&mut s.game.ships, &s.game.builds.set);
             }
             WindowEvent::MouseInput { state: ElementState::Pressed, button: MouseButton::Right, .. } if s.spawner.placing() => s.spawner.toggle(),
             // the right button: the tool's own use if it has one (the welder's view), else a closer look
@@ -1856,8 +1845,8 @@ impl ApplicationHandler for App {
                     MouseScrollDelta::PixelDelta(p) => p.y * 0.02,
                 };
                 let m = s.mods();
-                if !s.hands.wheel(y) && !s.spawner.wheel(y, m.coarse) && !s.aboard.wheel(&mut s.ships, &s.builds.set, y as f32, m) && !s.chase.wheel(y) {
-                    s.pilot.wheel(y);
+                if !s.me.hands.wheel(y) && !s.spawner.wheel(y, m.coarse) && !s.aboard.wheel(&mut s.game.ships, &s.game.builds.set, y as f32, m) && !s.chase.wheel(y) {
+                    s.me.pilot.wheel(y);
                 }
             }
             WindowEvent::RedrawRequested => match s.frame(&self.opts) {
@@ -1880,17 +1869,17 @@ impl ApplicationHandler for App {
             let m = s.mods();
             // (the gestures' wheel open: the mouse chooses in it)
             if s.handwork.mouse(delta.0, delta.1) {
-            } else if !s.aboard.motion(&mut s.ships, &s.builds.set, delta.0, delta.1, m) {
+            } else if !s.aboard.motion(&mut s.game.ships, &s.game.builds.set, delta.0, delta.1, m) {
                 // zoomed in, the mouse turns the view as much less
                 let c = s.ui.controls;
                 let k = c.mouse / (1.0 + s.zoom * (ZOOM - 1.0));
                 let (x, y) = (delta.0 * k, delta.1 * k * if c.invert_y { -1.0 } else { 1.0 });
                 if s.look.held {
                     // (the head, or the camera from outside: the body stays as it is)
-                    let r = s.pilot.mouse();
+                    let r = s.me.pilot.mouse();
                     s.look.turn(x * r, y * r, s.chase.on);
                 } else {
-                    s.pilot.look(x, y);
+                    s.me.pilot.look(x, y);
                 }
             }
         }

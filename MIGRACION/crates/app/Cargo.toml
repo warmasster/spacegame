@@ -15,6 +15,7 @@ lunar-controls = { path = "../controls" }
 lunar-machines = { path = "../machines" }
 lunar-audio = { path = "../audio" }
 lunar-net = { path = "../net" }
+lunar-play = { path = "../play" }
 winit.workspace = true
 glam.workspace = true
 egui.workspace = true

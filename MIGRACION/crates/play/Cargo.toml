@@ -1,0 +1,24 @@
+[package]
+name = "lunar-play"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+# The game without its picture: what decides what happens, for any number of players, the same in
+# the client (which predicts with it) and in the server (which has the truth). Nothing here draws,
+# sounds or reads a key.
+[dependencies]
+lunar-core = { path = "../core" }
+lunar-ship = { path = "../ship" }
+lunar-signals = { path = "../signals" }
+lunar-controls = { path = "../controls" }
+lunar-machines = { path = "../machines" }
+lunar-net = { path = "../net" }
+glam.workspace = true
+rayon.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

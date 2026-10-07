@@ -11,10 +11,8 @@ use lunar_core::{
     effect_defs::BlastDef,
     effects::Effects,
     font::Font,
-    props::{Lamp, PropScene},
 };
 use lunar_core::structure::state::Structure;
-use lunar_render::{Light, Renderer};
 use lunar_ship::{Pace, Ship, ShipKind, World};
 use rayon::prelude::*;
 use std::{
@@ -22,11 +20,6 @@ use std::{
     sync::Arc,
 };
 
-/// Ships farther than this (m) show no props; lamps farther than this light nothing.
-const PROPS_REACH: f64 = 70.0;
-const LAMPS_REACH: f64 = 260.0;
-/// How near a structure that is no ship shows what is written on it (m).
-const LABELS_REACH: f64 = 40.0;
 /// A ship this near the eye (m) runs every tick; one farther than `ASLEEP_FROM` and at rest is
 /// only looked at now and then. In between, and near but with nothing happening in it, it ticks
 /// twice a second with the rest settled (`lunar_ship::Pace`).
@@ -41,10 +34,6 @@ pub struct Ships {
     pub kinds: Vec<Arc<ShipKind>>,
     pub list: Vec<Ship>,
     pub font: Font,
-    scene: PropScene,
-    lamps: Vec<Lamp>,
-    lights: Vec<Light>,
-    order: Vec<(f64, usize)>,
     seed: u64,
     /// Ships paired with their structure last frame, and how many of them ran in full (tools).
     paired: usize,
@@ -52,9 +41,6 @@ pub struct Ships {
     /// The explosions the ships' machines set off this frame (the effect, where, how big), for
     /// whoever tells the other players of them (`multi`); emptied every frame.
     pub booms: Vec<(&'static str, DVec3, f32)>,
-    /// Lamps that are not of any ship, to light with the ships' this frame (the helmets of the
-    /// other players): taken (and emptied) by `show`.
-    pub guests: Vec<Lamp>,
 }
 
 /// Ambient pressure at `p` (Pa): bodies have no atmosphere yet; this is where one goes.
@@ -74,7 +60,7 @@ fn sunlight(bodies: &BodyRegistry, p: DVec3, sun: DVec3) -> f64 {
 
 impl Ships {
     pub fn new(kinds: Vec<Arc<ShipKind>>, font: Font) -> Ships {
-        Ships { kinds, list: Vec::new(), font, scene: PropScene::default(), lamps: Vec::new(), lights: Vec::new(), order: Vec::new(), seed: 0x5eed_0001, paired: usize::MAX, full: 0, booms: Vec::new(), guests: Vec::new() }
+        Ships { kinds, list: Vec::new(), font, seed: 0x5eed_0001, paired: usize::MAX, full: 0, booms: Vec::new() }
     }
 
     pub fn kind(&self, id: &str) -> Option<Arc<ShipKind>> {
@@ -160,12 +146,12 @@ impl Ships {
     }
 
     /// Run every ship's systems for `dt` s, all at once (each on its own structure, a thread
-    /// each as there are cores), each at its pace: in full the ones in `awake` (the one the
-    /// player rides, the one a tool works on), the ones near `eye` and the ones with something
-    /// going on; the rest a tick now and then.
+    /// each as there are cores), each at its pace: in full the ones in `awake` (the ones players
+    /// ride, the one a tool works on), the ones near any of `watchers` (the players, a camera) and
+    /// the ones with something going on; the rest a tick now and then.
     /// `people`: whoever stands about (spheres in the world): what moves stops at them.
     #[allow(clippy::too_many_arguments)]
-    pub fn update(&mut self, dt: f64, builds: &mut Builds, bodies: &BodyRegistry, fx: &mut Effects, sun: DVec3, eye: DVec3, awake: &[u64], people: &[(DVec3, f32)]) {
+    pub fn update(&mut self, dt: f64, builds: &mut Builds, bodies: &BodyRegistry, fx: &mut Effects, sun: DVec3, watchers: &[DVec3], awake: &[u64], people: &[(DVec3, f32)]) {
         // ships whose structure is gone are gone
         if self.list.len() != self.paired {
             let alive: HashSet<u64> = builds.set.list.iter().map(|s| s.id).collect();
@@ -176,7 +162,8 @@ impl Ships {
         let mut pairs: Vec<(&mut Ship, &mut Structure)> = self.list.iter_mut().filter_map(|sh| by_id.remove(&sh.structure).map(|s| (sh, s))).collect();
         self.paired = pairs.len();
         let pace = |sh: &Ship, s: &Structure| {
-            let d = s.to_world(s.center).distance(eye) - f64::from(s.radius);
+            let c = s.to_world(s.center);
+            let d = watchers.iter().map(|w| c.distance(*w)).fold(f64::MAX, f64::min) - f64::from(s.radius);
             let moving = !s.anchored && !s.resting;
             if awake.contains(&s.id) || sh.busy() || moving || s.awake_until > now || d < FULL_WITHIN {
                 Pace::Full
@@ -248,79 +235,6 @@ impl Ships {
             }
             lunar_ship::cargo::serve(sh, &mut builds.set);
         }
-    }
-
-    /// This frame's props and lamps to the renderer, seen from `eye`; `extra` adds its own props
-    /// (the spawner's ghost).
-    /// `own` is the player's own lamp, lit before any other. Ships `vis` hides show nothing but
-    /// the lamps that light their outside; seen from outside past twice their size, their inside
-    /// lamps light nothing (their inside is not drawn).
-    pub fn show(&mut self, r: &mut Renderer, builds: &Builds, eye: DVec3, own: Option<Lamp>, vis: &crate::visibility::Visibility, extra: impl FnOnce(&mut PropScene)) {
-        self.scene.clear();
-        self.lamps.clear();
-        for sh in &self.list {
-            let Some(s) = builds.set.list.iter().find(|s| s.id == sh.structure) else { continue };
-            let to_center = s.to_world(s.center).distance(eye);
-            let d = to_center - f64::from(s.radius);
-            if d > LAMPS_REACH {
-                continue;
-            }
-            let props = self.scene.props.len();
-            let glyphs = self.scene.glyphs.len();
-            let decals = self.scene.decals.len();
-            let lamps = self.lamps.len();
-            sh.scene(s, &builds.set.lib.catalog, &self.font, eye, &mut self.scene, &mut self.lamps);
-            let hidden = vis.is_hidden(s.id);
-            if d > PROPS_REACH || hidden {
-                // far or hidden: its lamps only
-                self.scene.props.truncate(props);
-                self.scene.glyphs.truncate(glyphs);
-                self.scene.decals.truncate(decals);
-            }
-            if hidden || to_center > 2.0 * f64::from(s.radius) {
-                let mut k = lamps;
-                for i in lamps..self.lamps.len() {
-                    if !self.lamps[i].inside {
-                        self.lamps.swap(k, i);
-                        k += 1;
-                    }
-                }
-                self.lamps.truncate(k);
-            }
-        }
-        // what is written on what is loose or built near the eye: a drum out of its hold keeps
-        // its lettering (the ships' own was laid out with them)
-        let mut placed = Vec::new();
-        for s in &builds.set.list {
-            if s.to_world(s.center).distance(eye) - f64::from(s.radius) > LABELS_REACH || vis.is_hidden(s.id) || self.by_structure(s.id).is_some() {
-                continue;
-            }
-            let frame = self.scene.frames.len() as u16;
-            self.scene.frames.push(lunar_core::props::PropFrame { pos: s.pos, rot: s.rot, inside: false });
-            if lunar_core::structure::labels::show(s, &builds.set.lib.catalog, &self.font, s.to_local(eye), |_| frame, &mut placed, &mut self.scene) == 0 {
-                self.scene.frames.pop();
-            }
-        }
-        extra(&mut self.scene);
-        r.set_props(&self.scene);
-        self.lamps.append(&mut self.guests);
-        // the lamps that matter most here: near and bright first
-        self.order.clear();
-        for (k, l) in self.lamps.iter().enumerate() {
-            let dist = l.pos.distance(eye);
-            let power = f64::from(l.color[0] + l.color[1] + l.color[2]) * f64::from(l.range);
-            self.order.push((dist / power.max(1e-3).sqrt(), k));
-        }
-        self.order.sort_by(|a, b| a.0.total_cmp(&b.0));
-        self.lights.clear();
-        if let Some(l) = own {
-            self.lights.push(Light { pos: l.pos, color: l.color, range: l.range, dir: l.dir.to_array(), cone: l.cone, inside: l.inside, everywhere: true });
-        }
-        for &(_, k) in self.order.iter().take(r.lamp_room().saturating_sub(self.lights.len())) {
-            let l = &self.lamps[k];
-            self.lights.push(Light { pos: l.pos, color: l.color, range: l.range, dir: l.dir.to_array(), cone: l.cone, inside: l.inside, everywhere: false });
-        }
-        r.set_lamps(&self.lights);
     }
 
     /// The ship on structure `id`.

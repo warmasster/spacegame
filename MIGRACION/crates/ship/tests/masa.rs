@@ -532,9 +532,11 @@ fn its_tanks_drained_unevenly_it_hovers_without_turning() {
         // (it rolls a little as it comes upright after leaving the ground)
         assert!(spin < 0.03 && lean < lean0 + 4.0, "{}: descentrada, gira a {spin:.4} rad/s y se inclina {lean:.2}° (al empezar {lean0:.2}°)", kind.id);
         // (its engines hold it up between them, and it is they that take the off-centre load:
-        // the thrusters barely fire)
+        // the thrusters barely fire. Measured with the systems and the world on one clock (V41:
+        // a tick a step); before, this test gave the systems 1/50 s for each 1/60 s of the world,
+        // and the Azor's thrusters gave 401 N where they now give 425, 2.0 % of its weight)
         assert!((thrust.iter().sum::<f64>() - weight).abs() < weight * 0.06, "{}: sus motores empujan {:.0} N y pesa {weight:.0} N", kind.id, thrust.iter().sum::<f64>());
-        assert!(jets < weight * 0.02, "{}: son las toberas las que la sostienen derecha ({jets:.0} N de media)", kind.id);
+        assert!(jets < weight * 0.025, "{}: son las toberas las que la sostienen derecha ({jets:.0} N de media)", kind.id);
     }
 }
 

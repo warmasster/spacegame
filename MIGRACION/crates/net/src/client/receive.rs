@@ -190,6 +190,8 @@ impl Client {
             Msg::Hinted { by, data } => self.events.push(Event::Hinted { by, data: data.to_vec() }),
             Msg::From { by, data } => self.events.push(Event::Direct { by, data: data.to_vec() }),
             Msg::Said { from, text } => self.events.push(Event::Chat { from, text: text.to_string() }),
+            Msg::Game(data) => self.events.push(Event::Game { reliable: true, data: data.to_vec() }),
+            Msg::Quick(data) => self.events.push(Event::Game { reliable: false, data: data.to_vec() }),
             Msg::Synced => {
                 self.synced = true;
                 self.events.push(Event::Synced);

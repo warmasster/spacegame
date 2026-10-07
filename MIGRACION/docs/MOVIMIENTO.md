@@ -40,10 +40,23 @@ en el propio jugador, que tampoco eran del jugador sino del mismo principio:
 **Nada sabe a qué velocidad va nada. Cada cosa se mueve con el mundo, en su mismo instante, y lo
 que toca la frena contra eso que toca.**
 
-1. **Un solo reloj: el del mundo.** `Structures::simulate_with` (`core/structure/schedule.rs`)
-   avanza las estructuras en lonchas de 1/60 s como mucho (`physics::slices`) y, después de **cada**
-   loncha, da ese mismo `dt` a lo que vive entre ellas: el rasgo `Among`. No hay acumuladores ni
-   pasos fijos aparte, ni interpolación: lo que se dibuja es dónde está cada cosa ahora.
+1. **Un solo reloj: el del juego** (V41). `lunar_play::game::Game::tick` avanza el mundo en
+   **pasos de exactamente 1/60 s** (`STEP`), numerados (`Game::step`), los mismos en cualquier
+   máquina y a cualquier número de fotogramas: en cada uno, `Structures::simulate_with`
+   (`core/structure/schedule.rs`) da su loncha a las estructuras y, después de ella, ese mismo `dt`
+   a lo que vive entre ellas (el rasgo `Among`), y los sistemas de cada nave dan un tic
+   (`lunar_ship::ship::TICK` = `STEP`). El fotograma no simula: debe su tiempo al juego y lo paga
+   en pasos (como mucho 4; si no le llega, el juego va algo más lento en vez de trabajar más). No
+   hay más acumulador que ese.
+   **Se dibuja entre los dos últimos pasos** (`Game::present` / `restore`), todo del mismo
+   instante: cada estructura entre donde estaba al empezar el paso y donde está; quien va a bordo,
+   por su sitio en lo que lo lleva; el tráfico, a esa hora; las partículas, los proyectiles y los
+   destellos, atrás lo que les toca con su velocidad (`Particles::ahead`, el `lag` del
+   renderizador), y lo que se emite o se dispara mientras se dibuja se lleva al tiempo del paso
+   (`Blasts::hold`: sale de la boca donde está, no donde se veía). La mirada no espera al paso.
+   Antes (V40) el mundo avanzaba en lonchas que dependían del fotograma (6,9 ms a 144 fps, 16,7 a
+   60) y dos máquinas no podían simular lo mismo: es lo que pide un servidor que tiene la verdad
+   ([`PLAN_AUTORITATIVO.md`](PLAN_AUTORITATIVO.md) §3.1).
 2. **A bordo se está donde se está en la nave** (`Ride::local`). La posición de mundo se rehace de
    ahí al empezar cada loncha. Quien pregunte dónde está el jugador *en una nave* (salas, sonido)
    usa ese sitio.

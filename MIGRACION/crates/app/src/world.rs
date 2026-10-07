@@ -30,8 +30,8 @@ pub struct World {
     pub site: Site,
     pub fleet: Fleet,
     pub crowd: Crowd,
-    /// Ships going about between fields (none in a bench: its numbers are the fleet's).
-    pub traffic: Option<Traffic>,
+    /// How many ships of the traffic it draws (the traffic itself is the game's: `Game::traffic`).
+    traffic_len: usize,
     moving_from: usize,
     crowd_from: usize,
     traffic_from: usize,
@@ -40,8 +40,20 @@ pub struct World {
 }
 
 impl World {
-    /// `traffic`: with the scenario's traffic (if it has any).
-    pub fn new(r: &mut Renderer, defs: &Defs, models: &Models, n: Counts, traffic: bool) -> Result<World, String> {
+    /// The scenario's traffic (if it has any and `on`), ten minutes of it already gone by, so the
+    /// sky is busy from the start: the game's to run (`Game::traffic`), this world's to draw.
+    pub fn traffic(defs: &Defs, on: bool) -> Result<Option<Traffic>, String> {
+        let sc = &defs.scenario;
+        let bodies = defs.system.bodies.clone();
+        let site = Site::from_def(&sc.site, &bodies)?;
+        Ok(match (&sc.trafico, on) {
+            (Some(def), true) if !sc.fleet.models.is_empty() => Some(Traffic::new(&bodies, &site, def, sc.fleet.models.len(), 0x7a_f1c0, 600.0)),
+            _ => None,
+        })
+    }
+
+    /// `traffic`: the game's traffic, to draw (`World::traffic`).
+    pub fn new(r: &mut Renderer, defs: &Defs, models: &Models, n: Counts, traffic: Option<&Traffic>) -> Result<World, String> {
         let sc = &defs.scenario;
         let bodies = defs.system.bodies.clone();
         let site = Site::from_def(&sc.site, &bodies)?;
@@ -58,20 +70,15 @@ impl World {
         for k in 0..crowd.len() {
             desc.push((npc_model, crowd.pos[k], Quat::IDENTITY, 1.0, FLAG_MOVING));
         }
-        // the traffic: ten minutes of it already gone by, so the sky is busy from the start
-        let traffic = match (&sc.trafico, traffic) {
-            (Some(def), true) if !fleet_models.is_empty() => Some(Traffic::new(&bodies, &site, def, fleet_models.len(), 0x7a_f1c0, 600.0)),
-            _ => None,
-        };
         let traffic_from = desc.len();
-        if let Some(t) = &traffic {
+        if let Some(t) = traffic {
             for k in 0..t.len() {
                 desc.push((fleet_models[usize::from(t.kind[k]) % fleet_models.len()], t.pos[k], t.rot[k], 1.0, FLAG_MOVING));
             }
         }
         r.set_instances(&desc);
-        let w = World { bodies, site, moving_from: fleet.parked, crowd_from: fleet.len(), traffic_from, traffic, fleet, crowd, time: 0.0, sim_ms: 0.0 };
-        w.write(r);
+        let w = World { bodies, site, moving_from: fleet.parked, crowd_from: fleet.len(), traffic_from, traffic_len: traffic.map_or(0, |t| t.len()), fleet, crowd, time: 0.0, sim_ms: 0.0 };
+        w.write(r, traffic);
         Ok(w)
     }
 
@@ -88,21 +95,20 @@ impl World {
         Some(View { eye, forward: (target - eye).normalize(), up, ..base })
     }
 
-    pub fn update(&mut self, r: &mut Renderer, dt: f64) {
+    /// The frame drawn at `time` (the game's, between its last two steps), `dt` s after the last:
+    /// the fleet and the crowd on, and they and the game's traffic into the renderer.
+    pub fn update(&mut self, r: &mut Renderer, time: f64, dt: f64, traffic: Option<&Traffic>) {
         let t0 = std::time::Instant::now();
-        self.time += dt;
+        self.time = time;
         self.fleet.update(&self.bodies, self.time);
         self.crowd.update(&self.bodies, dt);
-        if let Some(t) = &mut self.traffic {
-            t.update(&self.bodies, self.time);
-        }
-        self.write(r);
+        self.write(r, traffic);
         self.sim_ms = t0.elapsed().as_secs_f32() * 1000.0;
     }
 
     /// Moving instances (flying ships, NPCs) into the renderer, in parallel.
-    fn write(&self, r: &mut Renderer) {
-        if let Some(t) = &self.traffic {
+    fn write(&self, r: &mut Renderer, traffic: Option<&Traffic>) {
+        if let Some(t) = traffic.filter(|t| t.len() == self.traffic_len) {
             let (world, inst) = r.scene().poses(self.traffic_from..self.traffic_from + t.len());
             world.par_iter_mut().zip(inst.par_iter_mut()).enumerate().with_min_len(256).for_each(|(k, (w, i))| {
                 *w = t.pos[k];

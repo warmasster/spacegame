@@ -48,6 +48,16 @@ const WAKE_SPEED: f32 = 0.6;
 /// rather than on the ground under each of its corners.
 const CLEAR: f64 = 0.6;
 const SMALL: f32 = 1.5;
+/// Past this much travel relative to another (m in a step), what a body would pass through in
+/// the step is looked for along the way (`sweep`, `ground_ahead`): under it, the parts' own
+/// contacts hold (a corner gone past a thin plate stays in it as far as `DEEP`).
+const SWEEP_FROM: f64 = 0.25;
+/// Points cast along the way per pair of bodies and step at most, and how far toward its middle
+/// a part's corners are taken in to be cast.
+const SWEEP_RAYS: usize = 1024;
+const SWEEP_INSET: f32 = 0.85;
+/// What meets within this much (m) of what meets first meets with it.
+const SWEEP_TOGETHER: f32 = 0.05;
 /// From this many bodies their contacts are found on every core.
 const PARALLEL_FROM: usize = 6;
 
@@ -369,8 +379,11 @@ impl Physics {
                 }
             }
         }
+        // (each along where it goes in the step: what two fast bodies cross on the way is found
+        // though neither starts near the other)
         let mut grid = self.grid.take().unwrap_or_else(|| Grid::new(16.0));
-        grid.build(list);
+        let of = &self.of;
+        grid.build_swept(list, |k| if of[k].is_some() { list[k].vel * f64::from(dt) } else { DVec3::ZERO });
         // what holds where each is now: asked once per body and step
         self.fields.clear();
         self.shoved.clear();
@@ -396,7 +409,7 @@ impl Physics {
             self.patches.clear();
             self.lows.clear();
         }
-        let mut tasks: Vec<(usize, usize, Option<Patch>, Vec<u32>, Low)> = Vec::with_capacity(self.bodies.len());
+        let mut tasks: Vec<(usize, usize, Option<Patch>, Vec<u32>, Vec<u32>, Low)> = Vec::with_capacity(self.bodies.len());
         for (k, s) in list.iter().enumerate() {
             let Some(a) = self.of[k] else { continue };
             let com = self.bodies[a].com;
@@ -423,30 +436,45 @@ impl Physics {
                 }
             });
             let c = s.to_world(s.center);
-            grid.along(c, c, f64::from(s.radius), &mut self.near);
-            let near: Vec<u32> = self
-                .near
-                .iter()
-                .copied()
-                .filter(|&j| {
-                    let j = j as usize;
-                    let o = &list[j];
-                    // (what it holds is part of it: it does not strike it)
-                    j != k && !(self.of[j].is_some() && j < k) && self.part_of[j] != Some(a) && o.to_world(o.center).distance(c) <= f64::from(s.radius + o.radius)
-                })
-                .collect();
-            tasks.push((k, a, patch, near, self.lows.remove(&s.id).unwrap_or_default()));
+            let go = s.vel * f64::from(dt);
+            grid.along(c, c + go, f64::from(s.radius), &mut self.near);
+            let (mut near, mut fast) = (Vec::new(), Vec::new());
+            for &j in &self.near {
+                let j = j as usize;
+                let o = &list[j];
+                // (what it holds is part of it: it does not strike it)
+                if j == k || (self.of[j].is_some() && j < k) || self.part_of[j] == Some(a) {
+                    continue;
+                }
+                let reach = f64::from(s.radius + o.radius);
+                let apart = c - o.to_world(o.center);
+                if apart.length() <= reach {
+                    near.push(j as u32);
+                }
+                // how near they come within the step, each going as it goes
+                let closing = go - o.vel * f64::from(dt);
+                let along = closing.length_squared();
+                let t = if along > 0.0 { (-apart.dot(closing) / along).clamp(0.0, 1.0) } else { 0.0 };
+                if along.sqrt() > SWEEP_FROM && (apart + closing * t).length() <= reach {
+                    fast.push(j as u32);
+                }
+            }
+            tasks.push((k, a, patch, near, fast, self.lows.remove(&s.id).unwrap_or_default()));
         }
         let (of, moving) = (&self.part_of, &self.bodies);
         let list_ref: &[Structure] = list;
-        let find = |(k, a, patch, near, low): &mut (usize, usize, Option<Patch>, Vec<u32>, Low)| -> (Vec<Contact>, Vec<f32>) {
+        let find = |(k, a, patch, near, fast, low): &mut (usize, usize, Option<Patch>, Vec<u32>, Vec<u32>, Low)| -> (Vec<Contact>, Vec<f32>) {
             let (mut out, mut pressed) = (Vec::new(), Vec::new());
             if let Some(patch) = patch {
+                ground_ahead(&list_ref[*k], *a, patch, bodies, moving, dt, &mut out);
                 ground(&list_ref[*k], *a, patch, bodies, moving, low, &mut out);
             }
             legs(list_ref, *k, *a, patch.as_ref(), near, of, bodies, moving, low, dt, &mut out, &mut pressed);
             for &j in near.iter() {
                 pair(list_ref, *k, *a, j as usize, of[j as usize], moving, &mut out);
+            }
+            for &j in fast.iter() {
+                sweep(list_ref, *k, *a, j as usize, of[j as usize], moving, dt, &mut out);
             }
             (out, pressed)
         };
@@ -458,7 +486,7 @@ impl Physics {
                 pressed.push((*k, p));
             }
         }
-        for (k, _, _, _, low) in tasks {
+        for (k, _, _, _, _, low) in tasks {
             if !low.pts.is_empty() {
                 self.lows.insert(list[k].id, low);
             }
@@ -796,6 +824,141 @@ fn ground(s: &Structure, a: usize, patch: &Patch, registry: &BodyRegistry, bodie
             out.push(contact(bodies, a, None, None, p, patch.n.as_vec3(), depth.max(0.0)));
         }
     }
+}
+
+/// The ground met within the step by a body going fast enough to pass under it in one step (a
+/// rock coming down out of the sky, a ship flown into a hillside): its bounding sphere is
+/// marched along where it goes against the ground there, and where it first meets it gives one
+/// contact that may close the gap to it and no more. Once it is down, `ground` takes over.
+fn ground_ahead(s: &Structure, a: usize, patch: &Patch, registry: &BodyRegistry, bodies: &[Body], dt: f32, out: &mut Vec<Contact>) {
+    let body = &bodies[a];
+    let go = (body.v0 + body.v.as_dvec3()) * f64::from(dt);
+    let length = go.length();
+    if length <= SWEEP_FROM {
+        return;
+    }
+    let bd = registry.get(patch.body);
+    let r = f64::from(s.radius);
+    let centre = s.to_world(s.center);
+    let ground_at = |p: DVec3| bd.center + bd.up(p) * (bd.radius + bd.height_at(bd.up(p), 0.25));
+    // how high the bottom of the sphere is over the ground under it, a share `t` of the way on
+    let high = |t: f64| {
+        let p = centre + go * t;
+        (p - ground_at(p)).dot(bd.up(p)) - r
+    };
+    // (nowhere near: nothing to look for)
+    if high(0.0) > length {
+        return;
+    }
+    let tries = ((length / r.max(1.0)).ceil() as usize).clamp(1, 32);
+    let mut before = 0.0;
+    let mut met = None;
+    for i in 1..=tries {
+        let t = i as f64 / tries as f64;
+        if high(t) <= 0.0 {
+            met = Some((before, t));
+            break;
+        }
+        before = t;
+    }
+    let Some((mut lo, mut hi)) = met else { return };
+    if high(lo) <= 0.0 {
+        // (already down: the ground's own contacts hold it)
+        return;
+    }
+    for _ in 0..12 {
+        let mid = 0.5 * (lo + hi);
+        if high(mid) > 0.0 { lo = mid } else { hi = mid }
+    }
+    // the ground where it is met, at the body's own scale (as the patch is)
+    let at = centre + go * lo;
+    let up = bd.up(at);
+    let side = up.any_orthonormal_vector() * (r * 0.5).max(0.5);
+    let fwd = up.cross(side);
+    let n = (ground_at(at + side) - ground_at(at - side)).cross(ground_at(at + fwd) - ground_at(at - fwd)).normalize_or(up);
+    let n = if n.dot(up) < 0.0 { -n } else { n };
+    // the point of the sphere that meets it, where that point is now
+    let touch = at - n * r - go * lo;
+    let gap = (touch - ground_at(at - n * r)).dot(n).max(0.0);
+    out.push(contact(bodies, a, None, None, touch, n.as_vec3(), -(gap as f32)));
+}
+
+/// Contacts structures `k` (body `a`) and `j` (body `b`, if it moves) would make within the step
+/// though their parts do not touch yet: what closes fast enough to pass through the other in one
+/// step (two ships at orbital speed, a rock into a station) is stopped at its face. The corners
+/// of each are cast along where they go relative to the other (spin included), against the other's
+/// solid parts; one that would reach it within the step makes a contact that may close the gap
+/// to it and no more, as `pair`'s do before touching. The nearest are kept.
+#[allow(clippy::too_many_arguments)]
+fn sweep(list: &[Structure], k: usize, a: usize, j: usize, b: Option<usize>, bodies: &[Body], dt: f32, out: &mut Vec<Contact>) {
+    let (sk, sj) = (&list[k], &list[j]);
+    let dt = f64::from(dt);
+    // how fast a world point of each goes (one that stands still: not at all)
+    let at = |body: Option<usize>, p: DVec3| {
+        body.map_or(DVec3::ZERO, |i| {
+            let m = &bodies[i];
+            m.v0 + m.v.as_dvec3() + m.w.as_dvec3().cross(p - m.com)
+        })
+    };
+    let mut found: Vec<Contact> = Vec::new();
+    let mut rays = 0;
+    // `from`'s corners cast at `into` (`toward`: the way `from` goes relative to it); `flip`: the
+    // contact's normal is the other way (from `j` toward `k`, as every contact here)
+    let mut cast = |from: &Structure, fb: Option<usize>, into: &Structure, ib: Option<usize>, flip: bool, found: &mut Vec<Contact>| {
+        let travel = (at(fb, from.to_world(from.com)) - at(ib, from.to_world(from.com))) * dt;
+        let far = travel.length();
+        // the parts of `from` that may meet `into` on the way: round where `into` is halfway
+        let mid = from.to_local(into.to_world(into.center) - travel * 0.5);
+        from.index.sphere(mid, into.radius + (far * 0.5) as f32, |qi| {
+            let q = &from.parts[qi as usize];
+            if !q.alive || !q.collide || rays >= SWEEP_RAYS {
+                return;
+            }
+            // (its middle and its corners a little in: two alike faced off squarely, a hair
+            // turned, would pass each other's corners by)
+            let middle = q.shape.verts().sum::<Vec3>() / q.shape.verts().count().max(1) as f32;
+            for v in std::iter::once(middle).chain(q.shape.verts().map(|v| middle + (v - middle) * SWEEP_INSET)) {
+                if rays >= SWEEP_RAYS {
+                    return;
+                }
+                rays += 1;
+                let p = from.to_world(q.local.transform_point3(v));
+                let d = (at(fb, p) - at(ib, p)) * dt;
+                let len = d.length();
+                if len <= f64::EPSILON {
+                    continue;
+                }
+                let dir = (into.rot.inverse() * (d / len).as_vec3()).normalize();
+                let Some(hit) = into.raycast_solid(into.to_local(p), dir, len as f32 + TOUCH, 0.0) else { continue };
+                // (its face toward the corner: against the way the corner goes)
+                let mut n = into.rot * hit.normal;
+                if n.dot(dir) > 0.0 {
+                    n = -n;
+                }
+                let n = n.normalize();
+                let gap = f64::from(hit.t) * f64::from(-(into.rot * dir).dot(n));
+                let normal = if flip { -n } else { n };
+                found.push(contact(bodies, a, b, Some(j), p, normal, -(gap.max(0.0) as f32)));
+            }
+        });
+    };
+    let (ka, jb) = (Some(a), b);
+    cast(sk, ka, sj, jb, false, &mut found);
+    cast(sj, jb, sk, ka, true, &mut found);
+    // one contact where they meet first: the middle of what meets within a hair of the first,
+    // its normal theirs (a blow squarely on turns nothing; one off the middle turns what it
+    // should). Many at once, all as hard as a blow at hundreds of m/s, would be solved into a spin
+    let Some(first) = found.iter().map(|c| c.gap).min_by(f32::total_cmp) else { return };
+    let near = first + SWEEP_TOGETHER.max(first * 0.05);
+    let (mut at, mut n, mut count) = (Vec3::ZERO, Vec3::ZERO, 0.0f32);
+    for c in found.iter().filter(|c| c.gap <= near) {
+        at += c.ra;
+        n += c.n;
+        count += 1.0;
+    }
+    let (ra, n) = (at / count, n.normalize_or(found[0].n));
+    let p = bodies[a].com + ra.as_dvec3();
+    out.push(contact(bodies, a, b, Some(j), p, n, -first));
 }
 
 /// Contacts between structures `k` (body `a`) and `j` (body `b`, if it moves), part against

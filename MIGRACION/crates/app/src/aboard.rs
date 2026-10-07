@@ -77,20 +77,7 @@ pub struct Aboard {
     pub acts: Vec<(u64, Act)>,
 }
 
-/// A hand on something of a ship that is not a control of its panels.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Act {
-    /// Closure `0` (a door, a hatch, a lid) pushed open (`1`) or shut.
-    Closure(u16, bool),
-    /// Clamp `0` worked: it held something and lets it go (`1`), or it shuts on what is loose on it.
-    Clamp(u16, bool),
-}
-
-/// The signal a hand orders closure `c` of `sh` by.
-pub(crate) fn closure_order(sh: &lunar_ship::Ship, c: usize) -> Option<String> {
-    let plan = sh.kind.closures.get(c)?;
-    Some(plan.order.clone().unwrap_or_else(|| format!("{}.mano", plan.id)))
-}
+pub use lunar_play::controls::{Act, closure_order};
 
 /// The keys of a ship's seats that are its own (not flight orders, whose keys are the player's
 /// and the same in every ship), for the list of controls: (seat, keys, what they do), as its data
@@ -239,30 +226,13 @@ impl Aboard {
     /// A control set by another player's hand (told over the network): put where they left it.
     /// Nothing of it is heard or noted here, and it is not told on again.
     pub fn remote(ships: &mut Ships, set: &Structures, structure: u64, k: usize, value: f64) -> bool {
-        let (Some(n), Some(s)) = (ships.by_structure(structure), set.get(structure)) else { return false };
-        let sh = &mut ships.list[n];
-        if k >= sh.panels.controls.len() {
-            return false;
-        }
-        let kind = sh.kind.clone();
-        sh.panels.intent(k, &Intent::Set { value }, s, &kind, &sh.store).changed
+        lunar_play::controls::set(ships, set, structure, k, value)
     }
 
     /// What another player's hand did to a ship (told over the network), done to our copy of it.
     /// Nothing of it is heard or noted here, and it is not told on again.
     pub fn remote_act(ships: &mut Ships, structure: u64, act: Act) {
-        let Some(n) = ships.by_structure(structure) else { return };
-        let sh = &mut ships.list[n];
-        match act {
-            Act::Closure(c, open) => {
-                if let Some(order) = closure_order(sh, usize::from(c)) {
-                    sh.set_signal(&order, f64::from(u8::from(open)));
-                    sh.touch();
-                }
-            }
-            Act::Clamp(c, holding) if usize::from(c) < sh.kind.clamps.len() => sh.work_clamp(usize::from(c), holding),
-            Act::Clamp(..) => {}
-        }
+        lunar_play::controls::act(ships, structure, act);
     }
 
     /// The control aimed at (its ship's structure, which, which of its keys) and the one held

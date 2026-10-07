@@ -47,13 +47,61 @@ pub struct Structures {
     /// here, kept for whoever tells them (`multi` takes them from here and every game, this one
     /// too, does them when they come back). Nothing is ever put in it with no such structure.
     pub told: Vec<(u64, super::damage::Hit)>,
+    /// Where each structure was put back to while it is drawn between steps (`present`): its id,
+    /// where it really is and its turn, for `restore`.
+    shown: Vec<(u64, DVec3, glam::Quat)>,
 }
 
 impl Structures {
     pub fn new(lib: Arc<Library>) -> Structures {
         // checked when the library loaded
         let machines = Machines::new(&lib.catalog).unwrap_or_else(|e| panic!("{e}"));
-        Structures { list: Vec::new(), lib, next: 1, groups: Groups::default(), now: 0.0, sun: DVec3::Y, machines, solver: Solver::default(), physics: Default::default(), due: Default::default(), watch: Vec::new(), any_held: false, told: Vec::new() }
+        Structures { list: Vec::new(), lib, next: 1, groups: Groups::default(), now: 0.0, sun: DVec3::Y, machines, solver: Solver::default(), physics: Default::default(), due: Default::default(), watch: Vec::new(), any_held: false, told: Vec::new(), shown: Vec::new() }
+    }
+
+    /// A step begins: where each structure is now is where it was, for whoever draws between
+    /// this step and the next (`present`).
+    pub fn begin_step(&mut self) {
+        for s in &mut self.list {
+            s.before = Some((s.pos, s.rot));
+        }
+    }
+
+    /// Every structure where it was a share `alpha` (0..1) of the way through the last step,
+    /// between where it was as it began and where it is: what is drawn between steps, all of the
+    /// same instant. Nothing is simulated until `restore` puts them back.
+    pub fn present(&mut self, alpha: f64) {
+        self.shown.clear();
+        for s in &mut self.list {
+            self.shown.push((s.id, s.pos, s.rot));
+            if let Some((pos, rot)) = s.before {
+                s.pos = pos.lerp(s.pos, alpha);
+                let (a, b) = (rot.as_dquat(), s.rot.as_dquat());
+                let b = if a.dot(b) < 0.0 { -b } else { b };
+                s.rot = a.slerp(b, alpha).normalize().as_quat();
+            }
+        }
+    }
+
+    /// Where structure `id` really is while it is drawn between steps (`present`): its place and
+    /// turn at the step. None outside `present`, or if there is no such structure.
+    pub fn true_pose(&self, id: u64) -> Option<(DVec3, glam::Quat)> {
+        self.shown.iter().find(|s| s.0 == id).map(|s| (s.1, s.2))
+    }
+
+    /// Every structure back where it is (`present` undone).
+    pub fn restore(&mut self) {
+        for (k, &(id, pos, rot)) in self.shown.iter().enumerate() {
+            let s = match self.list.get_mut(k) {
+                Some(s) if s.id == id => s,
+                _ => match self.list.iter_mut().find(|s| s.id == id) {
+                    Some(s) => s,
+                    None => continue,
+                },
+            };
+            (s.pos, s.rot) = (pos, rot);
+        }
+        self.shown.clear();
     }
 
     /// The id the next structure made will have (none is taken).

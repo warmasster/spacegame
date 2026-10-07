@@ -12,6 +12,35 @@ rendimiento del juego en TS están en [`../../docs/RENDIMIENTO.md`](../../docs/R
 Prioridad: **A** (se nota jugando), **B** (se nota con muchas cosas en pantalla), **C** (limpieza o
 código muerto).
 
+## V41 (2026-10-07): paso fijo, dibujo entre pasos, barrido, `lunar-play`
+
+Fernando: «acuérdate de hiperoptimizar todo» y «aprovechar la mayor cantidad de hilos posible».
+
+- **Paso fijo** (`lunar_play::game::Game::tick`): el trabajo por segundo de simular ya no crece con
+  los FPS (antes, a 144 fps la física daba 144 lonchas por segundo; ahora siempre 60). A más de
+  60 fps se ahorra física; a menos, se dan hasta 4 pasos por fotograma.
+- **Dibujar entre pasos** (`Structures::present` / `restore`): dos pasadas por la lista de
+  estructuras por fotograma (copiar posición y giro, interpolar), sin reservas (`shown` se
+  reutiliza). El tráfico se calcula dos veces por fotograma (a la hora del dibujo y de vuelta a la
+  del paso): 0,3 ms cada una con 2 000 naves (medido en la V29). **C · Pendiente:** dibujar el
+  tráfico a su hora sin tocar su estado (una función que escriba las posiciones a una hora dada
+  directamente en las instancias), y así una sola pasada.
+- **Partículas atrás con su velocidad** (`Particles::ahead`, `upload(.., lag)`): una resta por
+  partícula al subirlas, nada más.
+- **Barrido entre estructuras** (`physics.rs::sweep`): solo para parejas que se acercan más de
+  25 cm en el paso y cuyos caminos se cruzan (rejilla por el camino de cada una,
+  `Grid::build_swept`); como mucho 1 024 rayos por pareja y paso, con el árbol de cajas de cada
+  estructura. Una nave posada o a la deriva junto a otra no lo paga. **B · Sin medir** en una
+  batalla de cientos (`tools/rendimiento/batalla_100.jsonc` con proyectiles grandes y naves
+  chocando): medirlo y, si pesa, rayos solo desde las piezas del lado que mira al otro.
+- **Contra el suelo** (`ground_ahead`): solo lo que va más de 25 cm por paso y está a menos de lo
+  que recorre en un paso sobre el suelo; hasta 32 muestras del relieve y 12 bisecciones.
+- **Jugadores sin reservas por paso**: todos los cuerpos van como un solo `Among` (`Crowd`), sin
+  lista nueva por paso; `seen_from`, `awake_now` y `people` del `Game` se reutilizan.
+- **Hilos**: la física ya busca contactos en todos los núcleos (`rayon`, desde 6 cuerpos) y los
+  sistemas de las naves corren en paralelo (desde 8). Lo que viene (el servidor) reparte por
+  jugador el interés y las instantáneas (fase 5 del plan).
+
 ## V40 (2026-10-07): ordenador de vuelo
 
 - Reparto entre toberas (`flight.rs` → `allocate`): descenso por coordenadas con arranque desde el

@@ -13,6 +13,15 @@ encima de esto.
 Es un plan, no código: cada fase acaba en algo que se juega y se mide, y al acabar cada una se
 decide si se sigue igual.
 
+## Avance
+
+| Fase | Estado | Qué quedó |
+|---|---|---|
+| 0 | hecha (2026-10-07) | la base: 90 baterías de pruebas en verde antes de tocar nada (13,5 min); las pruebas que miden lo que no debía depender del proceso ni de los fotogramas están en `crates/play/tests/game.rs` |
+| 1 | hecha (2026-10-07) | pasos fijos de 1/60 s (`Game::tick`), los sistemas de las naves a un tic por paso, dibujo entre pasos (`present`/`restore`, partículas con `ahead`/`lag`, lo disparado mientras se dibuja sale del paso: `Blasts::hold`), **barrido entre estructuras y contra el suelo**. Pruebas: la misma partida a 30, 60, 144, 240 fps y a trompicones; en otro proceso; nada salta entre pasos a 0, 300 y 7 800 m/s; bloques de frente hasta 15 600 m/s |
+| 2 | hecha (2026-10-07) | `crates/play` (`lunar-play`): `Game` para N jugadores (`Player`), `Builds`, `Blasts` sin dibujo ni teclas, `Ships` sin su aspecto (`app/shipview.rs`), `Tactics`, `Pilot` (con su estado entero y su resumen: `pilot/state.rs`), `Hands`, lo que hace una mano a una nave (`controls.rs`), el aire que empuja (`air.rs`), `told`, `follow`; `View` en el núcleo. El cliente usa todo eso y solo dibuja, suena y lee teclas |
+| 3–4 | en marcha | `lunar-net` lleva ya mensajes para el juego del servidor (`Msg::Game`, `Msg::Quick`, `Server::take_game` / `send_game`); el protocolo 2 está escrito y probado (`crates/play/src/net.rs`: comandos con diferencias, 48 bytes por cuatro pasos andando) |
+
 ---
 
 ## 0. La respuesta corta
@@ -369,6 +378,52 @@ el `Welcome` (con la versión del juego: otra versión, rechazada con su motivo,
 Y ya no hay nada que *creerse* en lo demás: el cliente no puede decir dónde está ni a qué ha dado.
 
 ---
+
+### 3.11. Intenciones: lo que el cliente interpreta y el servidor comprueba
+
+Hay dos clases de entrada, y cada una se trata distinto:
+
+| Clase | Qué es | Quién la convierte en lo que pasa |
+|---|---|---|
+| **Teclas del cuerpo** (`Cmd`) | ejes, saltar, agacharse, mochila, mirada, teclas mantenidas del asiento | el servidor, paso a paso, con el mismo `Pilot::step` que predice el cliente: la posición es verdad y solo la decide él |
+| **Intenciones** (`Act`) | «este mando a este valor», «esta puerta abierta», «lanzo esto desde aquí hacia allí», «sueldo esta pieza», «cojo esto», «me siento aquí» | el cliente, que es el único que sabe dónde está la mira al píxel, la propone con su paso; el servidor la **comprueba contra su verdad** (estás a su alcance, llevas esa herramienta, tu arma está cargada, la boca está donde dice tu cuerpo o tu montaje, la cadencia es la de los datos) y la aplica o la niega (`Denied`, con el porqué) |
+
+Así la interfaz (mirar, arrastrar una palanca, la rueda, las teclas a gusto de cada uno, la mano
+que va al mando) se queda en el cliente y el servidor no necesita conocerla; y nada de lo que se
+propone pasa sin que el servidor lo vea posible. Una herramienta nueva, un mando nuevo, un tipo
+de arma nuevo: una intención nueva es una entrada en la tabla de intenciones con su comprobación,
+nunca código en el núcleo de la red.
+
+### 3.12. Para lo que vendrá: escalar sin tocar el núcleo
+
+Fernando (2026-10-07): «que todo sea escalable: nuevas armas, nuevas mecánicas, nuevas naves,
+nuevos planetas, nuevos objetos móviles, asteroides que entran a planetas… y que los documentos
+del mundo puedan cumplirse a futuro» (*El universo que no te necesita* y *La simulación por
+dentro*). Lo que pidió, lo que se deduce de ello y el enganche que deja el servidor para cada
+cosa:
+
+| Lo que vendrá | Qué le pide a la red y al servidor | El enganche |
+|---|---|---|
+| **Armas nuevas** | que nadie toque la red | ya son datos (`Launch` por su nombre del catálogo). El saludo lleva la **huella de los datos** (un hash de `assets/defs`): con otros datos, rechazo con su motivo, nunca un arma que en otra máquina es otra |
+| **Naves nuevas** | su foto, sus asientos, sus teclas | `ShipKind` por nombre; la foto es `write_ship` (todo lo que guardan sus máquinas, `Machine::save`); las teclas son datos del asiento |
+| **Mecánicas nuevas de nave** (módulos) | que su estado viaje y se guarde | lo que una máquina guarda es lo que viaja y lo que se guarda: un módulo nuevo no toca la red |
+| **Objetos móviles nuevos** (drones, vehículos, grúas sueltas, ascensores) | que se repliquen, con su interés y su predicción | una **clase replicada** es una entrada en una tabla: cómo se escribe su estado, su radio de interés, si se predice o se guía, su prioridad |
+| **Planetas y lunas nuevos** | que todo valga en cualquier cuerpo | `BodyRegistry` (ya), posiciones en `f64` en la red que valen en todo un sistema solar (8 bytes por eje), interés en coordenadas del mundo, nada que suponga un cuerpo |
+| **Cuerpos que se mueven** (lunas que orbitan, planetas que giran) | que lo posado en un cuerpo que gira no se escurra | sus posiciones son una **fórmula del paso** (efemérides), igual en cliente y servidor: no se mandan. Lo posado va en el marco del cuerpo, como lo que va a bordo de una nave |
+| **Asteroides que entran en planetas** | que no atraviesen el suelo; que se sepan antes de llegar; que dejen cráter | **barrido contra el suelo** (`ground_ahead`, hecho en la fase 1); **interés por horizonte**: se sabe lo que puede llegar hasta ti en los próximos segundos, no solo lo que está cerca (a 20 km/s, 2 km son 0,1 s); los **cráteres son estado del servidor** por cuerpo, se guardan y se mandan a quien llega |
+| **Lo rápido y lejano en general** (misiles de largo alcance, naves en órbitas opuestas a 15,6 km/s) | lo mismo | el interés mira la velocidad relativa: radio = distancia que se recorre en el horizonte |
+| **Naves dentro de naves, estaciones enormes** | anidar marcos | toda posición en la red va relativa a su anfitrión (`fr` + local), a cualquier profundidad |
+| **Mucha gente** (la galaxia de 2 000 sistemas) | repartir el mundo | el `Welcome` dice la **región**; las ids son del mundo, no de la sesión: pasar de un servidor a otro al saltar es dar de baja aquí y de alta allí con la misma id |
+| **Personas del mundo vivo** (PNJ con mente) | que anden y se vean como los jugadores | son jugadores sin red: el mismo andador en el servidor, su cuerpo se replica igual |
+| **Lo oculto** («el juego lo sabe y tú no»: la grieta del núcleo 40-2291, el doble fondo) | que no viaje | cada dato de estado dice si es **visible**; lo oculto se queda en el servidor y no entra en lo que se manda ni en el resumen de lo visible |
+| **Sensores y niebla** (radar, firma del motor, lo que no ves) | que no se pueda ver a través con trampas | lo lejano viaja como **lectura de sensor** (lo que tu nave podría saber), no como la verdad |
+| **Causas** («todo tiene origen»: el historiador, las cajas negras) | saber por qué pasó cada cosa | cada hecho del servidor (golpe, rotura, robo, muerte) lleva **su causa** (quién o qué, y el hecho anterior): es lo que leerá el registro del mundo |
+| **Lo tocado persiste** | que una caja robada siga siendo esa caja | la `NetId` es la **id del mundo**, que nunca se reutiliza (`MUNDO.md`) |
+| **El tiempo del mundo** | un solo reloj | el paso es el reloj del núcleo del mundo (`now = paso / 60`); el mundo lejano va en su hilo a su ritmo |
+| **Batallas lejanas, cohortes** («de lejos, números») | que lo lejano no cueste | lo que nadie ve no se simula pieza a pieza (`SimLevel`, ya) y, más adelante, se resume en números con conservación |
+| **Atmósferas y viento** (entrada en un planeta con aire) | frenado, calor | es parte del campo del cuerpo (`field`): datos del cuerpo, igual en todos |
+| **Radio con alcance, voces** | que llegue a quien está a su alcance | mensajes del mundo con su propio interés (por alcance de la emisión, no por distancia a la cosa) |
+| **Mods y datos del servidor** | que el cliente juegue con los datos del servidor | la huella de los datos; más adelante, que el servidor los mande si no coinciden |
 
 ## 4. La gráfica del servidor
 

@@ -1100,6 +1100,7 @@ dependencies = [
  "lunar-editor",
  "lunar-machines",
  "lunar-net",
+ "lunar-play",
  "lunar-render",
  "lunar-ship",
  "lunar-signals",
@@ -1163,6 +1164,22 @@ name = "lunar-net"
 version = "0.1.0"
 dependencies = [
  "glam",
+]
+
+[[package]]
+name = "lunar-play"
+version = "0.1.0"
+dependencies = [
+ "glam",
+ "lunar-controls",
+ "lunar-core",
+ "lunar-machines",
+ "lunar-net",
+ "lunar-ship",
+ "lunar-signals",
+ "rayon",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

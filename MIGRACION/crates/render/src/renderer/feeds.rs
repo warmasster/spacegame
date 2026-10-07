@@ -35,8 +35,9 @@ impl Renderer {
     }
 
     /// This frame's effects, seen from `eye`: the particles, `extra` drawn as particles (rounds in flight) and the flashes.
-    pub fn set_effects(&mut self, particles: &Particles, extra: &[Particle], lights: &[Light], eye: DVec3) {
-        self.particles.upload(&self.gpu.queue, particles, extra, eye);
+    /// The picture is `lag` s behind the particles' time (drawn between the game's steps).
+    pub fn set_effects(&mut self, particles: &Particles, extra: &[Particle], lights: &[Light], eye: DVec3, lag: f64) {
+        self.particles.upload(&self.gpu.queue, particles, extra, eye, lag);
         self.flash_count = lights.len().min(MAX_LIGHTS);
         self.light_count = self.flash_count;
         self.lights[..self.light_count].copy_from_slice(&lights[..self.light_count]);

@@ -23,8 +23,9 @@ use lunar_machines::{
 use lunar_signals::{DerivedSet, Eval, Quality, SignalId, Store, Writer};
 use std::{ops::Range, sync::Arc};
 
-/// Systems tick (s).
-pub const TICK: f64 = 1.0 / 50.0;
+/// Systems tick (s): one a step of the world (`lunar_play::game::STEP`), so a ship's systems and
+/// the world it moves in keep the same clock, whatever the frames of whoever draws it.
+pub const TICK: f64 = 1.0 / 60.0;
 /// Ticks one call catches up at most: a slow frame runs the systems a little slow rather than
 /// doing more work (which would make the next frame slower still).
 pub const MAX_TICKS: f64 = 4.0;

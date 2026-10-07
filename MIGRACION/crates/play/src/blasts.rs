@@ -16,8 +16,7 @@ use lunar_core::{
     rounds::{self, Impact, Rounds},
     structure::{damage, motion::{Motion, Sweep}},
 };
-use lunar_render::{Light, Renderer, View};
-use winit::keyboard::KeyCode;
+use lunar_core::view::View;
 
 /// How far the aim reaches (m), and for missiles.
 
@@ -119,7 +118,7 @@ pub struct Blasts {
     /// Trail style, warhead (explosion id) and look in flight of each missile kind.
     trails: Vec<Option<u8>>,
     warheads: Vec<String>,
-    missile_looks: Vec<Option<(u8, f32)>>,
+    pub missile_looks: Vec<Option<(u8, f32)>>,
     /// Shots in flight, how each shot kind is drawn, where they landed this step, and every round
     /// and missile as a particle for the renderer (all reused).
     pub rounds: Rounds,
@@ -128,33 +127,33 @@ pub struct Blasts {
     sweep: Sweep,
     pub impact_count: u64,
     pub last_impact: Option<Impact>,
-    looks: Vec<Particle>,
+    pub looks: Vec<Particle>,
     strikes: Vec<Strike>,
     /// The camera rides behind the newest missile.
     pub follow: bool,
     shots: Vec<(String, ShotDef)>,
-    keys: Vec<(KeyCode, Action)>,
+    /// The test keys (a letter or a digit, `key_name`) and what each fires.
+    keys: Vec<(char, Action)>,
     /// To fire on the next update, and whether at the aim (else on the ground ahead).
     queued: Option<(Action, bool)>,
     /// An automatic shot whose key is held: (key, shot, rounds owed).
-    held: Option<(KeyCode, usize, f64)>,
+    held: Option<(char, usize, f64)>,
     /// How far ahead `fire_ahead` blasts land (m).
     ahead: f64,
-    lights: Vec<Light>,
-    time: f64,
+    pub time: f64,
     shots_fired: u64,
     /// With other players: what was fired and set off here since it was last taken (`Seen`), kept
     /// only while `tell` is on (whoever takes them sets it).
     pub seen: Vec<Seen>,
     pub tell: bool,
     /// The missiles launched in other players' games: they fly here to be seen, and strike nothing.
-    guests: Missiles,
+    pub guests: Missiles,
     guest_strikes: Vec<Strike>,
     /// Guided missiles and decoys in flight (`lunar_core::guided`): the explosion, the look and
     /// the trail of each missile kind, the puffs of each decoy kind.
     pub guided: Guided,
     guided_warheads: Vec<String>,
-    guided_looks: Vec<Option<(u8, f32)>>,
+    pub guided_looks: Vec<Option<(u8, f32)>>,
     guided_trails: Vec<Option<u8>>,
     decoy_looks: Vec<Option<u8>>,
     /// Where what the guided missiles follow is and how it shines, as whoever knows last said
@@ -176,21 +175,20 @@ pub struct Blasts {
     pub ends: u64,
     pub log_ends: bool,
     pub ended: Vec<(What, Option<(u64, Vec3)>)>,
+    /// While the picture is drawn between steps (`Game::present`) what is let fly is kept here,
+    /// as it was asked from where things are drawn, to be let fly from where they are.
+    pub hold: bool,
+    pub kept: Vec<Launch>,
 }
 
 /// A key name of the definitions ("B", "7"...).
-fn key_code(name: &str) -> Option<KeyCode> {
-    use KeyCode::*;
-    const LETTERS: [KeyCode; 26] = [
-        KeyA, KeyB, KeyC, KeyD, KeyE, KeyF, KeyG, KeyH, KeyI, KeyJ, KeyK, KeyL, KeyM, KeyN, KeyO, KeyP, KeyQ, KeyR, KeyS, KeyT, KeyU, KeyV, KeyW, KeyX, KeyY,
-        KeyZ,
-    ];
-    const DIGITS: [KeyCode; 10] = [Digit0, Digit1, Digit2, Digit3, Digit4, Digit5, Digit6, Digit7, Digit8, Digit9];
+/// The key a definition names (`"key": "b"`), as one upper-case letter or digit: what the keys of
+/// whoever plays are matched against (the client turns its key codes into these).
+pub fn key_name(name: &str) -> Option<char> {
     let c = name.trim().to_ascii_uppercase();
     let mut ch = c.chars();
     match (ch.next(), ch.next()) {
-        (Some(l @ 'A'..='Z'), None) => Some(LETTERS[l as usize - 'A' as usize]),
-        (Some(d @ '0'..='9'), None) => Some(DIGITS[d as usize - '0' as usize]),
+        (Some(l @ ('A'..='Z' | '0'..='9')), None) => Some(l),
         _ => None,
     }
 }
@@ -220,10 +218,10 @@ impl Blasts {
             let trail = m.trail.as_deref().map(|t| fx.style(t).ok_or_else(|| format!("missile {id}: unknown trail '{t}'"))).transpose()?;
             trails.push(trail);
             if let Some(k) = &m.key {
-                keys.push((key_code(k).ok_or_else(|| format!("{id}: unknown key '{k}'"))?, Action::Launch(i)));
+                keys.push((key_name(k).ok_or_else(|| format!("{id}: unknown key '{k}'"))?, Action::Launch(i)));
             }
         }
-        let bind = |k: &str, what: &str| key_code(k).ok_or_else(|| format!("{what}: unknown key '{k}'"));
+        let bind = |k: &str, what: &str| key_name(k).ok_or_else(|| format!("{what}: unknown key '{k}'"));
         for (id, e) in &defs.explosions {
             if let Some(k) = &e.key {
                 keys.push((bind(k, id)?, Action::Explode(id.clone())));
@@ -237,13 +235,10 @@ impl Blasts {
             // validated with the definitions: the style exists
             shot_looks.push(s.look.as_ref().map_or((0, 0.0), |l| (fx.style(&l.style).unwrap_or(0), l.size)));
         }
-        // one thing per key, and none the player's own keys
+        // one thing per key (that none is the player's own is for whoever reads the keys: `keys`)
         for (i, (k, _)) in keys.iter().enumerate() {
-            if crate::input::taken(*k) {
-                return Err(format!("la tecla {k:?} ya es del jugador (mover, agacharse, linterna...)"));
-            }
             if keys[..i].iter().any(|(o, _)| o == k) {
-                return Err(format!("la tecla {k:?} está asignada dos veces (disparos, misiles, explosiones)"));
+                return Err(format!("la tecla {k} está asignada dos veces (disparos, misiles, explosiones)"));
             }
         }
         let guests = Missiles::new(missiles.defs.clone());
@@ -269,6 +264,8 @@ impl Blasts {
             ends: 0,
             log_ends: false,
             ended: Vec::new(),
+            hold: false,
+            kept: Vec::new(),
             trails,
             warheads,
             missile_looks,
@@ -286,7 +283,6 @@ impl Blasts {
             queued: None,
             held: None,
             ahead: 20.0,
-            lights: Vec::with_capacity(lunar_core::effects::MAX_FLASHES),
             time: 0.0,
             shots_fired: 0,
         })
@@ -370,6 +366,12 @@ impl Blasts {
     /// and does what it does here, and the other games are told of it (`Seen::Launch`; where it
     /// ends, `Seen::End`). False if there was no room for it.
     pub fn launch(&mut self, l: Launch, bodies: &BodyRegistry, builds: &mut Builds) -> bool {
+        // (asked while the picture is drawn between steps: kept until the world is back at its
+        // step, and let fly from there: `Game::restore`)
+        if self.hold {
+            self.kept.push(l);
+            return true;
+        }
         self.next_tag = (self.next_tag + 1) % FOREIGN;
         let tag = self.next_tag.max(1);
         if !self.start(&l, tag, 0.0, bodies, builds) {
@@ -499,7 +501,7 @@ impl Blasts {
 
     /// A key went down: true when it fires something (on the next update); an automatic shot
     /// keeps firing until the key goes up.
-    pub fn key(&mut self, key: KeyCode) -> bool {
+    pub fn key(&mut self, key: char) -> bool {
         match self.keys.iter().find(|(k, _)| *k == key) {
             Some((_, a)) => {
                 if let Action::Shoot(i) = a
@@ -522,7 +524,7 @@ impl Blasts {
     }
 
     /// A key went up.
-    pub fn release(&mut self, key: KeyCode) {
+    pub fn release(&mut self, key: char) {
         if self.held.is_some_and(|(k, _, _)| k == key) {
             self.held = None;
         }
@@ -802,7 +804,8 @@ impl Blasts {
     }
 
     /// Behind the newest missile, looking where it flies (when following one).
-    fn follow_view(&self, bodies: &BodyRegistry, view: View) -> View {
+    /// The picture behind the newest missile when the camera follows it (`follow`), else `view`.
+    pub fn follow_view(&self, bodies: &BodyRegistry, view: View) -> View {
         let Some(m) = self.missiles.list.last().filter(|_| self.follow) else { return view };
         let up = bodies.get(bodies.dominant(m.pos)).up(m.pos);
         let dir = m.vel.normalize_or(view.forward);
@@ -824,7 +827,9 @@ impl Blasts {
     /// Fire what was asked and simulate; returns the view with the camera shake. The particles
     /// and the lights are handed to the renderer by `draw`, once it is known where the picture
     /// is taken from.
-    pub fn update(&mut self, dt: f64, bodies: &BodyRegistry, view: View, motion: Motion, builds: &mut Builds) -> View {
+    /// `dt` s on: what a test key or a script asked fired from `view` (going as `motion`), what
+    /// flies flown, the effects run.
+    pub fn update(&mut self, dt: f64, bodies: &BodyRegistry, view: View, motion: Motion, builds: &mut Builds) {
         self.time += dt;
         if let Some((action, aim)) = self.queued.take() {
             self.fire(action, aim, bodies, &view, motion, builds);
@@ -863,7 +868,11 @@ impl Blasts {
                 self.foreign.retain(|f| t - f.2 < FORGET && flying.binary_search(&f.1).is_ok());
             }
         }
-        self.follow_view(bodies, view)
+    }
+
+    /// The test keys there are (to be checked against the player's own).
+    pub fn keys(&self) -> impl Iterator<Item = char> + '_ {
+        self.keys.iter().map(|(k, _)| *k)
     }
 
     pub fn shaken(&self, view: View) -> View {
@@ -876,29 +885,6 @@ impl Blasts {
         let jitter = right * (t * 41.0).sin() + view.up * (t * 33.0 + 1.3).sin() * 0.8;
         View { forward: (view.forward + jitter * a).normalize(), ..view }
     }
-
-    /// This frame's particles and lights to the renderer, seen from `eye`: where the picture is
-    /// taken from in the end (the player's eyes, or a camera outside: the particles are sent
-    /// relative to it, so the eye of `update` will not do).
-    pub fn draw(&mut self, r: &mut Renderer, eye: DVec3, bodies: &BodyRegistry) {
-        self.lights.clear();
-        self.lights.extend(self.fx.flashes().iter().map(|f| {
-            let i = f.now();
-            Light { pos: f.pos, color: [f.color.x * i, f.color.y * i, f.color.z * i], range: f.range, ..Light::default() }
-        }));
-        self.rounds.looks(&mut self.looks);
-        for m in self.missiles.list.iter().chain(&self.guests.list) {
-            if let Some((style, size)) = self.missile_looks[m.kind] {
-                self.looks.push(Particle { pos: m.pos, drift: DVec3::ZERO, vel: m.vel.as_vec3(), age: 0.0, life: 1.0, size, seed: 0.5, ground: 0.0, height: 1e6, body: bodies.dominant(m.pos), style });
-            }
-        }
-        for m in &self.guided.list {
-            if let Some((style, size)) = self.guided_looks[usize::from(m.kind)] {
-                self.looks.push(Particle { pos: m.pos, drift: DVec3::ZERO, vel: m.vel.as_vec3(), age: 0.0, life: 1.0, size, seed: 0.5, ground: 0.0, height: 1e6, body: bodies.dominant(m.pos), style });
-            }
-        }
-        r.set_effects(&self.fx.particles, &self.looks, &self.lights, eye);
-    }
 }
 
 #[cfg(test)]
@@ -907,7 +893,7 @@ mod tests {
 
     #[test]
     fn a_handheld_round_starts_at_the_muzzle() {
-        let defs = crate::content::Defs::load(&crate::root().join("assets/defs")).unwrap();
+        let defs = crate::defs::Defs::load(&crate::root().join("assets/defs")).unwrap();
         let bodies = &defs.system.bodies;
         let site = lunar_core::scene::Site::from_def(&defs.scenario.site, bodies).unwrap();
         let effects: Vec<&str> = defs.effects.explosions.iter().map(|(id, _)| id.as_str()).collect();
@@ -935,16 +921,17 @@ mod tests {
 
     #[test]
     fn key_names() {
-        assert_eq!(key_code("b"), Some(KeyCode::KeyB));
-        assert_eq!(key_code("7"), Some(KeyCode::Digit7));
-        assert_eq!(key_code("F1"), None);
+        assert_eq!(key_name("b"), Some('B'));
+        assert_eq!(key_name("7"), Some('7'));
+        assert_eq!(key_name("F1"), None);
     }
 
     #[test]
     fn every_key_does_one_thing() {
-        // the real definitions: no shot, missile or explosion shares a key or takes the player's
-        let d = crate::content::Defs::load(&crate::root().join("assets/defs")).unwrap_or_else(|e| panic!("{e}"));
+        // the real definitions: no shot, missile or explosion shares a key (that none takes the
+        // player's is the client's to check: `input::taken`)
+        let d = crate::defs::Defs::load(&crate::root().join("assets/defs")).unwrap_or_else(|e| panic!("{e}"));
         let b = Blasts::new(&d.effects, lunar_core::missiles::Missiles::new(d.missiles.clone()), 1000).unwrap_or_else(|e| panic!("{e}"));
-        assert!(b.keys.iter().any(|(k, a)| *k == KeyCode::KeyU && matches!(a, Action::Shoot(i) if b.shots[*i].0 == "metralleta")));
+        assert!(b.keys.iter().any(|(k, a)| *k == 'U' && matches!(a, Action::Shoot(i) if b.shots[*i].0 == "metralleta")));
     }
 }

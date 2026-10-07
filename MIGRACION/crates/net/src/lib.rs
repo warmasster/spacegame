@@ -31,6 +31,6 @@ pub use client::{Client, Event, MAX_HINT, MAX_TELL, Status};
 pub use clock::now;
 pub use game::{Frame, PlayerState, RigidState, flag, key};
 pub use proto::DEFAULT_PORT;
-pub use server::{PlayerInfo, Server, ServerConfig, ServerEvent, ServerStats};
+pub use server::{GameIn, PlayerInfo, Server, ServerConfig, ServerEvent, ServerStats};
 pub use transport::{Addr, Conditions, MTU, Memory, MemoryNet, Transport, Udp};
 pub use wire::{Reader, WireError, Writer};

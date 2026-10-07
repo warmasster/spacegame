@@ -239,6 +239,10 @@ pub struct Structure {
     /// and shared as it was.
     pub lineage: u64,
     pub born: u32,
+    /// Where it was and how it was turned as the last step began (`Structures::begin_step`):
+    /// whoever draws between steps draws it between that and where it is (`Structures::present`).
+    /// None: made during the step.
+    pub before: Option<(DVec3, Quat)>,
 }
 
 impl Part {
@@ -392,6 +396,7 @@ impl Structure {
             owned: false,
             lineage: 0,
             born: 0,
+            before: None,
         };
         s.refresh();
         s

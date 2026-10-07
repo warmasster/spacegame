@@ -33,3 +33,4 @@ pub mod surface;
 pub mod system;
 pub mod terrain_gen;
 pub mod traffic;
+pub mod view;

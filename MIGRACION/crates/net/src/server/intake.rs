@@ -2,12 +2,16 @@
 //! passed on at the next tick; what they tell (to everyone, to one), the keys they ask for and
 //! their chat lines are dealt with at once. Nothing of what the game says is read.
 use super::world::Thing;
-use super::{Server, ServerEvent, pack};
+use super::{GameIn, Server, ServerEvent, pack};
 use crate::channel::MAX_UNRELIABLE;
 use crate::clock::micros;
 use crate::proto::Msg;
 use crate::proto::states::{SUBS, UpReader, Whose};
 use crate::text;
+
+/// What clients said to the game and it has not taken yet, at most (a game that stalls must not
+/// make the server keep everything a flood of them says).
+const MAX_GAME_IN: usize = 1 << 14;
 
 /// A state stamped further back than this is taken as of this long ago (microseconds).
 const OLDEST: u64 = 2_000_000;
@@ -75,6 +79,12 @@ impl Server {
             Msg::Release { key } => {
                 if self.world.release(id, key) {
                     self.send_all(&Msg::Owner { key, player: self.world.holder(key) }, None);
+                }
+            }
+            // (for the game that runs in the server: kept until it takes it)
+            Msg::Game(data) | Msg::Quick(data) => {
+                if self.game_in.len() < MAX_GAME_IN {
+                    self.game_in.push(GameIn { from: id, reliable, data: data.to_vec() });
                 }
             }
             Msg::Chat { text } => {

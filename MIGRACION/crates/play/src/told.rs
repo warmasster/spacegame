@@ -5,7 +5,7 @@
 //! | Kind | How | What |
 //! |---|---|---|
 //! | `CONTROL` | sure, to the others | a control of a ship left at a value by a hand |
-//! | `ACT` | sure, to the others | a door or a clamp of a ship worked by a hand (`aboard::Act`) |
+//! | `ACT` | sure, to the others | a door or a clamp of a ship worked by a hand (`controls::Act`) |
 //! | `SPAWN` | sure, echoed | a ship made in play (its number: its place among those made) |
 //! | `STRIKES` | sure, echoed | what was done to shared structures (hits, plates torn out), done by every game in the order the server passed it on |
 //! | `SEEN` | sure, to the others (where guided missiles are: loose) | what was let fly or set off and where it ended (`blasts::Seen`), to be seen: it does nothing; its damage goes as `STRIKES` |
@@ -15,9 +15,9 @@
 //! whose gun fired it, the ship its shooter rides or floats by), so that it leaves the muzzle in
 //! every game whatever each one's clock says; where it ended, on what it struck.
 use crate::{
-    aboard::Act,
     blasts::{Launch, Seen, What},
     builds::Strike,
+    controls::Act,
 };
 use glam::{Affine3A, DVec3, Quat, Vec3};
 use lunar_core::structure::damage::Hit;
@@ -373,7 +373,7 @@ pub fn read_control(r: &mut Reader) -> Result<(u64, u16, f64), WireError> {
     Ok((r.var()?, r.var16()?, r.f64()?))
 }
 
-/// What a hand did to ship `ship` that is not a control (a door, a clamp: `aboard::Act`).
+/// What a hand did to ship `ship` that is not a control (a door, a clamp: `controls::Act`).
 pub fn write_act(w: &mut Writer, ship: u64, act: Act) {
     w.u8(ACT);
     w.var(ship);

@@ -22,7 +22,7 @@ const MAX_PENDING: usize = 16;
 #[derive(Clone, Copy, Debug)]
 pub struct Flash {
     pub pos: DVec3,
-    vel: DVec3,
+    pub vel: DVec3,
     pub color: Vec3,
     pub intensity: f32,
     pub range: f32,

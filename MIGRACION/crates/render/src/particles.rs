@@ -163,12 +163,14 @@ impl ParticlesGpu {
     }
 
     /// This frame's particles and `extra` ones drawn the same way (rounds in flight...),
-    /// camera-relative, far to near: one buffer, one draw.
-    pub fn upload(&mut self, queue: &wgpu::Queue, particles: &Particles, extra: &[Particle], eye: DVec3) {
+    /// camera-relative, far to near: one buffer, one draw. The picture is `lag` s behind them
+    /// (drawn between the game's steps): each is drawn where it was then, along how it goes.
+    pub fn upload(&mut self, queue: &wgpu::Queue, particles: &Particles, extra: &[Particle], eye: DVec3, lag: f64) {
         let list = &particles.list;
         let n = list.len().min(self.capacity);
         let m = extra.len().min(self.capacity - n);
-        let key = |p: &Particle| ((p.pos - eye).length_squared() as f32).to_bits();
+        let at = |p: &Particle| if lag != 0.0 { p.pos - (p.drift + p.vel.as_dvec3()) * lag } else { p.pos };
+        let key = |p: &Particle| ((at(p) - eye).length_squared() as f32).to_bits();
         self.order.clear();
         self.order.extend(list[..n].iter().enumerate().map(|(i, p)| (key(p), i as u32)));
         self.order.extend(extra[..m].iter().enumerate().map(|(i, p)| (key(p), (n + i) as u32)));
@@ -178,7 +180,7 @@ impl ParticlesGpu {
             let i = i as usize;
             let p = if i < n { &list[i] } else { &extra[i - n] };
             let s = &particles.styles[usize::from(p.style)];
-            let rel = (p.pos - eye).as_vec3();
+            let rel = (at(p) - eye).as_vec3();
             self.staged.push(PartGpu {
                 pos: [rel.x, rel.y, rel.z, p.radius(s)],
                 vel: [p.vel.x, p.vel.y, p.vel.z, p.t()],

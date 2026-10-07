@@ -98,10 +98,14 @@ caminar a bordo, catálogo G, inspector F4) está en
 [`migracion/docs/PENDIENTES.md`](migracion/docs/PENDIENTES.md) (tachar al hacerlo).
 
 **Movimiento en el prototipo Rust: un solo reloj** ([`migracion/docs/MOVIMIENTO.md`](migracion/docs/MOVIMIENTO.md)).
-Lo que se mueve entre estructuras (el jugador, y cualquier cosa nueva que ande, flote o vaya
-cargada entre naves) lo mueve **el mundo**, loncha a loncha y justo después de las estructuras:
-se implementa `Among` (`core/structure/schedule.rs`) y se pasa a `Builds::update`. Nunca un
-acumulador ni un paso fijo propios, ni código que «compense» la velocidad de otra cosa: si algo
+El mundo avanza en **pasos fijos de 1/60 s** (`lunar_play::game::Game::tick`, el mismo en el
+cliente y en el servidor; el único acumulador es el del fotograma, que paga pasos) y se dibuja
+**entre los dos últimos** (`Game::present` / `restore`: todo del mismo instante; las partículas,
+atrás con su velocidad). Lo que se mueve entre estructuras (el jugador, y cualquier cosa nueva que
+ande, flote o vaya cargada entre naves) lo mueve **el mundo**, loncha a loncha y justo después de
+las estructuras: se implementa `Among` (`core/structure/schedule.rs`) y se pasa a `Builds::update`
+(lo hace `Game::tick`). Nunca un acumulador ni un paso propios, ni código que «compense» la
+velocidad de otra cosa: si algo
 necesita saber a qué velocidad va lo de al lado para verse o chocar bien, la causa está en otro
 sitio. Lo que se toca frena contra eso que se toca, no contra el mundo. Los números de cómo se
 mueve algo van en datos (`scenario.jsonc`), no en el código.

@@ -24,8 +24,7 @@
 //!
 //! What is not told yet: loose cargo and crates; where each piece come off is (each game moves
 //! its own).
-mod follow;
-pub mod told;
+pub use lunar_play::{follow, told};
 
 use crate::{
     aboard::Aboard,
@@ -278,7 +277,8 @@ impl Multi {
                 Event::Hinted { by, data } if data.first() == Some(&told::SEEN) => self.seen_later.push((by, data)),
                 Event::Told { by, data } if data.first() == Some(&told::SEEN) => self.seen_later.push((by, data)),
                 Event::Told { by, data } => self.told(by, &data, ships, builds),
-                Event::Hinted { .. } => {}
+                // (what a server that has the game says: not this protocol's)
+                Event::Hinted { .. } | Event::Game { .. } => {}
                 Event::Chat { from, text } => {
                     let who = from.and_then(|id| self.client.name(id)).unwrap_or("Servidor").to_string();
                     self.said.push((format!("{who}: {text}"), 0));

@@ -129,6 +129,11 @@ pub struct Particles {
     capacity: usize,
     /// Next particle whose ground is refreshed.
     cursor: usize,
+    /// How far ahead of the picture the particles' own time is (s): the game steps them, and
+    /// whoever draws between steps draws them that far back (`lag` of the renderer). What is made
+    /// while the picture is being made (dust under a foot, a plume's puff, from where things are
+    /// drawn) is moved ahead by as much, to the particles' time, so it is drawn where it was made.
+    pub ahead: f64,
 }
 
 /// Ground samples per frame (the rest keep the last one).
@@ -137,7 +142,7 @@ const GROUND_REFRESH: usize = 384;
 impl Particles {
     pub fn new(styles: Vec<StyleDef>, capacity: usize) -> Particles {
         assert!(styles.len() <= MAX_STYLES);
-        Particles { list: Vec::with_capacity(capacity), styles, capacity, cursor: 0 }
+        Particles { list: Vec::with_capacity(capacity), styles, capacity, cursor: 0, ahead: 0.0 }
     }
 
     pub fn capacity(&self) -> usize {
@@ -160,9 +165,12 @@ impl Particles {
     }
 
     /// Room left; a full list drops new particles (never the ones already flying).
-    pub fn spawn(&mut self, p: Particle) -> bool {
+    pub fn spawn(&mut self, mut p: Particle) -> bool {
         if self.list.len() == self.capacity {
             return false;
+        }
+        if self.ahead != 0.0 {
+            p.pos += (p.drift + p.vel.as_dvec3()) * self.ahead;
         }
         self.list.push(p);
         true

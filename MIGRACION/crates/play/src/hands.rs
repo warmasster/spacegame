@@ -10,9 +10,9 @@
 //! 2011): it does not overshoot or ring whatever the frame rate, and needs nothing of the solver.
 //! Speeds are taken relative to the hands, aboard or in free flight (`motion::Motion`).
 use crate::{builds::Builds, ships::Ships};
-use glam::{DVec3, Mat3, Vec3};
+use glam::{Mat3, Vec3};
 use lunar_core::{scenario::HandsDef, structure::set::Structures};
-use lunar_render::View;
+use lunar_core::view::View;
 
 /// How near and how far what is held is kept (m), and how much a wheel notch moves it.
 const NEAR: f64 = 0.9;
@@ -147,10 +147,11 @@ pub fn pull(m: f32, off: Vec3, v: Vec3, hz: f32, max: f32, dt: f32) -> Vec3 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use glam::DVec3;
 
     #[test]
     fn carrying_and_releasing_a_box_uses_the_hands_motion_not_the_world() {
-        let defs = crate::content::Defs::load(&crate::root().join("assets/defs")).unwrap();
+        let defs = crate::defs::Defs::load(&crate::root().join("assets/defs")).unwrap();
         let bodies = &defs.system.bodies;
         let site = lunar_core::scene::Site::from_def(&defs.scenario.site, bodies).unwrap();
         let effects: Vec<&str> = defs.effects.explosions.iter().map(|(id, _)| id.as_str()).collect();

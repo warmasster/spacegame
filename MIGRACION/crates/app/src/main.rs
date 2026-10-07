@@ -3,11 +3,10 @@
 mod aboard;
 mod air;
 mod bench;
-mod blasts;
+mod blastview;
 mod boot;
 mod bulk;
 mod body;
-mod builds;
 mod chase;
 mod cli;
 mod cockpit;
@@ -19,7 +18,6 @@ mod freelook;
 mod gear;
 mod gestures;
 mod gltf_model;
-mod hands;
 mod handwork;
 mod holding;
 mod hud;
@@ -28,25 +26,27 @@ mod inspector;
 mod multi;
 mod nav;
 mod perf;
-mod pilot;
 mod play;
 mod plumes;
 mod rangefinder;
 mod reach;
 mod rig;
 mod script;
-mod ships;
+mod shipview;
 mod sound;
 mod spawner;
 mod splash;
 mod splash_gpu;
 mod start;
-mod tactics;
 mod ui;
 mod visibility;
 mod visor;
 mod world;
 mod wrist;
+
+// what decides what happens is the game's, the same in every machine (`lunar_play`): here under
+// its own names, as when it lived here
+pub use lunar_play::{blasts, builds, hands, pilot, ships, tactics};
 
 use std::path::{Path, PathBuf};
 

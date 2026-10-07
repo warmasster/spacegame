@@ -160,3 +160,64 @@ fn what_a_body_holds_is_that_body_to_what_runs_into_it() {
     let (still, fast) = (ends[0], ends[1]);
     assert!((still.0 - fast.0).length() < 0.15 && (still.1 - fast.1).length() < 0.15, "standing still {still:.3?}, at speed {fast:.3?}");
 }
+
+#[test]
+fn bodies_that_close_fast_meet_instead_of_passing_through() {
+    // two blocks (1.5 m long) closing head-on far from any body, in steps of a sixtieth of a
+    // second: at 200 m/s they used to pass through each other unseen (3.3 m a step, more than
+    // they measure together); now they meet whatever the speed, up to two opposite orbits
+    for closing in [5.0, 50.0, 200.0, 500.0, 1000.0, 3000.0, 7800.0, 15_600.0] {
+        let (bodies, mut set) = world();
+        let at = bodies.get(0).above_ground(DVec3::Y, 200_000.0);
+        let a = block(&mut set, at - DVec3::X * 30.0, Quat::IDENTITY);
+        let b = block(&mut set, at + DVec3::X * 30.0, Quat::IDENTITY);
+        set.list[a].vel = DVec3::X * (closing / 2.0);
+        set.list[b].vel = -DVec3::X * (closing / 2.0);
+        // (long enough to have crossed twice over had nothing stopped them)
+        let steps = ((120.0 / closing + 0.5) * 60.0) as usize;
+        for _ in 0..steps {
+            set.step(1.0 / 60.0, &bodies);
+        }
+        let (pa, pb) = (set.list[a].pos.x, set.list[b].pos.x);
+        assert!(pa < pb, "at {closing} m/s they went through each other: a at {:.1} m, b at {:.1} m", pa - at.x, pb - at.x);
+        // and no further into each other than touching (their middles a block's length apart)
+        assert!(pb - pa > 1.2, "at {closing} m/s they end {:.2} m apart", pb - pa);
+    }
+}
+
+#[test]
+fn what_passes_by_fast_is_not_stopped() {
+    // the same two blocks going past each other 5 m apart sideways at orbital closing speed: the
+    // way along is looked at, and nothing on it is met
+    let (bodies, mut set) = world();
+    let at = bodies.get(0).above_ground(DVec3::Y, 200_000.0);
+    let a = block(&mut set, at - DVec3::X * 30.0, Quat::IDENTITY);
+    let b = block(&mut set, at + DVec3::X * 30.0 + DVec3::Z * 5.0, Quat::IDENTITY);
+    set.list[a].vel = DVec3::X * 3900.0;
+    set.list[b].vel = -DVec3::X * 3900.0;
+    for _ in 0..6 {
+        set.step(1.0 / 60.0, &bodies);
+    }
+    assert!((set.list[a].vel.x - 3900.0).abs() < 1e-6 && (set.list[b].vel.x + 3900.0).abs() < 1e-6, "{:?} {:?}", set.list[a].vel, set.list[b].vel);
+}
+
+#[test]
+fn what_comes_down_fast_stops_on_the_ground() {
+    // a block dropped straight down at the Moon's ground from 2 km up at 50 to 3000 m/s (a rock
+    // out of the sky): it ends on the ground, never under it
+    for speed in [50.0, 300.0, 1000.0, 3000.0] {
+        let (bodies, mut set) = world();
+        let b = bodies.get(0);
+        let dir = DVec3::new(0.3, 1.0, 0.2).normalize();
+        let k = block(&mut set, b.above_ground(dir, 2000.0), Quat::IDENTITY);
+        set.list[k].vel = -dir * speed;
+        let steps = ((2000.0 / speed + 1.0) * 60.0) as usize;
+        for _ in 0..steps {
+            set.step(1.0 / 60.0, &bodies);
+        }
+        let low = lowest(&set, k, &bodies);
+        let ground = b.altitude(b.above_ground(dir, 0.0));
+        assert!(low > ground - 0.3, "at {speed} m/s it ends {:.2} m under the ground", ground - low);
+        assert!(set.list[k].vel.dot(dir) > -speed * 0.5, "at {speed} m/s it is still going down at {:.1} m/s", -set.list[k].vel.dot(dir));
+    }
+}

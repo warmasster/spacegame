@@ -13,9 +13,15 @@ analiza y planea todo a la perfección». Planeado, sin empezar:
 [`PLAN_AUTORITATIVO.md`](PLAN_AUTORITATIVO.md) (12 fases: paso fijo, simulación sin gráficos para
 N jugadores, servidor que simula, comandos arriba y estado abajo, interés, daño, naves, carga,
 entrar tarde, sin conexión en el proceso, seguridad; la gráfica del servidor, solo para mirar).
-Faltan sus decisiones (§8 del plan).
+Faltan sus decisiones (§8 del plan). **En marcha (Fernando: «vamos con todo, todas las fases menos
+la última»):** fases 0 a 2 hechas (2026-10-07), ver el plan, «Avance».
 
-- **Dos naves rápidas se atraviesan** (encontrado el 2026-10-07 al preguntar Fernando «¿y si dos naves
+- ~~**Dos naves rápidas se atraviesan**~~ **Hecho (2026-10-07, V41):** barrido entre estructuras
+  (`physics.rs::sweep`: rayos del centro y las esquinas de cada pieza a lo largo del camino
+  relativo, un contacto donde se encuentran primero, que deja cerrar el hueco y no más) y contra el
+  suelo (`ground_ahead`). `core/tests/physics.rs`: bloques de frente de 5 a 15 600 m/s chocan
+  siempre, lo que pasa de largo a velocidad orbital no se frena, y lo que cae de 50 a 3 000 m/s
+  acaba sobre el suelo. Lo que había (encontrado el 2026-10-07 al preguntar Fernando «¿y si dos naves
   van rapidísimo y en ese paso no colisionan pero cruzan caminos?»): sí pasa, hoy y a cualquier
   número de fotogramas. Dos bloques de 1,5 m que se acercan de frente a 200 m/s se atraviesan a
   60 Hz; a 500 m/s, también a 240 Hz. La física solo busca contactos entre lo que ya se solapa al

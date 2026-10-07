@@ -39,7 +39,7 @@ use lunar_core::{
         weight,
     },
 };
-use lunar_render::View;
+use lunar_core::view::View;
 use std::sync::Arc;
 
 #[cfg(test)]
@@ -47,13 +47,15 @@ mod frames;
 #[cfg(test)]
 mod shots;
 mod pack;
+mod state;
 #[cfg(test)]
 mod tests;
 mod walk;
 
 pub use pack::Hold;
+pub use state::Garbled;
 
-#[derive(Default, Clone, Copy)]
+#[derive(Default, Clone, Copy, Debug, PartialEq)]
 pub struct Input {
     pub forward: f64,
     pub side: f64,

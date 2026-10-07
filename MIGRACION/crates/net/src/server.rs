@@ -79,6 +79,15 @@ pub struct ServerStats {
     pub told: u64,
 }
 
+/// Something a client said to the game that runs in the server (`Msg::Game`, `Msg::Quick`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct GameIn {
+    pub from: u32,
+    /// It came reliably (and in order), or not.
+    pub reliable: bool,
+    pub data: Vec<u8>,
+}
+
 /// A connected player, for the console.
 #[derive(Clone, Copy, Debug)]
 pub struct PlayerInfo<'a> {
@@ -159,6 +168,8 @@ pub struct Server {
     msg: Vec<u8>,
     stage: Vec<u8>,
     changed: Vec<u64>,
+    /// What clients said to the game, not taken yet.
+    game_in: Vec<GameIn>,
 }
 
 impl Server {
@@ -181,6 +192,7 @@ impl Server {
             msg: Vec::new(),
             stage: Vec::new(),
             changed: Vec::new(),
+            game_in: Vec::new(),
         }
     }
 
@@ -325,6 +337,43 @@ impl Server {
                 self.expel(i, text::BEHIND, Some(text::BEHIND));
             }
         }
+    }
+
+    /// What clients said to the game that runs in the server since the last call, in the order it
+    /// came (each one's reliable messages in the order they were sent).
+    pub fn take_game(&mut self) -> std::vec::Drain<'_, GameIn> {
+        self.game_in.drain(..)
+    }
+
+    /// Says `data` to player `to` for its game, reliably (`Msg::Game`) or not (`Msg::Quick`).
+    /// False if there is no such player, or (reliably) it is too far behind to take more: it is
+    /// dropped at the next update.
+    pub fn send_game(&mut self, to: u32, reliable: bool, data: &[u8]) -> bool {
+        let Some(i) = self.sessions.iter().position(|s| s.id == to && s.confirmed) else { return false };
+        let mut buf = std::mem::take(&mut self.msg);
+        let msg = if reliable { Msg::Game(data) } else { Msg::Quick(data) };
+        let bytes = pack(&msg, data.len(), &mut buf);
+        let sent = if bytes.is_empty() {
+            false
+        } else if reliable {
+            let ok = bytes.len() <= MAX_MESSAGE && self.sessions[i].channel.send_reliable(bytes);
+            if !ok {
+                self.expel(i, text::BEHIND, Some(text::BEHIND));
+            }
+            ok
+        } else {
+            bytes.len() <= crate::channel::MAX_UNRELIABLE && {
+                self.sessions[i].channel.send_unreliable(bytes);
+                true
+            }
+        };
+        self.msg = buf;
+        sent
+    }
+
+    /// How long a datagram takes to player `id` and back (s), as its channel measures it.
+    pub fn rtt(&self, id: u32) -> Option<f32> {
+        self.sessions.iter().find(|s| s.id == id).map(|s| s.channel.rtt())
     }
 
     /// What happened since the last call.

@@ -44,6 +44,38 @@ impl Grid {
         self.seen.resize(list.len(), 0);
     }
 
+    /// The same, each along where it goes in the step (`travel(i)`, world m): its bounding sphere
+    /// swept from where it is to where it will be. What two fast bodies cross on the way is
+    /// found though neither is near where the other starts.
+    pub fn build_swept(&mut self, list: &[Structure], travel: impl Fn(usize) -> DVec3) {
+        for v in self.cells.values_mut() {
+            v.clear();
+        }
+        for (i, s) in list.iter().enumerate() {
+            let c = s.to_world(s.center);
+            let r = f64::from(s.radius);
+            let go = travel(i);
+            let steps = (go.length() / (self.cell * 0.5)).ceil().max(0.0) as usize;
+            for k in 0..=steps {
+                let p = if steps == 0 { c } else { c + go * (k as f64 / steps as f64) };
+                let (lo, hi) = (self.key(p - DVec3::splat(r)), self.key(p + DVec3::splat(r)));
+                for x in lo[0]..=hi[0] {
+                    for y in lo[1]..=hi[1] {
+                        for z in lo[2]..=hi[2] {
+                            let cell = self.cells.entry([x, y, z]).or_default();
+                            if cell.last() != Some(&(i as u32)) {
+                                cell.push(i as u32);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        self.cells.retain(|_, v| !v.is_empty());
+        self.seen.clear();
+        self.seen.resize(list.len(), 0);
+    }
+
     /// Structures whose cells the segment a→b (widened by `pad` m) crosses, each once, into `out`.
     pub fn along(&mut self, a: DVec3, b: DVec3, pad: f64, out: &mut Vec<u32>) {
         out.clear();
