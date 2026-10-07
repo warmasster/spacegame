@@ -375,6 +375,7 @@ real con una red en memoria que pierde un 3 %, duplica un 1 % y retrasa 40 ± 10
 | `a_player_floating_by_a_ship_at_orbital_speed_…` | quien flota junto a una nave en órbita se dibuja a su lado (5 mm) |
 | `whoever_stands_aboard_a_ship_another_flies_…` | un pasajero de pie en una nave que pilota otro a 7,8 km/s no resbala |
 | `two_games_through_a_server_agree_…` | jugadores, mandos, puertas, naves puestas y dueños |
+| `every_weapon_in_the_data_…` | **todo lo que los datos dicen que se dispara** (hoy 26: 8 disparos, el misil, 2 guiados, 2 señuelos, 13 explosiones), uno a uno desde la nave de Ana a 2 km/s contra un Abejorro puesto para cada uno (hecho en las tres partidas): cada uno arranca una vez en cada partida, acaba las mismas veces y en el mismo sitio, y las tres quedan igual bit a bit, trozos incluidos. Un arma nueva en los datos se prueba aquí sola |
 | `told.rs` (`what_is_seen_beside_a_ship…`) | lanzamiento, final y aviso de un guiado en marcos que se mueven y giran: a 1,7 km/s, con la copia 6 m corrida y girada, el disparo sale de su boca y el final cae en su casco |
 | `told.rs` | cada mensaje ida y vuelta, tamaños, mensajes cortados |
 
@@ -387,10 +388,7 @@ real con una red en memoria que pierde un 3 %, duplica un 1 % y retrasa 40 ± 10
   sus gestos; quien entra tarde no recibe el estado de las máquinas (solo los mandos).
 - **Dónde está cada trozo** no se sincroniza: los trozos nacen igual y se dañan igual en todas,
   pero cada partida los mueve con su física y se separan poco a poco.
-- **En investigación:** una bala rápida puede atravesar una nave sin chocar cuando el blanco
-  está cerca (el barrido detecta el choque un paso tarde, ya dentro del casco, o no lo detecta si
-  en ese paso lo cruza entero). Lo encontró la prueba de todas las armas, que aún no está en el
-  repositorio por eso.
+
 - **No se puede migrar de dirección**: si el router cambia el puerto de salida de un jugador a
   media partida, el servidor deja de reconocerlo y el jugador cae por silencio.
 - **Sin cifrado ni autenticación**: la `cookie` impide suplantar direcciones al entrar, pero

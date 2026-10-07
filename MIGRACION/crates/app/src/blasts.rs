@@ -169,6 +169,8 @@ pub struct Blasts {
     foreign: Vec<(u64, u32, f64)>,
     /// Until where our guided missiles are is told again (s).
     track_in: f64,
+    /// How many things have been let fly or set off here (ours and the others' copies).
+    pub started: u64,
     /// How many things have ended here (ours and the others'); and, kept only while `log_ends`
     /// is on (the tests), each: what it was and on what, where in its frame.
     pub ends: u64,
@@ -263,6 +265,7 @@ impl Blasts {
             next_tag: 0,
             foreign: Vec::new(),
             track_in: 0.0,
+            started: 0,
             ends: 0,
             log_ends: false,
             ended: Vec::new(),
@@ -382,6 +385,12 @@ impl Blasts {
     /// `l` started, `age` s after it was let go: ours (it does what it does), or another game's
     /// (`tag` marked `FOREIGN`: it is seen, and does nothing).
     fn start(&mut self, l: &Launch, tag: u32, age: f32, bodies: &BodyRegistry, builds: &mut Builds) -> bool {
+        let started = self.start_one(l, tag, age, bodies, builds);
+        self.started += u64::from(started);
+        started
+    }
+
+    fn start_one(&mut self, l: &Launch, tag: u32, age: f32, bodies: &BodyRegistry, builds: &mut Builds) -> bool {
         let ours = tag & FOREIGN == 0;
         let vel = l.vel + l.dir * f64::from(l.speed);
         let (from, age64) = (l.from + vel * f64::from(age), f64::from(age));

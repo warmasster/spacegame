@@ -118,9 +118,9 @@ vuelo (V40)», [`COMBATE.md`](COMBATE.md), [`MOVIMIENTO.md`](MOVIMIENTO.md) §8)
   - de paso: el fondo de la partida de pruebas no volaba los misiles; los mensajes vistos se
     colocaban un fotograma tarde y antes de corregir las copias; lo que revienta usaba una semilla
     distinta en cada partida.
-  - **Queda:** una bala rápida contra un blanco cercano puede detectarse un paso tarde o
-    atravesarlo (encontrado por la prueba de todas las armas, que recorre todo lo que hay en los
-    datos; en ello); dónde está cada trozo no se sincroniza.
+  - prueba de **todas las armas de los datos** (`every_weapon_in_the_data_…`): las 26 que hay,
+    cada una contra un blanco nuevo en red; un arma nueva queda probada sola;
+  - **Queda:** dónde está cada trozo no se sincroniza (cada partida los mueve con su física).
 
 - **Teclas a gusto de cada uno** (Fernando: «las acciones con la F ok, pero mete cambiar
   controles… usar las flechas para algo de la nave… también tenemos numpad»):

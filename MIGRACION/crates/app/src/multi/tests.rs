@@ -823,3 +823,129 @@ fn a_body_faces_where_its_player_does() {
         assert!(f.dot(up).abs() < 1e-12 && (f.length() - 1.0).abs() < 1e-12);
     }
 }
+/// What every game has, as each has it: each shared structure (by the name every game knows it
+/// by: pieces come off too) and its parts, bit for bit; and how many structures there are in all.
+fn shared_state(g: &Game) -> (Vec<(u64, Vec<(bool, u32)>)>, usize) {
+    let mut out: Vec<(u64, Vec<(bool, u32)>)> = g.builds.set.list.iter().filter(|s| s.shared).map(|s| (s.lineage, s.parts.iter().map(|p| (p.alive, p.hp.to_bits())).collect())).collect();
+    out.sort_by_key(|s| s.0);
+    (out, g.builds.set.list.len())
+}
+
+/// Where structure `id` is at the world's moment (none: gone), as `kin_of`.
+fn kin_at(g: &Game, id: u64) -> Option<(Kin, DVec3)> {
+    let s = g.builds.set.get(id)?;
+    let behind = (g.builds.set.now - s.clock).max(0.0);
+    let carried = s.vel * behind;
+    Some((Kin { pos: s.pos + carried, vel: s.vel, rot: s.rot, spin: s.spin }, s.to_world(s.com) + carried))
+}
+
+#[test]
+fn every_weapon_in_the_data_is_seen_and_does_the_same_in_every_game() {
+    // Everything the definitions say can be let fly or set off (every shot, missile, guided
+    // missile, decoy and explosion: a weapon added to the data is tried here without a line
+    // more), each from Ana's ship at 2 km/s at an Abejorro she puts beside it for it (made in
+    // every game: what is made in play is too); Berto and Carla watch. Each is seen in every
+    // game, goes off in the same place in each, and every game ends each with the same damage,
+    // bit for bit — the pieces that come off included.
+    let bad = Conditions { loss: 0.03, duplicate: 0.01, delay: 0.04, jitter: 0.01 };
+    let mut t = Table::new(&["Ana", "Berto", "Carla"], 99, bad);
+    let pair = Pair::new(&t.bodies, 2000.0);
+    sit_at_controls(&mut t.games[0], 0);
+    let beside = move |at: f64| {
+        let lead = pair.lead(at);
+        Kin { pos: lead.pos + pair.ahead * 60.0 + pair.side * 3.0, ..lead }
+    };
+    let t0 = t.now;
+    for g in &mut t.games {
+        g.blasts.log_ends = true;
+        put(g, 0, &pair.lead(0.0));
+    }
+    // (Ana flies hers; the newest ship is where it goes in the game of whoever owns it — a ship
+    // nobody sits in is the host's, whoever made it)
+    let fly = move |i: usize, g: &mut Game, now: f64| {
+        let at = now - t0;
+        if i == 0 {
+            put(g, 0, &pair.lead(at));
+        }
+        // (while there is anything of it: a weapon may leave nothing)
+        let k = g.ships.list.len() - 1;
+        let id = g.ships.list[k].structure;
+        if k > 0 && g.multi.owns(id) && g.builds.set.get(id).is_some() {
+            put(g, k, &beside(at));
+        }
+        if let Some((k, mass)) = g.ships.list.last().and_then(|sh| kin_at(g, sh.structure)).map(|(k, m)| (k, m)) {
+            let id = g.ships.list.last().unwrap().structure;
+            g.blasts.aims.clear();
+            g.blasts.aims.push((id, lunar_core::guided::Aim { pos: mass, vel: k.vel, rcs: 60.0, heat: 2e7 }));
+        }
+    };
+    let dt = std::env::var("FPS").ok().and_then(|f| f.parse::<f64>().ok()).map_or(1.0 / 30.0, |f| 1.0 / f);
+    t.run(0.5, dt, true, fly);
+    let bodies = t.bodies.clone();
+    let every = t.games[0].blasts.every();
+    assert!(every.len() >= 20, "{every:?}");
+    let mut report = Vec::new();
+    for (name, what) in every {
+        // a fresh target, in every game
+        let count: Vec<usize> = t.games.iter().map(|g| g.ships.list.len()).collect();
+        let ana = &mut t.games[0];
+        let at = beside(t.now - t0);
+        let made = ana.ships.spawn_free(&mut ana.builds, "abejorro", at.pos, at.rot).unwrap();
+        ana.multi.made("abejorro", made, &ana.builds.set, &ana.ships);
+        for _ in 0..60 {
+            t.frame(dt, true, fly);
+            if t.games.iter().zip(&count).all(|(g, n)| g.ships.list.len() == n + 1) {
+                break;
+            }
+        }
+        assert!(t.games.iter().zip(&count).all(|(g, n)| g.ships.list.len() == n + 1), "{name}: the target was not made in every game");
+        t.run(0.3, dt, true, fly);
+        let before: Vec<u64> = t.games.iter().map(|g| g.blasts.ends).collect();
+        let started: Vec<u64> = t.games.iter().map(|g| g.blasts.started).collect();
+        t.frame(dt, true, |i, g, now| {
+            fly(i, g, now);
+            if i != 0 {
+                return;
+            }
+            let a = kin_of(g, 0);
+            let (by, target) = (g.ships.list[0].structure, g.ships.list.last().unwrap().structure);
+            let from = a.pos + pair.ahead * 14.0;
+            let (_, mass) = kin_at(g, target).expect("the target is there");
+            let aim = (mass - from).normalize();
+            let l = match what {
+                crate::blasts::What::Shot(_) => g.blasts.shot(&name, from, aim, a.vel, Some(by)).unwrap(),
+                crate::blasts::What::Missile(_) => crate::blasts::Launch { what, from, dir: aim, speed: 300.0, vel: a.vel, target: None, by: Some(by) },
+                crate::blasts::What::Guided(_) => crate::blasts::Launch { what, from, dir: aim, speed: crate::blasts::RAIL, vel: a.vel, target: Some(target), by: Some(by) },
+                crate::blasts::What::Decoy(_) => crate::blasts::Launch { what, from, dir: pair.up, speed: 30.0, vel: a.vel, target: None, by: Some(by) },
+                // (an explosion set off beside the target's hull)
+                crate::blasts::What::Boom(_) => crate::blasts::Launch { what, from: mass - aim * 4.0, dir: aim, speed: 0.0, vel: a.vel, target: None, by: Some(by) },
+            };
+            assert!(g.blasts.launch(l, &bodies, &mut g.builds), "{name} could not be let fly");
+        });
+        // until nothing of it flies in Ana's game, and a little more for the word to go round
+        let mut left = 0.6;
+        for _ in 0..(3.0 / dt) as usize {
+            t.frame(dt, true, fly);
+            if !t.games[0].blasts.flying() {
+                left -= dt;
+                if left <= 0.0 {
+                    break;
+                }
+            }
+        }
+        // (seen: started in every game, once — Ana's own, the others' copy of it)
+        let seen: Vec<u64> = t.games.iter().zip(&started).map(|(g, b)| g.blasts.started - b).collect();
+        let ends: Vec<u64> = t.games.iter().zip(&before).map(|(g, b)| g.blasts.ends - b).collect();
+        let states: Vec<_> = t.games.iter().map(shared_state).collect();
+        report.push(format!("{name:>22} ({what:?}): visto en {seen:?}, finales {ends:?}, estructuras {}", t.games[0].builds.set.list.len()));
+        let say = || report.join("\n");
+        assert!(seen.iter().all(|s| *s == 1), "{name}: started {seen:?} times\n{}", say());
+        assert!(ends.iter().all(|e| *e == ends[0]), "{name}: ended {ends:?} times\n{}", say());
+        for (i, st) in states.iter().enumerate() {
+            assert!(st.1 == states[0].1, "{name}: game {i} has {} structures, Ana's {}\n{}", st.1, states[0].1, say());
+            assert!(st.0 == states[0].0, "{name}: game {i} ends unlike Ana's\n{}", say());
+        }
+    }
+    same_ends(&t, t.games[0].blasts.ended.len());
+    eprintln!("{}", report.join("\n"));
+}
