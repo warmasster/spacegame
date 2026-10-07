@@ -164,7 +164,8 @@ impl Models {
     }
 }
 
-/// An asset path relative to `assets/`, or to the reference sources the migration came from.
+/// An asset path relative to `assets/`, or to the reference sources the migration came from (a
+/// build's folder carries only `assets/`: whatever it needs is copied there, as `astronaut.glb`).
 pub fn find_asset(assets: &Path, name: &str) -> PathBuf {
     let local = assets.join(name);
     if local.exists() { local } else { assets.join("../reference/sources/public/assets").join(name) }
