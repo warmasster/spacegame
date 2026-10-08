@@ -58,6 +58,22 @@ const MEND_SLACK: f32 = 1.5;
 /// Of the time a welder takes to put back a part that is gone, what one player must let pass
 /// between two.
 const REBUILD_SLACK: f64 = 0.8;
+/// Steps back the server keeps where each body was (300 ms): what a shot at a person, aimed at
+/// them as the shooter's game had them, is judged against (`PLAN_AUTORITATIVO.md` §3.5) the day
+/// people can be hurt; and whatever else asks where someone was a moment ago.
+pub const REWIND: usize = 18;
+
+/// Where one player's body was at a step (`Host::bodies_at`): its feet and the way up there, its
+/// eye, and what it stood in (structure, and the eye in its frame).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BodyAt {
+    pub id: u32,
+    pub feet: glam::DVec3,
+    pub up: glam::DVec3,
+    pub eye: glam::DVec3,
+    pub ride: Option<(u64, Vec3)>,
+}
+
 /// Steps a structure changed by a hand is left as it is before what was not worth telling of it
 /// (less than `lunar_ship::sync`'s step of hit points) is told.
 const SETTLE: u64 = 15;
@@ -284,6 +300,8 @@ pub struct Host {
     helds: Vec<(u64, Option<lunar_core::structure::hold::Held>)>,
     /// What every player is drawn from this step (theirs left out of their own snapshot).
     states: Vec<(u32, PlayerState)>,
+    /// Where every body was at each of the last `REWIND` steps (`step % REWIND`; buffers reused).
+    rewind: Vec<(u64, Vec<BodyAt>)>,
     /// Every player in the world: who, where, how fast (reused: `tracks`).
     far_players: Vec<(u32, glam::DVec3, Vec3)>,
     /// (reused)
@@ -334,6 +352,7 @@ impl Host {
             helds: Vec::new(),
             states: Vec::new(),
             far_players: Vec::new(),
+            rewind: (0..REWIND).map(|_| (u64::MAX, Vec::new())).collect(),
             cmds_in: Vec::new(),
             due: Vec::new(),
             moved: Vec::new(),
@@ -376,6 +395,13 @@ impl Host {
     /// Player `id`'s body and hands as the server has them.
     pub fn player(&self, id: u32) -> Option<&Player> {
         self.peers.iter().position(|p| p.id == id).map(|k| &self.players[k])
+    }
+
+    /// Where every body in the world was at the end of step `step`, if that is one of the last
+    /// `REWIND`: what the shooter saw, to judge a shot at a person by (lag compensation).
+    pub fn bodies_at(&self, step: u64) -> Option<&[BodyAt]> {
+        let (at, bodies) = &self.rewind[(step % REWIND as u64) as usize];
+        (*at == step).then_some(&bodies[..])
     }
 
     pub fn player_mut(&mut self, id: u32) -> Option<&mut Player> {
@@ -734,6 +760,16 @@ impl Host {
         // ---- 4. the step
         self.game.tick(&mut self.players);
         self.stats.steps += 1;
+        // (where each body is, kept a moment: `bodies_at`)
+        let slot = &mut self.rewind[(self.game.step % REWIND as u64) as usize];
+        slot.0 = self.game.step;
+        slot.1.clear();
+        for (p, peer) in self.players.iter().zip(&self.peers) {
+            if !p.away {
+                let (feet, up) = p.pilot.feet();
+                slot.1.push(BodyAt { id: peer.id, feet, up, eye: p.pilot.eye(), ride: p.pilot.ride.map(|r| (r.id, r.local)) });
+            }
+        }
         // ---- 5. each body against what its game got
         for k in 0..self.peers.len() {
             if self.players[k].away || self.peers[k].lost.is_some() {

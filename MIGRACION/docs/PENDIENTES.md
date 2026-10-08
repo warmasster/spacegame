@@ -730,11 +730,12 @@ silueta lejana, oclusión. Falta:
   pide un intercambio de claves (una dependencia, p. ej. x25519 + chacha20poly1305). Hoy las
   firmas paran a quien no ve el tráfico, no a quien lo ve.
 - [ ] (2026-10-08) Servidor autoritativo: con el relevo se fueron sus pruebas de partidas enteras
-  (`app/src/multi/tests.rs`). Falta su equivalente por el servidor que tiene la partida: **todas las
-  armas de los datos una a una** desde una nave a 2 km/s (cada una arranca una vez en cada juego,
-  acaba igual y todo queda igual bit a bit), el guiado contra una nave que esquiva, dos tiradores a
-  la vez, la formación de naves de 0 a 7 800 m/s a 30–240 fps, el pasajero de pie en una nave que
-  pilota otro.
+  (`app/src/multi/tests.rs`). Falta su equivalente por el servidor que tiene la partida: ~~**todas las
+  armas de los datos una a una** desde una nave a 2 km/s~~ (hecho 2026-10-08:
+  `every_weapon_of_the_data_fired_from_beside_a_ship_at_2_kms…`), el guiado contra una nave que
+  esquiva, dos tiradores a la vez, la formación de naves de 0 a 7 800 m/s a 30–240 fps, ~~el pasajero
+  de pie en una nave que pilota otro~~ (hecho: `the_pilot_hands_over_at_orbital_speed…`, 0
+  correcciones del que va de pie mientras el otro pilota).
 - [ ] (2026-10-08) Servidor autoritativo: el servidor guarda la partida cada 5 minutos y con
   «salir», pero no si se cierra la ventana de la consola o con Ctrl+C (no hay manejador de señales):
   se pierde lo de desde el último guardado. ~~Y lo que vuela en el momento de guardar (balas, misiles)
