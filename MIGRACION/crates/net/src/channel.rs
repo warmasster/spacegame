@@ -7,8 +7,9 @@
 //!   dropped (the newest wins);
 //! - several messages per datagram, datagrams of at most `MTU` bytes;
 //! - round-trip time, keep-alives when there is nothing to say, and how long the peer has been silent;
-//! - signed, once the session has a key (`sign`): every datagram ends with its SipHash, and one
-//!   whose tag does not pass is dropped before anything of it is read (`ChannelError::Forged`).
+//! - sealed, once the session has its keys (`seal`, `crate::seal`): every datagram encrypted and
+//!   signed, and one that does not open is dropped before anything of it is read
+//!   (`ChannelError::Forged`).
 //!
 //! The channel does no IO of its own and allocates nothing once warm.
 mod inbox;
@@ -33,8 +34,8 @@ pub const WINDOW: u16 = 256;
 pub const FRAGMENT: usize = 1024;
 /// The longest reliable message.
 pub const MAX_MESSAGE: usize = 64 * 1024;
-/// Bytes of the tag a signed datagram ends with.
-pub const TAG: usize = 8;
+/// Bytes a sealed datagram has besides what it carries (its number and its seal).
+pub const TAG: usize = crate::seal::OVERHEAD;
 /// The longest unreliable message: what fits one datagram after the header, its framing and the tag.
 pub const MAX_UNRELIABLE: usize = MTU - HEADER - 3 - TAG;
 /// Reliable items that may wait to be acked before `send_reliable` refuses: a peer this far behind is gone.
@@ -112,8 +113,10 @@ pub struct Channel {
     rtt: Rtt,
     buf: Vec<u8>,
     stats: ChannelStats,
-    /// The session's key, once there is one: what every datagram is signed with, both ways.
-    key: Option<crate::sip::Key>,
+    /// The session's keys, once there are: what every datagram is sealed with, both ways; and
+    /// (reused) what one opened carries.
+    keys: Option<crate::seal::Keys>,
+    opened: Vec<u8>,
 }
 
 impl Channel {
@@ -135,24 +138,19 @@ impl Channel {
             rtt: Rtt::new(),
             buf: vec![0; MTU],
             stats: ChannelStats::default(),
-            key: None,
+            keys: None,
+            opened: vec![0; MTU],
         }
     }
-    /// Every datagram signed with `key` from now on, and only those of the peer signed with it
-    /// taken.
-    pub fn sign(&mut self, key: crate::sip::Key) {
-        self.key = Some(key);
+    /// Every datagram sealed with `keys` from now on, and only those of the peer sealed with
+    /// them taken.
+    pub fn seal(&mut self, keys: crate::seal::Keys) {
+        self.keys = Some(keys);
     }
-    /// Whether `body` (a datagram without its lead byte) is signed with this channel's key (with
-    /// no key, anything is).
-    pub fn signed(&self, body: &[u8]) -> bool {
-        match self.key {
-            None => true,
-            Some(key) => body.len() >= TAG && {
-                let (data, tag) = body.split_at(body.len() - TAG);
-                crate::sip::hash(key, data).to_le_bytes() == tag
-            },
-        }
+    /// Whether `body` (a datagram without its lead byte) is sealed with this channel's keys (with
+    /// none, anything is). Nothing of it is taken.
+    pub fn opens(&self, body: &[u8]) -> bool {
+        self.keys.as_ref().is_none_or(|k| k.opens(self.lead, body))
     }
     /// Queues a message that must arrive, once and in order. False if it is too long or the peer is hopelessly behind.
     pub fn send_reliable(&mut self, data: &[u8]) -> bool {
@@ -170,10 +168,11 @@ impl Channel {
         }
         let resend = self.rtt.resend_after();
         let mut buf = std::mem::take(&mut self.buf);
-        let room = if self.key.is_some() { MTU - TAG } else { MTU };
+        // (sealed: its number after the lead byte, its seal at the end)
+        let (start, room) = if self.keys.is_some() { (1 + crate::seal::NUMBER, MTU - crate::seal::SEAL) } else { (1, MTU) };
         for _ in 0..MAX_BURST {
-            let mut w = Writer::new(&mut buf[..room]);
-            w.u8(self.lead);
+            buf[0] = self.lead;
+            let mut w = Writer::new(&mut buf[start..room]);
             w.u16(self.seq);
             w.u16(self.latest);
             w.u32(self.bits);
@@ -181,15 +180,13 @@ impl Channel {
             w.u8(if self.heard { ((now - self.latest_at) * 1000.0).clamp(0.0, 255.0) as u8 } else { 255 });
             let (carried, more_reliable) = self.out.write_due(&mut w, now, resend, &mut self.stats);
             let more_loose = self.out.write_loose(&mut w);
-            let mut len = w.len();
-            if len == HEADER && !self.ack_due && now - self.last_send < KEEPALIVE {
+            let carries = w.len();
+            if carries == HEADER - 1 && !self.ack_due && now - self.last_send < KEEPALIVE {
                 break;
             }
-            if let Some(key) = self.key {
-                // (what follows the lead byte, signed)
-                let tag = crate::sip::hash(key, &buf[1..len]).to_le_bytes();
-                buf[len..len + TAG].copy_from_slice(&tag);
-                len += TAG;
+            let mut len = start + carries;
+            if let Some(keys) = &mut self.keys {
+                len = keys.seal(&mut buf, len);
             }
             transport.send(to, &buf[..len]);
             self.sent[self.seq as usize % SENT] = Sent { seq: self.seq, live: true, time: now, carried };
@@ -206,10 +203,25 @@ impl Channel {
     }
     /// Takes a datagram of the peer (without its lead byte) and leaves its messages in `inbox`.
     pub fn receive(&mut self, body: &[u8], now: f64, inbox: &mut Inbox) -> Result<(), ChannelError> {
-        if !self.signed(body) {
-            return Err(ChannelError::Forged);
-        }
-        let body = if self.key.is_some() { &body[..body.len() - TAG] } else { body };
+        let mut opened = std::mem::take(&mut self.opened);
+        let r = self.taken(body, now, inbox, &mut opened);
+        self.opened = opened;
+        r
+    }
+
+    fn taken(&mut self, body: &[u8], now: f64, inbox: &mut Inbox, opened: &mut [u8]) -> Result<(), ChannelError> {
+        let body = match &mut self.keys {
+            Some(keys) => match keys.open(self.lead, body, opened) {
+                Ok(b) => b,
+                // (one that came already: nothing new, as the channel's own repeats)
+                Err(true) => {
+                    self.stats.repeated += 1;
+                    return Ok(());
+                }
+                Err(false) => return Err(ChannelError::Forged),
+            },
+            None => body,
+        };
         let mut r = Reader::new(body);
         let (seq, ack, ack_bits, delay) = (r.u16()?, r.u16()?, r.u32()?, r.u8()?);
         self.stats.recv_datagrams += 1;

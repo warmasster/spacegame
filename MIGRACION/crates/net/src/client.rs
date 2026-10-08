@@ -74,6 +74,9 @@ pub struct Client {
     salt: u32,
     /// What the server's challenge said: the hello that is listened to carries it.
     cookie: u64,
+    /// Our secret for this handshake (its key goes in the hello; the session is sealed with what
+    /// it and the server's work out: `seal`).
+    secret: crate::seal::Secret,
     name: String,
     build: String,
     scenario: u32,
@@ -110,12 +113,21 @@ impl Client {
     pub fn with_transport(t: Box<dyn Transport>, server: Addr, name: &str, build: &str, scenario: u32) -> Client {
         // A number of our own for this connection; the hasher's seed is the system's randomness.
         let salt = RandomState::new().hash_one(std::process::id()) as u32;
+        // (from the system's randomness; were there none, from the hasher's, as the salt)
+        let secret = crate::seal::Secret::new().unwrap_or_else(|| {
+            let mut b = [0u8; crate::seal::KEY];
+            for (k, c) in b.chunks_mut(8).enumerate() {
+                c.copy_from_slice(&RandomState::new().hash_one((std::process::id(), k)).to_le_bytes());
+            }
+            crate::seal::Secret::from_bytes(b)
+        });
         Client {
             transport: t,
             server,
             phase: Phase::Hello,
             salt,
             cookie: 0,
+            secret,
             name: text::clean_name(name),
             build: text::cut(build, MAX_BUILD).to_string(),
             scenario,

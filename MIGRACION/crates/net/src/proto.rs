@@ -4,19 +4,29 @@
 //!
 //! A client says `Hello`; the server answers with a `Challenge` (a number only that address can
 //! have been told); the client says `Hello` again with it, and the server answers `Welcome` (or
-//! `Refused`, with the reason). From then on both talk through a `Channel` (`Data` datagrams).
-//! `Bye` ends it from either side.
+//! `Refused`, with the reason). Each shows a key of its own made for that handshake (`key`): the
+//! session is sealed with what both work out of them (`seal`). From then on both talk through a
+//! `Channel` (`Data` datagrams, sealed). `Bye` ends it from either side.
 //!
 //! What the game says goes as bytes this layer never reads (`Game`, `Quick`), between each player
 //! and the game that runs in the server: the game can say new things without this changing.
 
+use crate::seal::KEY;
 use crate::wire::{Reader, Wire, WireError, Writer};
+
+/// A key shown in a handshake.
+fn key(r: &mut Reader) -> Wire<[u8; KEY]> {
+    let mut k = [0u8; KEY];
+    k.copy_from_slice(r.bytes(KEY)?);
+    Ok(k)
+}
 
 /// First bytes of a `Hello`: what tells our datagrams from anything else that reaches the port.
 pub const MAGIC: u32 = u32::from_le_bytes(*b"LUNA");
 /// The protocol's version: both sides must have the same. 1 was V35's (the server read the game's
-/// states); 2 the relay that read nothing; 3, a server that has the game (and nothing else).
-pub const VERSION: u16 = 3;
+/// states); 2 the relay that read nothing; 3, a server that has the game (and nothing else); 4,
+/// sealed (`seal`).
+pub const VERSION: u16 = 4;
 /// The port a server listens on unless told otherwise (UDP).
 pub const DEFAULT_PORT: u16 = 47600;
 
@@ -46,11 +56,12 @@ pub enum Datagram<'a> {
     /// A client asks to come in. `cookie`: what the server's `Challenge` said (0 the first time).
     /// `scenario`: a number that says what world its game starts with (whoever comes with another
     /// is not let in). One of another version only has `version` and `salt` filled.
-    Hello { version: u16, salt: u32, cookie: u64, scenario: u32, build: &'a str, name: &'a str },
+    Hello { version: u16, salt: u32, cookie: u64, key: [u8; KEY], scenario: u32, build: &'a str, name: &'a str },
     /// The server, to a hello without the right cookie: "say it again with this", to know the address is the sender's own.
     Challenge { salt: u32, cookie: u64 },
-    /// The server lets it in. `name`: the client's name as the server took it (cleaned, made unique).
-    Welcome { salt: u32, id: u32, name: &'a str, server: &'a str },
+    /// The server lets it in. `name`: the client's name as the server took it (cleaned, made unique);
+    /// `key`: the server's for this session.
+    Welcome { salt: u32, id: u32, key: [u8; KEY], name: &'a str, server: &'a str },
     /// The server does not, and why.
     Refused { salt: u32, reason: &'a str },
     /// Either side ends the connection.
@@ -64,12 +75,13 @@ impl<'a> Datagram<'a> {
     pub fn encode(&self, buf: &mut [u8]) -> usize {
         let mut w = Writer::new(buf);
         match *self {
-            Datagram::Hello { version, salt, cookie, scenario, build, name } => {
+            Datagram::Hello { version, salt, cookie, key, scenario, build, name } => {
                 w.u8(lead::HELLO);
                 w.u32(MAGIC);
                 w.u16(version);
                 w.u32(salt);
                 w.u64(cookie);
+                w.bytes(&key);
                 w.var(scenario as u64);
                 w.str(build);
                 w.str(name);
@@ -81,10 +93,11 @@ impl<'a> Datagram<'a> {
                 w.u32(salt);
                 w.u64(cookie);
             }
-            Datagram::Welcome { salt, id, name, server } => {
+            Datagram::Welcome { salt, id, key, name, server } => {
                 w.u8(lead::WELCOME);
                 w.u32(salt);
                 w.var(id as u64);
+                w.bytes(&key);
                 w.str(name);
                 w.str(server);
             }
@@ -119,13 +132,13 @@ impl<'a> Datagram<'a> {
                 }
                 if version != VERSION {
                     // Whatever follows is another protocol's: all we can do is say so.
-                    return Ok(Datagram::Hello { version, salt, cookie: 0, scenario: 0, build: "", name: "" });
+                    return Ok(Datagram::Hello { version, salt, cookie: 0, key: [0; KEY], scenario: 0, build: "", name: "" });
                 }
                 // What follows the name is padding.
-                return Ok(Datagram::Hello { version, salt, cookie: r.u64()?, scenario: r.var32()?, build: r.str(MAX_BUILD)?, name: r.str(MAX_NAME)? });
+                return Ok(Datagram::Hello { version, salt, cookie: r.u64()?, key: key(&mut r)?, scenario: r.var32()?, build: r.str(MAX_BUILD)?, name: r.str(MAX_NAME)? });
             }
             lead::CHALLENGE => Datagram::Challenge { salt: r.u32()?, cookie: r.u64()? },
-            lead::WELCOME => Datagram::Welcome { salt: r.u32()?, id: r.var32()?, name: r.str(MAX_NAME)?, server: r.str(MAX_NAME)? },
+            lead::WELCOME => Datagram::Welcome { salt: r.u32()?, id: r.var32()?, key: key(&mut r)?, name: r.str(MAX_NAME)?, server: r.str(MAX_NAME)? },
             lead::REFUSED => Datagram::Refused { salt: r.u32()?, reason: r.str(MAX_TEXT)? },
             lead::BYE => Datagram::Bye { salt: r.u32()?, reason: r.str(MAX_TEXT)? },
             lead::DATA => return Ok(Datagram::Data(r.rest())),

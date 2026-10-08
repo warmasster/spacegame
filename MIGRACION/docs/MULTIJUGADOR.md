@@ -93,14 +93,22 @@ Detrás, los mensajes: `[etiqueta][id, si es fiable][longitud][bytes]`.
 | `Joined`, `Left` | sí | servidor | quién está |
 | `Bundle`, `Synced` | sí | servidor | la puesta al día de quien entra (quién está), y su final |
 
-## Firmas y límites (fase 11)
+## Sellado y límites (fase 11)
 
-- **Cada datagrama de una sesión va firmado** (`channel::Channel::sign`): al final, 8 bytes de
-  SipHash-2-4 (`sip.rs`) de lo que lleva, con la clave de la sesión, que sale del saludo (la
-  galleta del `Challenge` y la sal del cliente: `sip::session_key`). Uno que no pasa se tira sin
-  leerlo (`ChannelError::Forged`, `ServerStats::forged`) y no echa a nadie. No es cifrado: quien
-  ve el tráfico (la misma wifi) ve el saludo.
-- **La sesión es su clave, no su dirección**: un datagrama firmado por una sesión que llega desde
+- **Cada sesión va sellada** (`seal.rs`, `channel::Channel::seal`; protocolo 4): en el saludo
+  cada lado enseña una clave X25519 hecha para ese saludo (el cliente en su `Hello`, el servidor
+  en su `Welcome`); de lo que los dos sacan de ellas y de lo que dijo el saludo (la galleta del
+  `Challenge` y la sal del cliente) salen dos claves, una por sentido (HKDF con SHA-256); cada
+  datagrama va cifrado y firmado con la de su sentido y un número suyo que no se repite
+  (ChaCha20-Poly1305: 8 bytes de número tras el primer byte y 16 de sello al final; el primer
+  byte, firmado). Quien ve el tráfico (la misma wifi) no lee nada; uno que no abre se tira sin
+  leerlo (`ChannelError::Forged`, `ServerStats::forged`) y no echa a nadie; uno que ya llegó
+  (la red que repite, o quien lo repite) no se toma otra vez. Sellar y abrir un datagrama de
+  1 200 bytes, 5,75 µs entre los dos extremos. Lo que no para: quien está en medio del camino
+  desde el saludo mismo y contesta como si fuera el servidor (haría falta conocer de antemano la
+  clave propia del servidor). Las cuentas están en las dependencias (`x25519-dalek`,
+  `chacha20poly1305`, `hkdf`, `sha2`, `getrandom`): nuestro código sigue sin `unsafe`.
+- **La sesión es su clave, no su dirección**: un datagrama sellado por una sesión que llega desde
   otra dirección la lleva allí (`ServerEvent::Moved`): el router que cambia la dirección del
   jugador no lo echa. Se comprueban como mucho 256 por segundo de direcciones desconocidas.
 - **Cada uno, lo suyo**: como mucho 512 mensajes para la partida de cada jugador cada vez que la
@@ -382,8 +390,8 @@ Lo que falta de cada fase está en [`PLAN_AUTORITATIVO.md`](PLAN_AUTORITATIVO.md
 que más se nota al jugar:
 
 - **Cerrar la ventana del servidor** en Windows lo para sin guardar (Ctrl+C y «salir» guardan).
-- **Sin cifrado**: los datagramas van firmados (nadie se hace pasar por otro ni mete nada en
-  una sesión ajena), pero quien ve el tráfico lo puede leer.
+- **Quien está en medio desde el saludo** (contesta como si fuera el servidor) podría leer: la
+  conexión va cifrada, pero sin conocer de antemano la clave del servidor no se sabe con quién.
 - **Los jugadores no tienen vida**: no hay que rebobinar el mundo para ver a quién se dio
   (compensación de retraso); el día que la tengan, va en el servidor (`PLAN_AUTORITATIVO.md` §6).
 

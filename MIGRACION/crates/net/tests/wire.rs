@@ -344,10 +344,10 @@ fn sizes_on_the_wire() {
 fn datagrams_and_messages_round_trip() {
     let mut buf = [0u8; 1200];
     for d in [
-        Datagram::Hello { version: VERSION, salt: 0xDEAD_BEEF, cookie: 0, scenario: 7, build: "V36", name: "Añil" },
-        Datagram::Hello { version: VERSION, salt: 1, cookie: 0xFEED_FACE_CAFE_F00D, scenario: 0xffff_ffff, build: "", name: "" },
+        Datagram::Hello { version: VERSION, salt: 0xDEAD_BEEF, cookie: 0, key: [0x33; 32], scenario: 7, build: "V36", name: "Añil" },
+        Datagram::Hello { version: VERSION, salt: 1, cookie: 0xFEED_FACE_CAFE_F00D, key: [0x33; 32], scenario: 0xffff_ffff, build: "", name: "" },
         Datagram::Challenge { salt: 0xDEAD_BEEF, cookie: 0xFEED_FACE_CAFE_F00D },
-        Datagram::Welcome { salt: 5, id: 3, name: "Añil", server: "Servidor de Selene" },
+        Datagram::Welcome { salt: 5, id: 3, key: [0x44; 32], name: "Añil", server: "Servidor de Selene" },
         Datagram::Refused { salt: 5, reason: "el servidor está lleno (16 de 16 jugadores)" },
         Datagram::Bye { salt: 9, reason: "" },
         Datagram::Data(&[1, 2, 3]),
@@ -357,16 +357,16 @@ fn datagrams_and_messages_round_trip() {
         assert_eq!(Datagram::decode(&buf[..n]), Ok(d));
     }
     // A hello is always the same size, larger than any answer to it; a shorter one is not a hello.
-    let n = Datagram::Hello { version: VERSION, salt: 77, cookie: 5, scenario: 7, build: "V36", name: "x" }.encode(&mut buf);
+    let n = Datagram::Hello { version: VERSION, salt: 77, cookie: 5, key: [0x33; 32], scenario: 7, build: "V36", name: "x" }.encode(&mut buf);
     assert_eq!(n, lunar_net::proto::HELLO_SIZE);
     assert_eq!(Datagram::decode(&buf[..n - 1]), Err(WireError::Short));
     // A hello of another version (V35's was 1) is recognised as such, whatever follows it.
     for other in [1, VERSION + 1] {
-        let n = Datagram::Hello { version: other, salt: 77, cookie: 5, scenario: 7, build: "V35", name: "x" }.encode(&mut buf);
+        let n = Datagram::Hello { version: other, salt: 77, cookie: 5, key: [0x33; 32], scenario: 7, build: "V35", name: "x" }.encode(&mut buf);
         buf[11..40].fill(0xff);
-        assert_eq!(Datagram::decode(&buf[..n]), Ok(Datagram::Hello { version: other, salt: 77, cookie: 0, scenario: 0, build: "", name: "" }));
+        assert_eq!(Datagram::decode(&buf[..n]), Ok(Datagram::Hello { version: other, salt: 77, cookie: 0, key: [0; 32], scenario: 0, build: "", name: "" }));
     }
-    assert_eq!(VERSION, 3);
+    assert_eq!(VERSION, 4);
     // the refusal of a game of another version fits the answer to a hello, and says which is which
     let why = lunar_net::text::version(VERSION, 1);
     assert!(why.contains("V35") && why.contains("actualiza el juego"), "{why}");
@@ -460,7 +460,7 @@ fn real_messages_cut_or_flipped_never_panic() {
     let (rigid, joints) = (written(|w| cargo(4, 9, Vec3::ONE).encode_rigid(w)), written(|w| ship(4, 1.0, 30).encode_joints(w)));
     let player = written(|w| PlayerState { ride: Some(1), seat: Some((1, 0)), tool: 2, head: [0.1, 0.2], body: 3, push: Vec3::Y, work: Some((4, Vec3::ONE)), gesture: 3, ..walker(1.0) }.encode(w));
     let mut hello = [0u8; 400];
-    let n = Datagram::Hello { version: VERSION, salt: 1, cookie: 9, scenario: 4, build: "V36", name: "Añil" }.encode(&mut hello);
+    let n = Datagram::Hello { version: VERSION, salt: 1, cookie: 9, key: [0x33; 32], scenario: 4, build: "V36", name: "Añil" }.encode(&mut hello);
     let samples: Vec<Vec<u8>> = vec![
         state.clone(),
         joints.clone(),

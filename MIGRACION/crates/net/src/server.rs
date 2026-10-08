@@ -7,7 +7,7 @@
 //! - `session`: one connected player.
 //!
 //! Nothing that comes from the wire is trusted: sizes are capped, texts cleaned, and every
-//! datagram of a session is signed with its key (`sip`): what does not pass is dropped unread, and
+//! datagram of a session is sealed with its keys (`seal`): what does not open is dropped unread, and
 //! a session whose datagrams start coming from another address (a router that changed it) is
 //! known by them and follows them there.
 mod intake;
@@ -131,6 +131,7 @@ struct Hello<'a> {
     version: u16,
     salt: u32,
     cookie: u64,
+    key: [u8; crate::seal::KEY],
     scenario: u32,
     build: &'a str,
     name: &'a str,
@@ -230,7 +231,7 @@ impl Server {
                 }
                 self.inbox = inbox;
             }
-            Ok(Datagram::Hello { version, salt, cookie, scenario, build, name }) => self.hello(from, Hello { version, salt, cookie, scenario, build, name }, now, t),
+            Ok(Datagram::Hello { version, salt, cookie, key, scenario, build, name }) => self.hello(from, Hello { version, salt, cookie, key, scenario, build, name }, now, t),
             Ok(Datagram::Bye { salt, .. }) => {
                 if let Some(i) = self.find(from).filter(|i| self.sessions[*i].salt == salt) {
                     self.drop_session(i, Leaving { reason: text::LEFT.to_string(), bye: None }, t);
@@ -251,7 +252,7 @@ impl Server {
             return None;
         }
         self.strays_checked.1 += 1;
-        let i = self.sessions.iter().position(|s| s.confirmed && s.leaving.is_none() && s.channel.signed(body))?;
+        let i = self.sessions.iter().position(|s| s.confirmed && s.leaving.is_none() && s.channel.opens(body))?;
         let s = &mut self.sessions[i];
         s.addr = from;
         self.events.push(ServerEvent::Moved { id: s.id, name: s.name.clone(), addr: from });

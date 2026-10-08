@@ -19,7 +19,7 @@ impl Client {
         } else if now - self.last_hello >= HELLO_EVERY {
             self.last_hello = now;
             let mut buf = [0u8; HELLO_SIZE];
-            let n = Datagram::Hello { version: VERSION, salt: self.salt, cookie: self.cookie, scenario: self.scenario, build: &self.build, name: &self.name }.encode(&mut buf);
+            let n = Datagram::Hello { version: VERSION, salt: self.salt, cookie: self.cookie, key: self.secret.public, scenario: self.scenario, build: &self.build, name: &self.name }.encode(&mut buf);
             self.transport.send(self.server, &buf[..n]);
         }
     }

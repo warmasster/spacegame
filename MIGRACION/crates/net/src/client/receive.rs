@@ -14,14 +14,19 @@ impl Client {
                 continue;
             }
             match Datagram::decode(&buf[..n]) {
-                Ok(Datagram::Welcome { salt, id, name, server }) if salt == self.salt && matches!(self.phase, Phase::Hello) => {
+                Ok(Datagram::Welcome { salt, id, key, name, server }) if salt == self.salt && matches!(self.phase, Phase::Hello) => {
+                    // (sealed with what our key and the server's work out, and what the handshake
+                    // said: its cookie and our salt)
+                    let Some(keys) = crate::seal::Keys::agree(&self.secret, &key, self.cookie, self.salt, true) else {
+                        self.phase = Phase::Over(text::BAD_KEY.to_string());
+                        break;
+                    };
                     self.phase = Phase::Live;
                     self.id = Some(id);
                     self.name = name.to_string();
                     self.server_name = server.to_string();
                     self.channel = Channel::new(now, lead::DATA);
-                    // (signed with what the handshake said: the server's cookie and our salt)
-                    self.channel.sign(crate::sip::session_key(self.cookie, self.salt));
+                    self.channel.seal(keys);
                     self.next_ping = now;
                 }
                 Ok(Datagram::Challenge { salt, cookie }) if salt == self.salt && matches!(self.phase, Phase::Hello) => {

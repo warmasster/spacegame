@@ -25,6 +25,13 @@ struct Pair {
     largest: usize,
 }
 
+/// The keys of both sides of a handshake (`seed` makes their secrets).
+fn keys(seed: u64) -> (lunar_net::seal::Keys, lunar_net::seal::Keys) {
+    use lunar_net::seal::{KEY, Keys, Secret};
+    let (a, b) = (Secret::from_bytes([seed as u8 | 1; KEY]), Secret::from_bytes([(seed >> 8) as u8 ^ 0xA5; KEY]));
+    (Keys::agree(&a, &b.public, 0x5EED ^ seed, 77, true).unwrap(), Keys::agree(&b, &a.public, 0x5EED ^ seed, 77, false).unwrap())
+}
+
 impl Pair {
     fn new(seed: u64, cond: Conditions) -> Pair {
         let net = MemoryNet::new(seed);
@@ -32,11 +39,11 @@ impl Pair {
         let (ea, eb) = (net.endpoint(), net.endpoint());
         let now = 50.0;
         net.set_time(now);
-        // (signed, as every session's channel is)
-        let key = lunar_net::sip::session_key(0x5EED ^ seed, 77);
+        // (sealed, as every session's channel is: each side's keys, from a handshake of its own)
+        let (ka, kb) = keys(seed);
         let (mut a, mut b) = (Channel::new(now, LEAD), Channel::new(now, LEAD));
-        a.sign(key);
-        b.sign(key);
+        a.seal(ka);
+        b.seal(kb);
         Pair { net, a: (a, ea), b: (b, eb), now, buf: vec![0; 2048], got_a: Vec::new(), got_b: Vec::new(), inbox: Inbox::new(), largest: 0 }
     }
     fn step(&mut self) {
@@ -264,16 +271,16 @@ fn the_same_seed_gives_the_same_run() {
 }
 
 #[test]
-fn a_datagram_not_signed_with_the_key_is_dropped_unread() {
-    // whoever does not know the session's key: a datagram of a channel of their own (another key,
-    // or none), a real one with a bit changed, one cut short. None of them gets in, none changes
-    // what the channel had, and the real ones go on
+fn a_datagram_not_sealed_with_the_key_is_dropped_unread() {
+    // whoever does not know the session's keys: a datagram of a channel of their own (another
+    // handshake's keys, or none), a real one with a bit changed, one cut short, a real one said
+    // again. None of them gets in, none changes what the channel had, and the real ones go on
     let mut pair = Pair::new(707, Conditions::default());
     pair.a.0.send_reliable(b"uno");
     pair.step();
     pair.step();
     let mut stranger = Channel::new(pair.now, LEAD);
-    stranger.sign(lunar_net::sip::session_key(1, 2));
+    stranger.seal(keys(1).0);
     stranger.send_reliable(b"falso");
     let mut unsigned = Channel::new(pair.now, LEAD);
     unsigned.send_reliable(b"sin firma");
@@ -299,6 +306,17 @@ fn a_datagram_not_signed_with_the_key_is_dropped_unread() {
     pair.step();
     let got: Vec<&[u8]> = pair.got_b.iter().map(|g| &g.1[..]).collect();
     assert_eq!(got, [&b"uno"[..], &b"dos"[..]]);
+    // (what goes is not there to be read; and a real one said again is not taken again)
+    assert!(!caught[0].windows(5).any(|w| w == b"falso"), "a sealed datagram shows what it carries");
+    let mut real = Vec::new();
+    pair.a.0.send_reliable(b"secreto");
+    pair.a.0.flush(pair.now, to, &mut Tap(&mut real));
+    assert!(!real[0].windows(7).any(|w| w == b"secreto"));
+    assert_eq!(pair.b.0.receive(&real[0][1..], pair.now, &mut inbox), Ok(()));
+    assert!(inbox.iter().any(|(_, m)| m.ends_with(b"secreto")));
+    inbox.clear();
+    assert_eq!(pair.b.0.receive(&real[0][1..], pair.now, &mut inbox), Ok(()));
+    assert!(inbox.iter().next().is_none(), "said again, taken again");
 }
 
 /// A transport that keeps what is sent through it.

@@ -11,8 +11,10 @@ pub(super) struct Leaving {
 pub(super) struct Session {
     pub id: u32,
     pub addr: Addr,
-    /// The number the client made up for this connection.
+    /// The number the client made up for this connection, and the key we showed it (said again if
+    /// our welcome is lost).
     pub salt: u32,
+    pub key: [u8; crate::seal::KEY],
     pub name: String,
     pub channel: Channel,
     /// The client has answered our welcome through the channel: until then nothing is sent

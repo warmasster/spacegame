@@ -12,6 +12,15 @@ rendimiento del juego en TS están en [`../../docs/RENDIMIENTO.md`](../../docs/R
 Prioridad: **A** (se nota jugando), **B** (se nota con muchas cosas en pantalla), **C** (limpieza o
 código muerto).
 
+## V41f (2026-10-08): sesiones selladas
+
+- **Medido:** sellar y abrir un datagrama de 1 200 bytes (ChaCha20-Poly1305) cuesta 5,75 µs entre
+  los dos extremos (`seal::tests::sealing_and_opening_a_datagram_costs_little`): con 16 jugadores
+  a 60 datagramas por segundo en cada sentido, unos 6 ms por segundo del servidor (0,6 % de un
+  núcleo). Cada datagrama lleva 24 bytes más que sin sellar (16 más que con la firma de antes).
+  Sin reservas: se sella en el búfer del canal y se abre en uno suyo. Comprobar las direcciones
+  desconocidas abre a prueba (sin tomar nada) con cada sesión: como mucho 256 por segundo.
+
 ## V41e (2026-10-08): lo dormido en vuelo, el rastro, lo que vuela al guardar
 
 - **Lo dormido en vuelo** avanza un paso de Verlet por segundo (`schedule::drift`): dos consultas
@@ -32,9 +41,9 @@ código muerto).
 
 ## V41d (2026-10-08): firmas y límites (fase 11)
 
-- **Medido:** firmar o comprobar un datagrama entero (1 200 bytes) con SipHash-2-4 cuesta 0,69 µs
-  (`sip::tests::signing_a_datagram_costs_next_to_nothing`): con 16 jugadores a 60 datagramas por
-  segundo cada uno, menos de 1 ms por segundo del servidor. Sin reservas: se firma en el búfer del
+- **Medido (ya no se usa: ahora se sella, V41f):** firmar o comprobar un datagrama entero
+  (1 200 bytes) con SipHash-2-4 costaba 0,69 µs: con 16 jugadores a 60 datagramas por
+  segundo cada uno, menos de 1 ms por segundo del servidor. Sin reservas: se firmaba en el búfer del
   canal.
 
 ## V41c (2026-10-08): reconectar y guardar la partida (fase 9)

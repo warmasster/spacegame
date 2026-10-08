@@ -138,9 +138,9 @@ fn a_wrong_build_a_wrong_scenario_and_a_wrong_protocol_are_refused_with_the_reas
     // game of V35 (protocol 1) is told to update; a later one, that the server is the old one.
     let mut stranger = w.net.endpoint();
     let mut buf = [0u8; 1200];
-    let tail = "la 1 es la del juego V35, la 2 la del V36 y la 3 la del V41, la del servidor que tiene la partida";
-    for (version, salt, says) in [(1, 41, format!("protocolo de red distinto: el servidor habla la versión 3 y tu juego la 1 (tu juego es más antiguo que el servidor: actualiza el juego; {tail})")), (VERSION + 1, 42, format!("protocolo de red distinto: el servidor habla la versión 3 y tu juego la 4 (tu juego es más nuevo que el servidor: hay que actualizar el servidor; {tail})"))] {
-        let n = Datagram::Hello { version, salt, cookie: 0, scenario: SCENARIO, build: "V35", name: "Otro" }.encode(&mut buf);
+    let tail = "la 1 es la del juego V35, la 2 la del V36, la 3 la del V41, la del servidor que tiene la partida, y la 4 la de la conexión cifrada";
+    for (version, salt, says) in [(1, 41, format!("protocolo de red distinto: el servidor habla la versión 4 y tu juego la 1 (tu juego es más antiguo que el servidor: actualiza el juego; {tail})")), (VERSION + 1, 42, format!("protocolo de red distinto: el servidor habla la versión 4 y tu juego la 5 (tu juego es más nuevo que el servidor: hay que actualizar el servidor; {tail})"))] {
+        let n = Datagram::Hello { version, salt, cookie: 0, key: [0x33; 32], scenario: SCENARIO, build: "V35", name: "Otro" }.encode(&mut buf);
         stranger.send(w.addr, &buf[..n]);
         w.run(0.1);
         let (_, n) = stranger.recv(&mut buf).expect("an answer");
@@ -307,7 +307,7 @@ fn garbage_thrown_at_a_server_changes_nothing() {
         }
         // And some a whole hello of our version from an address that is not the sender's own: it gets
         // a challenge it cannot answer, and nothing is kept for it.
-        let n = if round % 11 == 0 { Datagram::Hello { version: VERSION, salt: round, cookie: dice.next(), scenario: SCENARIO, build: BUILD, name: "Nadie" }.encode(&mut buf) } else { n };
+        let n = if round % 11 == 0 { Datagram::Hello { version: VERSION, salt: round, cookie: dice.next(), key: [0x33; 32], scenario: SCENARIO, build: BUILD, name: "Nadie" }.encode(&mut buf) } else { n };
         w.net.inject(stranger, w.addr, &buf[..n]);
         if round % 200 == 0 {
             w.step_with(|i, c, t| c.send_quick(&says(i, t)));
@@ -317,7 +317,7 @@ fn garbage_thrown_at_a_server_changes_nothing() {
     for (kind, from) in [(5u8, w.addrs[a]), (2, stranger), (3, stranger), (6, stranger)] {
         let n = match kind {
             5 => Datagram::Bye { salt: 0x0BAD_5A17, reason: "" }.encode(&mut buf),
-            2 => Datagram::Welcome { salt: 1, id: 1, name: "x", server: "y" }.encode(&mut buf),
+            2 => Datagram::Welcome { salt: 1, id: 1, key: [0x44; 32], name: "x", server: "y" }.encode(&mut buf),
             6 => Datagram::Challenge { salt: 1, cookie: 1 }.encode(&mut buf),
             _ => Datagram::Refused { salt: 1, reason: "no" }.encode(&mut buf),
         };

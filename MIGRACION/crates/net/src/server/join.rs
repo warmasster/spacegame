@@ -13,7 +13,7 @@ const BUNDLE: usize = 16 * 1024;
 
 impl Server {
     pub(super) fn hello(&mut self, from: Addr, hello: Hello, now: f64, t: &mut dyn Transport) {
-        let Hello { version, salt, cookie, scenario, build, name } = hello;
+        let Hello { version, salt, cookie, key, scenario, build, name } = hello;
         if let Some(i) = self.find(from)
             && self.sessions[i].salt == salt
         {
@@ -70,9 +70,16 @@ impl Server {
         self.next_id += 1;
         // Two players with one name would be told apart by nobody.
         let name = if self.sessions.iter().any(|s| s.name.eq_ignore_ascii_case(&name)) { format!("{} ({id})", text::clean(&name, text::NAME_CHARS - 6)) } else { name };
+        // (sealed with what its key and one of ours made for it work out, and what the handshake
+        // said: our cookie, its salt)
+        let mine = crate::seal::Secret::new();
+        let Some((mine, keys)) = mine.and_then(|m| crate::seal::Keys::agree(&m, &key, cookie, salt, false).map(|k| (m, k))) else {
+            self.refuse(from, salt, name, text::BAD_KEY.to_string(), now, t);
+            return;
+        };
         let mut channel = Channel::new(now, lead::DATA);
-        channel.sign(crate::sip::session_key(cookie, salt));
-        self.sessions.push(Session { id, addr: from, salt, name: name.clone(), channel, confirmed: false, leaving: None, game_in: 0 });
+        channel.seal(keys);
+        self.sessions.push(Session { id, addr: from, salt, key: mine.public, name: name.clone(), channel, confirmed: false, leaving: None, game_in: 0 });
         let i = self.sessions.len() - 1;
         self.welcome(i, t);
         // The others learn of the newcomer; the newcomer is told who is here in one go.
@@ -102,7 +109,7 @@ impl Server {
     fn welcome(&mut self, i: usize, t: &mut dyn Transport) {
         let s = &self.sessions[i];
         let mut buf = [0u8; 512];
-        let n = Datagram::Welcome { salt: s.salt, id: s.id, name: &s.name, server: &text::clean(&self.config.name, text::NAME_CHARS) }.encode(&mut buf);
+        let n = Datagram::Welcome { salt: s.salt, id: s.id, key: s.key, name: &s.name, server: &text::clean(&self.config.name, text::NAME_CHARS) }.encode(&mut buf);
         t.send(s.addr, &buf[..n]);
     }
 

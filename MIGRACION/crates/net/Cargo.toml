@@ -7,6 +7,14 @@ publish.workspace = true
 
 [dependencies]
 glam.workspace = true
+# Each session sealed (`seal`): keys agreed in the handshake (X25519), one for each way (HKDF with
+# SHA-256), every datagram encrypted and signed (ChaCha20-Poly1305); the secret of each handshake
+# from the system (getrandom). What calls the system and does the arithmetic is in them.
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+chacha20poly1305 = "0.10"
+hkdf = "0.12"
+sha2 = "0.10"
+getrandom = "0.3"
 
 [lints]
 workspace = true

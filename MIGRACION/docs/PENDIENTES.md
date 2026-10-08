@@ -726,9 +726,11 @@ silueta lejana, oclusión. Falta:
   de la herramienta de la mano y a su recarga, y solo se suelda con el soldador, a su ritmo (y uno
   y medio), y se repone una pieza a la vez. Lo que no se deja volar desaparece del juego que lo
   lanzó (`Event::Unfired`). Prueba: `what_is_let_fly_is_what_the_hands_carry…`.
-- [ ] (2026-10-08) Decisión para Fernando: cifrar el tráfico contra quien sí lo ve (la misma wifi)
-  pide un intercambio de claves (una dependencia, p. ej. x25519 + chacha20poly1305). Hoy las
-  firmas paran a quien no ve el tráfico, no a quien lo ve.
+- [x] ~~(2026-10-08) Decisión para Fernando: cifrar el tráfico contra quien sí lo ve (la misma wifi)
+  pide un intercambio de claves (una dependencia, p. ej. x25519 + chacha20poly1305).~~ **Hecho
+  (2026-10-08)**: sesiones selladas (`lunar_net::seal`, protocolo 4) con esas dependencias; sin
+  `unsafe` en nuestro código. Queda, si hace falta: la clave del servidor conocida de antemano
+  (contra quien se pone en medio desde el saludo).
 - [x] ~~(2026-10-08) Servidor autoritativo: con el relevo se fueron sus pruebas de partidas enteras
   (`app/src/multi/tests.rs`).~~ **Hecho (2026-10-08)**, todas por el servidor que tiene la partida:
   todas las armas de los datos una a una desde una nave a 2 km/s
