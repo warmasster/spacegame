@@ -705,7 +705,10 @@ silueta lejana, oclusión. Falta:
   juego se endereza hacia instantáneas redondeadas y no bota igual que la del servidor. Medido: 8
   correcciones en 2 s en la bodega del Cachalote recién creado; 0 con la nave ya en reposo. Idea:
   la nave que lleva al jugador, sin corregir mientras el desvío sea menor que lo que el cuerpo
-  tolera, o su estado exacto (no redondeado) mientras alguien la pisa.
+  tolera, o su estado exacto (no redondeado) mientras alguien la pisa. **Medido otra vez
+  (2026-10-08)**, con las afirmaciones viejas olvidadas y los pasos repetidos como eran: 4 en el
+  medio segundo que bota (más la de ponerlo allí), 0 después
+  (`standing_in_the_hold_of_a_ship_still_bouncing…`).
 - [ ] (2026-10-08) Servidor autoritativo: poner a alguien en una nave (`Pilot::put_on`, las pruebas y
   el «empezar junto a» del menú) toma su posición de la estructura tal como está: si nadie la ve
   y solo se simula a ratos, está atrasada (a 7,8 km/s, 780 m) y quien se pone se queda donde
@@ -739,8 +742,13 @@ silueta lejana, oclusión. Falta:
 - [ ] (2026-10-08) Servidor autoritativo: quien entra juega mientras le llega lo de alrededor (con
   10 jugadores, 6 naves, 100 estructuras y 10 % de pérdidas: a 1,2 s juega y ya lo tiene todo); falta
   la pantalla de carga que espere a tenerlo para un mundo mucho más grande.
-- [ ] (2026-10-07) Servidor autoritativo: tras una corrección el cuerpo se vuelve a dar contra el
+- [x] ~~(2026-10-07) Servidor autoritativo: tras una corrección el cuerpo se vuelve a dar contra el
   mundo como está ahora (`Game::step_alone`), no como estaba en cada paso repetido: junto a piezas
-  de una nave que se mueven (sus huesos) salen 2–3 correcciones más al aterrizar. El plan (§3.3)
-  guardaba «las poses de lo cercano» por paso: guardar los huesos de la nave que lleva al jugador
-  en su `Track` y ponerlos durante la repetición.
+  de una nave que se mueven (sus huesos) salen 2–3 correcciones más al aterrizar.~~ **Hecho
+  (2026-10-08):** esas 2–3 no eran los huesos sino que el servidor comparaba lo que el jugador había
+  dicho de los pasos siguientes antes de recibir la corrección (ahora se olvida al corregir: 4 → 1).
+  Y los pasos se repiten contra la nave que lleva al cuerpo como estaba en cada uno (giro,
+  velocidad, aceleración, gravedad propia y piezas móviles, por paso en su `Track`:
+  `Online::as_then`); la gravedad propia viaja con el estado de la nave. Prueba:
+  `put_in_the_air_aboard_a_ship_whose_gravity_comes_on…` (2 correcciones por 2 empujones; 6 sin
+  esto).

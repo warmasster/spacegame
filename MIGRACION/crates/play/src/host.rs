@@ -629,6 +629,10 @@ impl Host {
         self.players[k].pilot.write_state(&mut state);
         let peer = &mut self.peers[k];
         peer.fixes = peer.fixes.wrapping_add(1);
+        // (what they said of the steps ahead was of the body before this: not compared)
+        for c in &mut peer.claims {
+            c.0 = 0;
+        }
         peer.tell(&Event::Correct { step, state });
         self.stats.corrections += 1;
     }
@@ -1033,9 +1037,9 @@ impl Host {
         ships.sort_unstable();
         ships.dedup();
         for ship in ships {
-            let Some(n) = self.game.ships.by_structure(ship) else { continue };
+            let (Some(n), Some(s)) = (self.game.ships.by_structure(ship), self.game.builds.set.get(ship)) else { continue };
             let mut data = Vec::new();
-            lunar_ship::sync::write_ship(&self.game.ships.list[n], &|x| Some(x), &mut data);
+            lunar_ship::sync::write_ship(&self.game.ships.list[n], s, &|x| Some(x), &mut data);
             self.tell_knowing(ship, &Event::Systems { ship, data }, None);
         }
     }
@@ -1427,7 +1431,7 @@ pub fn made(g: &Game, id: u64) -> Option<Event> {
         Some(n) => {
             let sh = &g.ships.list[n];
             let mut systems = Vec::new();
-            sync::write_ship(sh, &|x| Some(x), &mut systems);
+            sync::write_ship(sh, s, &|x| Some(x), &mut systems);
             (sh.kind.id.clone(), sh.seed, systems)
         }
         None => (String::new(), 0, Vec::new()),

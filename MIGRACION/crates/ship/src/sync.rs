@@ -631,7 +631,7 @@ pub fn make(lib: &Library, id: u64, pos: DVec3, rot: Quat, inp: &mut In) -> Sync
 /// be left the same (`read_ship`): its signals, its controls, its machines and actuators, its
 /// joints, latches and clamps, the memory of its derived signals, its air. `net`: the id on the
 /// wire of a structure of this game (what a clamp holds); what has none is left out.
-pub fn write_ship(sh: &Ship, net: &dyn Fn(u64) -> Option<u64>, out: &mut Vec<u8>) {
+pub fn write_ship(sh: &Ship, s: &Structure, net: &dyn Fn(u64) -> Option<u64>, out: &mut Vec<u8>) {
     let mut nums: Vec<f64> = Vec::new();
     // signals: every value, and which cannot be trusted
     put_nums(out, sh.store.values());
@@ -682,6 +682,9 @@ pub fn write_ship(sh: &Ship, net: &dyn Fn(u64) -> Option<u64>, out: &mut Vec<u8>
     for a in &sh.atmos.air {
         [a.o2, a.n2, a.co2, a.t].iter().for_each(|v| put_num(out, *v));
     }
+    // how far its own gravity has come on (what it carries weighs by it: a copy made while it
+    // comes on, as far as the others')
+    put_f32(out, s.gravity.on);
 }
 
 /// Ship `sh` (on its structure `s`, whose own state was read already: `read_state`) left as
@@ -764,6 +767,7 @@ pub fn read_ship(sh: &mut Ship, s: &mut Structure, local: &dyn Fn(u64) -> Option
     for a in &mut sh.atmos.air {
         (a.o2, a.n2, a.co2, a.t) = (inp.num()?, inp.num()?, inp.num()?, inp.num()?);
     }
+    s.gravity.on = inp.f32()?.clamp(0.0, 1.0);
     sh.atmos.settled();
     sh.touch();
     Ok(())

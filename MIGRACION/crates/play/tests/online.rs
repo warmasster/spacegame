@@ -285,6 +285,79 @@ fn a_push_only_the_server_knows_of_is_put_right_without_a_jump() {
 }
 
 #[test]
+fn put_in_the_air_aboard_a_ship_whose_gravity_comes_on_each_push_is_put_right_once() {
+    // the Alcotán just made far from every body: its own gravity comes on over two seconds. One
+    // aboard is put up in the air by what only the server knows, twice while it comes on: put
+    // right each time and no more as they fall — their steps are done again against the ship as
+    // it was at each (its gravity then, not as far on as it is now)
+    let cond = Conditions { delay: 0.08, jitter: 0.005, ..Conditions::default() };
+    let mut t = Table::new(1, 53, cond);
+    let far = DVec3::new(2.0e6, 3.0e6, -1.0e6);
+    t.host.game.watchers.push(far);
+    let id = t.host.game.ships.spawn_free(&mut t.host.game.builds, "alcotan", far, Quat::IDENTITY).unwrap();
+    t.run(0.2, 60.0, |_, _, _| {});
+    let exit = {
+        let g = &t.host.game;
+        glam::Vec3::from_array(g.ships.list[g.ships.by_structure(id).unwrap()].kind.seats[0].def.salida)
+    };
+    let you = t.seats[0].online.you.unwrap();
+    let put = |t: &mut Table, at: glam::Vec3| {
+        let (game, p) = t.host.game_and_player(you).unwrap();
+        p.pilot.put_on(&game.builds.set, id, at);
+    };
+    put(&mut t, exit);
+    t.run(0.4, 60.0, |_, _, _| {});
+    let on = |t: &Table| t.host.game.builds.set.get(id).unwrap().gravity.on;
+    let first = t.seats[0].online.stats.corrections;
+    let was = on(&t);
+    for k in 0..2 {
+        put(&mut t, exit + glam::Vec3::new(0.3 * (k + 1) as f32, 0.6, 0.0));
+        t.run(0.7, 60.0, |_, _, _| {});
+    }
+    let fixes = t.seats[0].online.stats.corrections - first;
+    println!("aboard as its gravity comes on ({was:.2} → {:.2}): {fixes} corrections for 2 pushes", on(&t));
+    assert!(was < 0.5, "the gravity was not coming on: {was} → {}", on(&t));
+    assert_eq!(fixes, 2, "put right {fixes} times for 2 pushes ({:?})", t.seats[0].online.stats);
+}
+
+#[test]
+fn standing_in_the_hold_of_a_ship_still_bouncing_on_its_legs_is_put_right_only_while_it_bounces() {
+    // a Cachalote put down by the server a moment ago, still settling on its legs, one put in its
+    // hold at once: put right for being put there, a few times as the ship bounces under them
+    // (their game's copy of it bounces a little otherwise: `PENDIENTES.md`), and never once it
+    // has settled
+    let cond = Conditions { delay: 0.04, jitter: 0.005, loss: 0.01, ..Conditions::default() };
+    let mut t = Table::new(1, 61, cond);
+    t.run(0.3, 60.0, |_, _, _| {});
+    let (pos, rot) = {
+        let g = &t.host.game;
+        let b = g.bodies.get(g.site.body);
+        let at = b.above_ground(g.site.at(60.0, 40.0), 0.3);
+        (at, glam::Quat::IDENTITY)
+    };
+    let id = t.host.game.ships.spawn_free(&mut t.host.game.builds, "cachalote", pos, rot).unwrap();
+    t.run(0.1, 60.0, |_, _, _| {});
+    let you = t.seats[0].online.you.unwrap();
+    {
+        let (game, p) = t.host.game_and_player(you).unwrap();
+        p.pilot.put_on(&game.builds.set, id, glam::Vec3::new(0.0, 0.05, -13.0));
+    }
+    for _ in 0..40 {
+        t.run(0.25, 60.0, |_, _, _| {});
+        if t.host.game.builds.set.get(id).unwrap().resting {
+            break;
+        }
+    }
+    assert!(t.host.game.builds.set.get(id).unwrap().resting, "the ship never settled");
+    let settling = t.seats[0].online.stats.corrections;
+    t.run(3.0, 60.0, |_, _, _| {});
+    let after = t.seats[0].online.stats.corrections - settling;
+    println!("in the hold of a Cachalote settling on its legs: {settling} corrections as it settled, {after} after");
+    assert!(settling <= 6, "put right {settling} times as it settled");
+    assert_eq!(after, 0, "put right {after} times once it had settled");
+}
+
+#[test]
 fn the_others_are_seen_where_they_are() {
     let cond = Conditions { delay: 0.05, jitter: 0.01, loss: 0.02, ..Conditions::default() };
     let mut t = Table::new(2, 11, cond);
@@ -536,9 +609,9 @@ fn a_crate_let_go_taken_and_dropped_ends_where_the_server_has_it() {
     p.pilot.put_on(&game.builds.set, ship, at);
     t.run(2.0, 60.0, |_, _, _| {});
     let first = t.seats[0].online.stats.corrections;
-    // (put in by the server, their game does not know: one; and a few more as the body lands, its
-    // steps done again against the ship's moving parts as they are now, not as they were then)
-    assert!(first <= 4, "put in the hold, put right {first} times");
+    // (put in by the server, their game does not know: once, and no more after it — what their
+    // game said of the steps ahead before it knew is not held against it)
+    assert_eq!(first, 1, "put in the hold, put right {first} times");
     let made_from = t.host.game.builds.set.next_free();
     // the clamp let go, as a hand on it does (done here and said)
     {

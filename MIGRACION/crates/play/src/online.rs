@@ -31,13 +31,17 @@ use crate::{
     seats::Drive,
     told::{self, Named},
 };
-use glam::{DVec3, Quat, Vec3};
+use glam::{Affine3A, DVec3, Quat, Vec3};
 use lunar_core::{
     scenario::PlayerDef,
-    structure::schedule::{SimLevel, coast, coasted},
+    structure::{
+        schedule::{SimLevel, coast, coasted},
+        set::Structures,
+    },
 };
 use lunar_net::{Client, Event as NetEvent, PlayerState, Reader, Status};
 use lunar_ship::sync::{self, Digest};
+use std::collections::VecDeque;
 
 /// Steps of what was asked, and of where each structure was, kept.
 pub const RING: usize = 128;
@@ -71,7 +75,9 @@ const RESYNC_EVERY: u64 = 120;
 /// the look itself.
 const AIM_SAME: f64 = 0.999_998_5;
 
-/// Where a structure was at a step.
+/// Where a structure was at a step, and what whoever it carries weighs by there: how it sped up,
+/// how far its own gravity was on, how its moving parts were (`Structure::pose`, a counter: the
+/// bones themselves are in `Online::bones`, kept when they change).
 #[derive(Clone, Copy, Debug, Default)]
 struct Pose {
     step: u64,
@@ -79,14 +85,41 @@ struct Pose {
     vel: DVec3,
     rot: Quat,
     spin: Vec3,
+    acc: DVec3,
+    on: f32,
+    bones: u64,
 }
 
-/// Where a structure was at each of the last steps (`RING`, each at `step % RING`), and when it
-/// was last put right.
+/// Where a structure was at each of the last steps (`RING`, each at `step % RING`), when it was
+/// last put right, and which of its poses was last kept (`Online::bones`).
 struct Track {
     id: u64,
     poses: Box<[Pose; RING]>,
     fixed: u64,
+    kept: u64,
+}
+
+/// A structure's moving parts as they were (`Structure::bones` but the first), by its pose
+/// counter, from step `step`: what a body's steps are done again against.
+struct Bones {
+    id: u64,
+    pose: u64,
+    step: u64,
+    at: Vec<Affine3A>,
+}
+
+/// What a structure was before it was put as it was at a step to do a body's step again: put
+/// back after (its pose counter, and the one put now).
+struct Was {
+    id: u64,
+    rot: Quat,
+    vel: DVec3,
+    spin: Vec3,
+    acc: DVec3,
+    on: f32,
+    pose: u64,
+    put: u64,
+    bones: Vec<Affine3A>,
 }
 
 /// Counters since this game joined.
@@ -160,6 +193,10 @@ pub struct Online {
     /// The newest correction come, not applied yet: the step it is of and the body.
     pending: Option<(u64, Vec<u8>)>,
     tracks: Vec<Track>,
+    /// The moving parts of what moves, as each changed over the last steps (oldest first: what is
+    /// past `RING` is reused); and (reused) what is put back after a body's steps are done again.
+    bones: VecDeque<Bones>,
+    was: Vec<Was>,
     /// Pieces made here not named yet, and when.
     ours: Vec<(u64, u64)>,
     drive: Drive,
@@ -216,6 +253,8 @@ impl Online {
             first: 0,
             pending: None,
             tracks: Vec::new(),
+            bones: VecDeque::new(),
+            was: Vec::new(),
             ours: Vec::new(),
             drive: Drive::default(),
             seated: None,
@@ -522,6 +561,7 @@ impl Online {
                 me.hands = Hands::new(self.def.manos);
                 (self.you, self.region, self.fixes) = (Some(you), region, 0);
                 self.tracks.clear();
+                self.bones.clear();
                 (self.due, self.rate, self.early) = (0.0, 1.0, TARGET);
             }
             Event::Back { step: _, state } => {
@@ -703,9 +743,15 @@ impl Online {
                     continue;
                 }
                 host::apply(&cmd, me, true);
+                // (against what it stands in as it was then: how it sped up, its own gravity, its
+                // moving parts; not as it is now)
+                if let Some(r) = me.pilot.ride {
+                    self.as_then(&mut game.builds.set, r.id, t);
+                }
                 game.step_alone(me);
                 self.stats.replayed += 1;
             }
+            self.as_now(&mut game.builds.set);
         }
         (me.pilot.yaw, me.pilot.pitch) = look;
         // (drawn where it was, and brought to where it is)
@@ -739,9 +785,22 @@ impl Online {
             }
             // (as it is at the world's moment, if it is stepped now and then)
             let (pos, vel, rot) = coasted(s, bodies.field(s.pos).pull, set.now - s.clock);
-            let pose = Pose { step, pos, vel, rot, spin: s.spin };
+            let pose = Pose { step, pos, vel, rot, spin: s.spin, acc: s.acc, on: s.gravity.on, bones: s.pose };
             if t < self.tracks.len() && self.tracks[t].id == s.id {
-                self.tracks[t].poses[(step % RING as u64) as usize] = pose;
+                let tr = &mut self.tracks[t];
+                tr.poses[(step % RING as u64) as usize] = pose;
+                // (its moving parts, kept as they change: a buffer of what is past `RING` reused)
+                if s.bones.len() > 1 && tr.kept != s.pose {
+                    tr.kept = s.pose;
+                    let mut b = match self.bones.front() {
+                        Some(old) if old.step + RING as u64 <= step => self.bones.pop_front().unwrap_or_else(|| Bones { id: 0, pose: 0, step: 0, at: Vec::new() }),
+                        _ => Bones { id: 0, pose: 0, step: 0, at: Vec::new() },
+                    };
+                    (b.id, b.pose, b.step) = (s.id, s.pose, step);
+                    b.at.clear();
+                    b.at.extend_from_slice(&s.bones[1..]);
+                    self.bones.push_back(b);
+                }
             } else {
                 fresh.push((s.id, pose));
             }
@@ -751,11 +810,50 @@ impl Online {
                 let mut poses = Box::new([Pose::default(); RING]);
                 poses[(step % RING as u64) as usize] = pose;
                 let at = self.tracks.partition_point(|x| x.id < id);
-                self.tracks.insert(at, Track { id, poses, fixed: step });
+                self.tracks.insert(at, Track { id, poses, fixed: step, kept: u64::MAX });
             }
         }
         if self.tracks.len() > set.list.len() {
             self.tracks.retain(|tr| set.index_of(tr.id).is_some());
+        }
+    }
+
+    /// Structure `id` put as it was at step `t` (as far as was kept of it), what it was before
+    /// kept to be put back (`as_now`).
+    fn as_then(&mut self, set: &mut Structures, id: u64, t: u64) {
+        // (kept as `game.step` was after it: the step after)
+        let Ok(tr) = self.tracks.binary_search_by_key(&id, |x| x.id) else { return };
+        let p = self.tracks[tr].poses[((t + 1) % RING as u64) as usize];
+        let Some(k) = set.index_of(id).filter(|_| p.step == t + 1) else { return };
+        let s = &mut set.list[k];
+        let w = match self.was.iter().position(|w| w.id == id) {
+            Some(w) => w,
+            None => {
+                let (rot, vel, spin, acc, on, pose) = (s.rot, s.vel, s.spin, s.acc, s.gravity.on, s.pose);
+                self.was.push(Was { id, rot, vel, spin, acc, on, pose, put: pose, bones: s.bones[1..].to_vec() });
+                self.was.len() - 1
+            }
+        };
+        (s.rot, s.vel, s.spin, s.acc, s.gravity.on) = (p.rot, p.vel, p.spin, p.acc, p.on);
+        let w = &mut self.was[w];
+        if p.bones != w.put {
+            let then = if p.bones == w.pose { Some(&w.bones[..]) } else { self.bones.iter().find(|b| b.id == id && b.pose == p.bones).map(|b| &b.at[..]) };
+            if let Some(then) = then.filter(|b| b.len() + 1 == s.bones.len()) {
+                s.set_pose(then);
+                w.put = p.bones;
+            }
+        }
+    }
+
+    /// What `as_then` changed, put back as it is.
+    fn as_now(&mut self, set: &mut Structures) {
+        for w in self.was.drain(..) {
+            let Some(k) = set.index_of(w.id) else { continue };
+            let s = &mut set.list[k];
+            (s.rot, s.vel, s.spin, s.acc, s.gravity.on) = (w.rot, w.vel, w.spin, w.acc, w.on);
+            if w.put != w.pose && w.bones.len() + 1 == s.bones.len() {
+                s.set_pose(&w.bones);
+            }
         }
     }
 
@@ -814,7 +912,7 @@ impl Online {
         for th in &snap.things {
             let Some(k) = set.index_of(th.id) else { continue };
             let s = &mut set.list[k];
-            let want = Pose { step: snap.step, pos: th.pos, vel: th.vel.as_dvec3(), rot: th.rot, spin: th.spin };
+            let want = Pose { step: snap.step, pos: th.pos, vel: th.vel.as_dvec3(), rot: th.rot, spin: th.spin, ..Pose::default() };
             let track = self.tracks.binary_search_by_key(&th.id, |x| x.id).ok();
             let had = track.map(|t| self.tracks[t].poses[(snap.step % RING as u64) as usize]).filter(|p| p.step == snap.step && now.saturating_sub(snap.step) < RING as u64);
             // (at rest there: put where it rests, at rest)

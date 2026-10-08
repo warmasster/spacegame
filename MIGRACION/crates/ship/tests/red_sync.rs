@@ -56,7 +56,7 @@ fn run(ship: &mut Ship, s: &mut Structure, secs: f64) {
 fn snapshot(ship: &Ship, s: &Structure) -> Vec<u8> {
     let mut out = Vec::new();
     sync::write_state(s, &mut out);
-    sync::write_ship(ship, &|id| Some(id), &mut out);
+    sync::write_ship(ship, s, &|id| Some(id), &mut out);
     out
 }
 
