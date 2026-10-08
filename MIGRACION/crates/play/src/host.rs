@@ -1456,6 +1456,7 @@ const REBUILT: f32 = 0.2;
 /// (free flight only with `cheats`). The same in the server and in the player's own game.
 pub(crate) fn apply(c: &Cmd, p: &mut Player, cheats: bool) {
     p.input = c.input;
+    (p.tool, p.trigger) = (c.tool, c.trigger);
     // (a look as a head can: up and down no further than its neck, round no further than a
     // number that still turns finely)
     let most = p.pilot.look_limit();

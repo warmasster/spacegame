@@ -1847,6 +1847,102 @@ fn ships_too_far_to_know_in_full_are_known_from_afar_where_they_are() {
 }
 
 #[test]
+fn a_welder_works_by_its_trigger_and_where_it_is_aimed_in_the_server_as_in_the_game() {
+    // in the Cachalote's hold, a part hurt and another gone; one aboard with the welder in hand
+    // looks at the first and holds the trigger a second: it is mended at the welder's rate, in
+    // the server as in their game, and the other player has it so too. Then at where the other
+    // was, held as long as putting it back takes: it is back in every game. Nothing is said of
+    // what is mended (no `Act::Mend`): the server works it from the command, and nobody is put
+    // right. With the hands free, the trigger does nothing
+    let cond = Conditions { delay: 0.03, jitter: 0.005, loss: 0.01, ..Conditions::default() };
+    let mut t = Table::new(2, 97, cond);
+    t.host.config.cheats = false;
+    let ship = t.host.game.ships.list.iter().find(|sh| sh.kind.id == "cachalote").expect("the Cachalote").structure;
+    for _ in 0..20 {
+        t.run(0.5, 60.0, |_, _, _| {});
+        if t.host.game.builds.set.get(ship).is_some_and(|s| s.resting) {
+            break;
+        }
+    }
+    let you = t.seats[0].online.you.unwrap();
+    {
+        let (game, p) = t.host.game_and_player(you).unwrap();
+        p.pilot.put_on(&game.builds.set, ship, glam::Vec3::new(0.0, 0.05, -13.0));
+    }
+    t.run(2.0, 60.0, |_, _, _| {});
+    let (welder, (reach, rate, takes)) = {
+        let g = &t.host.game.gear;
+        let k = g.tools.iter().position(|x| matches!(x.kind, ToolKind::Soldador { .. })).unwrap() as u8 + 1;
+        (k, g.welder(k).unwrap())
+    };
+    // (the two nearest parts in reach that hang on one other alone: one to mend, one to put back)
+    let (mend, back) = {
+        let g = &t.host.game;
+        let eye = t.host.player(you).unwrap().pilot.position;
+        let s = g.builds.set.get(ship).unwrap();
+        let joints = |k: usize| s.joints.iter().filter(|j| j.alive && (j.a as usize == k || j.b as usize == k)).count();
+        let mut near: Vec<usize> = (0..s.parts.len())
+            .filter(|&k| s.parts[k].alive && !s.parts[k].fragment && s.parts[k].max_hp > 0.0 && s.parts[k].bone == 0 && joints(k) == 1 && s.to_world(s.parts[k].center).distance(eye) < reach * 0.8)
+            .collect();
+        near.sort_by(|&i, &j| s.to_world(s.parts[i].center).distance(eye).total_cmp(&s.to_world(s.parts[j].center).distance(eye)));
+        (near[0], near[1])
+    };
+    {
+        let k = t.host.game.builds.set.index_of(ship).unwrap();
+        let st = &mut t.host.game.builds.set.list[k];
+        st.parts[mend].hp = st.parts[mend].max_hp * 0.05;
+        (st.parts[back].alive, st.parts[back].hp) = (false, 0.0);
+        st.version += 1;
+    }
+    t.run(0.5, 60.0, |_, _, _| {});
+    let part = |g: &Game, p: usize| {
+        let s = g.builds.set.get(ship).unwrap();
+        (s.parts[p].alive, s.parts[p].hp)
+    };
+    // (looked at, as the eye meets it: what the welder takes is what the look meets first)
+    let look = |t: &mut Table, p: usize| {
+        let s = &mut t.seats[0];
+        let st = s.game.builds.set.get(ship).unwrap();
+        let at = st.to_world(st.parts[p].center);
+        s.me.pilot.look_at(at);
+        let view = s.me.pilot.view_aboard(&s.game.builds.set).unwrap_or_else(|| s.me.pilot.view());
+        lunar_play::weld::target(&view, reach, &s.game.builds.set).map(|x| x.part as usize)
+    };
+    let hurt = part(&t.host.game, mend).1;
+    let max = t.host.game.builds.set.get(ship).unwrap().parts[mend].max_hp;
+    let fixed = t.seats[0].online.stats.corrections;
+    // (the trigger with the hands free: nothing)
+    let aimed = look(&mut t, mend);
+    t.seats[0].online.trigger = true;
+    t.run(0.5, 60.0, |_, _, _| {});
+    assert_eq!(part(&t.host.game, mend).1, hurt, "mended with the hands free");
+    // (with the welder, a second on the part)
+    t.seats[0].online.tool = welder;
+    t.run(1.0, 60.0, |_, _, _| {});
+    t.seats[0].online.trigger = false;
+    t.run(0.5, 60.0, |_, _, _| {});
+    let mended = part(&t.host.game, mend).1 - hurt;
+    println!("welded by the trigger, aimed at part {mend} ({aimed:?}): {mended:.0} of {max:.0} hp in a second (the welder gives {:.0})", max * rate);
+    assert_eq!(aimed, Some(mend), "the look does not meet the part");
+    assert!((mended - max * rate).abs() < max * rate * 0.1, "mended {mended:.0}, the welder gives {:.0} a second", max * rate);
+    for (k, s) in t.seats.iter().enumerate() {
+        assert_eq!(part(&s.game, mend), part(&t.host.game, mend), "player {k} has the part otherwise");
+    }
+    // (at where the other was, as long as putting it back takes)
+    let aimed = look(&mut t, back);
+    assert_eq!(aimed, Some(back), "the look does not meet where the part was");
+    t.seats[0].online.trigger = true;
+    t.run(f64::from(takes) + 0.4, 60.0, |_, _, _| {});
+    t.seats[0].online.trigger = false;
+    t.run(0.5, 60.0, |_, _, _| {});
+    for (k, g) in std::iter::once(&t.host.game).chain(t.seats.iter().map(|s| &s.game)).enumerate() {
+        assert!(part(g, back).0, "game {k}: the part is not back");
+        assert_eq!(part(g, back), part(&t.host.game, back), "game {k} has it back otherwise");
+    }
+    assert_eq!(t.seats[0].online.stats.corrections, fixed, "the welder was put right");
+}
+
+#[test]
 fn what_is_let_fly_is_what_the_hands_carry_and_what_is_not_is_gone_from_the_game_that_fired_it() {
     // where tests are not let be, a rocket fired with the hands free, before the launcher is
     // loaded again, or a test key's gun with the launcher in hand, is not let fly: the game that

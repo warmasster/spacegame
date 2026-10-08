@@ -24,6 +24,7 @@ pub mod seats;
 pub mod ships;
 pub mod tactics;
 pub mod told;
+pub mod weld;
 
 use std::path::{Path, PathBuf};
 

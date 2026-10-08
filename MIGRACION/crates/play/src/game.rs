@@ -51,6 +51,11 @@ pub struct Player {
     /// Not in the world yet (a player whose game has not said what it asks): no step moves them,
     /// and they watch nothing.
     pub away: bool,
+    /// What the hands hold (`gear`: 0 nothing, `k` the `k`-th tool) and whether its trigger is
+    /// held: what a welder does is a step's (`weld`); and a part being put back, how far along.
+    pub tool: u8,
+    pub trigger: bool,
+    pub putting_back: Option<(u64, u32, f32)>,
     /// How far from where it is the body is drawn (world; and aboard, in what carries it): what
     /// is left to go of a correction, taken out over a moment so that the eye does not jump
     /// (`online`). Only `present` uses it.
@@ -68,7 +73,7 @@ impl AsMut<Player> for Player {
 
 impl Player {
     pub fn new(bodies: Arc<BodyRegistry>, site: &Site, def: PlayerDef) -> Player {
-        Player { pilot: Pilot::new(bodies, site, def), hands: Hands::new(def.manos), input: Input::default(), controls: Controls::new(&def), aim: None, away: false, offset: (DVec3::ZERO, glam::Vec3::ZERO), was: None, shown: None }
+        Player { pilot: Pilot::new(bodies, site, def), hands: Hands::new(def.manos), input: Input::default(), controls: Controls::new(&def), aim: None, away: false, tool: 0, trigger: false, putting_back: None, offset: (DVec3::ZERO, glam::Vec3::ZERO), was: None, shown: None }
     }
 
     /// The view the player acts along now (`aim`, else their eyes where they are).
@@ -243,6 +248,10 @@ impl Game {
         for p in players.iter_mut().map(|p| p.as_mut()).filter(|p| !p.away) {
             prepare(&self.ships, &self.builds.set, p);
             p.was = Some((p.pilot.position, p.pilot.ride.map(|r| (r.id, r.local))));
+        }
+        // what the welders in the hands do (the server's decide it; a player's game predicts its own)
+        for p in players.iter_mut().map(|p| p.as_mut()) {
+            crate::weld::step(p, &self.gear, &mut self.builds.set, &mut self.ships, dt);
         }
         self.builds.set.begin_step();
         // what flies is flown (and what a test key asked is fired, along the first player's view)

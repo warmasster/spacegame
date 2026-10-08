@@ -1304,10 +1304,13 @@ impl State {
         // what the seat's keys hold, the look of the head, what is in hand go in each step's
         // command, the seat's keys worked by the step there and here alike)
         self.aboard.driven = self.online.is_some();
+        // (what the hands hold and whether the trigger is pulled: the game's welder works with
+        // them, a step at a time, here and in the server: `lunar_play::weld`)
+        (self.me.tool, self.me.trigger) = (self.gear.held.map_or(0, |k| k as u8 + 1), self.gear.trigger && !self.gear.busy());
         let owed = match &mut self.online {
             Some(o) => {
                 o.keys = self.aboard.held_mask();
-                (o.head, o.tool, o.trigger, o.outside) = ([self.look.yaw as f32, self.look.pitch as f32], self.gear.held.map_or(0, |k| k as u8 + 1), self.gear.trigger, self.chase.on);
+                (o.head, o.tool, o.trigger, o.outside) = ([self.look.yaw as f32, self.look.pitch as f32], self.me.tool, self.me.trigger, self.chase.on);
                 Some(o.steps(dt))
             }
             None => None,
@@ -1428,6 +1431,7 @@ impl State {
             _ => (crate::holding::Steps::default(), glam::Vec3::ZERO),
         };
         let motion = self.me.pilot.motion_in(&self.game.builds.set);
+        self.gear.rebuilding = self.me.putting_back;
         self.gear.update(dt, &own, motion, &mut self.game.ships, &mut self.game.builds, &mut self.game.blasts, &self.world.bodies, &mut self.renderer, steps, short);
         // the visor the picture is seen through, from one's own eyes only
         let worn = looked.is_none() && !outside && !self.me.pilot.flying && self.bench.is_none() && self.start.is_none();
@@ -1528,15 +1532,6 @@ impl State {
                 }
                 for (structure, act) in self.aboard.acts.drain(..) {
                     o.act(step, &lunar_play::net::Act::Hand { ship: structure, act });
-                }
-                for (structure, part, op) in self.gear.ops.drain(..) {
-                    let act = match op {
-                        crate::gear::PartOp::Mend(hp) => lunar_play::net::Act::Mend { structure, part, hp },
-                        crate::gear::PartOp::Rebuild(_) => lunar_play::net::Act::Rebuild { structure, part },
-                        // (the makers' tool is for a game of one's own)
-                        crate::gear::PartOp::Wreck(_) => continue,
-                    };
-                    o.act(step, &act);
                 }
             }
             None => {

@@ -328,7 +328,9 @@ pub enum Act {
     /// What the hand lets fly (`Blasts::launch`), with the number this game gave it: where it
     /// ends is told back to this game by that number (`blasts::OWN`), so it is not seen twice.
     Launch(Launch, u32),
-    /// The welder at work on part `part` of `structure`: mended by `hp`, or put back.
+    /// Part `part` of `structure` mended by `hp`, or put back: what a script or a tool asks (held
+    /// to the welder in the hands and its rate). The window's welder says nothing of this: the
+    /// server works it from the command, its trigger and where it is aimed (`weld`).
     Mend {
         structure: u64,
         part: u32,

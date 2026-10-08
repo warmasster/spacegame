@@ -23,7 +23,6 @@ use lunar_core::{
     body::BodyRegistry,
     font::Font,
     props::{BOX, CYLINDER, GlyphQuad, Prop, PropFrame, PropScene, SPHERE},
-    structure::schedule::LINGER,
 };
 use lunar_render::{Renderer, View};
 use serde::Deserialize;
@@ -89,8 +88,8 @@ pub struct Gear {
     /// The welder's integrity view is on.
     pub view: bool,
     pub scan: Option<Scan>,
-    /// Putting back a part: which, and how far along (0..1).
-    rebuilding: Option<(u64, u32, f32)>,
+    /// Putting back a part: which, and how far along (0..1): the game's (`Player::putting_back`).
+    pub rebuilding: Option<(u64, u32, f32)>,
     /// Seconds until the launcher is loaded.
     loading: f64,
     sparks: f32,
@@ -110,20 +109,6 @@ pub struct Gear {
     next: Option<Option<usize>>,
     /// What the tool did that is heard (taken by whoever sounds it).
     pub heard: Vec<String>,
-    /// What the tool did this frame to the parts of structures: (structure, part, what), for
-    /// whoever tells the other players (what is simulated in another's game is theirs to mend).
-    pub ops: Vec<(u64, u32, PartOp)>,
-}
-
-/// What a tool does to a part of a structure.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum PartOp {
-    /// So many hit points mended.
-    Mend(f32),
-    /// Put back, with this share of its hit points.
-    Rebuild(f32),
-    /// Left with this share of its hit points gone (1: destroyed): a tool of the game's makers.
-    Wreck(f32),
 }
 
 /// A tool in someone's hands as it is drawn: which, how it is held this frame and what it shows.
@@ -163,8 +148,6 @@ pub fn level_frame(view: &View) -> Quat {
 
 /// Sparks a second while welding.
 const SPARK_RATE: f32 = 14.0;
-/// A part put back starts with this share of its hit points (the welder mends the rest).
-const REBUILT: f32 = 0.2;
 
 impl Gear {
     pub fn load(path: &std::path::Path, font: Font) -> Result<Gear, String> {
@@ -314,20 +297,9 @@ impl Gear {
     /// What the scanner reads along the view within `reach`.
     fn read(view: &View, reach: f64, ships: &Ships, builds: &Builds) -> Option<Scan> {
         let set = &builds.set;
-        let live = set.raycast(view.eye, view.forward, reach).map(|(k, h, p)| (k, h.part, f64::from(h.t), p, false));
-        // what is gone, where it would be: nearer than what is there, it is what you look at
-        let mut best = live;
-        for (k, s) in set.list.iter().enumerate() {
-            if s.to_world(s.center).distance(view.eye) > f64::from(s.radius) + reach {
-                continue;
-            }
-            let limit = best.map_or(reach, |b| b.2) as f32;
-            if let Some(h) = s.raycast_gone(s.to_local(view.eye), s.dir_to_local(view.forward), limit) {
-                best = Some((k, h.part, f64::from(h.t), view.eye + view.forward * f64::from(h.t), true));
-            }
-        }
-        let (k, part, _, at, gone) = best?;
-        let s = &set.list[k];
+        // (what the welder works on: what the game's welder takes, `lunar_play::weld::target`)
+        let lunar_play::weld::Target { structure, part, gone, at } = lunar_play::weld::target(view, reach, set)?;
+        let s = set.get(structure)?;
         let p = &s.parts[part as usize];
         let cat = &set.lib.catalog;
         let (title, detail) = match ships.by_structure(s.id) {
@@ -349,7 +321,6 @@ impl Gear {
         self.loading = (self.loading - dt).max(0.0);
         self.shown.clear();
         self.scan = None;
-        self.ops.clear();
         let Some(tool) = self.tool().cloned() else {
             r.set_integrity_view(&[]);
             self.pose = ToolPose::default();
@@ -383,48 +354,21 @@ impl Gear {
             }
         }
         match tool.kind {
-            ToolKind::Soldador { alcance, ritmo, reconstruir, vista } => {
+            ToolKind::Soldador { alcance, vista, .. } => {
                 self.scan = Gear::read(view, alcance, ships, builds);
                 if self.view {
                     self.shown.extend(builds.set.list.iter().filter(|s| s.to_world(s.center).distance(view.eye) - f64::from(s.radius) < vista).map(|s| s.id));
                 }
+                // (what it mends and puts back is the game's, a step at a time, here and in the
+                // server alike: `lunar_play::weld`. The arc's sparks are ours)
                 let working = self.trigger.then(|| self.scan.clone()).flatten();
                 if let Some(sc) = &working {
-                    let now = builds.set.now;
-                    let lib = builds.set.lib.clone();
-                    if let Some(s) = builds.set.list.iter_mut().find(|s| s.id == sc.structure) {
-                        s.awake_until = s.awake_until.max(now + LINGER);
-                        if sc.gone {
-                            // putting it back takes a moment; then it is there, to be mended
-                            let done = match self.rebuilding {
-                                Some((id, p, k)) if id == sc.structure && p == sc.part => k,
-                                _ => 0.0,
-                            } + dt as f32 / reconstruir.max(0.05);
-                            if done >= 1.0 {
-                                s.rebuild(&lib.catalog, sc.part as usize, REBUILT);
-                                self.ops.push((sc.structure, sc.part, PartOp::Rebuild(REBUILT)));
-                                self.rebuilding = None;
-                            } else {
-                                self.rebuilding = Some((sc.structure, sc.part, done));
-                            }
-                        } else {
-                            self.rebuilding = None;
-                            let hp = s.parts[sc.part as usize].max_hp * ritmo * dt as f32;
-                            s.mend(&lib.catalog, sc.part as usize, hp);
-                            self.ops.push((sc.structure, sc.part, PartOp::Mend(hp)));
-                        }
-                    }
-                    if let Some(n) = ships.by_structure(sc.structure) {
-                        ships.list[n].touch();
-                    }
                     // the arc: sparks where it works
                     self.sparks += SPARK_RATE * dt as f32;
                     while self.sparks >= 1.0 {
                         self.sparks -= 1.0;
                         let _ = blasts.fx.explode_scaled("soldadura", bodies, bodies.dominant(sc.at), sc.at - view.forward * 0.03, 0.5);
                     }
-                } else {
-                    self.rebuilding = None;
                 }
             }
             ToolKind::Lanzador { ref tiro, recarga } => {

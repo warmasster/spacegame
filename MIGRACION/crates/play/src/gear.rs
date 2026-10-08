@@ -89,6 +89,15 @@ impl Gear {
         }
     }
 
+    /// A welder in the hands (as a command says it): how far it reaches (m), what it mends a
+    /// second (a share of a part) and the seconds it takes to put back a part that is gone.
+    pub fn welder(&self, tool: u8) -> Option<(f64, f32, f32)> {
+        match self.in_hand(tool)?.kind {
+            ToolKind::Soldador { alcance, ritmo, reconstruir, .. } => Some((alcance, ritmo, reconstruir)),
+            ToolKind::Lanzador { .. } => None,
+        }
+    }
+
     /// What a welder in the hands mends a second (a share of a part) and the seconds it takes to
     /// put back a part that is gone; none if it is not a welder.
     pub fn mends(&self, tool: u8) -> Option<(f32, f32)> {
