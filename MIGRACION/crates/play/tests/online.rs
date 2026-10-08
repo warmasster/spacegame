@@ -600,6 +600,125 @@ fn ships_in_formation_at_any_speed_are_seen_side_by_side_at_any_frame_rate() {
 }
 
 #[test]
+fn each_key_of_every_ships_seat_held_over_the_network_does_what_it_does_held_at_home() {
+    // `ship/tests/coherencia.rs` with the keys coming over the network: every ship that flies,
+    // far from every body, sat in by one whose game is a server's; each key of its seat that
+    // moves the stick held a second and let go. The ship turns or goes about the same axis, the
+    // same way and nearly as much as the same key held in a game of one's own, the pilot's copy is
+    // where the server has it and the pilot is never put right
+    use lunar_ship::seat_keys::Does;
+    let cond = Conditions { delay: 0.04, jitter: 0.005, loss: 0.01, ..Conditions::default() };
+    let far = DVec3::new(2.0e6, 3.0e6, -1.0e6);
+    let kinds: Vec<String> = new_game().ships.kinds.iter().filter(|k| k.def.vuelo.is_some() && !k.seats.is_empty()).map(|k| k.id.clone()).collect();
+    assert!(kinds.len() >= 3, "few ships that fly: {kinds:?}");
+    // (how a ship answers a key held for `steps`: its turn and its push, in its own frame)
+    let answer = |before: (glam::Vec3, DVec3, Quat), after: (glam::Vec3, DVec3, Quat)| {
+        let inv = after.2.inverse();
+        (inv * (after.0 - before.0), (inv.as_dquat() * (after.1 - before.1)).as_vec3())
+    };
+    let state = |g: &Game, id: u64| {
+        let s = g.builds.set.get(id).unwrap();
+        (s.spin, s.vel, s.rot)
+    };
+    let main = |v: glam::Vec3| {
+        let ax = v.abs().max_position();
+        (ax, v[ax].signum(), v[ax].abs())
+    };
+    let mut bad = Vec::new();
+    let mut tried = 0;
+    for kind in &kinds {
+        // over the network
+        let mut t = Table::new(1, 89, cond);
+        (t.host.config.rule.near, t.host.config.rule.most) = (1.0e8, 1.0e8);
+        t.host.game.watchers.push(far);
+        let ship = t.host.game.ships.spawn_free(&mut t.host.game.builds, kind, far, Quat::IDENTITY).unwrap();
+        t.run(0.2, 60.0, |_, _, _| {});
+        let you = t.seats[0].online.you.unwrap();
+        let exit = {
+            let (game, p) = t.host.game_and_player(you).unwrap();
+            let n = game.ships.by_structure(ship).unwrap();
+            let exit = glam::Vec3::from_array(game.ships.list[n].kind.seats[0].def.salida);
+            p.pilot.put_on(&game.builds.set, ship, exit);
+            exit
+        };
+        t.run(1.5, 60.0, |_, _, _| {});
+        {
+            let s = &mut t.seats[0];
+            lunar_play::seats::sit(&mut s.me.pilot, &s.game.ships, &s.game.builds.set, ship, 0, |_, _| false).unwrap();
+        }
+        t.run(0.5, 60.0, |_, _, _| {});
+        // at home: the same ship, sat in, the keys straight to the seat
+        let mut home = new_game();
+        let local = home.ships.spawn_free(&mut home.builds, kind, far, Quat::IDENTITY).unwrap();
+        home.watchers.push(far);
+        let mut me = Player::new(home.bodies.clone(), &home.site, defs().scenario.player);
+        for _ in 0..12 {
+            home.tick(&mut [&mut me]);
+        }
+        me.pilot.put_on(&home.builds.set, local, exit);
+        for _ in 0..90 {
+            home.tick(&mut [&mut me]);
+        }
+        lunar_play::seats::sit(&mut me.pilot, &home.ships, &home.builds.set, local, 0, |_, _| false).unwrap();
+        for _ in 0..30 {
+            home.tick(&mut [&mut me]);
+        }
+        let mut drive = lunar_play::seats::Drive::default();
+        let mut moved = Vec::new();
+        let keys = {
+            let g = &t.host.game;
+            lunar_ship::seat_keys::keys(&g.ships.list[g.ships.by_structure(ship).unwrap()], 0).0
+        };
+        let fixed = t.seats[0].online.stats.corrections;
+        let mut worst = 0.0f64;
+        for (k, key) in keys.iter().enumerate() {
+            if !matches!(key.does, Does::Axis { .. }) {
+                continue;
+            }
+            tried += 1;
+            let (a0, h0) = (state(&t.host.game, ship), state(&home, local));
+            for _ in 0..60 {
+                t.seats[0].online.keys = 1 << k;
+                t.frame(1.0 / 60.0, |_, _, _| {});
+                drive.step(&me.pilot, 1 << k, &mut home.ships, &home.builds.set, STEP as f32, &mut moved);
+                home.tick(&mut [&mut me]);
+                // (the pilot's copy, where the server has it, at the server's step)
+                let srv = t.host.game.builds.set.get(ship).unwrap();
+                let mine = t.seats[0].game.builds.set.get(ship).unwrap();
+                let ahead = (t.seats[0].game.step - t.host.game.step) as f64 * STEP;
+                // (its centre of mass, which goes as `vel` says however it turns)
+                worst = worst.max((mine.to_world(mine.com) - mine.vel * ahead).distance(srv.to_world(srv.com)));
+            }
+            let (net, at_home) = (answer(a0, state(&t.host.game, ship)), answer(h0, state(&home, local)));
+            // (a turn wins over the push it makes as it turns)
+            let turns = |a: (glam::Vec3, glam::Vec3)| a.0.abs().max_element() > 0.02;
+            let what = |a: (glam::Vec3, glam::Vec3)| if turns(a) { (true, main(a.0)) } else { (false, main(a.1)) };
+            let (n, h) = (what(net), what(at_home));
+            if (n.0, n.1.0, n.1.1) != (h.0, h.1.0, h.1.1) || (n.1.2 - h.1.2).abs() > 0.25 * h.1.2.max(1e-3) {
+                bad.push(format!("{kind}: '{}' por la red {} en {} {:+.3}; en casa {} en {} {:+.3}", key.key, if n.0 { "gira" } else { "empuja" }, n.1.0, n.1.1 * n.1.2, if h.0 { "gira" } else { "empuja" }, h.1.0, h.1.1 * h.1.2));
+            }
+            // let go, and still again (the stabiliser stops it, here and at home)
+            for _ in 0..90 {
+                t.seats[0].online.keys = 0;
+                t.frame(1.0 / 60.0, |_, _, _| {});
+                drive.step(&me.pilot, 0, &mut home.ships, &home.builds.set, STEP as f32, &mut moved);
+                home.tick(&mut [&mut me]);
+            }
+        }
+        let fixes = t.seats[0].online.stats.corrections - fixed;
+        if fixes > 0 {
+            bad.push(format!("{kind}: el piloto, corregido {fixes} veces"));
+        }
+        if worst > 0.05 {
+            bad.push(format!("{kind}: la copia del piloto, a {worst:.3} m de la del servidor"));
+        }
+    }
+    println!("the seats' keys over the network: {tried} keys on {} ships ({})", kinds.len(), kinds.join(", "));
+    assert!(tried >= 10, "few keys tried: {tried}");
+    assert!(bad.is_empty(), "{}", bad.join("\n"));
+}
+
+#[test]
 fn the_server_keeps_where_each_body_was_a_moment_ago() {
     // two walking: the server has where each body was at each of the last 300 ms, as it had them
     // then, and nothing older (what a shot at a person will be judged against)

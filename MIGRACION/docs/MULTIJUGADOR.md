@@ -363,7 +363,7 @@ los guarda y los lee tras `follow`): un final cae sobre el casco ya en su sitio.
 | `net/tests/udp.rs` (3) | servidor y 2 clientes por UDP real en `127.0.0.1:0` |
 | `server/src` (10), `server/tests/programa.rs` (3) | ajustes, órdenes, fechas; el `.exe` arrancado de verdad: entra un jugador y anda, «salir» guarda, se arranca y retoma, se vuelve con la clave; 3 000 datagramas basura |
 | `play/src/keep.rs` | las ranuras: la más nueva entera se retoma, la rota o de otra versión se aparta, se escribe sobre la más vieja |
-| `play/tests/online.rs` (30), `local.rs` (2), `load.rs`, `interest.rs` | la partida por red, la propia (se guarda al cerrar y se vuelve al mismo cuerpo), muchos jugadores, el interés contra mirarlo todo: ver [`PLAN_AUTORITATIVO.md`](PLAN_AUTORITATIVO.md), «Avance» |
+| `play/tests/online.rs` (31), `local.rs` (2), `load.rs`, `interest.rs` | la partida por red, la propia (se guarda al cerrar y se vuelve al mismo cuerpo), muchos jugadores, el interés contra mirarlo todo: ver [`PLAN_AUTORITATIVO.md`](PLAN_AUTORITATIVO.md), «Avance» |
 
 Las pruebas del relevo (`app/src/multi/tests.rs`: formaciones a 7,8 km/s, armas de los datos una a
 una, guiados, tiradores a la vez) se fueron con él; lo que probaban se prueba por el servidor que
