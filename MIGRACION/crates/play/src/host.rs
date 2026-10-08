@@ -54,6 +54,10 @@ const LAUNCH_SLIP: f64 = 50.0;
 const MEND_RATE: f32 = 0.5;
 /// Steps between two things of a kind with no rate of its own let fly by one player (a reload).
 const RELOAD: u64 = 12;
+/// Bytes of events in one message at most (what a reliable message carries, less its head), and
+/// how many (what a player's game reads in one).
+const EVENTS_ROOM: usize = lunar_net::MAX_TELL - 32;
+const EVENTS_MOST: usize = 4096;
 /// Steps in a row a player's command may be guessed as the last one; past them nothing more is
 /// asked of the body (its game is not heard: it does not go on walking, or firing, on its own).
 const GUESS_MOST: u32 = 30;
@@ -100,6 +104,8 @@ pub struct HostStats {
     /// Bodies taken back by who had been cut off, and left for good (nobody came back for them).
     pub back: u64,
     pub forgotten: u64,
+    /// Events too big for any message (they could not be told).
+    pub too_big: u64,
 }
 
 /// One player, as the server has them besides their body.
@@ -136,9 +142,9 @@ struct Peer {
     came: Vec<u64>,
     went: Vec<u64>,
     rested: Vec<u64>,
-    /// Events for them, encoded (`net::append_event`), and how many.
+    /// Events for them, encoded (`net::append_event`), and where each ends in it.
     events: Vec<u8>,
-    count: u32,
+    ends: Vec<usize>,
     /// What goes out to them this step: a snapshot, the events.
     quick: Vec<u8>,
     sure: Vec<u8>,
@@ -176,7 +182,7 @@ impl Peer {
             went: Vec::new(),
             rested: Vec::new(),
             events: Vec::new(),
-            count: 0,
+            ends: Vec::new(),
             quick: Vec::new(),
             sure: Vec::new(),
             launches: 0.0,
@@ -194,12 +200,18 @@ impl Peer {
 
     fn tell(&mut self, e: &Event) {
         net::append_event(e, &mut self.events);
-        self.count += 1;
+        self.ends.push(self.events.len());
     }
 
     fn tell_bytes(&mut self, encoded: &[u8]) {
         self.events.extend_from_slice(encoded);
-        self.count += 1;
+        self.ends.push(self.events.len());
+    }
+
+    /// Nothing more to tell them.
+    fn untold(&mut self) {
+        self.events.clear();
+        self.ends.clear();
     }
 }
 
@@ -313,9 +325,8 @@ impl Host {
         peer.tell(&Event::Hello { step: self.game.step, you: id, sun: self.game.sun, region: self.config.region, key });
         // (the ground as it is: every crater dug so far)
         for (b, body) in self.game.bodies.iter() {
-            let craters = body.deform().craters().to_vec();
-            if !craters.is_empty() {
-                peer.tell(&Event::Ground { body: b, craters });
+            for e in net::ground(b, body.deform().craters()) {
+                peer.tell(&e);
             }
         }
         // (what the scenario set that is no more: their game has it from the start)
@@ -350,8 +361,7 @@ impl Host {
         peer.acts.clear();
         peer.interest.clear();
         (peer.newest, peer.heard, peer.behind) = (None, None, None);
-        peer.events.clear();
-        peer.count = 0;
+        peer.untold();
         peer.quick.clear();
     }
 
@@ -659,19 +669,39 @@ impl Host {
         for peer in &mut self.peers {
             if peer.lost.is_some() {
                 // (nobody to tell)
-                peer.events.clear();
-                peer.count = 0;
+                peer.untold();
                 peer.quick.clear();
                 continue;
             }
-            if peer.count > 0 {
-                net::events_message(step, peer.count, &peer.events, &mut peer.sure);
-                if send(peer.id, true, &peer.sure) {
-                    self.stats.event_bytes += peer.sure.len() as u64;
-                    peer.events.clear();
-                    peer.count = 0;
+            // (as many messages as it takes, each as many events as fit; what is not taken is kept)
+            let (mut from, mut k) = (0, 0);
+            while k < peer.ends.len() {
+                let mut j = k;
+                while j < peer.ends.len() && peer.ends[j] - from <= EVENTS_ROOM && j - k < EVENTS_MOST {
+                    j += 1;
                 }
+                if j == k {
+                    // (one event too big for any message: it cannot go)
+                    self.stats.too_big += 1;
+                    (from, k) = (peer.ends[k], k + 1);
+                    continue;
+                }
+                let end = peer.ends[j - 1];
+                net::events_message(step, (j - k) as u32, &peer.events[from..end], &mut peer.sure);
+                let sent = send(peer.id, true, &peer.sure);
                 peer.sure.clear();
+                if !sent {
+                    break;
+                }
+                self.stats.event_bytes += (end - from) as u64;
+                (from, k) = (end, j);
+            }
+            if k > 0 {
+                peer.events.drain(..from);
+                peer.ends.drain(..k);
+                for e in &mut peer.ends {
+                    *e -= from;
+                }
             }
             if !peer.quick.is_empty() {
                 send(peer.id, false, &peer.quick);
@@ -995,9 +1025,7 @@ impl Host {
                         None => continue,
                     },
                 };
-                let peer = &mut self.peers[k];
-                peer.events.extend_from_slice(&self.made[at].1);
-                peer.count += 1;
+                self.peers[k].tell_bytes(&self.made[at].1);
             }
             let mut came = came;
             came.clear();

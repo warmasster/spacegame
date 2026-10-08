@@ -769,3 +769,39 @@ fn the_game_kept_and_taken_up_again_is_as_it_was_and_each_comes_back_to_their_bo
     assert!(fixes == 0, "{fixes} corrections after coming back");
     assert!(off < 1e-3, "{off} m off");
 }
+
+#[test]
+fn a_late_comer_is_told_a_world_too_big_for_one_message() {
+    // a thousand craters round the site and two dozen ships by it: more than one reliable message
+    // carries. Whoever comes now is told all of it, in as many as it takes
+    let mut t = Table::new(1, 71, Conditions { delay: 0.03, loss: 0.02, ..Conditions::default() });
+    {
+        let g = &mut t.host.game;
+        let b = g.bodies.get(g.site.body);
+        for k in 0..1000 {
+            let (e, n) = ((k % 40) as f64 * 15.0 - 300.0, (k / 40) as f64 * 15.0 - 200.0);
+            let c = lunar_core::deform::Crater { dir: g.site.at(e, n), radius: 2.0 + (k % 3) as f64, depth: 0.6, rim: 0.15, seed: (k as f64 * 0.37).fract(), ground: 0.0 };
+            b.edit(|d| d.put_from(d.craters().len(), &[c]));
+        }
+        let kinds = ["alcotan", "abejorro", "azor"];
+        for k in 0..24 {
+            let a = k as f64 / 24.0 * std::f64::consts::TAU;
+            let up = g.site.at(150.0 * a.cos(), 150.0 * a.sin());
+            let pos = b.above_ground(up, 6.0);
+            let rot = Quat::from_rotation_arc(glam::Vec3::Y, up.as_vec3());
+            g.ships.spawn_free(&mut g.builds, kinds[k % 3], pos, rot).unwrap();
+        }
+    }
+    t.run(1.0, 60.0, |_, _, _| {});
+    let late = t.join("tarde");
+    t.run(4.0, 60.0, |_, _, _| {});
+    let ground = |g: &Game| g.bodies.get(g.site.body).deform().craters().to_vec();
+    assert_eq!(ground(&t.host.game).len(), 1000);
+    assert_eq!(ground(&t.seats[late].game), ground(&t.host.game), "the ground, every crater, in its order");
+    let ships = |g: &Game| g.ships.list.iter().map(|sh| sh.structure).collect::<Vec<_>>();
+    for id in ships(&t.host.game) {
+        assert!(t.seats[late].game.builds.set.get(id).is_some(), "ship {id} not told");
+    }
+    assert_eq!(t.host.stats.too_big, 0);
+    println!("told to who came late: {:.1} kB of events, {} structures", t.host.stats.event_bytes as f64 / 1000.0, t.seats[late].game.builds.set.list.len());
+}

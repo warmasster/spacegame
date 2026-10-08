@@ -706,6 +706,12 @@ silueta lejana, oclusión. Falta:
   correcciones en 2 s en la bodega del Cachalote recién creado; 0 con la nave ya en reposo. Idea:
   la nave que lleva al jugador, sin corregir mientras el desvío sea menor que lo que el cuerpo
   tolera, o su estado exacto (no redondeado) mientras alguien la pisa.
+- [ ] (2026-10-08) Servidor autoritativo: con el relevo se fueron sus pruebas de partidas enteras
+  (`app/src/multi/tests.rs`). Falta su equivalente por el servidor que tiene la partida: **todas las
+  armas de los datos una a una** desde una nave a 2 km/s (cada una arranca una vez en cada juego,
+  acaba igual y todo queda igual bit a bit), el guiado contra una nave que esquiva, dos tiradores a
+  la vez, la formación de naves de 0 a 7 800 m/s a 30–240 fps, el pasajero de pie en una nave que
+  pilota otro.
 - [ ] (2026-10-08) Servidor autoritativo: el servidor guarda la partida cada 5 minutos y con
   «salir», pero no si se cierra la ventana de la consola o con Ctrl+C (no hay manejador de señales):
   se pierde lo de desde el último guardado. Y lo que vuela en el momento de guardar (balas, misiles)

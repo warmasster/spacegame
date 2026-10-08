@@ -1,15 +1,21 @@
-//! The other players, as bodies drawn here from what is told of each (`PlayerState`): over a
-//! server that only passes things on (`multi`) or over one that has the game (`online`). Each is
-//! made the first time it is told of, moved from what is told and animated here, and forgotten
-//! when it is told of no more.
+//! The other players, as bodies drawn here from what the server's snapshots tell of each
+//! (`PlayerState`, `lunar_play::online`). Each is made the first time it is told of, moved from
+//! what is told and animated here, and forgotten when it is told of no more.
 use crate::{
     body::{Body, Stance},
-    multi::BodySource,
+    rig::Rig,
     ships::Ships,
 };
 use glam::{DVec3, Vec3};
 use lunar_core::{anim::BodyScene, body::BodyRegistry, structure::set::Structures};
 use lunar_net::{PlayerState, flag};
+
+/// What the others' bodies are made from: the suit's rig, as measured once (each body a copy),
+/// and its mesh in the renderer, whole (seen from outside).
+pub struct BodySource {
+    pub rig: Rig,
+    pub whole: Option<u16>,
+}
 
 /// Another player, as drawn here.
 pub struct Other {
@@ -34,6 +40,11 @@ pub fn facing(north: DVec3, up: DVec3, yaw: f64) -> DVec3 {
 }
 
 impl Others {
+    /// Where each other's eyes are as last drawn, and who they are (what their name goes over).
+    pub fn eyes(&self) -> impl Iterator<Item = (DVec3, u32)> + '_ {
+        self.list.iter().map(|o| (o.stance.eye, o.id))
+    }
+
     /// The others as `states` tell them, `ahead` s old (each on its own carried on by its speed:
     /// what rides or floats by a ship is placed by our copy of it), drawn into `out`. `net(k)`:
     /// our structure for the thing a state names `k`.

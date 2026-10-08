@@ -13,13 +13,8 @@ pub struct Config {
     /// The server's name, shown to who joins.
     pub nombre: String,
     pub max_jugadores: usize,
-    /// Times a second states are passed on.
-    pub tasa: u8,
     /// Seconds without hearing a client after which it is dropped.
     pub espera: f64,
-    /// The server has the game (simulates it and has the say: protocol 2); else it only passes on
-    /// what each player's game says (the old way).
-    pub simula: bool,
     /// Where the game's data is (the folder with `defs` in it); none: looked for beside the program.
     pub datos: Option<String>,
     /// Free flight and ships put anywhere let be (tests).
@@ -39,9 +34,7 @@ impl Default for Config {
             puerto: lunar_net::DEFAULT_PORT,
             nombre: "Servidor de Selene".to_string(),
             max_jugadores: 16,
-            tasa: 20,
             espera: 10.0,
-            simula: true,
             datos: None,
             trucos: false,
             partida: Some("partidas/partida".to_string()),
@@ -51,7 +44,7 @@ impl Default for Config {
     }
 }
 
-pub const USAGE: &str = "Uso: SeleneServidor [--puerto N] [--nombre TEXTO] [--datos CARPETA] [--partida RUTA] [--nueva] [--sin-guardar] [--relevo] [--trucos]\n  --puerto N        puerto UDP en el que escuchar (por defecto 47600)\n  --nombre TEXTO    nombre del servidor\n  --datos CARPETA   dónde están los datos del juego (la carpeta assets, con defs dentro)\n  --partida RUTA    dónde se guarda la partida (por defecto partidas/partida, junto al programa: partida.a.bin y partida.b.bin)\n  --nueva           empezar una partida nueva aunque haya una guardada\n  --sin-guardar     no guardar la partida\n  --relevo          no simular: solo pasar lo que dice cada juego (la forma antigua)\n  --trucos          dejar volar libre y poner naves (pruebas)\nEl resto de ajustes están en servidor.jsonc, junto al programa.";
+pub const USAGE: &str = "Uso: SeleneServidor [--puerto N] [--nombre TEXTO] [--datos CARPETA] [--partida RUTA] [--nueva] [--sin-guardar] [--trucos]\n  --puerto N        puerto UDP en el que escuchar (por defecto 47600)\n  --nombre TEXTO    nombre del servidor\n  --datos CARPETA   dónde están los datos del juego (la carpeta assets, con defs dentro)\n  --partida RUTA    dónde se guarda la partida (por defecto partidas/partida, junto al programa: partida.a.bin y partida.b.bin)\n  --nueva           empezar una partida nueva aunque haya una guardada\n  --sin-guardar     no guardar la partida\n  --trucos          dejar volar libre y poner naves (pruebas)\nEl resto de ajustes están en servidor.jsonc, junto al programa.";
 
 /// What the settings could not be read for: said to the person as it is.
 pub type Problem = String;
@@ -141,9 +134,9 @@ impl Config {
                 "puerto" => self.puerto = whole(v, key, 1, 65535)? as u16,
                 "nombre" => self.nombre = v.as_str().map(str::to_string).ok_or_else(|| format!("«nombre» tiene que ser un texto entre comillas (pone {v})"))?,
                 "max_jugadores" => self.max_jugadores = whole(v, key, 1, 64)? as usize,
-                "tasa" => self.tasa = whole(v, key, 5, 60)? as u8,
+                // (of the old server, that only passed on what each game said)
+                "tasa" | "simula" => notes.push(format!("{FILE}: «{key}» ya no se usa (el servidor siempre tiene la partida); lo ignoro.")),
                 "espera" => self.espera = v.as_f64().filter(|s| (2.0..=300.0).contains(s)).ok_or_else(|| format!("«espera» tiene que ser un número de segundos entre 2 y 300 (pone {v})"))?,
-                "simula" => self.simula = v.as_bool().ok_or_else(|| format!("«simula» tiene que ser true o false (pone {v})"))?,
                 "trucos" => self.trucos = v.as_bool().ok_or_else(|| format!("«trucos» tiene que ser true o false (pone {v})"))?,
                 "datos" => self.datos = Some(v.as_str().map(str::to_string).ok_or_else(|| format!("«datos» tiene que ser una carpeta entre comillas (pone {v})"))?),
                 "partida" => {
@@ -173,7 +166,7 @@ impl Config {
                 }
                 "--nombre" => self.nombre = args.next().ok_or("falta el texto después de --nombre")?,
                 "--datos" => self.datos = Some(args.next().ok_or("falta la carpeta después de --datos")?),
-                "--relevo" => self.simula = false,
+                "--relevo" => return Err("«--relevo» ya no existe: el servidor siempre tiene la partida".to_string()),
                 "--partida" => self.partida = Some(args.next().ok_or("falta la ruta después de --partida")?),
                 "--nueva" => self.nueva = true,
                 "--sin-guardar" => self.partida = None,
@@ -223,12 +216,13 @@ mod tests {
     fn a_file_sets_what_it_names_and_leaves_the_rest() {
         let mut c = Config::default();
         let notes = c.apply_file("{ \"puerto\": 5001, \"max_jugadores\": 4, // cuatro\n \"espera\": 20, \"tasa\": 30, \"color\": \"rojo\", }").expect("a good file");
-        assert_eq!(c, Config { puerto: 5001, max_jugadores: 4, espera: 20.0, tasa: 30, ..Config::default() });
-        assert_eq!(notes, ["servidor.jsonc: no conozco el ajuste «color»; lo ignoro."]);
+        assert_eq!(c, Config { puerto: 5001, max_jugadores: 4, espera: 20.0, ..Config::default() });
+        assert_eq!(notes.len(), 2);
+        assert!(notes.contains(&"servidor.jsonc: «tasa» ya no se usa (el servidor siempre tiene la partida); lo ignoro.".to_string()) && notes.contains(&"servidor.jsonc: no conozco el ajuste «color»; lo ignoro.".to_string()), "{notes:?}");
         let mut d = Config::default();
         assert!(d.apply_file("{}").expect("an empty file").is_empty());
         assert_eq!(d, Config::default());
-        assert_eq!((d.puerto, d.max_jugadores, d.tasa, d.espera, d.simula, d.trucos), (47600, 16, 20, 10.0, true, false));
+        assert_eq!((d.puerto, d.max_jugadores, d.espera, d.trucos, d.guardar_cada), (47600, 16, 10.0, false, 300.0));
     }
 
     #[test]
@@ -237,7 +231,6 @@ mod tests {
         assert_eq!(bad("{ \"puerto\": 70000 }"), "«puerto» tiene que ser un número entero entre 1 y 65535 (pone 70000)");
         assert_eq!(bad("{ \"puerto\": \"47600\" }"), "«puerto» tiene que ser un número entero entre 1 y 65535 (pone \"47600\")");
         assert_eq!(bad("{ \"max_jugadores\": 0 }"), "«max_jugadores» tiene que ser un número entero entre 1 y 64 (pone 0)");
-        assert_eq!(bad("{ \"tasa\": 2.5 }"), "«tasa» tiene que ser un número entero entre 5 y 60 (pone 2.5)");
         assert_eq!(bad("{ \"nombre\": 3 }"), "«nombre» tiene que ser un texto entre comillas (pone 3)");
         assert_eq!(bad("{ \"espera\": 1 }"), "«espera» tiene que ser un número de segundos entre 2 y 300 (pone 1)");
         assert_eq!(bad("{\n \"puerto\": 1\n \"nombre\": \"x\" }"), "no es JSON válido: mira la línea 3, columna 2");
@@ -250,8 +243,9 @@ mod tests {
         let mut c = Config::default();
         assert_eq!(c.apply_flags(args(&["--puerto", "5002", "--nombre", "La Base"])), Ok(true));
         assert_eq!((c.puerto, c.nombre.as_str()), (5002, "La Base"));
-        assert_eq!(c.apply_flags(args(&["--relevo", "--trucos", "--datos", "C:/juego/assets"])), Ok(true));
-        assert_eq!((c.simula, c.trucos, c.datos.as_deref()), (false, true, Some("C:/juego/assets")));
+        assert_eq!(c.apply_flags(args(&["--trucos", "--datos", "C:/juego/assets", "--nueva", "--sin-guardar"])), Ok(true));
+        assert_eq!((c.trucos, c.datos.as_deref(), c.nueva, c.partida.as_deref()), (true, Some("C:/juego/assets"), true, None));
+        assert!(c.apply_flags(args(&["--relevo"])).is_err());
         assert_eq!(c.apply_flags(args(&["--ayuda"])), Ok(false));
         assert_eq!(c.apply_flags(args(&["--puerto"])), Err("falta el número después de --puerto".to_string()));
         assert_eq!(c.apply_flags(args(&["--puerto", "cero"])), Err("--puerto: «cero» no es un puerto (un número entre 1 y 65535)".to_string()));

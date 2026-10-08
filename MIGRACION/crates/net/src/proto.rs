@@ -7,19 +7,16 @@
 //! `Refused`, with the reason). From then on both talk through a `Channel` (`Data` datagrams).
 //! `Bye` ends it from either side.
 //!
-//! What the game says goes as bytes the server never reads: states in batches (`states`), things
-//! told to everyone (`Tell`, `Hint`) or to one player (`To`). The server only knows who is in,
-//! who the host is and who holds each key (`Claim`): the game can say new things without the
-//! server changing.
-pub mod states;
+//! What the game says goes as bytes this layer never reads (`Game`, `Quick`), between each player
+//! and the game that runs in the server: the game can say new things without this changing.
 
 use crate::wire::{Reader, Wire, WireError, Writer};
 
 /// First bytes of a `Hello`: what tells our datagrams from anything else that reaches the port.
 pub const MAGIC: u32 = u32::from_le_bytes(*b"LUNA");
 /// The protocol's version: both sides must have the same. 1 was V35's (the server read the game's
-/// states); 2 is the relay that reads nothing.
-pub const VERSION: u16 = 2;
+/// states); 2 the relay that read nothing; 3, a server that has the game (and nothing else).
+pub const VERSION: u16 = 3;
 /// The port a server listens on unless told otherwise (UDP).
 pub const DEFAULT_PORT: u16 = 47600;
 
@@ -53,7 +50,7 @@ pub enum Datagram<'a> {
     /// The server, to a hello without the right cookie: "say it again with this", to know the address is the sender's own.
     Challenge { salt: u32, cookie: u64 },
     /// The server lets it in. `name`: the client's name as the server took it (cleaned, made unique).
-    Welcome { salt: u32, id: u32, tick_hz: u8, name: &'a str, server: &'a str },
+    Welcome { salt: u32, id: u32, name: &'a str, server: &'a str },
     /// The server does not, and why.
     Refused { salt: u32, reason: &'a str },
     /// Either side ends the connection.
@@ -84,11 +81,10 @@ impl<'a> Datagram<'a> {
                 w.u32(salt);
                 w.u64(cookie);
             }
-            Datagram::Welcome { salt, id, tick_hz, name, server } => {
+            Datagram::Welcome { salt, id, name, server } => {
                 w.u8(lead::WELCOME);
                 w.u32(salt);
                 w.var(id as u64);
-                w.u8(tick_hz);
                 w.str(name);
                 w.str(server);
             }
@@ -129,7 +125,7 @@ impl<'a> Datagram<'a> {
                 return Ok(Datagram::Hello { version, salt, cookie: r.u64()?, scenario: r.var32()?, build: r.str(MAX_BUILD)?, name: r.str(MAX_NAME)? });
             }
             lead::CHALLENGE => Datagram::Challenge { salt: r.u32()?, cookie: r.u64()? },
-            lead::WELCOME => Datagram::Welcome { salt: r.u32()?, id: r.var32()?, tick_hz: r.u8()?, name: r.str(MAX_NAME)?, server: r.str(MAX_NAME)? },
+            lead::WELCOME => Datagram::Welcome { salt: r.u32()?, id: r.var32()?, name: r.str(MAX_NAME)?, server: r.str(MAX_NAME)? },
             lead::REFUSED => Datagram::Refused { salt: r.u32()?, reason: r.str(MAX_TEXT)? },
             lead::BYE => Datagram::Bye { salt: r.u32()?, reason: r.str(MAX_TEXT)? },
             lead::DATA => return Ok(Datagram::Data(r.rest())),
@@ -142,18 +138,6 @@ impl<'a> Datagram<'a> {
 mod tag {
     pub const PING: u8 = 1;
     pub const PONG: u8 = 2;
-    pub const UP: u8 = 3;
-    pub const DOWN: u8 = 4;
-    pub const TELL: u8 = 5;
-    pub const TOLD: u8 = 6;
-    pub const HINT: u8 = 7;
-    pub const HINTED: u8 = 8;
-    pub const TO: u8 = 9;
-    pub const FROM: u8 = 10;
-    pub const CLAIM: u8 = 11;
-    pub const RELEASE: u8 = 12;
-    pub const OWNER: u8 = 13;
-    pub const HOST: u8 = 14;
     pub const CHAT: u8 = 15;
     pub const SAID: u8 = 16;
     pub const JOINED: u8 = 17;
@@ -175,31 +159,6 @@ pub enum Msg<'a> {
     Ping { t: u64 },
     /// Unreliable, server: "you said `t`; mine says `server`".
     Pong { t: u64, server: u64 },
-    /// Unreliable, client: its own states (its player, the things it holds): a `states` batch.
-    Up(&'a [u8]),
-    /// Unreliable, server: the states of the others, as it passes them on: a `states` batch.
-    Down(&'a [u8]),
-    /// Reliable, client: something for everyone else, in order (and back to itself in its place among
-    /// what everyone told, with `echo`).
-    Tell { echo: bool, data: &'a [u8] },
-    /// Reliable, server: what player `by` told.
-    Told { by: u32, data: &'a [u8] },
-    /// Unreliable, client: something for everyone else that may be lost (a passing effect).
-    Hint(&'a [u8]),
-    /// Unreliable, server: what player `by` hinted.
-    Hinted { by: u32, data: &'a [u8] },
-    /// Reliable, client: something for one player alone.
-    To { player: u32, data: &'a [u8] },
-    /// Reliable, server: what player `by` sent to this client alone.
-    From { by: u32, data: &'a [u8] },
-    /// Reliable, client: it asks for a key (a thing to simulate, a seat). Keys are held in the order asked.
-    Claim { key: u64 },
-    /// Reliable, client: it gives a key up (or stops waiting for it).
-    Release { key: u64 },
-    /// Reliable, server: who holds a key now among those who asked (`None`: nobody asks for it any more).
-    Owner { key: u64, player: Option<u32> },
-    /// Reliable, server: who the host is (what nobody claims is theirs).
-    Host { player: Option<u32> },
     /// Reliable, client: a chat line.
     Chat { text: &'a str },
     /// Reliable, server: a chat line; `from` is `None` when the server itself speaks.
@@ -208,14 +167,14 @@ pub enum Msg<'a> {
     Joined { id: u32, name: &'a str },
     /// Reliable, server: someone is gone.
     Left { id: u32 },
-    /// Reliable, server: everything the server knows of the game has been told to this newcomer.
+    /// Reliable, server: who is here has been told to this newcomer.
     Synced,
     /// Reliable, server: several reliable messages in one (each with its length before it): how a newcomer is
     /// told what the server knows without a hundred tiny messages. Read it with `Bundle`.
     Bundle(&'a [u8]),
-    /// Reliable, either way: what the game says to whoever simulates it (a client to a server
-    /// that has the game: what its player asks for; that server to a client: what happened). The
-    /// server does not pass it on: it hands it to the game that runs in it (`Server::take_game`).
+    /// Reliable, either way: what the game says (a client to the server: what its player does;
+    /// the server to a client: what happened). The server does not pass it on: it hands it to the
+    /// game that runs in it (`Server::take_game`).
     Game(&'a [u8]),
     /// The same, unreliable and sequenced (what the player asks of each step; states).
     Quick(&'a [u8]),
@@ -269,7 +228,7 @@ fn read_opt(r: &mut Reader) -> Wire<Option<u32>> {
 impl<'a> Msg<'a> {
     /// Whether this kind of message travels reliably: one that arrives the other way is not ours.
     pub fn reliable(&self) -> bool {
-        !matches!(self, Msg::Ping { .. } | Msg::Pong { .. } | Msg::Up(_) | Msg::Down(_) | Msg::Hint(_) | Msg::Hinted { .. } | Msg::Quick(_))
+        !matches!(self, Msg::Ping { .. } | Msg::Pong { .. } | Msg::Quick(_))
     }
 
     pub fn encode(&self, w: &mut Writer) {
@@ -282,60 +241,6 @@ impl<'a> Msg<'a> {
                 w.u8(tag::PONG);
                 w.var(t);
                 w.var(server);
-            }
-            Msg::Up(body) => {
-                w.u8(tag::UP);
-                w.bytes(body);
-            }
-            Msg::Down(body) => {
-                w.u8(tag::DOWN);
-                w.bytes(body);
-            }
-            Msg::Tell { echo, data } => {
-                w.u8(tag::TELL);
-                w.u8(u8::from(echo));
-                w.bytes(data);
-            }
-            Msg::Told { by, data } => {
-                w.u8(tag::TOLD);
-                w.var(by as u64);
-                w.bytes(data);
-            }
-            Msg::Hint(data) => {
-                w.u8(tag::HINT);
-                w.bytes(data);
-            }
-            Msg::Hinted { by, data } => {
-                w.u8(tag::HINTED);
-                w.var(by as u64);
-                w.bytes(data);
-            }
-            Msg::To { player, data } => {
-                w.u8(tag::TO);
-                w.var(player as u64);
-                w.bytes(data);
-            }
-            Msg::From { by, data } => {
-                w.u8(tag::FROM);
-                w.var(by as u64);
-                w.bytes(data);
-            }
-            Msg::Claim { key } => {
-                w.u8(tag::CLAIM);
-                w.var(key);
-            }
-            Msg::Release { key } => {
-                w.u8(tag::RELEASE);
-                w.var(key);
-            }
-            Msg::Owner { key, player } => {
-                w.u8(tag::OWNER);
-                w.var(key);
-                opt(w, player);
-            }
-            Msg::Host { player } => {
-                w.u8(tag::HOST);
-                opt(w, player);
             }
             Msg::Chat { text } => {
                 w.u8(tag::CHAT);
@@ -376,25 +281,6 @@ impl<'a> Msg<'a> {
         let m = match r.u8()? {
             tag::PING => Msg::Ping { t: r.var()? },
             tag::PONG => Msg::Pong { t: r.var()?, server: r.var()? },
-            tag::UP => Msg::Up(r.rest()),
-            tag::DOWN => Msg::Down(r.rest()),
-            tag::TELL => Msg::Tell {
-                echo: match r.u8()? {
-                    0 => false,
-                    1 => true,
-                    _ => return Err(WireError::Value),
-                },
-                data: r.rest(),
-            },
-            tag::TOLD => Msg::Told { by: r.var32()?, data: r.rest() },
-            tag::HINT => Msg::Hint(r.rest()),
-            tag::HINTED => Msg::Hinted { by: r.var32()?, data: r.rest() },
-            tag::TO => Msg::To { player: r.var32()?, data: r.rest() },
-            tag::FROM => Msg::From { by: r.var32()?, data: r.rest() },
-            tag::CLAIM => Msg::Claim { key: r.var()? },
-            tag::RELEASE => Msg::Release { key: r.var()? },
-            tag::OWNER => Msg::Owner { key: r.var()?, player: read_opt(&mut r)? },
-            tag::HOST => Msg::Host { player: read_opt(&mut r)? },
             tag::CHAT => Msg::Chat { text: r.str(MAX_TEXT)? },
             tag::SAID => Msg::Said { from: read_opt(&mut r)?, text: r.str(MAX_TEXT)? },
             tag::JOINED => Msg::Joined { id: r.var32()?, name: r.str(MAX_NAME)? },

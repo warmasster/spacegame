@@ -190,6 +190,25 @@ impl Deform {
         }
     }
 
+    /// The craters from the `from`-th on as `craters` says, exactly (what was there from it on
+    /// gone): the ground as another game has it, told in pieces (0: the whole of it anew).
+    pub fn put_from(&mut self, from: usize, craters: &[Crater]) {
+        if from == 0 {
+            self.replace(craters);
+            return;
+        }
+        let from = from.min(self.craters.len());
+        let old: Vec<Crater> = self.craters.drain(from..).collect();
+        for c in &old {
+            self.changed(c.dir, c.reach());
+        }
+        let room = MAX_CRATERS - self.craters.len();
+        self.craters.extend(craters.iter().take(room).copied());
+        for c in craters.iter().take(room) {
+            self.changed(c.dir, c.reach());
+        }
+    }
+
     /// Regions changed after version `seen`; None when the log no longer reaches back that far
     /// (the caller then refreshes everything).
     pub fn changes_since(&self, seen: u64) -> Option<impl Iterator<Item = (DVec3, f64)> + '_> {

@@ -648,9 +648,9 @@ impl Online {
                     b.edit(|d| d.add(crater, b.radius));
                 }
             }
-            Event::Ground { body, craters } => {
+            Event::Ground { body, from, craters } => {
                 if usize::from(body) < game.bodies.len() {
-                    game.bodies.get(body).edit(|d| d.replace(&craters));
+                    game.bodies.get(body).edit(|d| d.put_from(from as usize, &craters));
                 }
             }
         }

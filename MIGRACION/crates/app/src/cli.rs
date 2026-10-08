@@ -41,9 +41,6 @@ pub struct Options {
     /// The server to play with others through (`host:port`) and the name to go by there.
     pub server: Option<String>,
     pub name: Option<String>,
-    /// The server only passes on what each game says (`--relevo`, the old way): every game
-    /// simulates the world. Else the server has the game and ours predicts (`lunar_play::online`).
-    pub relay: bool,
     /// Without a server, the game alone as before (`--directo`): no server in the process.
     pub direct: bool,
     /// The game of one's own hosted for others at this UDP port (`--anfitrion`).
@@ -82,7 +79,6 @@ pub const HELP: &str = "SELENE (migración Rust)
   --sin-menu                   sin menú de inicio: directo a jugar
   --servidor HOST:PUERTO       jugar con otros a través de ese servidor (edición multijugador; servidores/LunaServidor.exe)
   --nombre NOMBRE              cómo te llamas en el servidor
-  --relevo                     con un servidor que solo pasa lo que dice cada juego (LunaServidor --relevo)
   --anfitrion PUERTO           alojar la partida propia: otros entran con --servidor ESTA_IP:PUERTO
   --directo                    sin conexión, el juego solo, sin el servidor dentro del proceso (como antes)
   --prueba-carga CARPETA       fotos de la pantalla de carga en varios momentos, sin abrir ventana ni cargar nada
@@ -132,7 +128,6 @@ impl Options {
             no_menu: false,
             server: None,
             name: None,
-            relay: false,
             direct: false,
             host: None,
             splash_test: None,
@@ -205,7 +200,7 @@ impl Options {
                     o.server = Some(value()?.clone());
                 }
                 "--nombre" => o.name = Some(value()?.clone()),
-                "--relevo" => o.relay = true,
+                "--relevo" => return Err("--relevo ya no existe: todo servidor tiene la partida".into()),
                 "--directo" => o.direct = true,
                 "--anfitrion" => {
                     let v = value()?;

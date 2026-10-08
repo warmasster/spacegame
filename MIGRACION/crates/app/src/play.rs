@@ -191,10 +191,8 @@ struct State {
     perf: Perf,
     /// What the suit carries in its hands.
     gear: Gear,
-    /// Other players (`--servidor`), and what their bodies are made from: over a server that
-    /// only passes things on (`multi`, `--relevo`), or over one that has the game (`online`: ours
-    /// predicts, the others drawn from its snapshots).
-    multi: Option<crate::multi::Multi>,
+    /// The game over a server (`--servidor`, or the one in the process: `local`): ours predicts,
+    /// the others drawn from its snapshots.
     online: Option<lunar_play::online::Online>,
     /// The server in the process a game of one's own goes through (`lunar_play::local`).
     local: Option<lunar_play::local::Local>,
@@ -203,13 +201,11 @@ struct State {
     /// and how a player is made.
     fingerprint: u32,
     player_def: lunar_core::scenario::PlayerDef,
-    /// The server asked for only passes things on (`--relevo`).
-    relay: bool,
     /// The server we play on and the name we go by there, and when to try to come back to it
     /// if the connection is lost (our body waits for us there a while: `Online::back`).
     server_at: Option<(String, String)>,
     retry_at: f64,
-    body_source: Option<crate::multi::BodySource>,
+    body_source: Option<crate::others::BodySource>,
     /// The player's own body (if its model is there), and what of it is drawn this frame.
     body: Option<crate::body::Body>,
     figures: lunar_core::anim::BodyScene,
@@ -322,7 +318,7 @@ impl State {
                     let whole = renderer.body_mesh(&model.mesh);
                     // (the others' bodies are made from the same, each its own)
                     let rig = crate::rig::Rig::new(def.clone(), &model)?;
-                    let source = crate::multi::BodySource { rig: rig.clone(), whole };
+                    let source = crate::others::BodySource { rig: rig.clone(), whole };
                     rig_def = Some(def);
                     Some((crate::body::Body::new(rig, seen, whole), source))
                 } else {
@@ -353,9 +349,9 @@ impl State {
         lap("naves");
         // with others: the server asked to let us in (it answers while we play); a game of one's
         // own, through the one in the process
-        let (multi, mut online) = match &o.server {
-            Some(addr) => connect(addr, o.name.as_deref().unwrap_or("Jugador"), o.relay, &game, defs.fingerprint, sc.player)?,
-            None => (None, None),
+        let mut online = match &o.server {
+            Some(addr) => Some(connect(addr, o.name.as_deref().unwrap_or("Jugador"), defs.fingerprint, sc.player)?),
+            None => None,
         };
         let local = match local {
             Some(Ok(t)) => match t.join() {
@@ -446,13 +442,11 @@ impl State {
             perf: Perf::default(),
             barrage: None,
             gear,
-            multi,
             online,
             local,
             others: Default::default(),
             fingerprint,
             player_def,
-            relay: o.relay,
             server_at: o.server.clone().map(|a| (a, o.name.clone().unwrap_or_else(|| "Jugador".to_string()))),
             retry_at: 0.0,
             body_source,
@@ -1257,15 +1251,7 @@ impl State {
                 self.barrage = None;
             }
         }
-        // with others: what they told is done here before anything runs (their ships brought to
-        // where they have them, what they struck done in its order), what they fired shown
-        self.game.blasts.tell = self.multi.as_ref().is_some_and(|m| m.connected()) || self.online.is_some();
-        if let Some(m) = &mut self.multi {
-            m.receive(lunar_net::now(), &mut self.game.ships, &mut self.game.builds, &self.world.bodies);
-            for (by, seen, age) in m.shown.drain(..) {
-                self.game.blasts.show(by, &seen, age, &self.world.bodies, &mut self.game.builds);
-            }
-        }
+        self.game.blasts.tell = self.online.is_some();
         // over a server that has the game: what it said, done (our body put right, the rest of the
         // world brought to it, what happened); what the ships and the server said, shown
         if let Some(o) = &mut self.online {
@@ -1524,17 +1510,12 @@ impl State {
         for sh in &mut self.game.ships.list {
             sh.panels.aimed = aimed.filter(|(id, _)| *id == sh.structure).map(|(_, a)| a);
         }
-        // with others: what our hand changed (or a script's steps) goes to them; without, it is
-        // nobody's business
+        // over a server: what our hand changed (or a script's steps) is what we mean to do before
+        // the next step: it checks the hand could, and does it; our copy did it already. Without
+        // one, it is nobody's business
         let scripted = self.script.as_mut().map(|sc| std::mem::take(&mut sc.changed)).unwrap_or_default();
-        match (&mut self.multi, &mut self.online) {
-            (Some(m), _) => {
-                self.aboard.changed.drain(..).chain(scripted).for_each(|(structure, k, value)| m.control(structure, k, value));
-                self.aboard.acts.drain(..).for_each(|(structure, act)| m.act(structure, act));
-            }
-            // (to a server that has the game, as what we mean to do before the next step: it checks
-            // the hand could, and does it; our copy did it already)
-            (None, Some(o)) => {
+        match &mut self.online {
+            Some(o) => {
                 let step = self.game.step;
                 for (structure, k, value) in self.aboard.changed.drain(..).chain(scripted) {
                     o.act(step, &lunar_play::net::Act::Control { ship: structure, control: k as u16, value });
@@ -1552,7 +1533,7 @@ impl State {
                     o.act(step, &act);
                 }
             }
-            (None, None) => {
+            None => {
                 self.aboard.changed.clear();
                 self.aboard.acts.clear();
             }
@@ -1607,16 +1588,6 @@ impl State {
             let ahead = self.game.step.saturating_sub(o.others_step) as f64 * STEP;
             self.others.draw(&o.others, ahead, dt, Some, source, &self.game.builds.set, &self.world.bodies, &self.game.ships, &mut self.figures);
         }
-        // the others: our player and ships out, theirs in, their bodies drawn
-        if let Some(m) = &mut self.multi {
-            let now = lunar_net::now();
-            if let Some(source) = &self.body_source {
-                m.bodies(now, dt, source, &self.game.builds.set, &self.world.bodies, &self.game.ships, &mut self.figures);
-            }
-            for (text, level) in m.said.drain(..) {
-                self.ui.hud.notice("red", &text, [Level::Normal, Level::Caution, Level::Warning][usize::from(level.min(2))], 5.0);
-            }
-        }
         self.renderer.set_bodies(&self.figures);
         // the HUD: in play always; in a script's pictures only if it asks for it
         self.ui.hud.begin(dt as f32);
@@ -1637,15 +1608,15 @@ impl State {
                 self.ui.hud.status.push(("Red".into(), text, [Level::Normal, Level::Caution, Level::Warning][usize::from(level.min(2))]));
             }
         }
-        if let (true, Some(m)) = (shown, &self.multi) {
-            let (text, level) = m.status();
-            self.ui.hud.status.push(("Red".into(), text, [Level::Normal, Level::Caution, Level::Warning][usize::from(level.min(2))]));
+        // (each one's name over them in the picture)
+        if let (true, Some(o)) = (shown, &self.online) {
             let size = self.window.inner_size();
             let aspect = f64::from(size.width) / f64::from(size.height.max(1));
             let tan = (f64::from(view.fov_y) * 0.5).tan();
             let right = view.forward.cross(view.up).normalize_or_zero();
             let up = right.cross(view.forward);
-            for (eye, name) in m.names() {
+            for (eye, id) in self.others.eyes() {
+                let Some(name) = o.client.name(id) else { continue };
                 let rel = eye + view.up * 0.42 - view.eye;
                 let depth = rel.dot(view.forward);
                 if !(0.5..=120.0).contains(&depth) {
@@ -1691,7 +1662,7 @@ impl State {
             let (start, menu_open, adapter) = (&mut self.start, self.ui.menu, self.adapter.as_str());
             let net = match &self.local {
                 Some(l) => l.port().map(|p| format!("anfitrión · puerto {p}")),
-                None => self.multi.as_ref().map(|m| m.status().0).or_else(|| self.online.as_ref().map(|o| online_status(o).0)),
+                None => self.online.as_ref().map(|o| online_status(o).0),
             };
             let mut chosen = None;
             let frame = self.ui.frame(&self.window, &info, |ctx| {
@@ -1720,16 +1691,16 @@ impl State {
                 Some(crate::start::Action::Connect) => {
                     if let Some((addr, name)) = self.start.as_ref().map(|st| (st.server.trim().to_string(), st.name.trim().to_string())) {
                         let name = if name.is_empty() { "Jugador".to_string() } else { name };
-                        match connect(&addr, &name, self.relay, &self.game, self.fingerprint, self.player_def) {
-                            Ok((m, o)) => {
-                                (self.multi, self.online, self.local) = (m, o, None);
+                        match connect(&addr, &name, self.fingerprint, self.player_def) {
+                            Ok(o) => {
+                                (self.online, self.local) = (Some(o), None);
                                 self.server_at = Some((addr, name));
                             }
                             Err(e) => self.ui.hud.notice("red", &format!("No se puede conectar a {addr}: {e}"), Level::Warning, 6.0),
                         }
                     }
                 }
-                Some(crate::start::Action::Disconnect) => (self.multi, self.online, self.server_at, self.local) = (None, None, None, None),
+                Some(crate::start::Action::Disconnect) => (self.online, self.server_at, self.local) = (None, None, None),
                 None => {}
             }
             // what the menu's own foot asks: back to the start menu, or out
@@ -1746,11 +1717,6 @@ impl State {
         self.game.restore(&mut [&mut self.me]);
         drawn?;
         self.perf.lap(perf::RENDER);
-        // with others: our player and ships out, as they are at the step
-        if let Some(m) = &mut self.multi {
-            let tool = self.gear.held.map_or(0, |k| k as u8 + 1);
-            m.send(lunar_net::now(), &self.me.pilot, self.me.pilot.eye_over_feet(), [self.look.yaw, self.look.pitch], tool, self.gear.trigger, outside, &self.game.ships, &mut self.game.builds, &mut self.game.blasts.seen);
-        }
         if script_shot.is_none() && shot.is_some() {
             return Ok(false);
         }
@@ -1960,13 +1926,6 @@ impl ApplicationHandler for App {
                     s.capture_mouse(true);
                 } else if s.spawner.placing() {
                     let made = s.spawner.place(&mut s.game.ships, &mut s.game.builds, &s.world.bodies);
-                    // (a ship made with others about is made on their copies too)
-                    if let (Some(m), Some(id)) = (&mut s.multi, made)
-                        && let Some(n) = s.game.ships.by_structure(id)
-                    {
-                        let kind = s.game.ships.list[n].kind.id.clone();
-                        m.made(&kind, id, &s.game.builds.set, &s.game.ships);
-                    }
                     // (over a server that has the game it is the server's to make: asked for where
                     // ours was put, and ours undone; it comes as the server makes it)
                     if let (Some(o), Some(id)) = (&mut s.online, made)
@@ -2118,15 +2077,11 @@ fn start_local(dir: &std::path::Path, host: Option<u16>) -> Result<lunar_play::l
 /// Seconds between two tries to come back to a server whose connection was lost.
 const RETRY_EVERY: f64 = 4.0;
 
-/// Asks the server at `addr` to let us in as `name`: one that only passes on what each game says
-/// (`relay`: ours simulates the world with the rest), or one that has the game (ours predicts what
-/// is its own and the server puts it right).
-fn connect(addr: &str, name: &str, relay: bool, game: &Game, fingerprint: u32, def: lunar_core::scenario::PlayerDef) -> Result<(Option<crate::multi::Multi>, Option<lunar_play::online::Online>), String> {
-    if relay {
-        return Ok((Some(crate::multi::Multi::connect(addr, name, &game.ships, &game.builds)?), None));
-    }
+/// Asks the server at `addr` to let us in as `name`: one that has the game (ours predicts what is
+/// its own and the server puts it right).
+fn connect(addr: &str, name: &str, fingerprint: u32, def: lunar_core::scenario::PlayerDef) -> Result<lunar_play::online::Online, String> {
     let client = lunar_net::Client::connect(addr, name, lunar_play::net::BUILD, fingerprint)?;
-    Ok((None, Some(lunar_play::online::Online::new(client, def))))
+    Ok(lunar_play::online::Online::new(client, def))
 }
 
 /// How the connection to a server that has the game is, in a few words, and how much it matters

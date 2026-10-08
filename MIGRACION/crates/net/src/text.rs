@@ -26,7 +26,7 @@ pub fn full(max: usize) -> String {
 }
 pub fn version(server: u16, client: u16) -> String {
     let which = if client < server { "tu juego es más antiguo que el servidor: actualiza el juego" } else { "tu juego es más nuevo que el servidor: hay que actualizar el servidor" };
-    format!("protocolo de red distinto: el servidor habla la versión {server} y tu juego la {client} ({which}; la 1 es la del juego V35 y la 2 la del V36)")
+    format!("protocolo de red distinto: el servidor habla la versión {server} y tu juego la {client} ({which}; la 1 es la del juego V35, la 2 la del V36 y la 3 la del V41, la del servidor que tiene la partida)")
 }
 pub fn build(server: &str, client: &str) -> String {
     format!("versión del juego distinta: la partida es de la versión «{server}» y la tuya es «{client}»")

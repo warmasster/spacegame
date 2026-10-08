@@ -3,29 +3,38 @@ SERVIDOR DE LUNA
 
 Qué es
 ------
-LunaServidor.exe es el servidor dedicado del juego: un programa pequeño, sin ventana de
-juego, al que se conectan los jugadores para verse y volar juntos. No simula nada: cada
-jugador tiene el mundo entero en su ordenador y el servidor reparte entre todos lo que hace
-cada uno, y decide de quién es cada nave. Gasta muy poco: parado, nada; con 8 jugadores,
-alrededor del 1 % de un núcleo y unos 80 kB por segundo de red (entre lo que entra y lo que sale).
+LunaServidor.exe es el servidor dedicado del juego: un programa sin ventana de juego al que se
+conectan los jugadores para jugar juntos. Tiene la partida: la simula él, 60 pasos por segundo
+(naves, disparos, daños, carga, el suelo), decide todo lo que pasa y le cuenta a cada jugador lo
+que tiene cerca. El juego de cada jugador va un poco por delante prediciendo lo suyo, y el
+servidor lo endereza si se equivoca, así que se juega sin notar el retardo. Guarda la partida
+solo (cada 5 minutos y al pararlo) y al arrancar sigue donde estaba.
+
+Necesita los datos del juego (la carpeta assets, con defs dentro): los busca junto a él (o en la
+carpeta de la versión más nueva que tenga al lado); si no, se le dice dónde con «datos» en
+servidor.jsonc o con --datos CARPETA. Con 16 jugadores, cada paso le cuesta alrededor de 1 ms.
 
 En esta carpeta:
   LunaServidor.exe   el servidor
   iniciar.bat        lo arranca y deja la ventana abierta cuando se para
   servidor.jsonc     sus ajustes (puerto, nombre, jugadores...)
   servidor.log       lo que va diciendo, con fecha (se crea solo; se puede borrar)
+  partidas\          la partida guardada, en dos ranuras (partida.a.bin y partida.b.bin)
   LEEME.txt          esto
 
 Arrancarlo
 ----------
 Doble clic en iniciar.bat. Se abre una consola y dice algo así:
 
-  [12:00:00 UTC] Servidor «Servidor de Luna» en marcha en el puerto 47600 (UDP): hasta 16 jugadores, 20 envíos por segundo.
+  [12:00:00 UTC] Cargando la partida de C:\Juegos\Selene\assets…
+  [12:00:01 UTC] Partida retomada de partidas\partida.b.bin (guardada 12 veces): …
+  [12:00:01 UTC] Servidor «Servidor de Luna» en marcha en el puerto 47600 (UDP): hasta 16 jugadores; la partida la simula él, 60 pasos por segundo (juego V41+p3, datos 5ce0a210).
   [12:00:00 UTC] En esta red se entra con: --servidor 192.168.1.20:47600   (en esta misma máquina: --servidor 127.0.0.1:47600)
   [12:00:00 UTC] Órdenes: jugadores · expulsar <id> [motivo] · decir <texto> · salir. Para pararlo: «salir» (o cerrar esta ventana).
 
 Las horas son UTC (hora universal), no la hora local.
-Para pararlo: escribir salir y pulsar Intro (avisa a los jugadores), o cerrar la ventana.
+Para pararlo: escribir salir y pulsar Intro (guarda la partida y avisa a los jugadores). Cerrar
+la ventana también lo para, pero sin guardar: se pierde lo de desde el último guardado.
 
 La primera vez, Windows puede preguntar si se le permite el acceso a la red: hay que decir
 que sí (redes privadas, y públicas si van a entrar desde fuera).
@@ -42,10 +51,14 @@ nombre:
                                            (la dirección que el servidor dice al arrancar)
   Desde fuera, por internet:               --servidor LA.IP.PUBLICA:47600 --nombre Marta
 
-Todos tienen que tener la misma versión del juego y el mismo escenario. El primero que
-entra fija los dos; al que llega con otra versión u otro escenario el servidor no lo deja
-entrar y le dice por qué. Cuando salen todos, la partida se olvida y el siguiente que entre
-empieza otra (puede ser con otra versión).
+Todos tienen que tener la misma versión del juego y los mismos datos que el servidor; al que
+llega con otros, el servidor no lo deja entrar y le dice por qué.
+
+Si a alguien se le corta la conexión, su cuerpo se queda donde estaba 60 segundos, quieto (los
+demás lo ven), y el juego vuelve a entrar solo y lo recupera.
+
+También se puede alojar una partida sin LunaServidor.exe: el juego con --anfitrion 47600 juega
+y deja entrar a otros a la vez (en ese caso la partida no se guarda).
 
 El puerto, el cortafuegos y el router
 -------------------------------------
@@ -79,8 +92,8 @@ usar las direcciones de esa red.
   ayuda                    recuerda estas órdenes
 
 Además el servidor va contando solo quién entra, quién sale y por qué, a quién no deja
-entrar, las naves que se ponen, el chat, y cada 30 segundos (si hay alguien) cuántos
-jugadores y naves hay y cuánta red entra y sale.
+entrar, el chat, cuándo guarda, y cada 30 segundos cuánto tarda cada paso de la partida,
+cuántas correcciones hizo y cuánta red entra y sale.
 
 Ajustes
 -------
@@ -88,41 +101,30 @@ En servidor.jsonc (se lee al arrancar; lleva comentarios que explican cada uno):
   puerto         47600   puerto UDP
   nombre                 nombre del servidor
   max_jugadores  16      jugadores a la vez (1 a 64)
-  tasa           20      veces por segundo que se reparten posiciones (5 a 60)
   espera         10      segundos sin noticias de un jugador para darlo por caído
+  datos                  dónde están los datos del juego (si no están junto a él)
+  partida        partidas/partida   dónde se guarda (null: no se guarda)
+  guardar_cada   300     segundos entre dos guardados (0: solo al parar con «salir»)
+  trucos         false   dejar volar libre y poner naves (para pruebas)
 Si el fichero tiene un error, el servidor no arranca y dice en qué línea está.
-Opciones al arrancar (mandan sobre el fichero):  --puerto N   --nombre "TEXTO"   --ayuda
+Opciones al arrancar (mandan sobre el fichero):  --puerto N   --nombre "TEXTO"   --datos CARPETA
+  --partida RUTA   --nueva (empezar de cero aunque haya una guardada)   --sin-guardar   --trucos   --ayuda
 
-Qué se sincroniza en esta primera versión
------------------------------------------
-  - Los jugadores: dónde está cada uno, hacia dónde mira, cómo se mueve, si va agachado,
-    con la mochila, la linterna, qué lleva en la mano y en qué asiento va. Cada ordenador
-    dibuja y anima a los demás a partir de eso.
-  - Las naves: cada nave tiene un dueño, que es quien la simula «de verdad» y manda su
-    posición, giro, velocidad y articulaciones (tren, puertas, rampas); los demás la siguen.
-    El dueño es quien se sienta a sus mandos (el primero que llega); si no hay nadie a los
-    mandos, es del anfitrión, que es el jugador que lleva más tiempo conectado. Cuando el
-    dueño se levanta o se va, la nave pasa a quien toque y se avisa a todos.
-  - Los mandos de las naves: cada interruptor, botón o palanca que alguien toca llega a
-    todos, una sola vez y en el mismo orden.
-  - Las naves que se ponen durante la partida.
-  - El chat y los avisos del servidor.
-  - Quien entra tarde recibe lo que pasó antes: quién está, las naves puestas, de quién es
-    cada una y los mandos tocados hasta entonces (los últimos 4096).
+Qué hace el servidor
+--------------------
+  - Simula la partida entera: los jugadores (con lo que cada uno pide en cada paso), las
+    naves y sus máquinas, los disparos y los daños (los trozos que saltan), la carga suelta,
+    lo que se lleva en la mano y el suelo (los cráteres).
+  - Cada jugador recibe lo que tiene cerca, lo más cercano antes, y lo que pasa a su alrededor.
+  - Comprueba lo que cada uno dice que hace (que llegue, que no dispare más rápido de lo que su
+    arma deja); lo que no puede ser, no pasa.
+  - Guarda la partida en dos ranuras: si algo corta un guardado a medias, queda la otra.
 
 Y qué no
 --------
-  - El servidor no simula ni guarda nada: no hay partida guardada. Cuando sale el último
-    jugador, se olvida todo.
-  - Solo viaja lo de la lista de arriba. Lo demás lo calcula cada ordenador por su cuenta
-    (por ejemplo la carga suelta, los proyectiles o los daños) y puede no coincidir entre
-    jugadores.
-  - A los demás se les ve con un retraso de una décima de segundo, más o menos (algo más con
-    mala conexión): es lo que permite verlos moverse suave aunque la red vaya a saltos.
   - No hay contraseña ni cifrado: entra quien conozca la dirección y tenga la misma versión.
     Para jugar con amigos; no para dejarlo abierto a desconocidos.
-  - Si a un jugador se le corta la conexión no vuelve solo: tiene que entrar otra vez.
-  - Si el servidor se para, la partida se acaba para todos.
+  - Lo que vuela en el momento de guardar (balas, misiles) no se guarda.
 
 Si algo no va
 -------------

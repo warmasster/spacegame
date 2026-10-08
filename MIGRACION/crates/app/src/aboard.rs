@@ -228,18 +228,6 @@ impl Aboard {
         o.changed
     }
 
-    /// A control set by another player's hand (told over the network): put where they left it.
-    /// Nothing of it is heard or noted here, and it is not told on again.
-    pub fn remote(ships: &mut Ships, set: &Structures, structure: u64, k: usize, value: f64) -> bool {
-        lunar_play::controls::set(ships, set, structure, k, value)
-    }
-
-    /// What another player's hand did to a ship (told over the network), done to our copy of it.
-    /// Nothing of it is heard or noted here, and it is not told on again.
-    pub fn remote_act(ships: &mut Ships, structure: u64, act: Act) {
-        lunar_play::controls::act(ships, structure, act);
-    }
-
     /// The control aimed at (its ship's structure, which, which of its keys) and the one held
     /// down: what the body's hand goes to (`handwork`).
     pub fn hand(&self) -> (Option<(u64, u16, u8)>, Option<(u64, u16)>) {

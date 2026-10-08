@@ -1,6 +1,5 @@
-//! Who may come in, and telling a newcomer what the server knows: who is here, who the host is
-//! and who holds each key. What the world is like now is not the server's to tell: the game asks
-//! those who hold it (the newcomer says so to everyone once it is in).
+//! Who may come in, and telling a newcomer who is here. What the world is like is the game's to
+//! tell (the game that runs in the server is told who came: `ServerEvent::Joined`).
 use super::session::{Leaving, Session};
 use super::{Hello, REFUSALS_A_SECOND, SMALL, Server, ServerEvent, pack};
 use crate::channel::Channel;
@@ -53,10 +52,10 @@ impl Server {
         } else if self.sessions.is_empty() {
             // The first to come says what game this is.
             None
-        } else if build != self.world.build {
-            Some(text::build(&self.world.build, build))
-        } else if scenario != self.world.scenario {
-            Some(text::scenario(self.world.scenario, scenario))
+        } else if build != self.playing.0 {
+            Some(text::build(&self.playing.0, build))
+        } else if scenario != self.playing.1 {
+            Some(text::scenario(self.playing.1, scenario))
         } else {
             None
         };
@@ -65,19 +64,17 @@ impl Server {
             return;
         }
         if self.sessions.is_empty() {
-            self.world.start(build, scenario);
+            self.playing = (build.to_string(), scenario);
         }
         let id = self.next_id;
         self.next_id += 1;
         // Two players with one name would be told apart by nobody.
         let name = if self.sessions.iter().any(|s| s.name.eq_ignore_ascii_case(&name)) { format!("{} ({id})", text::clean(&name, text::NAME_CHARS - 6)) } else { name };
-        self.sessions.push(Session { id, addr: from, salt, name: name.clone(), channel: Channel::new(now, lead::DATA), confirmed: false, own: Default::default(), relayed: 0, leaving: None });
+        self.sessions.push(Session { id, addr: from, salt, name: name.clone(), channel: Channel::new(now, lead::DATA), confirmed: false, leaving: None });
         let i = self.sessions.len() - 1;
         self.welcome(i, t);
-        // The others learn of the newcomer (and of the host, if it is the first); the newcomer is
-        // told everything in one go.
+        // The others learn of the newcomer; the newcomer is told who is here in one go.
         self.send_all(&Msg::Joined { id, name: &name }, Some(id));
-        self.settle(Some(id));
         self.catch_up(i);
         self.events.push(ServerEvent::Joined { id, name, addr: from, players: self.sessions.len() });
     }
@@ -103,11 +100,11 @@ impl Server {
     fn welcome(&mut self, i: usize, t: &mut dyn Transport) {
         let s = &self.sessions[i];
         let mut buf = [0u8; 512];
-        let n = Datagram::Welcome { salt: s.salt, id: s.id, tick_hz: self.config.tick_hz, name: &s.name, server: &text::clean(&self.config.name, text::NAME_CHARS) }.encode(&mut buf);
+        let n = Datagram::Welcome { salt: s.salt, id: s.id, name: &s.name, server: &text::clean(&self.config.name, text::NAME_CHARS) }.encode(&mut buf);
         t.send(s.addr, &buf[..n]);
     }
 
-    /// Everything a newcomer must know from the server, in order, in as few reliable messages as it takes.
+    /// Who is here, to a newcomer, in as few reliable messages as it takes.
     fn catch_up(&mut self, i: usize) {
         let me = self.sessions[i].id;
         let mut one = std::mem::take(&mut self.msg);
@@ -122,10 +119,6 @@ impl Server {
         };
         for s in self.sessions.iter().filter(|s| s.id != me) {
             add(pack(&Msg::Joined { id: s.id, name: &s.name }, SMALL, &mut one));
-        }
-        add(pack(&Msg::Host { player: self.host_now() }, SMALL, &mut one));
-        for (key, player) in self.world.holders() {
-            add(pack(&Msg::Owner { key, player: Some(player) }, SMALL, &mut one));
         }
         add(pack(&Msg::Synced, SMALL, &mut one));
         self.msg = one;

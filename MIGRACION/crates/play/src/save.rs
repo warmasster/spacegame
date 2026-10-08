@@ -62,9 +62,8 @@ pub fn write<'a>(game: &Game, saves: u64, scenario: u32, bodies: impl Iterator<I
     out.extend_from_slice(&0u32.to_le_bytes());
     let mut n = 0u32;
     for (b, body) in game.bodies.iter() {
-        let craters = body.deform().craters().to_vec();
-        if !craters.is_empty() {
-            net::append_event(&Event::Ground { body: b, craters }, out);
+        for e in net::ground(b, body.deform().craters()) {
+            net::append_event(&e, out);
             n += 1;
         }
     }
@@ -175,7 +174,7 @@ pub fn read(game: &mut Game, scenario: u32, data: &[u8]) -> Result<Kept, String>
     let mut died = Vec::new();
     for _ in 0..n {
         match net::read_event(&mut r).map_err(bad)? {
-            Event::Ground { body, craters } if usize::from(body) < game.bodies.len() => game.bodies.get(body).edit(|d| d.replace(&craters)),
+            Event::Ground { body, from, craters } if usize::from(body) < game.bodies.len() => game.bodies.get(body).edit(|d| d.put_from(from as usize, &craters)),
             Event::Gone { id } => online::remove(game, id),
             e @ Event::Made { .. } => {
                 if !online::put_made(game, step, &e, &mut died) {

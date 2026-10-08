@@ -1,25 +1,15 @@
-//! Sessions: clients on one server see each other (states within their quantisation, names,
-//! arrivals and departures); who may not come in is told why; who vanishes is noticed.
+//! Sessions: clients on one server are told of each other (names, arrivals and departures) and
+//! what each says reaches the game in the server, and what it says reaches each; who may not come
+//! in is told why; who vanishes is noticed.
 mod common;
 
-use common::{BUILD, SCENARIO, World, on_the_moon};
-use glam::Vec3;
-use lunar_net::game::POS_UNITS;
+use common::{BUILD, SCENARIO, World};
 use lunar_net::proto::{Datagram, VERSION};
-use lunar_net::{Conditions, Event, MAX_TELL, PlayerState, ServerConfig, ServerEvent, Status, Transport, flag, key};
+use lunar_net::{Conditions, Event, GameIn, MAX_TELL, ServerConfig, ServerEvent, Status, Transport};
 
-/// Client `i`'s player at time `t`: each walks its own line at its own speed.
-fn player(i: usize, t: f64) -> PlayerState {
-    let speed = 1.0 + i as f64 * 0.25;
-    PlayerState {
-        pos: on_the_moon(i as f64 * 10.0) + glam::DVec3::new(0.0, speed * (t - 100.0), 0.0),
-        vel: Vec3::new(0.0, speed as f32, 0.0),
-        yaw: 0.1 * i as f32,
-        pitch: -0.05 * i as f32,
-        flags: flag::GROUNDED | if i % 2 == 1 { flag::LAMP } else { 0 },
-        tool: i as u8,
-        ..PlayerState::default()
-    }
+/// What client `i`'s game says of a moment (as a game's commands do: often, the newest counts).
+fn says(i: usize, t: f64) -> [u8; 3] {
+    [i as u8, (t * 10.0) as u8, 0xAB]
 }
 
 fn everyone_sees_everyone(n: usize, seed: u64) {
@@ -30,30 +20,36 @@ fn everyone_sees_everyone(n: usize, seed: u64) {
         ids.push(w.settle(c));
     }
     assert_eq!(ids, (1..=n as u32).collect::<Vec<_>>(), "ids in the order they came");
-    for _ in 0..180 {
-        w.step_with(|i, c, t| c.set_player(&player(i, t)));
+    let mut game: Vec<GameIn> = Vec::new();
+    for k in 0..180 {
+        w.step_with(|i, c, t| {
+            c.send_quick(&says(i, t));
+            if k == 10 {
+                c.send_game(&[i as u8; 5]);
+            }
+        });
+        game.extend(w.server.take_game());
+        // (and the game in the server, to each its own)
+        if k == 20 {
+            for (i, id) in ids.iter().enumerate() {
+                assert!(w.server.send_game(*id, true, &[0xC0, i as u8]));
+            }
+        }
     }
-    let mut seen = Vec::new();
     for i in 0..n {
         assert!(matches!(w.clients[i].status(), Status::Connected { id, players, .. } if id == ids[i] && players == n), "{:?}", w.clients[i].status());
-        w.clients[i].players(w.now, &mut seen);
-        assert_eq!(seen.len(), n - 1, "client {i} sees the others and not itself");
-        // The others are drawn a little in the past: where each was at that moment, within the wire's precision.
-        let drawn = w.now - w.clients[i].delay() as f64;
-        for (id, got) in &seen {
-            let j = ids.iter().position(|x| x == id).expect("a known id");
-            assert_ne!(j, i);
-            let want = player(j, drawn);
-            assert!((got.pos - want.pos).length() < 0.005, "client {i} sees {j} {} m off", (got.pos - want.pos).length());
-            assert!((got.pos - want.pos).x.abs() <= 0.5 / POS_UNITS + 1e-9);
-            assert!((got.yaw - want.yaw).abs() < 1e-4 && (got.pitch - want.pitch).abs() < 1e-4);
-            assert!((got.vel - want.vel).length() < 0.005);
-            assert_eq!((got.flags, got.tool, got.ride, got.seat), (want.flags, want.tool, None, None));
+        assert_eq!(w.clients[i].peers().count(), n - 1, "client {i} knows of the others and not of itself");
+        for (j, id) in ids.iter().enumerate().filter(|(j, _)| *j != i) {
             assert_eq!(w.clients[i].name(*id), Some(format!("Jugador {j}").as_str()));
         }
+        // what its game said came to the game in the server, from it: reliably once, the rest as it went
+        assert_eq!(game.iter().filter(|m| m.from == ids[i] && m.reliable).map(|m| m.data.clone()).collect::<Vec<_>>(), [vec![i as u8; 5]]);
+        assert!(game.iter().filter(|m| m.from == ids[i] && !m.reliable).count() > 150, "nearly every quick one, on a clean network");
+        assert!(game.iter().filter(|m| m.from == ids[i]).all(|m| m.data[0] == i as u8));
         assert_eq!(w.clients[i].name(ids[i]), Some(format!("Jugador {i}").as_str()), "and knows its own name");
         // Everyone learnt of everyone else exactly once: those who were here (before `Synced`) and those who came after.
         let events = w.events(i);
+        assert_eq!(events.iter().filter(|e| matches!(e, Event::Game { .. })).cloned().collect::<Vec<_>>(), [Event::Game { reliable: true, data: vec![0xC0, i as u8] }], "what the game in the server said to it alone");
         let joined: Vec<u32> = events.iter().filter_map(|e| if let Event::Joined { id, .. } = e { Some(*id) } else { None }).collect();
         let mut want: Vec<u32> = ids.iter().copied().filter(|x| *x != ids[i]).collect();
         assert_eq!(joined, want, "client {i}");
@@ -72,40 +68,49 @@ fn everyone_sees_everyone(n: usize, seed: u64) {
     for i in 0..n - 1 {
         let left: Vec<Event> = w.events(i).into_iter().filter(|e| matches!(e, Event::Left { .. })).collect();
         assert_eq!(left, [Event::Left { id: ids[n - 1], name: format!("Jugador {}", n - 1) }]);
-        w.clients[i].players(w.now, &mut seen);
-        assert_eq!(seen.len(), n - 2);
+        assert_eq!(w.clients[i].peers().count(), n - 2);
         assert_eq!(w.clients[i].name(ids[n - 1]), None);
     }
     assert!(w.log.contains(&ServerEvent::Left { id: ids[n - 1], name: format!("Jugador {}", n - 1), reason: "se ha ido".to_string(), players: n - 1 }));
     assert_eq!(w.server.stats().garbled, 0, "nothing the clients sent was nonsense");
-    assert_eq!(w.server.stats().foreign, 0);
 }
 
 #[test]
-fn two_clients_see_each_other() {
+fn two_clients_know_of_each_other() {
     everyone_sees_everyone(2, 1);
 }
 
 #[test]
-fn eight_clients_see_each_other() {
+fn eight_clients_know_of_each_other() {
     everyone_sees_everyone(8, 2);
 }
 
 #[test]
-fn a_rough_network_still_gets_everyone_in_and_seen() {
+fn a_rough_network_still_gets_everyone_in_and_heard() {
     let mut w = World::plain(3);
     w.conditions(Conditions { loss: 0.2, duplicate: 0.1, delay: 0.03, jitter: 0.05 });
     for i in 0..4 {
         let c = w.join(&format!("J{i}"));
         w.settle(c);
     }
-    for _ in 0..300 {
-        w.step_with(|i, c, t| c.set_player(&player(i, t)));
+    let mut game: Vec<GameIn> = Vec::new();
+    for k in 0..300 {
+        w.step_with(|i, c, t| {
+            c.send_quick(&says(i, t));
+            if k % 30 == 0 {
+                c.send_game(&[i as u8, (k / 30) as u8]);
+            }
+        });
+        game.extend(w.server.take_game());
     }
-    let mut seen = Vec::new();
+    w.run(2.0);
+    game.extend(w.server.take_game());
     for i in 0..4 {
-        w.clients[i].players(w.now, &mut seen);
-        assert_eq!(seen.len(), 3);
+        assert_eq!(w.clients[i].peers().count(), 3);
+        // (what goes reliably, all of it and in order, whatever was lost or doubled)
+        let id = w.clients[i].id().unwrap();
+        let sure: Vec<u8> = game.iter().filter(|m| m.from == id && m.reliable).map(|m| m.data[1]).collect();
+        assert_eq!(sure, (0..10).collect::<Vec<u8>>(), "client {i}");
         let joined = w.events(i).iter().filter(|e| matches!(e, Event::Joined { .. })).count();
         assert_eq!(joined, 3, "each arrival told once, however many datagrams were lost or doubled");
     }
@@ -133,13 +138,14 @@ fn a_wrong_build_a_wrong_scenario_and_a_wrong_protocol_are_refused_with_the_reas
     // game of V35 (protocol 1) is told to update; a later one, that the server is the old one.
     let mut stranger = w.net.endpoint();
     let mut buf = [0u8; 1200];
-    for (version, salt, says) in [(1, 41, "protocolo de red distinto: el servidor habla la versión 2 y tu juego la 1 (tu juego es más antiguo que el servidor: actualiza el juego; la 1 es la del juego V35 y la 2 la del V36)"), (VERSION + 1, 42, "protocolo de red distinto: el servidor habla la versión 2 y tu juego la 3 (tu juego es más nuevo que el servidor: hay que actualizar el servidor; la 1 es la del juego V35 y la 2 la del V36)")] {
+    let tail = "la 1 es la del juego V35, la 2 la del V36 y la 3 la del V41, la del servidor que tiene la partida";
+    for (version, salt, says) in [(1, 41, format!("protocolo de red distinto: el servidor habla la versión 3 y tu juego la 1 (tu juego es más antiguo que el servidor: actualiza el juego; {tail})")), (VERSION + 1, 42, format!("protocolo de red distinto: el servidor habla la versión 3 y tu juego la 4 (tu juego es más nuevo que el servidor: hay que actualizar el servidor; {tail})"))] {
         let n = Datagram::Hello { version, salt, cookie: 0, scenario: SCENARIO, build: "V35", name: "Otro" }.encode(&mut buf);
         stranger.send(w.addr, &buf[..n]);
         w.run(0.1);
         let (_, n) = stranger.recv(&mut buf).expect("an answer");
         let Ok(Datagram::Refused { salt: back, reason }) = Datagram::decode(&buf[..n]) else { panic!("a refusal") };
-        assert_eq!((back, reason), (salt, says));
+        assert_eq!((back, reason), (salt, says.as_str()));
     }
     assert_eq!(w.server.player_count(), 1);
 }
@@ -148,22 +154,14 @@ fn a_wrong_build_a_wrong_scenario_and_a_wrong_protocol_are_refused_with_the_reas
 fn the_first_client_says_what_game_it_is_and_an_empty_server_forgets() {
     let mut w = World::plain(5);
     let a = w.join_as("A", "V40", 9);
-    let id = w.settle(a);
-    assert_eq!((w.server.host(), w.clients[a].host(), w.clients[a].hosting()), (Some(id), Some(id), true));
-    // what it holds and what it tells of is the game's
-    w.clients[a].claim(key::seat(3, 0));
-    for _ in 0..30 {
-        w.step_with(|_, c, t| c.set_rigid(&common::ship(3, t, 4)));
-    }
-    assert_eq!((w.server.key_count(), w.server.thing_count()), (1, 1));
+    w.settle(a);
     w.clients[a].close();
     w.run(0.2);
-    assert_eq!((w.server.player_count(), w.server.key_count(), w.server.thing_count(), w.server.host()), (0, 0, 0, None));
+    assert_eq!(w.server.player_count(), 0);
     assert_eq!(w.log.last(), Some(&ServerEvent::Empty));
-    // Another game altogether is welcome now, and nothing of the last one is in it.
+    // Another game altogether is welcome now (a server that does not say which game it has).
     let b = w.join_as("B", "V41", 2);
-    let id = w.settle(b);
-    assert_eq!((w.server.host(), w.server.owner(key::thing(3)), w.server.owner(key::seat(3, 0))), (Some(id), Some(id), None));
+    w.settle(b);
     let late = w.join_as("C", "V41", 9);
     w.run(0.5);
     assert!(matches!(w.clients[late].status(), Status::Failed(why) if why.starts_with("escenario distinto")));
@@ -194,7 +192,7 @@ fn a_client_that_vanishes_is_dropped_and_the_others_are_told() {
     let (a, b, c) = (w.join("A"), w.join("B"), w.join("C"));
     let ids = [w.settle(a), w.settle(b), w.settle(c)];
     for _ in 0..60 {
-        w.step_with(|i, c, t| c.set_player(&player(i, t)));
+        w.step_with(|i, c, t| c.send_quick(&says(i, t)));
     }
     w.events(a);
     w.events(c);
@@ -206,9 +204,7 @@ fn a_client_that_vanishes_is_dropped_and_the_others_are_told() {
     assert!(w.log.contains(&ServerEvent::Left { id: ids[1], name: "B".to_string(), reason: "dejó de dar señal".to_string(), players: 2 }));
     for i in [a, c] {
         assert_eq!(w.events(i), [Event::Left { id: ids[1], name: "B".to_string() }]);
-        let mut seen = Vec::new();
-        w.clients[i].players(w.now, &mut seen);
-        assert_eq!(seen.len(), 1);
+        assert_eq!(w.clients[i].peers().count(), 1);
     }
     // And the one that vanished, hearing nothing, gives the server up by itself.
     w.run(8.0);
@@ -314,14 +310,14 @@ fn garbage_thrown_at_a_server_changes_nothing() {
         let n = if round % 11 == 0 { Datagram::Hello { version: VERSION, salt: round, cookie: dice.next(), scenario: SCENARIO, build: BUILD, name: "Nadie" }.encode(&mut buf) } else { n };
         w.net.inject(stranger, w.addr, &buf[..n]);
         if round % 200 == 0 {
-            w.step_with(|i, c, t| c.set_player(&player(i, t)));
+            w.step_with(|i, c, t| c.send_quick(&says(i, t)));
         }
     }
     // A goodbye in someone's name without their number is not theirs; nor are answers meant for clients.
     for (kind, from) in [(5u8, w.addrs[a]), (2, stranger), (3, stranger), (6, stranger)] {
         let n = match kind {
             5 => Datagram::Bye { salt: 0x0BAD_5A17, reason: "" }.encode(&mut buf),
-            2 => Datagram::Welcome { salt: 1, id: 1, tick_hz: 20, name: "x", server: "y" }.encode(&mut buf),
+            2 => Datagram::Welcome { salt: 1, id: 1, name: "x", server: "y" }.encode(&mut buf),
             6 => Datagram::Challenge { salt: 1, cookie: 1 }.encode(&mut buf),
             _ => Datagram::Refused { salt: 1, reason: "no" }.encode(&mut buf),
         };
@@ -330,7 +326,7 @@ fn garbage_thrown_at_a_server_changes_nothing() {
         w.net.inject(w.addr, w.addrs[b], &buf[..n]);
     }
     for _ in 0..120 {
-        w.step_with(|i, c, t| c.set_player(&player(i, t)));
+        w.step_with(|i, c, t| c.send_quick(&says(i, t)));
     }
     let stats = w.server.stats();
     println!("20 000 garbage datagrams: {} taken for nonsense, {} from nobody we know; players still {}", stats.garbled, stats.strays, w.server.player_count());
@@ -340,13 +336,13 @@ fn garbage_thrown_at_a_server_changes_nothing() {
     assert!(w.log.iter().filter(|e| matches!(e, ServerEvent::Refused { .. })).count() < 200, "and its log is not filled with them");
     assert_eq!(w.server.player_count(), 2, "nobody came in by accident, nobody was thrown out");
     assert!(!w.log.iter().any(|e| matches!(e, ServerEvent::Left { .. })));
-    let mut seen = Vec::new();
     for (i, other) in [(a, ids[1]), (b, ids[0])] {
         assert!(matches!(w.clients[i].status(), Status::Connected { players: 2, .. }), "{:?}", w.clients[i].status());
-        w.clients[i].players(w.now, &mut seen);
-        assert_eq!(seen.iter().map(|s| s.0).collect::<Vec<_>>(), [other]);
+        assert_eq!(w.clients[i].peers().collect::<Vec<_>>(), [other]);
         assert!(w.events(i).is_empty(), "and the clients heard nothing of it");
     }
+    // (what the games said still came, and only from them)
+    assert!(w.server.take_game().all(|m| ids.contains(&m.from)));
 }
 
 #[test]
@@ -359,15 +355,16 @@ fn texts_too_long_for_the_wire_are_cut_not_fatal() {
     let ids = [w.settle(a), w.settle(b)];
     assert_eq!(w.clients[b].name(ids[0]), Some("Ñ".repeat(24).as_str()));
     w.clients[a].chat(&"é".repeat(5000));
-    // What the game tells is not cut: the longest thing it may say arrives whole, and one longer is not taken.
+    // What the game says is not cut: the longest thing it may say arrives whole, and one longer is not taken.
     let long: Vec<u8> = (0..MAX_TELL).map(|k| (k * 7) as u8).collect();
-    assert!(w.clients[a].tell(&long) && !w.clients[a].tell(&vec![0; MAX_TELL + 1]) && !w.clients[a].tell_to(ids[1], &vec![0; MAX_TELL + 1]));
-    w.clients[a].hint(&vec![0; lunar_net::MAX_HINT + 1]);
+    assert!(w.clients[a].send_game(&long) && !w.clients[a].send_game(&vec![0; MAX_TELL + 1]));
+    w.clients[a].send_quick(&vec![0; lunar_net::MAX_HINT + 1]);
+    assert!(w.server.send_game(ids[1], true, &long) && !w.server.send_game(ids[1], true, &vec![0; MAX_TELL + 1]));
     w.run(1.5);
     let events = w.events(b);
     assert!(events.contains(&Event::Chat { from: Some(ids[0]), text: "é".repeat(240) }));
-    let Some(Event::Told { by, data }) = events.iter().find(|e| matches!(e, Event::Told { .. })) else { panic!("what was told") };
-    assert!(*by == ids[0] && *data == long);
-    assert!(!events.iter().any(|e| matches!(e, Event::Hinted { .. })));
+    assert!(events.contains(&Event::Game { reliable: true, data: long.clone() }), "the longest the server may say, whole");
+    let game: Vec<GameIn> = w.server.take_game().collect();
+    assert_eq!(game, [GameIn { from: ids[0], reliable: true, data: long }], "the longest a game may say, whole, and nothing longer");
     assert_eq!(w.server.stats().garbled, 0);
 }

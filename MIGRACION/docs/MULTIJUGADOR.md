@@ -1,22 +1,16 @@
 # Multijugador: los cimientos
 
-Primera versión: un **servidor dedicado que no simula nada** (`crates/server`, `LunaServidor.exe`)
-y una **biblioteca de red** (`crates/net`, `lunar_net`) con el lado del cliente. Cada cliente
-simula el mundo entero (todos cargan el mismo escenario); la red los mantiene de acuerdo:
+**Hoy (V41, 2026-10-08): el servidor tiene la partida.** `luna-servidor` simula el mundo entero
+(`lunar_play::host`), decide todo y le cuenta a cada jugador lo que necesita; el juego de cada uno
+predice su cuerpo y lo demás y el servidor lo endereza (`lunar_play::online`); sin conexión, el
+mismo servidor corre dentro del proceso (`lunar_play::local`). Cómo y por qué:
+[`PLAN_AUTORITATIVO.md`](PLAN_AUTORITATIVO.md). Esta biblioteca (`crates/net`, `lunar_net`) es solo
+la conexión: quién entra y sale, el chat, y los mensajes del juego (`Msg::Game` fiables, `Msg::Quick`
+los más nuevos) llevados sin leerlos.
 
-1. **Jugadores**: cada cliente manda el estado de su jugador 20 veces por segundo; los demás
-   dibujan un astronauta a partir de él.
-2. **Naves**: cada nave tiene un **dueño**, cuyo cliente la simula con autoridad y manda su
-   estado rígido y sus articulaciones; los demás lo aplican.
-3. **Mandos**: cada interruptor o palanca que alguien toca viaja fiable a todos.
-4. **Naves puestas en partida**: se anuncian fiables; el servidor les da su id de red.
-5. **Chat** y avisos del servidor.
-
-Las naves del escenario no se anuncian: son las ids `0..n-1` en el orden del escenario en todos
-los clientes. El cliente dice cuántas tiene al saludar; el primero que entra fija la cuenta y la
-versión, y a quien llegue con otras se le rechaza diciéndole por qué.
-
-Sin dependencias nuevas: red de `std` (`UdpSocket`), sin `unsafe`.
+Lo que sigue de las secciones marcadas **(histórico)** es del **relevo** que hubo antes (V35–V40):
+un servidor que no simulaba nada y clientes que simulaban cada uno el mundo entero, con dueños de
+naves y estados repartidos. Se quitó en la fase 10 del plan; queda aquí lo medido entonces.
 
 ## Dónde está cada cosa
 
@@ -29,16 +23,14 @@ Sin dependencias nuevas: red de `std` (`UdpSocket`), sin `unsafe`.
 | `transport/memory.rs` | `MemoryNet` / `Memory`: una red dentro del proceso que pierde, retrasa, duplica y desordena a propósito, igual en cada ejecución con la misma semilla (pruebas). |
 | `channel.rs` (+ `channel/`) | Conexión con un par: cabecera con secuencia y acuses, mensajes **fiables ordenados** y **no fiables secuenciados**, varios por datagrama, troceo de los largos, RTT, latidos, silencio. |
 | `proto.rs` | Qué es un datagrama (`Hello`, `Challenge`, `Welcome`, `Refused`, `Data`, `Bye`) y los mensajes del canal (`Msg`). |
-| `proto/states.rs` | Lotes de estados: `Up` (cliente → servidor) y `Down` (servidor → cliente). |
-| `game.rs` (+ `game/`) | `PlayerState`, `ShipState`, `ControlIntent`: datos planos, su codificación y su mezcla. Los bits de `flags` en `game::flag`. |
-| `snap.rs` | Interpolación de instantáneas: un anillo de 16 por cosa. |
-| `throttle.rs` | Mandar solo lo que cambia (y un latido por segundo). |
-| `clock.rs` | `now()` y la estimación del reloj del servidor. |
-| `server.rs` (+ `server/`) | `Server`: sesiones, entrada, reparto de estados, propiedad de naves, memoria de mandos. Sin E/S propia. |
-| `client.rs` (+ `client/`) | `Client`: lo que usa el juego. |
+| `game.rs` (+ `game/`) | `PlayerState`, `RigidState`: datos planos, su codificación y su mezcla (lo que llevan las instantáneas de `lunar_play::net`). Los bits de `flags` en `game::flag`. |
+| `clock.rs` | `now()` y la estimación del reloj del servidor (`Ping`/`Pong`). |
+| `server.rs` (+ `server/`) | `Server`: sesiones, entrada, chat, lo que cada juego dice a la partida (`take_game`) y lo que la partida le dice (`send_game`). Sin E/S propia. |
+| `client.rs` (+ `client/`) | `Client`: lo que usa el juego (`send_game`, `send_quick`, `events`, `chat`). |
 | `text.rs` | Todos los textos que lee una persona (en castellano) y la limpieza de lo que la gente escribe. |
 
-`crates/server/src`: `main.rs` (el bucle), `config.rs` (`servidor.jsonc` y opciones), `console.rs`
+`crates/server/src`: `main.rs` (la red), `sim.rs` (la partida en su hilo), `keep.rs` (las dos
+ranuras de la partida guardada), `config.rs` (`servidor.jsonc` y opciones), `console.rs`
 (órdenes), `journal.rs` (consola + `servidor.log`).
 
 ## El protocolo
@@ -49,9 +41,9 @@ El primer byte dice qué es. Ninguno pasa de 1200 bytes.
 
 | Datagrama | Quién | Contenido |
 |---|---|---|
-| `Hello` | cliente | marca `LUNA`, versión del protocolo (1), `salt` (un número que el cliente inventa para esta conexión), `cookie`, naves del escenario, versión del juego, nombre. **Siempre 300 bytes** (relleno). |
+| `Hello` | cliente | marca `LUNA`, versión del protocolo (3), `salt` (un número que el cliente inventa para esta conexión), `cookie`, naves del escenario, versión del juego, nombre. **Siempre 300 bytes** (relleno). |
 | `Challenge` | servidor | `salt`, `cookie`: «repítelo con esto». |
-| `Welcome` | servidor | `salt`, id del jugador, envíos por segundo, nombre tal como quedó, nombre del servidor. |
+| `Welcome` | servidor | `salt`, id del jugador, nombre tal como quedó, nombre del servidor. |
 | `Refused` | servidor | `salt`, motivo (texto para la persona). |
 | `Data` | ambos | un datagrama del canal. |
 | `Bye` | ambos | `salt`, motivo. El cliente lo manda tres veces al cerrar. |
@@ -87,14 +79,12 @@ Detrás, los mensajes: `[etiqueta][id, si es fiable][longitud][bytes]`.
 
 | Mensaje | Fiable | Quién | Para qué |
 |---|---|---|---|
-| `Ping` / `Pong` | no | c / s | reloj del servidor |
-| `Up` | no | cliente | sus estados: su jugador y las naves que posee |
-| `Down` | no | servidor | los estados de los demás, por lotes |
-| `Control` / `Controlled` | sí | c / s | un mando tocado |
-| `Spawn` / `Spawned` | sí | c / s | nave puesta en partida (el servidor le da la id) |
+| `Ping` / `Pong` | no | c / s | reloj del servidor (y que se le oiga mientras el juego calla) |
+| `Game` | sí | ambos | lo que el juego dice (actos del jugador; lo que pasó: `lunar_play::net::Event`) |
+| `Quick` | no | ambos | lo mismo, el más nuevo (comandos de cada paso; instantáneas) |
 | `Chat` / `Said` | sí | c / s | chat; `Said` sin autor es el servidor |
-| `Joined`, `Left`, `Owner` | sí | servidor | quién está, de quién es cada nave |
-| `Bundle`, `Synced` | sí | servidor | la puesta al día de quien entra, y su final |
+| `Joined`, `Left` | sí | servidor | quién está |
+| `Bundle`, `Synced` | sí | servidor | la puesta al día de quien entra (quién está), y su final |
 
 ## Tamaños y errores
 
@@ -135,7 +125,7 @@ articulaciones de una nave van aparte y solo cuando cambian ellas: en vuelo son 
 de los bytes y casi nunca se mueven. Mientras un jugador va montado en una nave, su posición y
 velocidad en el mundo no cuentan como cambio (los demás lo colocan con `local`).
 
-## Ancho de banda medido
+## Ancho de banda medido (histórico)
 
 `tests/bandwidth.rs`, red en memoria, bytes por segundo **contando los 28 de IP+UDP** de cada
 datagrama. 8 jugadores andando y mirando alrededor, 4 naves volando (del anfitrión) con 20
@@ -155,7 +145,7 @@ Con el programa de verdad y UDP real en esta máquina (8 clientes, 50 s): otro c
 La puesta al día de quien entra tarde va en pocos mensajes grandes (`Bundle`): 4096 mandos, 40
 naves puestas y 340 dueños son 81 kB en 75 datagramas y 0,43 s con un 10 % de pérdidas.
 
-## Reloj e interpolación
+## Reloj e interpolación (histórico)
 
 - **Un solo reloj**: cada cliente estima el reloj del servidor con `Ping`/`Pong` (guarda los
   últimos 16; la estimación es la media de los que tardaron como mucho 2 ms más que el más
@@ -177,7 +167,7 @@ naves puestas y 340 dueños son 81 kB en 75 datagramas y 0,43 s con un 10 % de p
 Medido (`tests/interp.rs`): a 3 m/s con ese retardo irregular, error máximo 6,7 mm respecto
 a donde estaba en el instante dibujado, 0,2 mm fuera de su línea, nunca hacia atrás.
 
-## De quién es cada nave
+## De quién es cada nave (histórico)
 
 La decide el servidor (`server/world.rs`) y la anuncia con `Owner`:
 
@@ -193,8 +183,9 @@ cuentan (`ServerStats::foreign`).
 ## El programa servidor
 
 `servidores/LunaServidor.exe`, con `servidor.jsonc` al lado (JSON con comentarios y comas
-finales): `puerto` (47600, UDP), `nombre`, `max_jugadores` (16), `tasa` (20), `espera` (10 s).
-Opciones: `--puerto N`, `--nombre X`, `--ayuda`. Órdenes: `jugadores`, `expulsar <id> [motivo]`,
+finales): `puerto` (47600, UDP), `nombre`, `max_jugadores` (16), `espera` (10 s), `datos`, `trucos`,
+`partida` (dónde se guarda: `partidas/partida`) y `guardar_cada` (300 s). Opciones: `--puerto N`,
+`--nombre X`, `--datos CARPETA`, `--partida RUTA`, `--nueva`, `--sin-guardar`, `--trucos`, `--ayuda`. Órdenes: `jugadores`, `expulsar <id> [motivo]`,
 `decir <texto>`, `salir`, `ayuda`. Todo lo que dice va también a `servidor.log`. Las horas son
 UTC (`std` no conoce la hora local). No hay manejador de Ctrl+C: se para con `salir` o
 cerrándolo. Ver `servidores/LEEME.txt`.
@@ -202,7 +193,7 @@ cerrándolo. Ver `servidores/LEEME.txt`.
 Tras cambiar el servidor: `tools/cargo.ps1 build --release -p luna-servidor --target-dir target/red`
 y copiar `target/red/release/luna-servidor.exe` a `servidores/LunaServidor.exe`.
 
-## Usarlo desde el juego
+## Usarlo desde el juego (histórico)
 
 ```rust
 let mut net = lunar_net::Client::connect("192.168.1.20:47600", "Ana", "V35", naves_del_escenario)?;
@@ -227,7 +218,7 @@ for id in naves_ajenas { if let Some(s) = net.ship(id, now) { /* aplicar */ } }
 - Un rechazo o un «no responde» dejan `Status::Failed(motivo)`; `Event::Disconnected` solo sale
   si se llegó a estar dentro.
 
-## En el juego: naves, disparos y daño (`app/src/multi/`)
+## En el juego: naves, disparos y daño (`app/src/multi/`) (histórico)
 
 Cada partida simula todo; la red solo la mantiene de acuerdo con las demás.
 
@@ -346,38 +337,21 @@ los guarda y los lee tras `follow`): un final cae sobre el casco ya en su sitio.
 
 ## Pruebas
 
-`tools/cargo.ps1 test -p lunar-net -p luna-servidor --target-dir target/red` — 73 pruebas, casi
-todas con la red en memoria (deterministas):
+`cargo test -p lunar-net -p luna-servidor -p lunar-play`, casi todas con la red en memoria
+(deterministas):
 
 | Fichero | Qué comprueba |
 |---|---|
-| `net/tests/wire.rs` (18) | ida y vuelta de cada tipo, cotas de error, tamaños; 200 000 datagramas de basura y mensajes reales cortados o con bits cambiados en todos los descodificadores, sin un `panic` |
+| `net/tests/wire.rs` (16) | ida y vuelta de cada tipo, cotas de error, tamaños; 200 000 datagramas de basura y mensajes reales cortados o con bits cambiados en todos los descodificadores, sin un `panic` |
 | `net/tests/channel.rs` (8) | 30 % de pérdidas + desorden + duplicados: 1000 fiables llegan una vez y en orden; los no fiables nunca llegan viejos; 5 kB y 64 KiB llegan enteros; latidos y silencio; 70 000 datagramas (los contadores dan la vuelta) |
-| `net/tests/session.rs` (13) | 2 y 8 clientes se ven; versión, escenario y protocolo distintos rechazados con su motivo; servidor lleno; cliente que desaparece; nombres; expulsar, decir, cerrar; reconexión desde la misma dirección; basura contra un servidor en marcha |
-| `net/tests/ownership.rs` (5) | el anfitrión posee las libres; sentarse la toma, levantarse la devuelve; el dueño que se va; estados de quien no es dueño ignorados (con un cliente tramposo hecho a mano) |
-| `net/tests/events.rs` (6) | mandos y naves nuevas llegan a todos una vez y en orden con 25 % de pérdidas; tope de naves; puesta al día de quien entra tarde |
-| `net/tests/interp.rs` (7) | el anillo; velocidad constante con llegada irregular; parar y arrancar sin saltos; un corte de red |
-| `net/tests/udp.rs` (2 + 1) | servidor y 2 clientes por UDP real en `127.0.0.1:0`; `load_for_a_running_server` (ignorada) carga un servidor en marcha con 8 clientes |
-| `net/tests/bandwidth.rs` (2) | las cifras de arriba |
-| `server/src` (10), `server/tests/programa.rs` (2) | ajustes, órdenes, fechas; el `.exe` arrancado de verdad, con dos clientes y sus órdenes por consola |
+| `net/tests/session.rs` (13) | 2 y 8 clientes se conocen y lo que dice cada juego llega a la partida del servidor (y lo que ella dice, a cada uno); con 20 % de pérdidas lo fiable llega entero y en orden; versión, escenario y protocolo distintos rechazados con su motivo; servidor lleno; cliente que desaparece; nombres; expulsar, decir, cerrar; reconexión desde la misma dirección; basura contra un servidor en marcha; lo más largo que se puede decir llega entero y lo más largo no se manda |
+| `net/tests/udp.rs` (2 + 1) | servidor y 2 clientes por UDP real en `127.0.0.1:0` |
+| `server/src` (11), `server/tests/programa.rs` (3) | ajustes, órdenes, fechas, ranuras; el `.exe` arrancado de verdad: entra un jugador y anda, «salir» guarda, se arranca y retoma, se vuelve con la clave |
+| `play/tests/online.rs` (15), `local.rs`, `load.rs` | la partida por red: ver [`PLAN_AUTORITATIVO.md`](PLAN_AUTORITATIVO.md), «Avance» |
 
-Y en el juego (`cargo test -p lunar-app -- multi::`, ~30 s, partidas enteras contra el servidor
-real con una red en memoria que pierde un 3 %, duplica un 1 % y retrasa 40 ± 10 ms):
-
-| Prueba (`app/src/multi/tests.rs`) | Qué comprueba |
-|---|---|
-| `ships_are_seen_flying_where_they_are_and_smoothly_…` | dos naves en formación a 0, 300, 2000 y 7800 m/s, a 30, 60, 144 y 240 fps: cada copia a la distancia que permiten los relojes, sin saltos (< 2 cm + lo que corrige el reloj por frame) ni giros de más de 2° |
-| `ships_shoot_each_other_at_orbital_speed_…` | 3 partidas, dos naves a 2 km/s disparándose (30 proyectiles de cañón): las tres acaban con el mismo daño, bit a bit, y ven estallar cada bala en el mismo punto de la nave (< 1 cm) |
-| `a_rocket_fired_out_of_an_open_hold_…` | a 7,8 km/s, un jugador en la bodega abierta de la Alcotán dispara un cohete por la rampa al Abejorro que va detrás: sale de su boca en las tres partidas (0,000 m), no toca la Alcotán, da una vez en el Abejorro, mismo daño y misma explosión en las tres |
-| `a_guided_missile_flies_the_same_…` | un guiado a 2 km/s contra el Cachalote que esquiva a 7 g, con la copia de Carla dormida por lejana: las copias van a 0,5 m del de verdad como mucho (los relojes permiten 0,84 m), estallan donde él y las tres acaban igual bit a bit (con lo que revienta y con la postura de lo articulado) |
-| `hits_from_two_shooters_at_once_…` | dos tiradores a la vez: el mismo orden en todas (sin el eco, falla) |
-| `what_a_player_fires_leaves_their_muzzle_…` | un cohete disparado a 7,8 km/s sale de la boca en todas las partidas |
-| `a_player_floating_by_a_ship_at_orbital_speed_…` | quien flota junto a una nave en órbita se dibuja a su lado (5 mm) |
-| `whoever_stands_aboard_a_ship_another_flies_…` | un pasajero de pie en una nave que pilota otro a 7,8 km/s no resbala |
-| `two_games_through_a_server_agree_…` | jugadores, mandos, puertas, naves puestas y dueños |
-| `every_weapon_in_the_data_…` | **todo lo que los datos dicen que se dispara** (hoy 26: 8 disparos, el misil, 2 guiados, 2 señuelos, 13 explosiones), uno a uno desde la nave de Ana a 2 km/s contra un Abejorro puesto para cada uno (hecho en las tres partidas): cada uno arranca una vez en cada partida, acaba las mismas veces y en el mismo sitio, y las tres quedan igual bit a bit, trozos incluidos. Un arma nueva en los datos se prueba aquí sola |
-| `told.rs` (`what_is_seen_beside_a_ship…`) | lanzamiento, final y aviso de un guiado en marcos que se mueven y giran: a 1,7 km/s, con la copia 6 m corrida y girada, el disparo sale de su boca y el final cae en su casco |
-| `told.rs` | cada mensaje ida y vuelta, tamaños, mensajes cortados |
+Las pruebas del relevo (`app/src/multi/tests.rs`: formaciones a 7,8 km/s, armas de los datos una a
+una, guiados, tiradores a la vez) se fueron con él; lo que probaban se prueba por el servidor que
+tiene la partida a medida que llega cada fase (lo que falta, en `PENDIENTES.md`).
 
 ## Lo que no hace (todavía)
 

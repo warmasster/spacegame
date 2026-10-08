@@ -1,7 +1,6 @@
 //! What the game says over the network many times a second, as plain data: a player, a rigid
 //! thing (a ship, a crate, anything loose). Each knows its compact encoding (`encode` / `decode`)
-//! and how to be mixed between two moments. What the game says now and then (a hand on a control,
-//! a hit, a ship made) is its own business: it travels as bytes the server passes on unread.
+//! and how to be mixed between two moments.
 mod player;
 mod rigid;
 
@@ -43,32 +42,6 @@ pub mod flag {
     /// ship that flies): placed by it as it is where they are drawn, however fast both go, and
     /// going on their own.
     pub const BESIDE: u16 = 1 << 12;
-}
-
-/// The keys the server arbitrates (`Client::claim`): whose a thing is, who sits where. The lowest
-/// bit says what a key is worth with nobody claiming it: 0, the host's (a thing: someone must
-/// simulate it); 1, nobody's (a seat: empty).
-pub mod key {
-    /// The key of thing `id` (a ship, a crate): whoever holds it simulates it and tells the rest.
-    pub const fn thing(id: u64) -> u64 {
-        id << 1
-    }
-    /// The thing a key is of, if it is a thing's.
-    pub const fn thing_of(key: u64) -> Option<u64> {
-        if key & 1 == 0 { Some(key >> 1) } else { None }
-    }
-    /// The key of seat `seat` of thing `id`: one player at a time.
-    pub const fn seat(id: u64, seat: u8) -> u64 {
-        (((id << 8) | seat as u64) << 1) | 1
-    }
-    /// The thing and the seat a key is of, if it is a seat's.
-    pub const fn seat_of(key: u64) -> Option<(u64, u8)> {
-        if key & 1 == 1 { Some((key >> 9, (key >> 1) as u8)) } else { None }
-    }
-    /// Whether a key nobody claims is the host's.
-    pub const fn hosted(key: u64) -> bool {
-        key & 1 == 0
-    }
 }
 
 /// The shortest way from angle `a` to angle `b`, a fraction `t` of it; the result in [-π, π).

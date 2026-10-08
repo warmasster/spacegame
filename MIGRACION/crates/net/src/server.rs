@@ -1,20 +1,15 @@
-//! The server's logic, with no IO of its own: it is handed the time and a transport, and takes
-//! players in, passes on what each says to the rest and decides who holds each key (whose each
-//! thing is to simulate, who sits where). It simulates nothing and reads nothing of what the game
-//! says: every client has the whole world; the server is what makes them agree.
-//! - `join`: who may come in, and telling a newcomer what the server knows;
-//! - `intake`: what the clients send (states, things told, keys asked for, chat);
-//! - `relay`: the states of everyone to everyone else, batched, once a tick;
-//! - `world`: the keys and who holds them, the newest state of each thing that moves;
+//! The server's connections, with no IO of its own: it is handed the time and a transport, takes
+//! players in and out, and carries what each player's game says to the game that runs in the
+//! server (`take_game`) and what that game says back (`send_game`), unread. It also passes on the
+//! chat and says who comes and goes.
+//! - `join`: who may come in, and telling a newcomer who is here;
+//! - `intake`: what the clients send (for the game, pings, chat);
 //! - `session`: one connected player.
 //!
-//! Nothing that comes from the wire is trusted: sizes are capped, texts cleaned, and a client can
-//! only speak for its own player and for the things whose key it holds.
+//! Nothing that comes from the wire is trusted: sizes are capped and texts cleaned.
 mod intake;
 mod join;
-mod relay;
 mod session;
-mod world;
 
 use crate::channel::{ChannelError, ChannelStats, Inbox, MAX_MESSAGE};
 use crate::proto::{Datagram, FRAMING, Msg};
@@ -23,21 +18,14 @@ use crate::transport::{Addr, Transport};
 use crate::wire::Writer;
 use session::{Leaving, Session};
 use std::hash::RandomState;
-use world::World;
 
 #[derive(Clone, Debug)]
 pub struct ServerConfig {
     /// The server's name, shown to who joins.
     pub name: String,
     pub max_players: usize,
-    /// Times a second the states are passed on (and the clients send theirs).
-    pub tick_hz: u8,
     /// Seconds without hearing a client after which it is dropped.
     pub timeout: f64,
-    /// Keys one player may ask for at once.
-    pub max_keys: u32,
-    /// Things in motion whose newest state is kept at once (more are not passed on).
-    pub max_things: usize,
     /// A server that has the game itself: the build and the scenario (the fingerprint of its
     /// data) it plays. A hello of any other is refused, whoever comes first. None: the first to
     /// come says what game this is.
@@ -46,7 +34,7 @@ pub struct ServerConfig {
 
 impl Default for ServerConfig {
     fn default() -> Self {
-        ServerConfig { name: "Servidor de Selene".to_string(), max_players: 16, tick_hz: 20, timeout: 10.0, max_keys: 4096, max_things: 16384, game: None }
+        ServerConfig { name: "Servidor de Selene".to_string(), max_players: 16, timeout: 10.0, game: None }
     }
 }
 
@@ -61,7 +49,7 @@ pub enum ServerEvent {
     Refused { addr: Addr, name: String, reason: String },
     /// A chat line.
     Chat { id: u32, name: String, text: String },
-    /// The last player left: the game is forgotten, and the next one to come starts another.
+    /// The last player left.
     Empty,
 }
 
@@ -76,11 +64,6 @@ pub struct ServerStats {
     pub garbled: u64,
     /// Datagrams from addresses that are not connected.
     pub strays: u64,
-    /// States of things sent by someone who does not hold their key (and were ignored). A few are
-    /// normal each time a thing changes hands: its last holder goes on sending until it is told.
-    pub foreign: u64,
-    /// Things told to everyone and to one player, as the server passed them on.
-    pub told: u64,
 }
 
 /// Something a client said to the game that runs in the server (`Msg::Game`, `Msg::Quick`).
@@ -146,20 +129,15 @@ struct Hello<'a> {
 /// Refusals said in any one second: more hellos than this that cannot come in are not answered
 /// (nor logged), so a flood of them costs the server and its log next to nothing.
 const REFUSALS_A_SECOND: u32 = 8;
-/// Seconds a thing nobody tells of any more is still kept.
-const KEEP: f64 = 3.0;
 
 pub struct Server {
     config: ServerConfig,
-    /// In the order they came, which is the order of their ids: the first is the host.
+    /// In the order they came, which is the order of their ids.
     sessions: Vec<Session>,
-    world: World,
+    /// The game's build and the number of its scenario, as the first to come said them (with no
+    /// `ServerConfig::game`).
+    playing: (String, u32),
     next_id: u32,
-    /// The relay tick we are in (from 1).
-    tick: u64,
-    next_tick: f64,
-    /// The host everyone was last told of.
-    host: Option<u32>,
     events: Vec<ServerEvent>,
     stats: ServerStats,
     /// The key of the cookies of this run: what proves a hello comes from the address it says.
@@ -170,23 +148,18 @@ pub struct Server {
     inbox: Inbox,
     datagram: Vec<u8>,
     msg: Vec<u8>,
-    stage: Vec<u8>,
-    changed: Vec<u64>,
     /// What clients said to the game, not taken yet.
     game_in: Vec<GameIn>,
 }
 
 impl Server {
     pub fn new(config: ServerConfig) -> Server {
-        let config = ServerConfig { tick_hz: config.tick_hz.clamp(1, 120), max_players: config.max_players.max(1), timeout: config.timeout.max(1.0), ..config };
+        let config = ServerConfig { max_players: config.max_players.max(1), timeout: config.timeout.max(1.0), ..config };
         Server {
             config,
             sessions: Vec::new(),
-            world: World::default(),
+            playing: (String::new(), 0),
             next_id: 1,
-            tick: 1,
-            next_tick: 0.0,
-            host: None,
             events: Vec::new(),
             stats: ServerStats::default(),
             secret: RandomState::new(),
@@ -194,15 +167,12 @@ impl Server {
             inbox: Inbox::new(),
             datagram: vec![0; 2048],
             msg: Vec::new(),
-            stage: Vec::new(),
-            changed: Vec::new(),
             game_in: Vec::new(),
         }
     }
 
-    /// Takes what has arrived, drops who is gone, passes the states on if a tick is due and sends
-    /// what each client is owed. `now`: seconds of a clock that never goes back (`lunar_net::now()`).
-    /// Call it at least as often as the tick; more often only makes events travel sooner.
+    /// Takes what has arrived, drops who is gone and sends what each client is owed. `now`: seconds
+    /// of a clock that never goes back (`lunar_net::now()`). The more often, the sooner things go.
     pub fn update(&mut self, now: f64, transport: &mut dyn Transport) {
         let mut t = Counting { inner: transport, bytes: 0, datagrams: 0 };
         let mut buf = std::mem::take(&mut self.datagram);
@@ -213,12 +183,6 @@ impl Server {
         }
         self.datagram = buf;
         self.reap(now, &mut t);
-        if now >= self.next_tick {
-            self.relay(now);
-            let interval = 1.0 / self.config.tick_hz as f64;
-            // Late by more than a tick (the machine stalled): do not try to catch up.
-            self.next_tick = if now - self.next_tick > interval { now + interval } else { self.next_tick + interval };
-        }
         for s in self.sessions.iter_mut().filter(|s| s.confirmed) {
             s.channel.flush(now, s.addr, &mut t);
         }
@@ -288,40 +252,13 @@ impl Server {
             let n = Datagram::Bye { salt: s.salt, reason: bye }.encode(&mut buf);
             t.send(s.addr, &buf[..n]);
         }
-        let mut changed = std::mem::take(&mut self.changed);
-        changed.clear();
-        self.world.leave(s.id, &mut changed);
         self.events.push(ServerEvent::Left { id: s.id, name: s.name, reason: leaving.reason, players: self.sessions.len() });
         if self.sessions.is_empty() {
-            self.world.clear();
-            self.host = None;
+            self.playing = (String::new(), 0);
             self.events.push(ServerEvent::Empty);
-            self.changed = changed;
             return;
         }
-        // In this order: who is gone, who the host is now, then the keys that changed hands (what
-        // nobody asks for goes to the host just told of).
         self.send_all(&Msg::Left { id: s.id }, None);
-        self.settle(None);
-        for key in &changed {
-            let player = self.world.holder(*key);
-            self.send_all(&Msg::Owner { key: *key, player }, None);
-        }
-        self.changed = changed;
-    }
-
-    /// The host: who has been here longest.
-    fn host_now(&self) -> Option<u32> {
-        self.sessions.first().map(|s| s.id)
-    }
-
-    /// Tells everyone (but `except`) who the host is, if it changed.
-    fn settle(&mut self, except: Option<u32>) {
-        let host = self.host_now();
-        if host != self.host {
-            self.host = host;
-            self.send_all(&Msg::Host { player: host }, except);
-        }
     }
 
     /// Sends a small reliable message of the server's own to everyone but `except`.
@@ -349,10 +286,14 @@ impl Server {
         self.game_in.drain(..)
     }
 
-    /// Says `data` to player `to` for its game, reliably (`Msg::Game`) or not (`Msg::Quick`).
-    /// False if there is no such player, or (reliably) it is too far behind to take more: it is
-    /// dropped at the next update.
+    /// Says `data` to player `to` for its game, reliably (`Msg::Game`, at most `MAX_TELL` bytes) or
+    /// not (`Msg::Quick`, at most `MAX_HINT`). False if there is no such player, it is too long
+    /// (nothing goes), or (reliably) the player is too far behind to take more: it is dropped at
+    /// the next update.
     pub fn send_game(&mut self, to: u32, reliable: bool, data: &[u8]) -> bool {
+        if data.len() > if reliable { crate::client::MAX_TELL } else { crate::client::MAX_HINT } {
+            return false;
+        }
         let Some(i) = self.sessions.iter().position(|s| s.id == to && s.confirmed) else { return false };
         let mut buf = std::mem::take(&mut self.msg);
         let msg = if reliable { Msg::Game(data) } else { Msg::Quick(data) };
@@ -393,25 +334,9 @@ impl Server {
     pub fn player_count(&self) -> usize {
         self.sessions.len()
     }
-    /// The connected players, the host first.
+    /// The connected players, in the order they came.
     pub fn players(&self) -> impl Iterator<Item = PlayerInfo<'_>> {
         self.sessions.iter().map(|s| PlayerInfo { id: s.id, name: &s.name, addr: s.addr, ping_ms: s.channel.rtt() * 1000.0, channel: s.channel.stats() })
-    }
-    /// Things in motion right now (those somebody told of in the last few seconds).
-    pub fn thing_count(&self) -> usize {
-        self.world.things.len()
-    }
-    /// Keys somebody asks for.
-    pub fn key_count(&self) -> usize {
-        self.world.claimed()
-    }
-    /// The host (what nobody asks for is theirs).
-    pub fn host(&self) -> Option<u32> {
-        self.host_now()
-    }
-    /// Whose a key is: its holder's, else the host's if it is a thing's.
-    pub fn owner(&self, key: u64) -> Option<u32> {
-        self.world.owner(key, self.host_now())
     }
     /// Throws a player out at the next update, telling them why (`reason` may be empty). False if there is no such player.
     pub fn kick(&mut self, id: u32, reason: &str) -> bool {

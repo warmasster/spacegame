@@ -5,11 +5,10 @@ mod common;
 use common::{Dice, angle_between, cargo, ship, walker};
 use glam::{DVec3, Quat, Vec3};
 use lunar_net::game::{JOINT_UNITS, LOCAL_UNITS, PLAYER_VEL_UNITS, POS_UNITS, PUSH_UNITS, RIGID_VEL_UNITS, SPIN_UNITS, mix_angle};
-use lunar_net::proto::states::{DownReader, DownWriter, Source, UpReader, Whose, begin_up, up_entry};
 use lunar_net::proto::{Bundle, Datagram, Msg, VERSION};
 use lunar_net::quant::ANGLE_STEP;
 use lunar_net::wire::var_len;
-use lunar_net::{Channel, Frame, Inbox, PlayerState, Reader, RigidState, WireError, Writer, flag, key};
+use lunar_net::{Channel, Frame, Inbox, PlayerState, Reader, RigidState, WireError, Writer, flag};
 use std::f32::consts::PI;
 
 fn written(write: impl FnOnce(&mut Writer)) -> Vec<u8> {
@@ -294,19 +293,6 @@ fn rigid_states_round_trip_within_their_quantisation() {
 }
 
 #[test]
-fn keys_say_what_they_are_of() {
-    for id in [0u64, 1, 77, (9 << 20) | 4321, 1 << 50] {
-        assert_eq!(key::thing_of(key::thing(id)), Some(id));
-        assert!(key::hosted(key::thing(id)) && key::seat_of(key::thing(id)).is_none());
-        for seat in [0u8, 3, 255] {
-            let k = key::seat(id, seat);
-            assert_eq!(key::seat_of(k), Some((id, seat)));
-            assert!(!key::hosted(k) && key::thing_of(k).is_none());
-        }
-    }
-}
-
-#[test]
 fn sizes_on_the_wire() {
     let size = |p: &PlayerState| written(|w| p.encode(w)).len();
     let still = PlayerState { vel: Vec3::ZERO, ..walker(10.0) };
@@ -348,10 +334,8 @@ fn sizes_on_the_wire() {
     assert!(rigid(&beside) <= 26 && rigid(&cargo(900, 2, Vec3::new(1.5, 0.4, -6.0))) <= 16, "a state told in a ship's frame is small numbers");
     assert_eq!(written(|w| walker(10.0).encode(w)).len(), 26);
     assert_eq!(written(|w| still.encode(w)).len(), 22);
-    // what the game tells costs what it says plus this
-    for (what, m) in
-        [("told to everyone", Msg::Tell { echo: false, data: &[0; 12] }), ("as it is passed on", Msg::Told { by: 3, data: &[0; 12] }), ("to one player", Msg::To { player: 3, data: &[0; 12] }), ("a key asked for", Msg::Claim { key: key::thing(77) })]
-    {
+    // what the game says costs what it says plus this
+    for (what, m) in [("said reliably", Msg::Game(&[0; 12])), ("said quickly", Msg::Quick(&[0; 12]))] {
         println!("{what}: {} bytes as a message", written(|w| m.encode(w)).len());
     }
 }
@@ -363,7 +347,7 @@ fn datagrams_and_messages_round_trip() {
         Datagram::Hello { version: VERSION, salt: 0xDEAD_BEEF, cookie: 0, scenario: 7, build: "V36", name: "Añil" },
         Datagram::Hello { version: VERSION, salt: 1, cookie: 0xFEED_FACE_CAFE_F00D, scenario: 0xffff_ffff, build: "", name: "" },
         Datagram::Challenge { salt: 0xDEAD_BEEF, cookie: 0xFEED_FACE_CAFE_F00D },
-        Datagram::Welcome { salt: 5, id: 3, tick_hz: 20, name: "Añil", server: "Servidor de Selene" },
+        Datagram::Welcome { salt: 5, id: 3, name: "Añil", server: "Servidor de Selene" },
         Datagram::Refused { salt: 5, reason: "el servidor está lleno (16 de 16 jugadores)" },
         Datagram::Bye { salt: 9, reason: "" },
         Datagram::Data(&[1, 2, 3]),
@@ -382,7 +366,7 @@ fn datagrams_and_messages_round_trip() {
         buf[11..40].fill(0xff);
         assert_eq!(Datagram::decode(&buf[..n]), Ok(Datagram::Hello { version: other, salt: 77, cookie: 0, scenario: 0, build: "", name: "" }));
     }
-    assert_eq!(VERSION, 2);
+    assert_eq!(VERSION, 3);
     // the refusal of a game of another version fits the answer to a hello, and says which is which
     let why = lunar_net::text::version(VERSION, 1);
     assert!(why.contains("V35") && why.contains("actualiza el juego"), "{why}");
@@ -393,21 +377,9 @@ fn datagrams_and_messages_round_trip() {
     for m in [
         Msg::Ping { t: 123_456_789 },
         Msg::Pong { t: 123_456_789, server: 987_654_321_000 },
-        Msg::Up(&[1, 2, 3]),
-        Msg::Down(&[4, 5]),
-        Msg::Tell { echo: false, data: &data },
-        Msg::Tell { echo: true, data: &[] },
-        Msg::Told { by: 4, data: &data },
-        Msg::Hint(&data),
-        Msg::Hinted { by: 70_000, data: &data },
-        Msg::To { player: 9, data: &data },
-        Msg::From { by: 2, data: &data },
-        Msg::Claim { key: key::thing(3) },
-        Msg::Release { key: key::seat(3, 1) },
-        Msg::Owner { key: u64::MAX, player: Some(0) },
-        Msg::Owner { key: 6, player: None },
-        Msg::Host { player: Some(1) },
-        Msg::Host { player: None },
+        Msg::Game(&data),
+        Msg::Game(&[]),
+        Msg::Quick(&data),
         Msg::Chat { text: "hola" },
         Msg::Joined { id: 9, name: "Añil" },
         Msg::Left { id: 9 },
@@ -426,81 +398,8 @@ fn datagrams_and_messages_round_trip() {
 }
 
 #[test]
-fn batches_of_states_round_trip() {
-    let (p, s) = (walker(3.0), ship(2, 8.0, 5));
-    let (praw, sraw, jraw) = (written(|w| p.encode(w)), written(|w| s.encode_rigid(w)), written(|w| s.encode_joints(w)));
-    // A thing in a batch goes without its joints, which are more than half of a ship; they go apart.
-    assert_eq!((sraw.len(), jraw.len(), written(|w| s.encode(w)).len()), (33, 10, 1 + 33 + 10));
-    let thing = Whose::Thing(key::thing(2));
-
-    let up = written(|w| {
-        begin_up(w, 5_000_000);
-        assert!(up_entry(w, Whose::Own, 0, false, &praw));
-        assert!(up_entry(w, thing, 1, false, &jraw));
-        assert!(up_entry(w, thing, 0, true, &sraw));
-    });
-    let Ok(Msg::Up(body)) = Msg::decode(&up) else { panic!("an up batch") };
-    let mut r = UpReader::new(body).expect("a batch");
-    assert_eq!(r.stamp(), 5_000_000);
-    let e = r.next().expect("ok").expect("an entry");
-    assert!(e.whose == Whose::Own && e.sub == 0 && !e.held && e.raw == &praw[..]);
-    let e = r.next().expect("ok").expect("an entry");
-    assert!(e.whose == thing && e.sub == 1 && e.raw == &jraw[..]);
-    let e = r.next().expect("ok").expect("an entry");
-    assert!(e.whose == thing && e.sub == 0 && e.held && e.raw == &sraw[..]);
-    assert!(r.next().expect("ok").is_none());
-    // The server reads none of it: whatever the bytes are, they come out as they went in.
-    let odd = written(|w| {
-        begin_up(w, 1);
-        up_entry(w, Whose::Thing(u64::MAX), 3, false, &[0xff; 9]);
-    });
-    let e = UpReader::new(&odd[1..]).expect("a batch").next().expect("ok").expect("an entry");
-    assert!(e.whose == Whose::Thing(u64::MAX) && e.sub == 3 && e.raw == [0xff; 9]);
-    // A state longer than any of ours is refused, however long the message says it is.
-    let long = written(|w| {
-        begin_up(w, 1);
-        w.u8(0);
-        w.var(5000);
-    });
-    assert!(UpReader::new(&long[1..]).expect("a batch").next().is_err());
-
-    let down = written(|w| {
-        let mut d = DownWriter::begin(w, 9_000_000);
-        assert!(d.entry(w, Whose::Own, 0, 7, 8_950_000, false, &praw));
-        assert!(d.entry(w, thing, 1, 0, 8_950_000, false, &jraw));
-        assert!(d.entry(w, thing, 0, 0, 8_950_000, true, &sraw));
-        assert!(d.entry(w, Whose::Own, 0, 8, 8_990_000, false, &praw));
-        // A moment a little later than the batch itself: a sender whose clock runs ahead.
-        assert!(d.entry(w, Whose::Own, 0, 9, 9_000_500, false, &praw));
-    });
-    // The entries that share the moment of the one before them spend no bytes saying it.
-    assert_eq!(down.len(), 1 + 4 + (1 + 3 + 1 + 1 + praw.len()) + (1 + 1 + 1 + jraw.len()) + (1 + 1 + 1 + sraw.len()) + (1 + 3 + 1 + 1 + praw.len()) + (1 + 2 + 1 + 1 + praw.len()));
-    let Ok(Msg::Down(body)) = Msg::decode(&down) else { panic!("a down batch") };
-    let mut r = DownReader::new(body).expect("a batch");
-    assert_eq!(r.base(), 9_000_000);
-    let mut seen = Vec::new();
-    while let Some(e) = r.next().expect("ok") {
-        seen.push((e.source, e.sub, e.stamp, e.held, e.raw.len()));
-    }
-    let k = Source::Thing(key::thing(2));
-    assert_eq!(
-        seen,
-        [(Source::Player(7), 0, 8_950_000, false, praw.len()), (k, 1, 8_950_000, false, jraw.len()), (k, 0, 8_950_000, true, sraw.len()), (Source::Player(8), 0, 8_990_000, false, praw.len()), (Source::Player(9), 0, 9_000_500, false, praw.len())]
-    );
-
-    // A full message refuses the entry and stays whole.
-    let mut small = [0u8; 40];
-    let mut w = Writer::new(&mut small);
-    let mut d = DownWriter::begin(&mut w, 9_000_000);
-    assert!(d.entry(&mut w, Whose::Own, 0, 7, 9_000_000, false, &praw));
-    let len = w.len();
-    assert!(!d.entry(&mut w, thing, 0, 0, 9_000_000, false, &sraw));
-    assert_eq!((w.len(), w.ok()), (len, true));
-}
-
-#[test]
 fn bundles_hold_messages_in_order() {
-    let msgs = [written(|w| Msg::Joined { id: 1, name: "a" }.encode(w)), written(|w| Msg::Owner { key: 0, player: Some(1) }.encode(w)), written(|w| Msg::Synced.encode(w))];
+    let msgs = [written(|w| Msg::Joined { id: 1, name: "a" }.encode(w)), written(|w| Msg::Left { id: 1 }.encode(w)), written(|w| Msg::Synced.encode(w))];
     let mut bundle = Bundle::begin();
     msgs.iter().for_each(|m| Bundle::push(&mut bundle, m));
     let Ok(Msg::Bundle(body)) = Msg::decode(&bundle) else { panic!("a bundle") };
@@ -527,12 +426,6 @@ fn feed_everything(bytes: &[u8], channel: &mut Channel, inbox: &mut Inbox, scrat
         Bundle::new(body).for_each(drop);
     }
     Bundle::new(bytes).for_each(drop);
-    if let Ok(mut up) = UpReader::new(bytes) {
-        while let Ok(Some(_)) = up.next() {}
-    }
-    if let Ok(mut down) = DownReader::new(bytes) {
-        while let Ok(Some(_)) = down.next() {}
-    }
     inbox.clear();
     let _ = channel.receive(bytes, 1.0, inbox);
     for (_, msg) in inbox.iter() {
@@ -568,26 +461,15 @@ fn real_messages_cut_or_flipped_never_panic() {
     let player = written(|w| PlayerState { ride: Some(1), seat: Some((1, 0)), tool: 2, head: [0.1, 0.2], body: 3, push: Vec3::Y, work: Some((4, Vec3::ONE)), gesture: 3, ..walker(1.0) }.encode(w));
     let mut hello = [0u8; 400];
     let n = Datagram::Hello { version: VERSION, salt: 1, cookie: 9, scenario: 4, build: "V36", name: "Añil" }.encode(&mut hello);
-    let thing = Whose::Thing(key::thing(4));
     let samples: Vec<Vec<u8>> = vec![
         state.clone(),
         joints.clone(),
+        rigid.clone(),
         player.clone(),
         hello[..n].to_vec(),
-        written(|w| Msg::Told { by: 2, data: &state }.encode(w)),
-        written(|w| Msg::Owner { key: key::seat(3, 2), player: Some(2) }.encode(w)),
-        written(|w| {
-            let mut d = DownWriter::begin(w, 9_000_000);
-            d.entry(w, Whose::Own, 0, 7, 8_950_000, false, &player);
-            d.entry(w, thing, 1, 0, 8_950_000, false, &joints);
-            d.entry(w, thing, 0, 0, 8_950_000, true, &rigid);
-        }),
-        written(|w| {
-            begin_up(w, 1);
-            up_entry(w, Whose::Own, 0, false, &player);
-            up_entry(w, thing, 1, false, &joints);
-            up_entry(w, thing, 0, false, &rigid);
-        }),
+        written(|w| Msg::Game(&state).encode(w)),
+        written(|w| Msg::Said { from: Some(2), text: "hola" }.encode(w)),
+        written(|w| Msg::Joined { id: 3, name: "Añil" }.encode(w)),
     ];
     let (mut inbox, mut scratch) = (Inbox::new(), RigidState::default());
     let mut channel = Channel::new(0.0, 4);
