@@ -15,6 +15,12 @@
 //!
 //! The same rule for every kind of thing that will be (ships, pieces, crates, asteroids): it only
 //! asks where a thing is, how big it is and how it moves.
+//!
+//! With many things, they are put once a step in an `Index` that every player's interest asks
+//! (`Interest::update_in`): what is small and slow in cells, where a player looks only at the 27
+//! round it (what is farther cannot be near enough nor come so within the horizon); what is big or
+//! fast in a list everyone looks at; and a player who goes fast looks at everything. It knows the
+//! same as looking at everything (`tests`).
 use glam::DVec3;
 use lunar_core::structure::set::Structures;
 
@@ -46,6 +52,93 @@ impl Rule {
     }
 }
 
+/// With fewer structures than this, every player looks at all of them (cheaper than the cells).
+pub const INDEX_FROM: usize = 256;
+
+/// Where every structure is, once a step, for every player's interest to ask.
+#[derive(Clone, Debug, Default)]
+pub struct Index {
+    /// Side of a cell (m), and the eye's own speed up to which a player may look in cells only.
+    cell: f64,
+    slow: f64,
+    /// What is small and slow, by cell (its cell's key, its place in the structures).
+    small: Vec<(u64, u32)>,
+    /// What is big or fast: everyone looks at it.
+    big: Vec<u32>,
+    /// Of each structure (by its place): its centre (world) and how near it is known from.
+    at: Vec<(DVec3, f64)>,
+    /// In use (enough structures for it to pay).
+    built: bool,
+}
+
+/// A cell's key: a number for each cell, the same wherever it is asked for (two cells may share
+/// one: what is in the other is looked at too, and found not near).
+fn cell_key(p: DVec3, cell: f64) -> u64 {
+    let c = (p / cell).floor();
+    key3(c.x as i64, c.y as i64, c.z as i64)
+}
+
+fn key3(x: i64, y: i64, z: i64) -> u64 {
+    let mut h = (x as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ (y as u64).wrapping_mul(0xC2B2_AE3D_27D4_EB4F) ^ (z as u64).wrapping_mul(0x1656_67B1_9E37_79F9);
+    h ^= h >> 31;
+    h.wrapping_mul(0xBF58_476D_1CE4_E5B9)
+}
+
+impl Index {
+    /// Every structure of `set` put where it is, by `rule`.
+    pub fn build(&mut self, rule: &Rule, set: &Structures) {
+        // (cells twice the reach of the smallest; of each cell's side, what the eye itself may
+        // go over the horizon is kept aside)
+        self.cell = rule.near * 2.0;
+        let margin = rule.near * 0.5;
+        self.slow = margin / rule.horizon.max(1e-9);
+        (self.small.clear(), self.big.clear(), self.at.clear());
+        self.built = set.list.len() >= INDEX_FROM;
+        for (i, s) in set.list.iter().enumerate() {
+            let at = s.to_world(s.center);
+            let reach = rule.reach(f64::from(s.radius));
+            self.at.push((at, reach));
+            if !self.built {
+                continue;
+            }
+            if reach + s.vel.length() * rule.horizon <= self.cell - margin {
+                self.small.push((cell_key(at, self.cell), i as u32));
+            } else {
+                self.big.push(i as u32);
+            }
+        }
+        self.small.sort_unstable();
+    }
+
+    /// The places of the structures `eye` going at `vel` may come to know: all of them, or what
+    /// is big or fast and what is in the cells round it.
+    fn each(&self, eye: DVec3, vel: DVec3, n: usize, keys: &mut Vec<u64>, mut f: impl FnMut(usize)) {
+        if !self.built || vel.length() > self.slow {
+            (0..n).for_each(f);
+            return;
+        }
+        self.big.iter().for_each(|&i| f(i as usize));
+        let c = (eye / self.cell).floor();
+        let (x, y, z) = (c.x as i64, c.y as i64, c.z as i64);
+        keys.clear();
+        for dx in -1..=1 {
+            for dy in -1..=1 {
+                for dz in -1..=1 {
+                    keys.push(key3(x + dx, y + dy, z + dz));
+                }
+            }
+        }
+        keys.sort_unstable();
+        keys.dedup();
+        for &k in keys.iter() {
+            let from = self.small.partition_point(|e| e.0 < k);
+            for e in self.small[from..].iter().take_while(|e| e.0 == k) {
+                f(e.1 as usize);
+            }
+        }
+    }
+}
+
 /// A structure known by one player.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Known {
@@ -63,8 +156,9 @@ pub struct Known {
 #[derive(Clone, Debug, Default)]
 pub struct Interest {
     pub known: Vec<Known>,
-    /// (reused) what a snapshot takes, by priority.
+    /// (reused) what a snapshot takes, by priority; the cells round the eye.
     order: Vec<(f32, u32)>,
+    keys: Vec<u64>,
 }
 
 impl Interest {
@@ -175,6 +269,66 @@ impl Interest {
         self.order.sort_unstable_by(|a, b| b.0.total_cmp(&a.0));
         out.clear();
         out.extend(self.order.iter().map(|o| o.1 as usize));
+    }
+
+    /// The same as `update`, asking `index` (made of `set` this step, `Index::build`) instead of
+    /// looking at every structure: what is known and what comes and goes is the same.
+    #[allow(clippy::too_many_arguments)]
+    pub fn update_in(&mut self, rule: &Rule, set: &Structures, index: &Index, eye: DVec3, vel: DVec3, pinned: &[u64], dt: f32, came: &mut Vec<u64>, went: &mut Vec<u64>) {
+        let mut k = 0;
+        while k < self.known.len() {
+            if set.index_of(self.known[k].id).is_none() {
+                went.push(self.known[k].id);
+                self.known.remove(k);
+            } else {
+                k += 1;
+            }
+        }
+        let near = |i: usize| {
+            let s = &set.list[i];
+            let (at, reach) = index.at[i];
+            let d = at.distance(eye);
+            let rel = s.vel - vel;
+            let to = at - eye;
+            let t = (-to.dot(rel) / rel.length_squared().max(1e-9)).clamp(0.0, rule.horizon);
+            (pinned.contains(&s.id) || d < reach || (to + rel * t).length() < reach, d < reach * rule.keep)
+        };
+        // (what is known: still near, or for how long not)
+        for kn in &mut self.known {
+            let Some(i) = set.index_of(kn.id) else { continue };
+            let (near, kept) = near(i);
+            if near || kept {
+                kn.out = 0.0;
+            } else {
+                kn.out += dt;
+                if kn.out > rule.linger {
+                    went.push(kn.id);
+                }
+            }
+        }
+        // (what comes: of what may)
+        let from = came.len();
+        let known = &self.known;
+        index.each(eye, vel, set.list.len(), &mut self.keys, |i| {
+            let id = set.list[i].id;
+            if known.binary_search_by_key(&id, |k| k.id).is_err() && near(i).0 {
+                came.push(id);
+            }
+        });
+        for &id in pinned {
+            if set.index_of(id).is_some() && self.known.binary_search_by_key(&id, |k| k.id).is_err() && !came[from..].contains(&id) {
+                came.push(id);
+            }
+        }
+        if !went.is_empty() {
+            self.known.retain(|k| !went.contains(&k.id));
+        }
+        for &id in &came[from..] {
+            if let Err(i) = self.known.binary_search_by_key(&id, |k| k.id) {
+                let resting = set.get(id).is_some_and(|s| s.resting);
+                self.known.insert(i, Known { id, out: 0.0, prio: f32::MAX, resting, rest_told: 0 });
+            }
+        }
     }
 
     /// Known thing `i` went in a snapshot.

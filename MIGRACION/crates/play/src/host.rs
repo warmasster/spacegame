@@ -24,7 +24,7 @@ use crate::{
     builds::Strike,
     controls, follow,
     game::{Game, Player, STEP, Say},
-    interest::{Interest, Rule},
+    interest::{Index, Interest, Rule},
     net::{self, ACT, Act, CMDS, Check, Cmd, Event, Snap},
     pilot::Summary,
     seats::{self, Drive},
@@ -274,6 +274,8 @@ pub struct Host {
     /// What a player let fly by their hand: our number for it, who, theirs, and when (what is
     /// told of it goes to them by their number: `blasts::OWN`).
     own: Vec<(u32, u32, u32, u64)>,
+    /// Where every structure is this step, for every player's interest to ask.
+    index: Index,
     /// (reused)
     mine: Vec<(told::From, Seen)>,
     /// What the keys are made with (a secret of this run), and the id the next body left waiting
@@ -314,6 +316,7 @@ impl Host {
             pinned: Vec::new(),
             check_turn: 0,
             own: Vec::new(),
+            index: Index::default(),
             mine: Vec::new(),
             keys: std::hash::RandomState::new(),
             next_lost: u32::MAX,
@@ -1046,6 +1049,8 @@ impl Host {
             pins.extend(p.pilot.seat.map(|s| s.structure));
             pins.extend(peer.beside);
         }
+        self.index.build(&rule, set);
+        let index = &self.index;
         let players = &self.players;
         let pinned = &self.pinned;
         let scenario_end = self.game.builds.scenario_end;
@@ -1058,7 +1063,7 @@ impl Host {
                 return;
             }
             let from = peer.came.len();
-            peer.interest.update(&rule, set, p.position, p.velocity_in(set), &pinned[k], dt, &mut peer.came, &mut peer.went);
+            peer.interest.update_in(&rule, set, index, p.position, p.velocity_in(set), &pinned[k], dt, &mut peer.came, &mut peer.went);
             peer.interest.owe(set, p.position, &pinned[k], dt);
             peer.rested.clear();
             peer.interest.rests(set, &mut peer.rested);

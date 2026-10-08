@@ -728,10 +728,9 @@ silueta lejana, oclusión. Falta:
   «salir», pero no si se cierra la ventana de la consola o con Ctrl+C (no hay manejador de señales):
   se pierde lo de desde el último guardado. Y lo que vuela en el momento de guardar (balas, misiles)
   no se guarda.
-- [ ] (2026-10-08) Servidor autoritativo: quien entra recibe lo que tiene cerca a medida que su
-  interés lo va conociendo, en los pasos que tarde; falta la puesta al día por prioridad (lo cercano
-  primero, en pocos mensajes grandes) con la pantalla de carga hasta tenerlo todo, y la prueba de
-  entrar con 100 trozos, 6 naves y 10 jugadores con 10 % de pérdidas en menos de 2 s.
+- [ ] (2026-10-08) Servidor autoritativo: quien entra juega mientras le llega lo de alrededor (con
+  10 jugadores, 6 naves, 100 estructuras y 10 % de pérdidas: a 1,2 s juega y ya lo tiene todo); falta
+  la pantalla de carga que espere a tenerlo para un mundo mucho más grande.
 - [ ] (2026-10-07) Servidor autoritativo: tras una corrección el cuerpo se vuelve a dar contra el
   mundo como está ahora (`Game::step_alone`), no como estaba en cada paso repetido: junto a piezas
   de una nave que se mueven (sus huesos) salen 2–3 correcciones más al aterrizar. El plan (§3.3)

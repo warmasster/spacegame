@@ -45,9 +45,12 @@ código muerto).
   segundo: emparejar por índice (las estructuras están en orden de id) con un búfer reutilizado.
 - **B · Pendiente:** `lunar_net::Server` copia cada mensaje del juego que llega (`GameIn::data`,
   un `Vec` por datagrama: 60 por segundo y jugador). Un banco de búferes que vuelvan.
-- **B · Pendiente:** el interés recorre todas las estructuras por jugador y paso (fuerza bruta). Con
-  16 jugadores y mil cosas son 16 000 distancias por paso (decenas de µs); con decenas de miles,
-  una rejilla (la de la física) y actualizar cada jugador cada 4 pasos, escalonado.
+- ~~**B · El interés recorre todas las estructuras por jugador y paso (fuerza bruta)**~~ (2026-10-08):
+  `interest::Index`, una vez por paso para todos: lo pequeño y lento en celdas (cada jugador mira
+  las 27 que lo rodean), lo grande o rápido aparte, y la posición y el alcance de cada estructura
+  calculados una vez y no por jugador. Medido (`tests/interest.rs`, 6 000 estructuras, 16
+  jugadores, un cuarto a velocidad orbital): de 3,5 a 1,7 ms por paso, sabiendo lo mismo. Queda:
+  quien va deprisa sigue mirándolo todo (con muchos así, celdas a su escala o mirar cada 4 pasos).
 - **C · Pendiente:** `sync::Digest::of` reserva una lista por máquina; va una vez por paso (la nave
   del turno) en el servidor y una por instantánea en el cliente.
 - **Medido:** `Pilot::body` reservaba una lista por jugador y paso: ahora `body_into` sobre la de

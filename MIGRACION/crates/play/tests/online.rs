@@ -1003,10 +1003,15 @@ fn a_ships_gun_fired_from_its_seat_fires_in_the_server_and_everyone_sees_it() {
         keys.iter().position(|k| k.key == "disparar").expect("a key to fire")
     };
     let before = (t.host.game.blasts.started, t.seats[0].game.blasts.started, t.seats[1].game.blasts.started);
+    let sent = t.host.stats.snap_bytes + t.host.stats.event_bytes;
     for frame in 0..120 {
         t.seats[0].online.keys = if frame < 60 { 1 << k } else { 0 };
         t.frame(1.0 / 60.0, |_, _, _| {});
     }
+    // (what the fight costs on the wire: a second of fire and one after, to each of the two)
+    let per_player = (t.host.stats.snap_bytes + t.host.stats.event_bytes - sent) as f64 / 2.0 / 2.0;
+    println!("in the fight, each player is sent {:.1} kB/s", per_player / 1000.0);
+    assert!(per_player < 64_000.0, "{per_player} B/s each");
     t.run(1.0, 60.0, |_, _, _| {});
     let fired = t.host.game.blasts.started - before.0;
     let (pilot, watcher) = (t.seats[0].game.blasts.started - before.1, t.seats[1].game.blasts.started - before.2);
@@ -1215,4 +1220,61 @@ fn the_pilot_hands_over_at_orbital_speed_and_the_ship_goes_on_without_a_jerk() {
     // (getting up where the other stands: each game puts them by where it has the other, a
     // moment old; a few, and only then)
     assert!(fixes.iter().all(|f| *f <= 5), "put right {fixes:?}");
+}
+
+#[test]
+fn one_who_comes_into_a_busy_game_on_a_bad_network_plays_at_once_and_soon_has_it_all() {
+    // ten playing, six ships and a hundred structures loose round the site, ten in a hundred
+    // datagrams lost: one more comes in. They play within two seconds, and have everything near
+    // them as the server has it soon after
+    let cond = Conditions { delay: 0.05, jitter: 0.01, loss: 0.1, ..Conditions::default() };
+    let mut t = Table::new(10, 101, cond);
+    {
+        let g = &mut t.host.game;
+        let b = g.bodies.get(g.site.body);
+        for k in 0..6 {
+            let a = k as f64 / 6.0 * std::f64::consts::TAU;
+            let up = g.site.at(220.0 * a.cos(), 220.0 * a.sin());
+            g.ships.spawn_free(&mut g.builds, ["alcotan", "abejorro", "azor"][k % 3], b.above_ground(up, 6.0), Quat::from_rotation_arc(glam::Vec3::Y, up.as_vec3())).unwrap();
+        }
+        for k in 0..100 {
+            let (e, n) = ((k % 10) as f64 * 60.0 - 270.0, (k / 10) as f64 * 60.0 - 270.0);
+            let up = g.site.at(e, n);
+            let id = g.builds.set.spawn("torre", b.above_ground(up, 0.0), Quat::from_rotation_arc(glam::Vec3::Y, up.as_vec3())).unwrap();
+            let i = g.builds.set.index_of(id).unwrap();
+            g.builds.set.list[i].anchored = true;
+        }
+    }
+    t.run(2.0, 60.0, |k, me, n| {
+        if k % 2 == 0 {
+            walk(me, n + k as u64 * 50)
+        }
+    });
+    let began = t.now;
+    let late = t.join("tarde");
+    let playing = t.now - began;
+    // (everything near them, as the server has it)
+    let near: Vec<u64> = {
+        let you = t.seats[late].online.you.unwrap();
+        let eye = t.host.player(you).unwrap().pilot.position;
+        let rule = t.host.config.rule;
+        t.host.game.builds.set.list.iter().filter(|s| s.id >= t.host.game.builds.scenario_end && s.to_world(s.center).distance(eye) < rule.reach(f64::from(s.radius))).map(|s| s.id).collect()
+    };
+    let mut all = None;
+    for f in 0..600 {
+        t.frame(1.0 / 60.0, |k, me, n| {
+            if k % 2 == 0 {
+                walk(me, n + k as u64 * 50)
+            }
+        });
+        if near.iter().all(|id| t.seats[late].game.builds.set.get(*id).is_some()) {
+            all = Some(f as f64 / 60.0);
+            break;
+        }
+    }
+    let all = all.unwrap_or_else(|| panic!("the one who came never had it all: {} of {} ({:?})", near.iter().filter(|id| t.seats[late].game.builds.set.get(**id).is_some()).count(), near.len(), t.seats[late].online.stats));
+    println!("came into a game of 10 with {} structures near (10 % lost): playing in {playing:.2} s, everything near {all:.2} s later", near.len());
+    assert!(near.len() >= 100, "the scene is wrong: {} near", near.len());
+    assert!(playing < 2.0, "it took {playing:.2} s to play");
+    assert!(all < 2.0, "and {all:.2} s more to have everything near");
 }
