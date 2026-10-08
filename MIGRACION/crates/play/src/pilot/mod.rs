@@ -34,7 +34,7 @@ use lunar_core::{
     scenario::PlayerDef,
     scene::Site,
     structure::{
-        schedule::Among,
+        schedule::{Among, coasted},
         set::{Contact, Structures},
         state::Structure,
         weight,
@@ -289,12 +289,26 @@ impl Pilot {
     }
 
     /// Standing with the feet at `at` of structure `id` (its frame), the way up the one we
-    /// weigh by there, and still to it however it goes.
+    /// weigh by there, and still to it however it goes: aboard it if that is in its rooms. It is
+    /// taken as it is at the world's moment: one stepped now and then, or asleep, is on along its
+    /// path from where it was last stepped (`coasted`; else, at orbital speed, hundreds of metres
+    /// behind it), and is caught up there as whoever is aboard wakes it.
     pub fn put_on(&mut self, set: &Structures, id: u64, at: Vec3) {
         let Some(s) = set.get(id) else { return };
-        let feet = s.to_world(at);
-        self.put(feet, self.up_aboard(s, feet));
-        self.still_to(set, id);
+        let (pos, vel, rot) = coasted(s, self.bodies.field(s.pos).pull, set.now - s.clock);
+        // (the way up as it is in its own frame where it was last stepped, turned as it is now)
+        let up = (rot * s.rot.inverse()).as_dquat() * self.up_aboard(s, s.to_world(at));
+        self.put(pos + (rot * at).as_dvec3(), up);
+        // (aboard, how we go is how we go in it: still; beside it, as fast as it goes there)
+        let local = rot.inverse() * (self.position - pos).as_vec3();
+        if s.in_rooms(local) {
+            self.ride = Some(Ride { id, local, rot });
+            return;
+        }
+        let com = pos + (rot * s.com).as_dvec3();
+        let v = vel + s.spin.cross((self.position - com).as_vec3()).as_dvec3();
+        (self.vertical_velocity, self.drift) = (v.dot(up), v - up * v.dot(up));
+        self.hold = Hold::Beside { id, vel, gains: DVec3::ZERO };
     }
 
     /// Still to structure `id` where we are (set there by a script, by a ship under way): as

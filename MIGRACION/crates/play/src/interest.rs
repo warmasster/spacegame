@@ -24,6 +24,12 @@
 use glam::DVec3;
 use lunar_core::structure::set::Structures;
 
+/// How far what is known only from afar reaches (m): ships past what is known of them in full,
+/// and players past what a snapshot carries (`net::Far`): a radar's reach and some.
+pub const TRACK_REACH: f64 = 150_000.0;
+/// Steps between two words of what is known from afar (5 a second).
+pub const TRACK_EVERY: u64 = 12;
+
 #[derive(Clone, Copy, Debug)]
 pub struct Rule {
     /// Known within this (m), plus this for each metre of its radius, and never farther than `most`.

@@ -944,7 +944,8 @@ impl State {
             b.t += dt;
             b.view()
         } else {
-            if self.start.is_some() {
+            // (nor while the world round us is still coming from the server: a loading screen)
+            if self.start.is_some() || self.online.as_ref().is_some_and(|o| o.live() && !o.ready) {
                 input = Input::default();
             }
             // what the keys ask of the player: the game's steps take it (`Game::tick`: the air's
@@ -1632,6 +1633,25 @@ impl State {
                     self.ui.hud.tags.push(([(x * 0.5 + 0.5) as f32, (0.5 - y * 0.5) as f32], name.to_string(), (1.0 - (depth - 40.0) / 80.0).clamp(0.15, 1.0) as f32));
                 }
             }
+            // (what is known only from afar: a ship past what we know of it in full, a player past
+            // what we are told of them: its name and how far, where it is in the sky)
+            for (what, at) in o.far_now(self.game.step) {
+                let rel = at - view.eye;
+                let depth = rel.dot(view.forward);
+                if depth < 1.0 {
+                    continue;
+                }
+                let (x, y) = (rel.dot(right) / (depth * tan * aspect), rel.dot(up) / (depth * tan));
+                if x.abs() >= 1.0 || y.abs() >= 1.0 {
+                    continue;
+                }
+                let name = match what {
+                    lunar_play::net::FarWhat::Ship { kind, .. } => self.game.ships.kinds.get(usize::from(kind)).map_or("nave", |k| k.def.nombre.as_str()).to_string(),
+                    lunar_play::net::FarWhat::Player(id) => o.client.name(id).unwrap_or("jugador").to_string(),
+                };
+                let km = format!("{:.1}", rel.length() / 1000.0).replace('.', ",");
+                self.ui.hud.tags.push(([(x * 0.5 + 0.5) as f32, (0.5 - y * 0.5) as f32], format!("{name} · {km} km"), 0.5));
+            }
         }
         self.ui.panels = self.spawner.open || self.inspector.open || self.editor.open || self.start.is_some();
         self.ui.at_start = self.start.is_some();
@@ -1670,7 +1690,11 @@ impl State {
                 None => self.online.as_ref().map(|o| online_status(o).0),
             };
             let mut chosen = None;
+            let loading = self.online.as_ref().filter(|o| o.live() && !o.ready).map(|o| o.stats.made);
             let frame = self.ui.frame(&self.window, &info, |ctx| {
+                if let Some(n) = loading {
+                    crate::hud::loading(ctx, n);
+                }
                 if let Some(st) = start.as_mut().filter(|_| !menu_open) {
                     chosen = st.draw(ctx, crate::BUILD, adapter, net.as_deref());
                 }
@@ -2100,6 +2124,7 @@ fn online_status(o: &lunar_play::online::Online) -> (String, u8) {
     match o.status() {
         lunar_net::Status::Connecting => ("conectando…".to_string(), 1),
         lunar_net::Status::Connected { .. } if !o.live() => ("entrando en la partida…".to_string(), 1),
+        lunar_net::Status::Connected { .. } if !o.ready => (format!("cargando lo de alrededor… ({} recibido)", o.stats.made), 1),
         lunar_net::Status::Connected { players, ping_ms, .. } => {
             let st = o.stats;
             (format!("{} · {ping_ms:.0} ms · {} correcciones", if players == 1 { "1 jugador".to_string() } else { format!("{players} jugadores") }, st.corrections), u8::from(ping_ms > 200.0))

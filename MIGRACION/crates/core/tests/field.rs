@@ -218,8 +218,8 @@ fn a_sleeper_catches_up_as_it_is_pulled_where_it_is() {
             assert!((fell - want).abs() < 1e-9 + 1e-9 * want, "{} a {alt:.0} m: cae {fell:.4} m, serían {want:.4}", b.name);
         }
     }
-    // and through the world's own clock: far from every watcher it sleeps, and woken it is where
-    // free flight under the pull of where it was would have taken it
+    // and through the world's own clock: far from every watcher it sleeps, going on along its fall
+    // a second at a time, and woken it is where free flight would have taken it
     let b = bodies.get(1);
     let dir = clear_of_the_rest(&bodies, 1);
     let mut set = structures();
@@ -231,13 +231,60 @@ fn a_sleeper_catches_up_as_it_is_pulled_where_it_is() {
         now += 0.5;
         set.simulate(now, 0.5, &bodies, &DistancePolicy::default(), &far);
     }
-    assert!(set.list[k].pos == from, "dormida y se mueve");
+    assert!(set.list[k].clock == now && set.list[k].pos != from, "dormida, no sigue su caída (reloj {})", set.list[k].clock);
     now += 1.0 / 60.0;
     set.simulate(now, 1.0 / 60.0, &bodies, &DistancePolicy::default(), &[from]);
     let fell = (from - set.list[k].pos).dot(dir);
     let g = bodies.field(from).g();
     eprintln!("dormida 2 s junto a la luna menor y despertada: ha caído {fell:.3} m (g = {g:.3})");
     assert!((fell - 0.5 * g * now * now).abs() < 0.05 * g * now * now, "al despertar ha caído {fell:.3} m");
+}
+
+#[test]
+fn an_orbit_slept_through_stays_an_orbit_and_a_fall_is_woken_before_the_ground() {
+    // round each body where its pull is whole, nobody near for three hours: it goes on along its
+    // orbit (where its pull is each second, not where it fell asleep), its height and speed as
+    // they were. And one falling to the ground from as high: woken short of it, never under it
+    let bodies = bodies();
+    for body in 0..3u16 {
+        let b = bodies.get(body);
+        let dir = clear_of_the_rest(&bodies, body);
+        let alt = b.whole_to() * 0.5;
+        let r = b.radius + alt;
+        let speed = (b.own_pull(alt) * r).sqrt();
+        let mut set = structures();
+        let k = block(&mut set, b.center + dir * r);
+        set.list[k].vel = dir.any_orthonormal_vector() * speed;
+        let far = [b.center - dir * 1.0e9];
+        let (mut now, mut low, mut high) = (0.0, f64::MAX, 0.0f64);
+        for _ in 0..3 * 3600 {
+            now += 1.0;
+            set.simulate(now, 1.0, &bodies, &DistancePolicy::default(), &far);
+            let s = &set.list[k];
+            let h = (s.to_world(s.com) - b.center).length();
+            (low, high) = (low.min(h), high.max(h));
+        }
+        let s = &set.list[k];
+        eprintln!("{}: órbita a {alt:.0} m, 3 h dormida: entre {:.1} y {:.1} m del radio, a {:.3} m/s de su velocidad", b.name, low - r, high - r, s.vel.length() - speed);
+        assert!(s.awake_until <= now, "{}: se despertó", b.name);
+        assert!(high - low < 1e-4 * r, "{}: la órbita no es la que era: de {low:.0} a {high:.0} m", b.name);
+        assert!((s.vel.length() - speed).abs() < 1e-3 * speed, "{}: va a {:.2} m/s, iba a {speed:.2}", b.name, s.vel.length());
+        // (falling straight down at a few hundred metres a second)
+        let mut set = structures();
+        let k = block(&mut set, b.center + dir * r);
+        set.list[k].vel = -dir * 300.0;
+        let mut now = 0.0;
+        while set.list[k].awake_until <= now && now < 3600.0 {
+            now += 1.0;
+            set.simulate(now, 1.0, &bodies, &DistancePolicy::default(), &far);
+            let s = &set.list[k];
+            assert!(b.altitude(s.to_world(s.com)) > 0.0, "{}: bajo el suelo a los {now} s", b.name);
+        }
+        let s = &set.list[k];
+        let above = b.altitude(s.to_world(s.com));
+        eprintln!("{}: cayendo desde {alt:.0} m, despierta a {above:.0} m del suelo a {:.0} m/s", b.name, s.vel.length());
+        assert!(s.awake_until > now && above > 0.0 && above < s.vel.length() * 3.0 + 1000.0, "{}: despierta a {above:.0} m", b.name);
+    }
 }
 
 #[test]

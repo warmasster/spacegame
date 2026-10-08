@@ -28,12 +28,13 @@ pub const CMDS: u8 = 1;
 pub const ACT: u8 = 2;
 pub const SNAP: u8 = 3;
 pub const EVENTS: u8 = 4;
+pub const TRACKS: u8 = 5;
 
 /// What a player's game says it is in its hello to a server that has the game (and the
 /// fingerprint of its data, `defs::fingerprint`, as the scenario): the server lets in only its own.
 /// After the `+`, the version of what they say to each other here: a new event, act or field is
 /// a new one.
-pub const BUILD: &str = "V41+p5";
+pub const BUILD: &str = "V41+p7";
 
 /// The commands a `CMDS` message repeats (one lost datagram, or three, loses nothing).
 pub const REPEAT: usize = 4;
@@ -546,6 +547,77 @@ pub struct Snap {
     pub things: Vec<RigidState>,
 }
 
+/// What is known of something only from afar (`docs/PLAN_AUTORITATIVO.md` §3.6, the track level):
+/// a ship or a player past what a player knows in full, out to `interest::TRACK_REACH`: where it
+/// is and how it goes, a few times a second; a dot in the sky, a name, a blip.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Far {
+    pub what: FarWhat,
+    pub pos: DVec3,
+    pub vel: Vec3,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FarWhat {
+    /// A ship: its structure's id and its kind (its place among the data's ship kinds).
+    Ship { id: u64, kind: u16 },
+    /// A player, by their id on the network.
+    Player(u32),
+}
+
+/// What is known from afar at the end of step `step` into `out` (as much of `list` as fits in
+/// `room` bytes, in its order; where each is, from `from`, to the centimetre): how many went.
+pub fn write_tracks(step: u64, from: DVec3, list: &[Far], room: usize, out: &mut Vec<u8>) -> usize {
+    let mut n = 0;
+    framed(out, room, |w| {
+        w.u8(TRACKS);
+        w.var(step);
+        from.to_array().iter().for_each(|x| w.f64(*x));
+        for f in list {
+            let before = w.mark();
+            match f.what {
+                FarWhat::Ship { id, kind } => {
+                    w.u8(0);
+                    w.var(id);
+                    w.u16(kind);
+                }
+                FarWhat::Player(id) => {
+                    w.u8(1);
+                    w.var(u64::from(id));
+                }
+            }
+            w.vec3((f.pos - from).as_vec3());
+            w.vec3(f.vel);
+            if !w.ok() {
+                w.rewind(before);
+                break;
+            }
+            n += 1;
+        }
+    });
+    n
+}
+
+/// What `write_tracks` wrote, after its kind byte, into `out` (emptied first): its step.
+pub fn read_tracks(r: &mut Reader, out: &mut Vec<Far>) -> Wire<u64> {
+    out.clear();
+    let step = r.var()?;
+    let from = DVec3::new(r.f64()?, r.f64()?, r.f64()?);
+    while !r.is_empty() {
+        if out.len() >= 1024 {
+            return Err(WireError::Long);
+        }
+        let what = match r.u8()? {
+            0 => FarWhat::Ship { id: r.var()?, kind: r.u16()? },
+            1 => FarWhat::Player(r.var32()?),
+            _ => return Err(WireError::Value),
+        };
+        let pos = from + r.vec3()?.as_dvec3();
+        out.push(Far { what, pos, vel: r.vec3()? });
+    }
+    Ok(step)
+}
+
 /// A snapshot into `out` (as much of it as fits in `room` bytes: what is left out goes next time).
 pub fn write_snap(s: &Snap, room: usize, out: &mut Vec<u8>) -> usize {
     let mut things = 0;
@@ -727,6 +799,9 @@ pub enum Event {
     /// What you let fly as your `tag` was not let fly here (not what your hands carry, or not
     /// yet): gone from your game, as if it never was.
     Unfired { tag: u32 },
+    /// All there was round you when you came in has been told (it comes after it): from here on
+    /// the world is all there (what a game shows while it waits for this, `Online::ready`).
+    Ready,
 }
 
 fn write_held(w: &mut Writer, h: &Option<Held>) {
@@ -958,6 +1033,7 @@ fn write_event(w: &mut Writer, e: &Event) {
             w.u8(19);
             w.u32(*tag);
         }
+        Event::Ready => w.u8(20),
         Event::Rest { id, pos, rot } => {
             w.u8(15);
             w.var(*id);
@@ -1049,6 +1125,7 @@ pub fn read_event(r: &mut Reader) -> Wire<Event> {
         17 => Event::Back { step: r.var()?, state: read_blob(r)? },
         18 => Event::Unheld,
         19 => Event::Unfired { tag: r.u32()? },
+        20 => Event::Ready,
         _ => return Err(WireError::Value),
     })
 }
@@ -1149,6 +1226,7 @@ mod tests {
             Event::Back { step: 97, state: vec![4, 5] },
             Event::Unheld,
             Event::Unfired { tag: 0x3FFF_FFFF },
+            Event::Ready,
             Event::Correct { step: 98, state: vec![1, 2, 3] },
             Event::Made {
                 id: 77,

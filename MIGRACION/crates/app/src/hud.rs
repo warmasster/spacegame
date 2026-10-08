@@ -511,6 +511,23 @@ impl Hud {
     }
 }
 
+/// Over everything while the world round us is still coming from the server: the picture dimmed
+/// and, in the middle, that it is loading and how much has come (`made`: the structures told).
+/// Nothing is played under it (`Online::ready`).
+pub fn loading(ctx: &egui::Context, made: u64) {
+    backdrop(ctx, 0.8);
+    let r = ctx.content_rect();
+    let size = vec2(360.0_f32.min(r.width() - 40.0), 92.0);
+    let rect = Rect::from_center_size(r.center(), size);
+    let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("cargando")));
+    plate(&painter, rect, 1.4, Some(ACCENT), 1.0);
+    let t = ctx.input(|i| i.time) as f32;
+    let dots = ".".repeat(1 + (t * 2.0) as usize % 3);
+    painter.text(rect.center() - vec2(0.0, 14.0), Align2::CENTER_CENTER, format!("CARGANDO LO DE ALREDEDOR{dots}"), FontId::proportional(17.0), TEXT);
+    painter.text(rect.center() + vec2(0.0, 16.0), Align2::CENTER_CENTER, if made == 1 { "1 cosa recibida".to_string() } else { format!("{made} cosas recibidas") }, FontId::proportional(13.0), DIM);
+    ctx.request_repaint();
+}
+
 /// The menu's ground: the picture dimmed, darker toward the edges, so that the window over it is
 /// read and the world is still there.
 pub fn backdrop(ctx: &egui::Context, alpha: f32) {

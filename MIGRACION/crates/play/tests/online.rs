@@ -773,8 +773,9 @@ fn who_is_cut_off_comes_back_to_their_body_where_it_waited() {
 #[test]
 fn the_game_kept_and_taken_up_again_is_as_it_was_and_each_comes_back_to_their_body() {
     // a shot that breaks a ship and digs the ground, a walk; the game kept, the server stopped
-    // and started again from what it kept: every structure, piece and crater as it was, and the
-    // player, coming back with their key, in their body where it was
+    // and started again from what it kept: every structure, piece and crater as it was, what was
+    // flying flying on as it was, and the player, coming back with their key, in their body where
+    // it was
     let mut t = Table::new(1, 61, Conditions::default());
     t.run(1.0, 60.0, |_, _, _| {});
     {
@@ -791,6 +792,19 @@ fn the_game_kept_and_taken_up_again_is_as_it_was_and_each_comes_back_to_their_bo
     let key = t.seats[0].online.key.unwrap();
     let id = t.seats[0].online.you.unwrap();
     let body = t.host.player(id).unwrap().pilot.summary();
+    // (and in the air as it is kept: a rocket, a missile, a guided one and a decoy, going up)
+    {
+        let g = &mut t.host.game;
+        let b = g.bodies.get(g.site.body);
+        let up = g.site.at(0.0, 0.0);
+        let from = b.above_ground(up, 50.0);
+        let bodies = g.bodies.clone();
+        assert!(g.blasts.fire_from("cohete", from, up, DVec3::ZERO, None, &bodies, &mut g.builds));
+        g.blasts.missiles.fire(0, from + up * 5.0, up * 300.0, 7);
+        assert!(g.blasts.guided.launch(0, from + up * 10.0, up * 40.0, None, 0));
+        assert!(g.blasts.guided.release(0, from + up * 15.0, up * 20.0));
+    }
+    t.host.step();
     let mut kept = Vec::new();
     let began = std::time::Instant::now();
     t.host.save(defs().fingerprint, &mut kept);
@@ -825,9 +839,34 @@ fn the_game_kept_and_taken_up_again_is_as_it_was_and_each_comes_back_to_their_bo
         assert!(s.pos.distance(o.pos) < 1e-9 && s.rot.angle_between(o.rot) < 1e-6, "structure {} moved: {:.2e} m", s.id, s.pos.distance(o.pos));
     }
     assert_eq!(a.ships.list.len(), b.ships.list.len());
+    // (what flies, to the last bit, and flying on alike)
+    let flying = |g: &Game| {
+        let bl = &g.blasts;
+        (
+            bl.rounds.list.iter().map(|r| (r.pos, r.vel, r.left, r.tag)).collect::<Vec<_>>(),
+            bl.missiles.list.iter().map(|m| (m.pos, m.vel, m.t, m.tag)).collect::<Vec<_>>(),
+            bl.guided.list.iter().map(|m| (m.pos, m.vel, m.t, m.id)).collect::<Vec<_>>(),
+            bl.guided.decoys.iter().map(|d| (d.pos, d.vel, d.age, d.id)).collect::<Vec<_>>(),
+        )
+    };
+    let was = flying(a);
+    assert!(!was.0.is_empty() && !was.1.is_empty() && !was.2.is_empty() && !was.3.is_empty(), "nothing flying to keep: {was:?}");
+    assert_eq!(was, flying(b), "what flies is not as it was");
     let ground = |g: &Game| g.bodies.get(g.site.body).deform().craters().to_vec();
     assert!(!ground(a).is_empty(), "the shot dug nothing");
     assert_eq!(ground(a), ground(b), "the ground as it was");
+    {
+        // (another taken up from it, and the one kept, half a second on: alike)
+        let config = HostConfig { cheats: true, ..HostConfig::default() };
+        let mut other = Host::load(new_game(), defs().scenario.player, config, defs().fingerprint, &kept).unwrap();
+        let mut kept_one = std::mem::replace(&mut t.host, Host::new(new_game(), defs().scenario.player, HostConfig::default()));
+        for _ in 0..30 {
+            kept_one.step();
+            other.step();
+        }
+        assert_eq!(flying(&kept_one.game), flying(&other.game), "what flies does not fly on alike");
+        t.host = kept_one;
+    }
     let waiting: Vec<u32> = host.waiting().collect();
     assert_eq!(waiting.len(), 1, "the body waits");
     assert!(host.player(waiting[0]).unwrap().pilot.summary().near(&body), "the body as it was");
@@ -1208,6 +1247,226 @@ fn two_who_reach_for_one_crate_one_has_it_and_a_weld_is_the_same_for_all() {
 }
 
 #[test]
+fn parts_put_back_by_a_welder_are_back_in_every_game_one_at_a_time() {
+    // two parts of the Cachalote's hold gone, one aboard with the welder in hand: put back, each
+    // is back in every game (as the server put it); the second asked at once is refused (a welder
+    // puts back one at a time, as long as it takes) and put back once that is over
+    let cond = Conditions { delay: 0.03, jitter: 0.005, loss: 0.01, ..Conditions::default() };
+    let mut t = Table::new(2, 43, cond);
+    let ship = t.host.game.ships.list.iter().find(|sh| sh.kind.id == "cachalote").expect("the Cachalote").structure;
+    for _ in 0..20 {
+        t.run(0.5, 60.0, |_, _, _| {});
+        if t.host.game.builds.set.get(ship).is_some_and(|s| s.resting) {
+            break;
+        }
+    }
+    let you = t.seats[0].online.you.unwrap();
+    {
+        let (game, p) = t.host.game_and_player(you).unwrap();
+        p.pilot.put_on(&game.builds.set, ship, glam::Vec3::new(0.0, 0.05, -13.0));
+    }
+    t.run(2.0, 60.0, |_, _, _| {});
+    // (the two nearest parts that hang on one other alone: gone, nothing else comes off)
+    let parts: Vec<usize> = {
+        let g = &t.host.game;
+        let eye = t.host.player(you).unwrap().pilot.position;
+        let s = g.builds.set.get(ship).unwrap();
+        let joints = |k: usize| s.joints.iter().filter(|j| j.alive && (j.a as usize == k || j.b as usize == k)).count();
+        let mut near: Vec<usize> = (0..s.parts.len()).filter(|&k| s.parts[k].alive && !s.parts[k].fragment && s.parts[k].max_hp > 0.0 && s.parts[k].bone == 0 && joints(k) == 1).collect();
+        near.sort_by(|&i, &j| s.to_world(s.parts[i].local.translation.into()).distance(eye).total_cmp(&s.to_world(s.parts[j].local.translation.into()).distance(eye)));
+        near.into_iter().take(2).collect()
+    };
+    assert_eq!(parts.len(), 2, "no parts to take off");
+    let count = t.host.game.builds.set.list.len();
+    {
+        let k = t.host.game.builds.set.index_of(ship).unwrap();
+        let st = &mut t.host.game.builds.set.list[k];
+        for &p in &parts {
+            (st.parts[p].alive, st.parts[p].hp) = (false, 0.0);
+        }
+        st.version += 1;
+    }
+    t.run(0.5, 60.0, |_, _, _| {});
+    assert_eq!(t.host.game.builds.set.list.len(), count, "something came off");
+    let alive = |g: &Game, p: usize| g.builds.set.get(ship).unwrap().parts[p].alive;
+    for (k, s) in t.seats.iter().enumerate() {
+        assert!(parts.iter().all(|&p| !alive(&s.game, p)), "player {k} still has the parts");
+    }
+    // (where tests are not let be, with the welder in hand)
+    t.host.config.cheats = false;
+    let (welder, takes) = t.host.game.gear.tools.iter().enumerate().find_map(|(k, x)| match x.kind {
+        ToolKind::Soldador { reconstruir, .. } => Some((k as u8 + 1, f64::from(reconstruir))),
+        ToolKind::Lanzador { .. } => None,
+    }).expect("a welder");
+    t.seats[0].online.tool = welder;
+    t.run(0.2, 60.0, |_, _, _| {});
+    let denied = t.host.stats.denied;
+    let rebuild = |t: &mut Table, p: usize| {
+        let s = &mut t.seats[0];
+        let step = s.game.step;
+        s.online.act(step, &lunar_play::net::Act::Rebuild { structure: ship, part: p as u32 });
+        t.run(0.5, 60.0, |_, _, _| {});
+    };
+    rebuild(&mut t, parts[0]);
+    rebuild(&mut t, parts[1]);
+    assert!(alive(&t.host.game, parts[0]) && !alive(&t.host.game, parts[1]), "the first is back, the second not yet");
+    assert_eq!(t.host.stats.denied - denied, 1);
+    t.run(takes, 60.0, |_, _, _| {});
+    rebuild(&mut t, parts[1]);
+    t.run(0.5, 60.0, |_, _, _| {});
+    let hp = |g: &Game, p: usize| g.builds.set.get(ship).unwrap().parts[p].hp;
+    for (k, s) in t.seats.iter().enumerate() {
+        for &p in &parts {
+            assert!(alive(&s.game, p), "player {k} does not have part {p} back");
+            assert_eq!(hp(&s.game, p), hp(&t.host.game, p), "player {k} has part {p} otherwise");
+        }
+    }
+    assert_eq!(t.host.game.builds.set.list.len(), count);
+}
+
+#[test]
+fn a_ship_nobody_flies_in_orbit_is_where_the_server_has_it_in_every_game() {
+    // the Alcotán in a circular orbit 18 km over the Moon, nobody aboard: one watches it from the
+    // site, another comes in half a minute late; each one's copy is where the server has it, on
+    // its orbit, for a minute and a half (150 km of it). Then the first is put aboard where the
+    // ship is by now (not where it was last stepped, asleep, a second back: `Pilot::put_on`); it
+    // is stepped from then on, they go round with it and nobody is put right for it
+    let cond = Conditions { delay: 0.05, jitter: 0.005, loss: 0.02, ..Conditions::default() };
+    let mut t = Table::new(1, 71, cond);
+    // (known however far: what is tried here is where it is, not who knows it)
+    (t.host.config.rule.near, t.host.config.rule.most) = (1.0e8, 1.0e8);
+    let (pos, vel) = {
+        let g = &t.host.game;
+        let b = g.bodies.get(g.site.body);
+        let dir = g.site.at(0.0, 0.0);
+        // (within its reach: what pulls beyond it is nothing, `bodies/luna.jsonc`)
+        let p = b.center + dir * (b.radius + b.reach * 0.6);
+        let (pull, r) = (g.bodies.field(p).pull.length(), (p - b.center).length());
+        (p, dir.any_orthonormal_vector() * (pull * r).sqrt())
+    };
+    let id = t.host.game.ships.spawn_free(&mut t.host.game.builds, "alcotan", pos, Quat::IDENTITY).unwrap();
+    {
+        let k = t.host.game.builds.set.index_of(id).unwrap();
+        t.host.game.builds.set.list[k].vel = vel;
+    }
+    // (where a game has it at the server's step: as it is at its own moment, taken back along its
+    // orbit by how far ahead that game is)
+    let at = |g: &Game, step: u64| {
+        let s = g.builds.set.get(id)?;
+        let (p, v, _) = coasted(s, g.bodies.field(s.pos).pull, g.builds.set.now - s.clock);
+        let back = (g.step as f64 - step as f64) * STEP;
+        Some(p - v * back + g.bodies.field(p).pull * 0.5 * back * back)
+    };
+    let mut worst = [0.0f64; 2];
+    let mut late = None;
+    for second in 0..90 {
+        if second == 30 {
+            late = Some(t.join("tarde"));
+        }
+        t.run(1.0, 60.0, |_, _, _| {});
+        let step = t.host.game.step;
+        let truth = at(&t.host.game, step).unwrap();
+        for (k, s) in t.seats.iter().enumerate() {
+            // (the late one from a few seconds after it came)
+            if late == Some(k) && second < 35 {
+                continue;
+            }
+            let mine = at(&s.game, step).unwrap_or_else(|| panic!("player {k} does not know the ship at {second} s"));
+            worst[k.min(1)] = worst[k.min(1)].max(mine.distance(truth));
+        }
+    }
+    // (a ship nobody is near is not stepped: where it is follows from its orbit, `coasted`)
+    let travelled = at(&t.host.game, t.host.game.step).unwrap().distance(pos);
+    println!("a ship in orbit nobody flies, {:.0} km on: the watcher's copy at most {:.3} m off, the late one's {:.3} m", travelled / 1000.0, worst[0], worst[1]);
+    assert!(travelled > 100_000.0, "it did not go round: {travelled:.0} m");
+    assert!(worst[0] < 0.1 && worst[1] < 0.1, "copies off: {worst:?}");
+    // (one aboard, in its rooms: they go round with it)
+    let you = t.seats[0].online.you.unwrap();
+    let exit = {
+        let g = &t.host.game;
+        glam::Vec3::from_array(g.ships.list[g.ships.by_structure(id).unwrap()].kind.seats[0].def.salida)
+    };
+    {
+        let (game, p) = t.host.game_and_player(you).unwrap();
+        p.pilot.put_on(&game.builds.set, id, exit);
+    }
+    t.run(2.0, 60.0, |_, _, _| {});
+    let first = t.seats[0].online.stats.corrections;
+    let mut aboard = [0.0f64; 2];
+    for _ in 0..10 {
+        t.run(1.0, 60.0, |_, _, _| {});
+        let step = t.host.game.step;
+        let truth = at(&t.host.game, step).unwrap();
+        for (k, s) in t.seats.iter().enumerate() {
+            aboard[k.min(1)] = aboard[k.min(1)].max(at(&s.game, step).unwrap().distance(truth));
+        }
+    }
+    let p = &t.host.player(you).unwrap().pilot;
+    println!("aboard in orbit: {} corrections after being put there, copies at most {aboard:?} m off", t.seats[0].online.stats.corrections - first);
+    assert!(p.ride.is_some_and(|r| r.id == id), "they did not go round with it");
+    assert_eq!(t.seats[0].online.stats.corrections, first, "put right aboard in orbit ({:?})", t.seats[0].online.stats);
+    assert!(aboard[0] < 0.1 && aboard[1] < 0.1, "copies off with one aboard: {aboard:?}");
+}
+
+#[test]
+fn ships_too_far_to_know_in_full_are_known_from_afar_where_they_are() {
+    // an Alcotán set down 40 km from the site and an Azor flying 5 km up 30 km off, past what is
+    // known of them in full: the one at the site knows them from afar (`Online::far`), each of
+    // its kind and where the server has it, a few times a second; put by the Alcotán, it is known
+    // in full and not from afar
+    let cond = Conditions { delay: 0.05, jitter: 0.005, loss: 0.02, ..Conditions::default() };
+    let mut t = Table::new(1, 77, cond);
+    let (parked, flying) = {
+        let g = &mut t.host.game;
+        let b = g.bodies.get(g.site.body);
+        let (a, c) = (g.site.at(40_000.0, 0.0), g.site.at(-30_000.0, 0.0));
+        let rot = |up: DVec3| Quat::from_rotation_arc(glam::Vec3::Y, up.as_vec3());
+        let parked = g.ships.spawn_free(&mut g.builds, "alcotan", b.above_ground(a, 3.0), rot(a)).unwrap();
+        let flying = g.ships.spawn_free(&mut g.builds, "azor", b.above_ground(c, 5000.0), rot(c)).unwrap();
+        let k = g.builds.set.index_of(flying).unwrap();
+        g.builds.set.list[k].vel = c.any_orthonormal_vector() * 600.0;
+        (parked, flying)
+    };
+    t.run(1.0, 60.0, |_, _, _| {});
+    let at = |g: &Game, id: u64| {
+        let s = g.builds.set.get(id).unwrap();
+        coasted(s, g.bodies.field(s.pos).pull, g.builds.set.now - s.clock).0
+    };
+    let mut worst = 0.0f64;
+    for _ in 0..5 {
+        t.run(1.0, 60.0, |_, _, _| {});
+        let (o, g) = (&t.seats[0].online, &t.seats[0].game);
+        let step = t.host.game.step;
+        for (id, kind) in [(parked, "alcotan"), (flying, "azor")] {
+            assert!(g.builds.set.get(id).is_none(), "{kind} is known in full at {:.0} km", at(&t.host.game, id).distance(t.host.player(o.you.unwrap()).unwrap().pilot.position) / 1000.0);
+            let (_, pos) = o.far_now(step).find(|(w, _)| matches!(w, lunar_play::net::FarWhat::Ship { id: i, .. } if *i == id)).unwrap_or_else(|| panic!("{kind} not known from afar ({:?})", o.far));
+            let k = o.far.iter().find_map(|f| match f.what {
+                lunar_play::net::FarWhat::Ship { id: i, kind } if i == id => Some(kind),
+                _ => None,
+            });
+            assert_eq!(k.map(|k| g.ships.kinds[usize::from(k)].id.as_str()), Some(kind));
+            worst = worst.max(pos.distance(at(&t.host.game, id)));
+        }
+    }
+    println!("known from afar: a ship set down 40 km off and one flying at 600 m/s 30 km off, at most {worst:.3} m from where the server has them");
+    assert!(worst < 1.0, "{worst:.3} m off");
+    // (beside the Alcotán: known in full, and not from afar)
+    let you = t.seats[0].online.you.unwrap();
+    {
+        let (game, p) = t.host.game_and_player(you).unwrap();
+        let s = game.builds.set.get(parked).unwrap();
+        let beside = s.to_world(s.center) + (s.rot * glam::Vec3::X).as_dvec3() * 60.0;
+        let b = game.bodies.get(game.site.body);
+        let ground = b.above_ground(b.up(beside), 0.0);
+        p.pilot.put(ground, b.up(ground));
+    }
+    t.run(3.0, 60.0, |_, _, _| {});
+    let o = &t.seats[0].online;
+    assert!(t.seats[0].game.builds.set.get(parked).is_some(), "the Alcotán is not known in full beside it");
+    assert!(o.far.iter().all(|f| !matches!(f.what, lunar_play::net::FarWhat::Ship { id, .. } if id == parked)), "and still from afar");
+}
+
+#[test]
 fn what_is_let_fly_is_what_the_hands_carry_and_what_is_not_is_gone_from_the_game_that_fired_it() {
     // where tests are not let be, a rocket fired with the hands free, before the launcher is
     // loaded again, or a test key's gun with the launcher in hand, is not let fly: the game that
@@ -1365,8 +1624,9 @@ fn the_pilot_hands_over_at_orbital_speed_and_the_ship_goes_on_without_a_jerk() {
 #[test]
 fn one_who_comes_into_a_busy_game_on_a_bad_network_plays_at_once_and_soon_has_it_all() {
     // ten playing, six ships and a hundred structures loose round the site, ten in a hundred
-    // datagrams lost: one more comes in. They play within two seconds, and have everything near
-    // them as the server has it soon after
+    // datagrams lost: one more comes in. They are in within two seconds, and have everything near
+    // them as the server has it soon after; told they have it all (`Event::Ready`: the loading
+    // screen comes off) when they do, not before
     let cond = Conditions { delay: 0.05, jitter: 0.01, loss: 0.1, ..Conditions::default() };
     let mut t = Table::new(10, 101, cond);
     {
@@ -1401,19 +1661,26 @@ fn one_who_comes_into_a_busy_game_on_a_bad_network_plays_at_once_and_soon_has_it
         t.host.game.builds.set.list.iter().filter(|s| s.id >= t.host.game.builds.scenario_end && s.to_world(s.center).distance(eye) < rule.reach(f64::from(s.radius))).map(|s| s.id).collect()
     };
     let mut all = None;
+    let mut ready = None;
     for f in 0..600 {
         t.frame(1.0 / 60.0, |k, me, n| {
             if k % 2 == 0 {
                 walk(me, n + k as u64 * 50)
             }
         });
-        if near.iter().all(|id| t.seats[late].game.builds.set.get(*id).is_some()) {
+        let has = near.iter().filter(|id| t.seats[late].game.builds.set.get(**id).is_some()).count();
+        if ready.is_none() && t.seats[late].online.ready {
+            ready = Some((f as f64 / 60.0, has));
+        }
+        if has == near.len() && ready.is_some() {
             all = Some(f as f64 / 60.0);
             break;
         }
     }
     let all = all.unwrap_or_else(|| panic!("the one who came never had it all: {} of {} ({:?})", near.iter().filter(|id| t.seats[late].game.builds.set.get(**id).is_some()).count(), near.len(), t.seats[late].online.stats));
-    println!("came into a game of 10 with {} structures near (10 % lost): playing in {playing:.2} s, everything near {all:.2} s later", near.len());
+    let (ready, had) = ready.expect("never told it had it all");
+    println!("came into a game of 10 with {} structures near (10 % lost): in at {playing:.2} s, everything near {all:.2} s later, told so at {ready:.2} s with {had}", near.len());
+    assert_eq!(had, near.len(), "told it had it all with {had} of {}", near.len());
     assert!(near.len() >= 100, "the scene is wrong: {} near", near.len());
     assert!(playing < 2.0, "it took {playing:.2} s to play");
     assert!(all < 2.0, "and {all:.2} s more to have everything near");

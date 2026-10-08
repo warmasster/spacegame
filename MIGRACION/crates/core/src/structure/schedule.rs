@@ -59,6 +59,15 @@ pub const NET_ACTIVE: f64 = 0.05;
 pub const NET_COARSE: f64 = 1.0;
 /// Seconds a woken structure stays active.
 pub const LINGER: f64 = 8.0;
+/// Seconds of flight a dormant structure is brought along its path at a time: however long it
+/// sleeps, it is where its orbit or its fall has it (`drift`).
+pub const DORMANT_STEP: f64 = 1.0;
+/// Above the ground by less than this and what one step of its flight takes it (m), a sleeper in
+/// flight is woken: what it meets there the world's physics meets.
+const WAKE_ABOVE: f64 = 200.0;
+/// The most a body's ground stands over its datum (m): over this and a step's flight, no ground
+/// is looked for.
+const RELIEF: f64 = 12_000.0;
 
 /// What lives among the structures without being one of them. The world steps it with them,
 /// slice by slice and right after them (`Structures::simulate_with`), so it and they are always
@@ -99,13 +108,43 @@ pub fn coast(s: &mut Structure, pull: DVec3, t: f64) {
 /// flight from its state now (`coast`, without moving it): what one stepped now and then (its
 /// `clock` behind the world's) is at the world's moment.
 pub fn coasted(s: &Structure, pull: DVec3, t: f64) -> (DVec3, DVec3, Quat) {
-    if s.anchored || s.resting || s.held.is_some() || t <= 0.0 {
+    // (no time, or none known: one never stepped has no clock yet)
+    if s.anchored || s.resting || s.held.is_some() || !(t > 0.0) {
         return (s.pos, s.vel, s.rot);
     }
     let com = s.to_world(s.com);
     let com_new = com + s.vel * t + pull * (0.5 * t * t);
     let rot = (Quat::from_scaled_axis(s.spin * t as f32) * s.rot).normalize();
     (com_new - (rot * s.com).as_dvec3(), s.vel + pull * t, rot)
+}
+
+/// Structure `s`, asleep in flight, brought along its path to `now` in steps of at most
+/// `DORMANT_STEP` (velocity Verlet, pulled each time as it is pulled where it is: an orbit stays
+/// an orbit, a fall from far off ends where it would). It stops short where the next step could
+/// meet the ground (true: to be woken there, with what is left of the time still to go).
+pub fn drift(s: &mut Structure, bodies: &BodyRegistry, now: f64) -> bool {
+    let mut com = s.to_world(s.com);
+    let mut f = bodies.field(com);
+    let mut near = false;
+    while now - s.clock > 1e-9 {
+        let h = (now - s.clock).min(DORMANT_STEP);
+        let travel = s.vel.length() * h + f64::from(s.radius) + WAKE_ABOVE;
+        if let Some(b) = f.ground.map(|b| bodies.get(b))
+            && b.datum_altitude(com) < RELIEF + travel
+            && b.altitude(com) < travel
+        {
+            near = true;
+            break;
+        }
+        let half = s.vel + f.pull * (0.5 * h);
+        com += half * h;
+        f = bodies.field(com);
+        s.vel = half + f.pull * (0.5 * h);
+        s.rot = (Quat::from_scaled_axis(s.spin * h as f32) * s.rot).normalize();
+        s.clock = if h < DORMANT_STEP { now } else { s.clock + h };
+    }
+    s.pos = com - (s.rot * s.com).as_dvec3();
+    near
 }
 
 impl Structures {
@@ -177,7 +216,14 @@ impl Structures {
                         st.steps += 1;
                     }
                 }
-                SimLevel::Dormant => st.dormant += 1,
+                SimLevel::Dormant => {
+                    st.dormant += 1;
+                    // (in flight: on along its path a second at a time, not where it fell asleep;
+                    // about to meet the ground, woken where it is)
+                    if now - s.clock >= DORMANT_STEP && !(s.anchored || s.resting || s.held.is_some()) && drift(s, bodies, now) {
+                        s.awake_until = now + LINGER;
+                    }
+                }
             }
         }
         for &(k, t) in &alone {

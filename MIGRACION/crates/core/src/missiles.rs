@@ -61,7 +61,8 @@ pub struct Missile {
     pub t: f64,
     /// What the path ahead strikes and at what flight time, as last predicted.
     pub predicted: Option<(Target, f64)>,
-    next_look: f64,
+    /// Flight time at which the path ahead is looked at again.
+    pub next_look: f64,
 }
 
 /// A missile that landed.

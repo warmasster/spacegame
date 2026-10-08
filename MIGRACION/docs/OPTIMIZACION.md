@@ -12,6 +12,24 @@ rendimiento del juego en TS están en [`../../docs/RENDIMIENTO.md`](../../docs/R
 Prioridad: **A** (se nota jugando), **B** (se nota con muchas cosas en pantalla), **C** (limpieza o
 código muerto).
 
+## V41e (2026-10-08): lo dormido en vuelo, el rastro, lo que vuela al guardar
+
+- **Lo dormido en vuelo** avanza un paso de Verlet por segundo (`schedule::drift`): dos consultas
+  a `field` (62 ns cada una) y, a menos de 12 km más lo que avanza de un suelo, la altura del
+  terreno. Mil naves dormidas en órbita: unos 0,1 ms por segundo. Antes no costaba nada (no se
+  movía) pero al despertar estaba en otra parte.
+- **El rastro** (`Host::tracks`): por jugador y 5 veces por segundo, cada nave que no conoce entera
+  (una consulta a `field` y una distancia) y cada jugador; lo de más cerca primero, en un datagrama.
+  Con 24 naves y 16 jugadores, unos 400 cálculos cada 12 pasos. Sin reservas: búferes del `Peer`.
+- **Guardar lo que vuela** escribe cada bala, misil, guiado y señuelo (60–100 bytes cada uno); la
+  partida de la prueba con cuatro en el aire: 0,31 ms y 34 kB.
+- **Visto (no es de este cambio):** `masa.rs`
+  `a_ship_with_nothing_flowing_is_never_weighed_…` falla en este contenedor por tiempo: la Azor
+  quemando cuesta 26–33 µs por tic y en reposo 14 (el límite es 1,5 × reposo + 5 µs = 26). La
+  simulación de la nave sola no la toca este cambio; hay que medirlo en una máquina normal y, si
+  se repite, ver qué hace de más quemando (sus 6 piezas con propelente se pesan 810 veces en
+  400 s, lo previsto).
+
 ## V41d (2026-10-08): firmas y límites (fase 11)
 
 - **Medido:** firmar o comprobar un datagrama entero (1 200 bytes) con SipHash-2-4 cuesta 0,69 µs

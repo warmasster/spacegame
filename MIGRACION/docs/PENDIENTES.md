@@ -709,11 +709,15 @@ silueta lejana, oclusión. Falta:
   (2026-10-08)**, con las afirmaciones viejas olvidadas y los pasos repetidos como eran: 4 en el
   medio segundo que bota (más la de ponerlo allí), 0 después
   (`standing_in_the_hold_of_a_ship_still_bouncing…`).
-- [ ] (2026-10-08) Servidor autoritativo: poner a alguien en una nave (`Pilot::put_on`, las pruebas y
+- [x] ~~(2026-10-08) Servidor autoritativo: poner a alguien en una nave (`Pilot::put_on`, las pruebas y
   el «empezar junto a» del menú) toma su posición de la estructura tal como está: si nadie la ve
   y solo se simula a ratos, está atrasada (a 7,8 km/s, 780 m) y quien se pone se queda donde
-  estaba. Y recién hecha una nave hacen falta unos pasos antes de que lleve a nadie. `put_on`
-  debería tomar la nave en el momento del mundo (`coasted`) y despertarla.
+  estaba.~~ **Hecho (2026-10-08):** `put_on` la toma en el momento del mundo (`coasted`) y, si
+  queda en sus salas, sube a ella al momento (quieto en ella): quien va a bordo la despierta y se
+  pone al día con él dentro. Y lo dormido en vuelo ya no se pone al día con una parábola sino
+  por su camino (`schedule::drift`). Prueba: `a_ship_nobody_flies_in_orbit…` (150 km de órbita,
+  copias a 1 mm; a bordo, 0 correcciones). Queda: recién hecha una nave hacen falta unos pasos
+  antes de que lleve a nadie (las pruebas esperan 0,2 s).
 - [x] ~~(2026-10-08) Servidor autoritativo: el servidor no comprueba que lo que se dispara con la
   mano sea lo que se lleva (el equipo de la mano, `gear.jsonc`, es de la ventana, y el comando solo
   dice su número): un tramposo podría disparar un misil sin lanzamisiles, al ritmo de su tipo y
@@ -733,15 +737,18 @@ silueta lejana, oclusión. Falta:
   pilota otro.
 - [ ] (2026-10-08) Servidor autoritativo: el servidor guarda la partida cada 5 minutos y con
   «salir», pero no si se cierra la ventana de la consola o con Ctrl+C (no hay manejador de señales):
-  se pierde lo de desde el último guardado. Y lo que vuela en el momento de guardar (balas, misiles)
-  no se guarda. **Decisión para Fernando:** oír Ctrl+C y el cierre de la consola pide llamar al
+  se pierde lo de desde el último guardado. ~~Y lo que vuela en el momento de guardar (balas, misiles)
+  no se guarda.~~ (Hecho 2026-10-08: se guarda al bit, `Blasts::keep`.) **Decisión para Fernando:** oír Ctrl+C y el cierre de la consola pide llamar al
   sistema (`SetConsoleCtrlHandler` en Windows, `signal` en Linux), que es código `unsafe`, y el
   espacio de trabajo lo prohíbe (`unsafe_code = "forbid"`): o una excepción en un fichero pequeño
   del servidor, o la dependencia `ctrlc` (que en Windows no espera a que se guarde al cerrar la
   ventana).
-- [ ] (2026-10-08) Servidor autoritativo: quien entra juega mientras le llega lo de alrededor (con
+- [x] ~~(2026-10-08) Servidor autoritativo: quien entra juega mientras le llega lo de alrededor (con
   10 jugadores, 6 naves, 100 estructuras y 10 % de pérdidas: a 1,2 s juega y ya lo tiene todo); falta
-  la pantalla de carga que espere a tenerlo para un mundo mucho más grande.
+  la pantalla de carga que espere a tenerlo para un mundo mucho más grande.~~ **Hecho
+  (2026-10-08):** `Event::Ready` detrás de todo lo que se le cuenta al entrar; la ventana muestra
+  «Cargando lo de alrededor…» y no deja mover el cuerpo hasta entonces (`hud::loading`). Sin
+  probar a mano en la ventana (aquí no hay gráfica).
 - [x] ~~(2026-10-07) Servidor autoritativo: tras una corrección el cuerpo se vuelve a dar contra el
   mundo como está ahora (`Game::step_alone`), no como estaba en cada paso repetido: junto a piezas
   de una nave que se mueven (sus huesos) salen 2–3 correcciones más al aterrizar.~~ **Hecho

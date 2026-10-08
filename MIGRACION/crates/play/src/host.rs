@@ -24,8 +24,8 @@ use crate::{
     builds::Strike,
     controls, follow,
     game::{Game, Player, STEP, Say},
-    interest::{Index, Interest, Rule},
-    net::{self, ACT, Act, CMDS, Check, Cmd, Event, Snap},
+    interest::{Index, Interest, Rule, TRACK_EVERY, TRACK_REACH},
+    net::{self, ACT, Act, CMDS, Check, Cmd, Event, Far, FarWhat, Snap},
     pilot::Summary,
     seats::{self, Drive},
     told::{self, Named},
@@ -168,6 +168,11 @@ struct Peer {
     ends: Vec<usize>,
     /// What goes out to them this step: a snapshot, the events.
     quick: Vec<u8>,
+    /// What they know only from afar (reused), its word to them this step, and whether the last
+    /// one had anything (an empty one is said once, to clear it).
+    far: Vec<Far>,
+    tracks: Vec<u8>,
+    far_told: bool,
     sure: Vec<u8>,
     /// What may be let fly and mended now (refilled each step), and when each kind of thing was
     /// last let fly (step): nothing goes faster than its kind can.
@@ -176,6 +181,8 @@ struct Peer {
     fired: Vec<(crate::blasts::What, u64)>,
     /// When they last put back a part that was gone (step).
     rebuilt: Option<u64>,
+    /// Told that all there was round them when they came has been told (`Event::Ready`).
+    ready: bool,
     /// What may still come of their commands, acts and structures asked for again (refilled each
     /// step, `CMDS_RATE`…).
     cmds_left: f32,
@@ -212,11 +219,15 @@ impl Peer {
             events: Vec::new(),
             ends: Vec::new(),
             quick: Vec::new(),
+            far: Vec::new(),
+            tracks: Vec::new(),
+            far_told: false,
             sure: Vec::new(),
             launches: 0.0,
             mend: 0.0,
             fired: Vec::new(),
             rebuilt: None,
+            ready: false,
             cmds_left: CMDS_BURST,
             acts_left: ACTS_BURST,
             resyncs_left: RESYNC_BURST,
@@ -273,6 +284,8 @@ pub struct Host {
     helds: Vec<(u64, Option<lunar_core::structure::hold::Held>)>,
     /// What every player is drawn from this step (theirs left out of their own snapshot).
     states: Vec<(u32, PlayerState)>,
+    /// Every player in the world: who, where, how fast (reused: `tracks`).
+    far_players: Vec<(u32, glam::DVec3, Vec3)>,
     /// (reused)
     cmds_in: Vec<Cmd>,
     due: Vec<(usize, Act)>,
@@ -320,6 +333,7 @@ impl Host {
             shadows: Vec::new(),
             helds: Vec::new(),
             states: Vec::new(),
+            far_players: Vec::new(),
             cmds_in: Vec::new(),
             due: Vec::new(),
             moved: Vec::new(),
@@ -743,6 +757,7 @@ impl Host {
         self.said();
         // ---- 7. what goes out
         self.snapshots();
+        self.tracks();
     }
 
     /// What every player is to be told of the last step: `send(to, reliable, bytes)`, which says
@@ -790,6 +805,10 @@ impl Host {
             if !peer.quick.is_empty() {
                 send(peer.id, false, &peer.quick);
                 peer.quick.clear();
+            }
+            if !peer.tracks.is_empty() {
+                send(peer.id, false, &peer.tracks);
+                peer.tracks.clear();
             }
         }
     }
@@ -1174,6 +1193,11 @@ impl Host {
                 }
             }
             self.peers[k].rested = rested;
+            // (all they were to know when they came is told before this: their world is there)
+            if !self.peers[k].ready && self.peers[k].lost.is_none() {
+                self.peers[k].ready = true;
+                self.peers[k].tell(&Event::Ready);
+            }
         }
     }
 
@@ -1278,6 +1302,44 @@ impl Host {
 
     /// The snapshots of this step, to the players whose turn it is (staggered over the steps),
     /// made at once on every thread.
+    /// What each player knows only from afar, every `TRACK_EVERY` steps (theirs in turn): the
+    /// ships they do not know in full and the players past what a snapshot carries, out to
+    /// `TRACK_REACH`, the nearest first, as many as a datagram holds.
+    fn tracks(&mut self) {
+        let step = self.game.step;
+        let (set, bodies, kinds) = (&self.game.builds.set, &*self.game.bodies, &self.game.ships.kinds);
+        let (room, most) = (self.config.snap_room, self.config.rule.most);
+        self.far_players.clear();
+        self.far_players.extend(self.players.iter().zip(&self.peers).filter(|(p, _)| !p.away).map(|(p, peer)| (peer.id, p.pilot.position, p.pilot.velocity().as_vec3())));
+        for (k, peer) in self.peers.iter_mut().enumerate() {
+            if (step + k as u64) % TRACK_EVERY != 0 || peer.lost.is_some() {
+                continue;
+            }
+            let me = self.players[k].pilot.position;
+            peer.far.clear();
+            for sh in &self.game.ships.list {
+                let Some(s) = set.get(sh.structure).filter(|s| !peer.interest.knows(s.id)) else { continue };
+                let (pos, vel, _) = coasted(s, bodies.field(s.pos).pull, set.now - s.clock);
+                if pos.distance(me) <= TRACK_REACH {
+                    let kind = kinds.iter().position(|kd| kd.id == sh.kind.id).unwrap_or(0) as u16;
+                    peer.far.push(Far { what: FarWhat::Ship { id: s.id, kind }, pos, vel: vel.as_vec3() });
+                }
+            }
+            for &(id, pos, vel) in &self.far_players {
+                let d = pos.distance(me);
+                if id != peer.id && d >= most && d <= TRACK_REACH {
+                    peer.far.push(Far { what: FarWhat::Player(id), pos, vel });
+                }
+            }
+            if peer.far.is_empty() && !peer.far_told {
+                continue;
+            }
+            peer.far.sort_by(|a, b| a.pos.distance_squared(me).total_cmp(&b.pos.distance_squared(me)));
+            peer.far_told = !peer.far.is_empty();
+            net::write_tracks(step, me, &peer.far, room, &mut peer.tracks);
+        }
+    }
+
     fn snapshots(&mut self) {
         // (every player as the others draw them)
         self.states.clear();

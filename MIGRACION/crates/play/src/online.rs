@@ -26,7 +26,7 @@ use crate::{
     game::{Game, Player, STEP, Say},
     hands::Hands,
     host,
-    net::{self, Act, Check, Cmd, EVENTS, Event, REPEAT, SNAP, Snap},
+    net::{self, Act, Check, Cmd, EVENTS, Event, Far, FarWhat, REPEAT, SNAP, Snap, TRACKS},
     pilot::Pilot,
     seats::Drive,
     told::{self, Named},
@@ -152,6 +152,14 @@ pub struct Online {
     def: PlayerDef,
     /// In (`Event::Hello` came): our id on the network.
     pub you: Option<u32>,
+    /// All there was round us when we came in has come (`Event::Ready`): what a game waits for
+    /// before it lets the player play (a loading screen), the world being all there.
+    pub ready: bool,
+    /// What is known only from afar (`net::Far`: ships past what we know in full, players past
+    /// what a snapshot carries), as of the end of step `far_step`: `far_now` has it now.
+    pub far: Vec<Far>,
+    pub far_step: u64,
+    far_in: Vec<Far>,
     pub region: u32,
     pub stats: OnlineStats,
     /// Which of the seat's keys are held now (`net::Cmd::keys`), as whoever reads the keys says;
@@ -225,6 +233,10 @@ impl Online {
             client,
             def,
             you: None,
+            ready: false,
+            far: Vec::new(),
+            far_step: 0,
+            far_in: Vec::new(),
             region: 0,
             stats: OnlineStats::default(),
             keys: 0,
@@ -505,9 +517,24 @@ impl Online {
     /// Said loosely: a snapshot (the newest kept).
     fn loose(&mut self, data: &[u8]) {
         let mut r = Reader::new(data);
-        if r.u8() != Ok(SNAP) {
-            self.stats.garbled += 1;
-            return;
+        match r.u8() {
+            Ok(SNAP) => {}
+            // (what is known from afar: the newest word of it is all of it)
+            Ok(TRACKS) => {
+                match net::read_tracks(&mut r, &mut self.far_in) {
+                    Ok(step) if step >= self.far_step => {
+                        std::mem::swap(&mut self.far, &mut self.far_in);
+                        self.far_step = step;
+                    }
+                    Ok(_) => {}
+                    Err(_) => self.stats.garbled += 1,
+                }
+                return;
+            }
+            _ => {
+                self.stats.garbled += 1;
+                return;
+            }
         }
         let mut snap = Snap::default();
         std::mem::swap(&mut snap, &mut self.snap);
@@ -559,7 +586,7 @@ impl Online {
                 game.builds.set.reserve(LOCAL_IDS);
                 me.pilot = Pilot::new(game.bodies.clone(), &game.site, self.def);
                 me.hands = Hands::new(self.def.manos);
-                (self.you, self.region, self.fixes) = (Some(you), region, 0);
+                (self.you, self.region, self.fixes, self.ready) = (Some(you), region, 0, false);
                 self.tracks.clear();
                 self.bones.clear();
                 (self.due, self.rate, self.early) = (0.0, 1.0, TARGET);
@@ -674,6 +701,7 @@ impl Online {
                 self.holding = None;
             }
             Event::Unfired { tag } => game.blasts.unfire(tag),
+            Event::Ready => self.ready = true,
             Event::Denied(why) => {
                 self.stats.denied += 1;
                 self.said.push((why, 1));
@@ -855,6 +883,13 @@ impl Online {
                 s.set_pose(&w.bones);
             }
         }
+    }
+
+    /// What is known from afar as it is at step `step` (where it was told, gone on as it went),
+    /// with where.
+    pub fn far_now(&self, step: u64) -> impl Iterator<Item = (FarWhat, DVec3)> + '_ {
+        let t = step.saturating_sub(self.far_step) as f64 * STEP;
+        self.far.iter().map(move |f| (f.what, f.pos + f.vel.as_dvec3() * t))
     }
 
     fn forget_track(&mut self, id: u64) {

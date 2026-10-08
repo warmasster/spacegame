@@ -125,9 +125,9 @@ pub struct Guided {
     pub target: Option<u64>,
     /// The structure that fired it (it cannot strike it before it is armed).
     pub shooter: u64,
-    /// Seconds since it last saw what it follows.
-    blind: f32,
-    look_in: f32,
+    /// Seconds since it last saw what it follows, and until its seeker looks again.
+    pub blind: f32,
+    pub look_in: f32,
     pub id: u32,
     /// Whose it is, as its launcher numbers what it lets fly (0: nobody's); it comes back with
     /// its hit.
@@ -208,6 +208,19 @@ impl Flight {
         self.next = self.next.wrapping_add(1).max(1);
         self.list.push(Guided { kind, pos: from, vel, t: 0.0, target, shooter, blind: 0.0, look_in: 0.0, id: self.next, tag: 0, push: DVec3::ZERO, led: None });
         true
+    }
+
+    /// Missile `g` as it was (a game kept on disk taken up again): in flight again, its id not
+    /// given again.
+    pub fn put_back(&mut self, g: Guided) {
+        self.next = self.next.max(g.id);
+        self.list.push(g);
+    }
+
+    /// Decoy `d` as it was, the same way.
+    pub fn put_back_decoy(&mut self, d: Decoy) {
+        self.next = self.next.max(d.id);
+        self.decoys.push(d);
     }
 
     /// A decoy of `kind` let go at `from` with `vel`. False when the pool is full.

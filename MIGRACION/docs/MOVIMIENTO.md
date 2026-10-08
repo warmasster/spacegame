@@ -208,6 +208,18 @@ para despertar (`shoved`) usan el tirón de ahí.
 También por donde están ahora: el durmiente que se pone al día (`schedule::coast`), lo que le
 estorba a un mecanismo (`obstruct`), `rest_on_ground` y el ordenador de cada nave.
 
+**Lo que duerme en vuelo sigue su camino** (`schedule::drift`, 2026-10-08): una estructura
+dormida (lejos de todo el que mira) que no reposa ni está anclada ni sujeta avanza cada segundo
+(`DORMANT_STEP`) por Verlet con el tirón de donde está en cada paso, no con el de donde se
+durmió: una órbita dormida tres horas sigue siendo la misma órbita (a menos de 2 m de su altura
+y 3 mm/s de su velocidad en los tres cuerpos de la prueba), y lo que cae desde lejos (un
+asteroide) se despierta antes del suelo, a lo que avanza en un paso y 200 m, para que lo que
+encuentre allí lo encuentre la física (`an_orbit_slept_through_stays_an_orbit…`). Entre dos de
+esos pasos, dónde está ahora es `coasted` (menos de un segundo de parábola). Antes se ponía al
+día de una vez con el tirón de donde se durmió: una parábola, que en órbita se va cientos de
+metros en un minuto y atraviesa la Luna en una hora. Poner a alguien en ella
+(`Pilot::put_on`) la toma también en el momento del mundo.
+
 Cada estructura dice además dos cosas que necesita lo que lleva encima:
 
 | Campo | Qué es | Quién lo pone |

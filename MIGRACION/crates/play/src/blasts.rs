@@ -651,6 +651,101 @@ impl Blasts {
         }
     }
 
+    /// What flies here now that is this game's own (rounds, missiles, guided missiles, decoys;
+    /// not the copies of another game's), and the number the next thing let fly gets: what a game
+    /// kept on disk keeps of it (`save`), to the last bit. `take_up` puts it back.
+    pub fn keep(&self, out: &mut Vec<u8>) {
+        fn v(out: &mut Vec<u8>, p: DVec3) {
+            p.to_array().iter().for_each(|x| out.extend_from_slice(&x.to_le_bytes()));
+        }
+        let mine = |tag: u32| tag & FOREIGN == 0;
+        out.extend_from_slice(&self.next_tag.to_le_bytes());
+        out.extend_from_slice(&(self.rounds.list.iter().filter(|r| mine(r.tag)).count() as u32).to_le_bytes());
+        for r in self.rounds.list.iter().filter(|r| mine(r.tag)) {
+            (v(out, r.pos), v(out, r.vel), v(out, r.nose));
+            out.extend_from_slice(&r.kind.to_le_bytes());
+            out.extend_from_slice(&r.body.to_le_bytes());
+            out.extend_from_slice(&r.left.to_le_bytes());
+            out.push(r.style);
+            out.extend_from_slice(&r.size.to_le_bytes());
+            out.extend_from_slice(&r.seed.to_le_bytes());
+            out.extend_from_slice(&r.tag.to_le_bytes());
+        }
+        out.extend_from_slice(&(self.missiles.list.len() as u32).to_le_bytes());
+        for m in &self.missiles.list {
+            out.extend_from_slice(&(m.kind as u32).to_le_bytes());
+            out.extend_from_slice(&m.tag.to_le_bytes());
+            (v(out, m.pos), v(out, m.vel));
+            out.extend_from_slice(&m.t.to_le_bytes());
+            out.extend_from_slice(&m.next_look.to_le_bytes());
+        }
+        out.extend_from_slice(&(self.guided.list.iter().filter(|g| mine(g.tag) && g.led.is_none()).count() as u32).to_le_bytes());
+        for g in self.guided.list.iter().filter(|g| mine(g.tag) && g.led.is_none()) {
+            out.extend_from_slice(&g.kind.to_le_bytes());
+            (v(out, g.pos), v(out, g.vel));
+            out.extend_from_slice(&g.t.to_le_bytes());
+            out.extend_from_slice(&g.target.map_or(u64::MAX, |t| t).to_le_bytes());
+            out.extend_from_slice(&g.shooter.to_le_bytes());
+            out.extend_from_slice(&g.blind.to_le_bytes());
+            out.extend_from_slice(&g.look_in.to_le_bytes());
+            out.extend_from_slice(&g.id.to_le_bytes());
+            out.extend_from_slice(&g.tag.to_le_bytes());
+            v(out, g.push);
+        }
+        out.extend_from_slice(&(self.guided.decoys.len() as u32).to_le_bytes());
+        for d in &self.guided.decoys {
+            out.extend_from_slice(&d.kind.to_le_bytes());
+            (v(out, d.pos), v(out, d.vel));
+            out.extend_from_slice(&d.age.to_le_bytes());
+            out.extend_from_slice(&d.id.to_le_bytes());
+        }
+    }
+
+    /// What `keep` kept, flying again (on top of whatever flies here: a game just made has
+    /// nothing). An error if it is not what `keep` writes, or names what there is not.
+    pub fn take_up(&mut self, r: &mut lunar_net::Reader) -> Result<(), lunar_net::WireError> {
+        use lunar_net::WireError::Value;
+        fn v(r: &mut lunar_net::Reader) -> Result<DVec3, lunar_net::WireError> {
+            Ok(DVec3::new(r.f64()?, r.f64()?, r.f64()?))
+        }
+        self.next_tag = self.next_tag.max(r.u32()?);
+        for _ in 0..r.u32()? {
+            let (pos, vel, nose) = (v(r)?, v(r)?, v(r)?);
+            let (kind, body, left, style, size, seed, tag) = (r.u16()?, r.u16()?, r.f32()?, r.u8()?, r.f32()?, r.f32()?, r.u32()?);
+            if usize::from(kind) >= self.shots.len() {
+                return Err(Value);
+            }
+            self.rounds.list.push(rounds::Round { pos, vel, nose, kind, body, left, style, size, seed, tag });
+        }
+        for _ in 0..r.u32()? {
+            let (kind, tag) = (r.u32()? as usize, r.u32()?);
+            let (pos, vel, t, next_look) = (v(r)?, v(r)?, r.f64()?, r.f64()?);
+            if kind >= self.missiles.defs.len() {
+                return Err(Value);
+            }
+            self.missiles.list.push(lunar_core::missiles::Missile { kind, tag, pos, vel, t, predicted: None, next_look });
+        }
+        for _ in 0..r.u32()? {
+            let kind = r.u16()?;
+            let (pos, vel, t) = (v(r)?, v(r)?, r.f64()?);
+            let target = Some(r.u64()?).filter(|t| *t != u64::MAX);
+            let (shooter, blind, look_in, id, tag, push) = (r.u64()?, r.f32()?, r.f32()?, r.u32()?, r.u32()?, v(r)?);
+            if usize::from(kind) >= self.guided.defs.len() {
+                return Err(Value);
+            }
+            self.guided.put_back(lunar_core::guided::Guided { kind, pos, vel, t, target, shooter, blind, look_in, id, tag, push, led: None });
+        }
+        for _ in 0..r.u32()? {
+            let kind = r.u16()?;
+            let (pos, vel, age, id) = (v(r)?, v(r)?, r.f32()?, r.u32()?);
+            if usize::from(kind) >= self.guided.decoy_defs.len() {
+                return Err(Value);
+            }
+            self.guided.put_back_decoy(lunar_core::guided::Decoy { kind, pos, vel, age, id });
+        }
+        Ok(())
+    }
+
     /// What was let fly here as `tag` gone, as if it never was (the server did not let it fly).
     pub fn unfire(&mut self, tag: u32) {
         let tag = tag & !OWN;

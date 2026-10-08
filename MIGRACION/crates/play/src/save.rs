@@ -1,14 +1,15 @@
 //! A game kept on disk and taken up again (`docs/PLAN_AUTORITATIVO.md` fase 9): its world as a
 //! game that comes in is told it (`Event::Made` of every structure that is not as the scenario
 //! sets it, `Event::Ground`, `Event::Gone`), its clock, and its players' bodies with the keys they
-//! are theirs by (each comes back to theirs: `Act::Back`). What flies the moment it is kept
-//! (rounds, missiles, particles) is not: it would be gone in a moment anyway.
+//! are theirs by (each comes back to theirs: `Act::Back`), and what flies the moment it is kept
+//! (rounds, missiles, guided missiles, decoys: `Blasts::keep`), to the last bit. Particles and
+//! flashes are not: they are only seen.
 //!
 //! The bytes: `MAGIC`, `VERSION`, the build and the scenario's fingerprint it is of (no other
 //! takes it up), how many times it was kept (of two slots, the newest is the one with more), the
 //! clock (step, the structures' time and bursts, strikes done, the next free id, the sun), the
-//! events, the bodies and a checksum of all that before it (a slot cut short or garbled is not
-//! taken). Little-endian; the events as they go on the wire (`net::append_event`).
+//! events, the bodies, what flies and a checksum of all that before it (a slot cut short or
+//! garbled is not taken). Little-endian; the events as they go on the wire (`net::append_event`).
 use crate::{
     game::Game,
     net::{self, Event},
@@ -18,7 +19,7 @@ use glam::DVec3;
 use lunar_net::Reader;
 
 pub const MAGIC: [u8; 4] = *b"LPAR";
-pub const VERSION: u16 = 1;
+pub const VERSION: u16 = 2;
 
 /// What a game taken up again had besides its world: how many times it was kept, and its
 /// players' bodies (`Pilot::write_state`) by their keys.
@@ -97,6 +98,8 @@ pub fn write<'a>(game: &Game, saves: u64, scenario: u32, bodies: impl Iterator<I
         n += 1;
     }
     out[count_at..count_at + 4].copy_from_slice(&n.to_le_bytes());
+    // ---- what flies
+    game.blasts.keep(out);
     let sum = checksum(out);
     out.extend_from_slice(&sum.to_le_bytes());
 }
@@ -191,6 +194,7 @@ pub fn read(game: &mut Game, scenario: u32, data: &[u8]) -> Result<Kept, String>
         let len = u32::from_le_bytes(le(&mut r).map_err(bad)?) as usize;
         kept.bodies.push((key, r.bytes(len).map_err(bad)?.to_vec()));
     }
+    game.blasts.take_up(&mut r).map_err(bad)?;
     if !r.is_empty() {
         return Err("la partida guardada está estropeada".to_string());
     }
