@@ -213,6 +213,31 @@ fn the_program_has_the_game_and_a_player_walks_in_it() {
     let mut old = Client::connect(&addr, "Marta", "V39", 3).expect("a client");
     let refused = program.expect("No se deja entrar a Marta", || old.update(now()));
     assert!(refused.contains(lunar_play::net::BUILD) && refused.contains("V39"), "{refused}");
+    // garbage thrown at it over the real network, from a stranger: it plays on as if nothing
+    let junk = std::net::UdpSocket::bind("127.0.0.1:0").expect("a socket");
+    let mut dice = 0x9E37_79B9_7F4A_7C15u64;
+    for k in 0..3000u64 {
+        dice ^= dice << 13;
+        dice ^= dice >> 7;
+        dice ^= dice << 17;
+        let n = 1 + (dice % 400) as usize;
+        let mut d: Vec<u8> = (0..n).map(|i| (dice >> (i % 8 * 8)) as u8 ^ i as u8).collect();
+        d[0] = 1 + (k % 6) as u8;
+        let _ = junk.send_to(&d, &addr);
+    }
+    let (mut last, mut walked) = (now(), 0.0);
+    while walked < 1.0 {
+        let t = now();
+        online.receive(t, &mut game, &mut me);
+        for _ in 0..online.steps(t - last) {
+            me.input = lunar_play::pilot::Input { forward: 1.0, ..Default::default() };
+            online.step(&mut game, &mut me);
+            walked += lunar_play::game::STEP;
+        }
+        last = t;
+        std::thread::sleep(Duration::from_millis(4));
+    }
+    assert_eq!(online.stats.corrections, 0, "garbage changed nothing: {:?}", online.stats);
     let key = online.key.expect("a key to come back with");
     program.order("salir");
     let saved = program.expect("Partida guardada en", || online.receive(now(), &mut game, &mut me));

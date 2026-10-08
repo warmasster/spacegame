@@ -368,3 +368,88 @@ fn texts_too_long_for_the_wire_are_cut_not_fatal() {
     assert_eq!(game, [GameIn { from: ids[0], reliable: true, data: long }], "the longest a game may say, whole, and nothing longer");
     assert_eq!(w.server.stats().garbled, 0);
 }
+
+/// A machine's way out whose address can change under it (a router that gives it another one).
+struct Movable(std::sync::Arc<std::sync::Mutex<lunar_net::Memory>>);
+
+impl Transport for Movable {
+    fn send(&mut self, to: lunar_net::Addr, data: &[u8]) {
+        self.0.lock().unwrap().send(to, data);
+    }
+    fn recv(&mut self, buf: &mut [u8]) -> Option<(lunar_net::Addr, usize)> {
+        self.0.lock().unwrap().recv(buf)
+    }
+}
+
+#[test]
+fn a_session_whose_address_changes_goes_on_from_the_new_one_and_nobody_else_can_take_it() {
+    let mut w = World::plain(15);
+    let a = w.join("A");
+    let ida = w.settle(a);
+    // B's way out, to be moved
+    let way = std::sync::Arc::new(std::sync::Mutex::new(w.net.endpoint()));
+    w.clients.push(lunar_net::Client::with_transport(Box::new(Movable(way.clone())), w.addr, "B", BUILD, SCENARIO));
+    w.addrs.push(way.lock().unwrap().addr());
+    let b = w.clients.len() - 1;
+    let idb = w.settle(b);
+    w.events(a);
+    // (the router gives B another address: what it sends comes from there now, what is sent to the
+    // old one is lost)
+    let new = w.net.endpoint();
+    let (old, moved) = (way.lock().unwrap().addr(), new.addr());
+    *way.lock().unwrap() = new;
+    w.net.cut(old, true);
+    for k in 0..120 {
+        w.step_with(|i, c, t| {
+            c.send_quick(&says(i, t));
+            if i == 1 && k == 10 {
+                c.send_game(&[0xB0]);
+            }
+        });
+    }
+    assert!(w.log.contains(&ServerEvent::Moved { id: idb, name: "B".to_string(), addr: moved }), "{:?}", w.log);
+    assert!(matches!(w.clients[b].status(), Status::Connected { .. }), "B is still in: {:?}", w.clients[b].status());
+    assert!(w.server.take_game().any(|m| m.from == idb && m.data == [0xB0]), "and what it says reaches the game");
+    assert_eq!(w.server.player_count(), 2);
+    assert!(w.events(a).iter().all(|e| !matches!(e, Event::Left { .. })), "nobody left");
+    // (and someone else at yet another address, saying it is A, is nobody)
+    let stranger = w.net.endpoint().addr();
+    let mut buf = [0u8; 64];
+    for k in 0..40 {
+        buf.iter_mut().enumerate().for_each(|(i, x)| *x = (i * 31 + k) as u8);
+        buf[0] = 4;
+        w.net.inject(stranger, w.addr, &buf);
+    }
+    w.run(0.5);
+    assert!(!w.log.iter().any(|e| matches!(e, ServerEvent::Moved { id, .. } if *id == ida)), "A stays where it is");
+    assert!(matches!(w.clients[a].status(), Status::Connected { .. }));
+}
+
+#[test]
+fn one_who_floods_does_not_crowd_out_the_others() {
+    let mut w = World::plain(16);
+    let (a, b) = (w.join("A"), w.join("B"));
+    let ids = [w.settle(a), w.settle(b)];
+    w.server.take_game().for_each(drop);
+    let mut honest = 0;
+    for k in 0..60 {
+        // (B says thousands of things a frame; A, one, as a game does)
+        w.step_with(|i, c, _| {
+            if i == 1 {
+                for _ in 0..3000 {
+                    c.send_quick(&[0xEE; 8]);
+                }
+            } else {
+                c.send_game(&[0xA0, k]);
+            }
+        });
+        let got: Vec<GameIn> = w.server.take_game().collect();
+        assert!(got.iter().filter(|m| m.from == ids[1]).count() <= 512, "what one may put in at once");
+        honest += got.iter().filter(|m| m.from == ids[0]).count();
+    }
+    w.run(0.5);
+    honest += w.server.take_game().filter(|m| m.from == ids[0]).count();
+    assert_eq!(honest, 60, "everything the honest one said came");
+    assert!(w.server.stats().flooded > 0);
+    assert_eq!(w.server.player_count(), 2);
+}

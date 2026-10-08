@@ -19,4 +19,7 @@ pub(super) struct Session {
     /// through it (it would arrive before the welcome, or instead of it, and be thrown away).
     pub confirmed: bool,
     pub leaving: Option<Leaving>,
+    /// Messages for the game taken of it since the game last took them (`take_game`): past
+    /// `MAX_GAME_IN_EACH` the rest are dropped, so one who floods does not crowd out the others.
+    pub game_in: u32,
 }

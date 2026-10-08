@@ -445,6 +445,11 @@ impl Pilot {
 
     /// The body's own frame: its way up and the level way its turn is counted from (what the
     /// mouse turns while it floats: `look`).
+    /// How far up and down the head looks at most (rad).
+    pub fn look_limit(&self) -> f64 {
+        self.def.cuerpo.cabeza.arriba
+    }
+
     pub fn body_frame(&self) -> (DVec3, DVec3) {
         (self.up, self.fore)
     }

@@ -805,3 +805,154 @@ fn a_late_comer_is_told_a_world_too_big_for_one_message() {
     assert_eq!(t.host.stats.too_big, 0);
     println!("told to who came late: {:.1} kB of events, {} structures", t.host.stats.event_bytes as f64 / 1000.0, t.seats[late].game.builds.set.list.len());
 }
+
+#[test]
+fn a_cheating_client_gets_nothing_by_it_and_the_honest_one_plays_on() {
+    // one plays honestly; another is a client made by hand that says whatever it likes: commands
+    // by the hundred, a look no head can take, what only tests may, what is out of reach, the
+    // same structure asked for again and again, garbage, and datagrams in the name of the honest
+    // one. None of it does anything; the honest one is never put right
+    use lunar_play::blasts::{Launch, What};
+    use lunar_play::net::{self as wire, Act, Cmd};
+    let mut t = Table::new(1, 83, Conditions::default());
+    t.host.config.cheats = false;
+    let mut cheat = lunar_net::Client::with_transport(Box::new(t.net.endpoint()), t.link.addr(), "tramposo", BUILD, defs().fingerprint);
+    let mut out = Vec::new();
+    let mut frames = 0;
+    while t.host.ids().count() < 2 {
+        t.frame(1.0 / 60.0, |_, me, n| walk(me, n));
+        cheat.update(t.now);
+        cheat.events().for_each(drop);
+        frames += 1;
+        assert!(frames < 600, "the cheat never got in");
+    }
+    let them = cheat.id().unwrap();
+    let mut dice = 0x9E37_79B9_7F4A_7C15u64;
+    let mut roll = move || {
+        dice ^= dice << 13;
+        dice ^= dice >> 7;
+        dice ^= dice << 17;
+        dice
+    };
+    let before = t.host.stats;
+    for f in 0..240u64 {
+        let step = t.host.game.step;
+        // (commands by the hundred, each running, with a look straight through the head)
+        for k in 0..40 {
+            let c = Cmd { step: step + 2 + (k % 3), input: Input { forward: 1.0, run: true, ..Input::default() }, yaw: 3.0, pitch: 50.0, ..Cmd::default() };
+            wire::write_cmds(&[c], None, &mut out);
+            cheat.send_quick(&out);
+        }
+        // (what is not let be, and what is out of reach)
+        let far = t.host.game.bodies.get(t.host.game.site.body).above_ground(t.host.game.site.at(3000.0, 0.0), 2.0);
+        let acts = [
+            Act::Body(vec![0; 40]),
+            Act::Spawn { kind: "cachalote".into(), pos: far, rot: Quat::IDENTITY },
+            Act::Launch(Launch { what: What::Boom(0), from: far, dir: DVec3::X, speed: 10.0, vel: DVec3::ZERO, target: None, by: None }),
+            Act::Launch(Launch { what: What::Shot(0), from: far, dir: DVec3::X, speed: 900.0, vel: DVec3::ZERO, target: None, by: None }),
+            Act::Mend { structure: 1, part: 0, hp: 1e9 },
+            Act::Resync { id: 1 },
+            Act::Resync { id: 2 },
+        ];
+        for a in &acts {
+            wire::write_act(step, a, &mut out);
+            cheat.send_game(&out);
+        }
+        // (garbage that says it is a command or an act)
+        for _ in 0..20 {
+            let n = 1 + (roll() % 60) as usize;
+            let mut junk: Vec<u8> = (0..n).map(|_| roll() as u8).collect();
+            junk[0] = if roll() % 2 == 0 { wire::CMDS } else { wire::ACT };
+            cheat.send_quick(&junk);
+        }
+        // (datagrams in the honest one's name, from their address: not signed with their key)
+        if f % 4 == 0 {
+            let mut fake = vec![4u8];
+            fake.extend((0..40).map(|_| roll() as u8));
+            t.net.inject(t.seats[0].at, t.link.addr(), &fake);
+        }
+        t.frame(1.0 / 60.0, |_, me, n| walk(me, n));
+        cheat.update(t.now);
+        cheat.events().for_each(drop);
+    }
+    let s = t.host.stats;
+    let body = &t.host.player(them).expect("the cheat is still there").pilot;
+    println!(
+        "cheat: {} flooded, {} denied, {} garbled; the server's net: {} forged; the honest one: {} corrections",
+        s.flooded - before.flooded,
+        s.denied - before.denied,
+        s.garbled - before.garbled,
+        t.server.stats().forged,
+        t.seats[0].online.stats.corrections
+    );
+    assert!(body.pitch.abs() <= std::f64::consts::FRAC_PI_2 + 1e-9, "a look no head can take: {}", body.pitch);
+    assert!(s.flooded - before.flooded > 1000, "commands by the hundred are dropped");
+    assert!(s.denied - before.denied > 100, "what is not let be is refused");
+    assert!(s.garbled > before.garbled, "garbage is counted");
+    assert!(t.server.stats().forged > 0, "what is not signed by them is not theirs");
+    assert_eq!(t.host.game.ships.list.iter().filter(|sh| t.host.game.builds.set.get(sh.structure).is_some_and(|st| st.pos.distance(DVec3::ZERO) > 0.0 && st.to_world(st.center).distance(t.host.game.site.at(3000.0, 0.0) * t.host.game.bodies.get(t.host.game.site.body).radius) < 500.0)).count(), 0, "no ship was put");
+    // (the cheat's body went no faster than anyone's: one command a step)
+    let walked = body.velocity_in(&t.host.game.builds.set).length();
+    assert!(walked < 8.0 && !body.flying, "{walked} m/s, flying {}", body.flying);
+    assert!(matches!(t.seats[0].online.status(), lunar_net::Status::Connected { .. }), "the honest one is still in");
+    assert_eq!(t.seats[0].online.stats.corrections, 0, "and was never put right");
+    assert!(t.off(0, 120) < 1e-3);
+}
+
+#[test]
+fn garbage_said_to_the_game_breaks_nothing() {
+    // what a game says, cut short and with bits changed, and noise that says it is a command or an
+    // act, fifty thousand times, from one who is in the game: nothing panics, nothing it says that
+    // makes no sense is taken, and the honest player beside it plays on
+    use lunar_play::net::{self as wire, Act, Check, Cmd};
+    let mut t = Table::new(1, 89, Conditions::default());
+    t.host.config.cheats = false;
+    let noise = 999_999;
+    t.host.join(noise);
+    let mut real: Vec<Vec<u8>> = Vec::new();
+    let mut out = Vec::new();
+    let cmds: Vec<Cmd> = (0..4).map(|k| Cmd { step: 100 + k, input: Input { forward: 0.5, jump: k == 2, ..Input::default() }, yaw: 0.3 * k as f64, aim: Some(glam::Vec3::Y), frame: Some([glam::Vec3::Y, glam::Vec3::X]), keys: 5, ..Cmd::default() }).collect();
+    wire::write_cmds(&cmds, Some(Check { step: 99, body: Summary::default(), fixes: 3 }), &mut out);
+    real.push(out.clone());
+    for a in [Act::Grab, Act::Release, Act::Wheel(2.0), Act::Sit { ship: 5, seat: 1 }, Act::Stand, Act::Resync { id: 3 }, Act::Back { key: 7 }, Act::Body(vec![1; 90]), Act::Mend { structure: 2, part: 3, hp: 4.0 }] {
+        wire::write_act(100, &a, &mut out);
+        real.push(out.clone());
+    }
+    let mut dice = 0x2545_F491_4F6C_DD1Du64;
+    let mut roll = move || {
+        dice ^= dice << 13;
+        dice ^= dice >> 7;
+        dice ^= dice << 17;
+        dice
+    };
+    let before = t.host.stats.garbled;
+    for round in 0..50_000u64 {
+        let mut m = match round % 3 {
+            0 => {
+                let r = &real[(roll() % real.len() as u64) as usize];
+                r[..1 + (roll() as usize % r.len())].to_vec()
+            }
+            1 => {
+                let mut r = real[(roll() % real.len() as u64) as usize].clone();
+                for _ in 0..1 + roll() % 3 {
+                    let at = (roll() % r.len() as u64) as usize;
+                    r[at] ^= 1 << (roll() % 8);
+                }
+                r
+            }
+            _ => (0..1 + roll() % 80).map(|_| roll() as u8).collect(),
+        };
+        if round % 7 == 0 && !m.is_empty() {
+            m[0] = if roll() % 2 == 0 { wire::CMDS } else { wire::ACT };
+        }
+        t.host.take(noise, &m);
+        if round % 500 == 0 {
+            t.frame(1.0 / 60.0, |_, me, n| walk(me, n));
+        }
+    }
+    t.run(2.0, 60.0, |_, me, n| walk(me, n));
+    println!("garbage: {} taken for nonsense of 50 000 (the rest made sense, or came too fast)", t.host.stats.garbled - before);
+    assert!(t.host.stats.garbled - before > 10_000);
+    assert_eq!(t.seats[0].online.stats.corrections, 0);
+    assert!(t.off(0, 120) < 1e-3);
+}

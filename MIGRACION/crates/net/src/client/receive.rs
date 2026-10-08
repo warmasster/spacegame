@@ -20,6 +20,8 @@ impl Client {
                     self.name = name.to_string();
                     self.server_name = server.to_string();
                     self.channel = Channel::new(now, lead::DATA);
+                    // (signed with what the handshake said: the server's cookie and our salt)
+                    self.channel.sign(crate::sip::session_key(self.cookie, self.salt));
                     self.next_ping = now;
                 }
                 Ok(Datagram::Challenge { salt, cookie }) if salt == self.salt && matches!(self.phase, Phase::Hello) => {

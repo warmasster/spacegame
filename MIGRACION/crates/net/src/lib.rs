@@ -10,6 +10,7 @@
 //! - `proto`: what a datagram and a message are;
 //! - `game`: a player, a rigid thing: plain data, their encoding and their mixing;
 //! - `clock`: one clock for all (the process's, and the server's as a client measures it);
+//! - `sip`: SipHash, what every datagram of a session is signed with;
 //! - `text`: every text a person reads (Spanish) and the cleaning of what people type.
 pub mod channel;
 pub mod client;
@@ -18,6 +19,7 @@ pub mod game;
 pub mod proto;
 pub mod quant;
 pub mod server;
+pub mod sip;
 pub mod text;
 pub mod transport;
 pub mod wire;

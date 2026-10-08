@@ -12,6 +12,13 @@ rendimiento del juego en TS están en [`../../docs/RENDIMIENTO.md`](../../docs/R
 Prioridad: **A** (se nota jugando), **B** (se nota con muchas cosas en pantalla), **C** (limpieza o
 código muerto).
 
+## V41d (2026-10-08): firmas y límites (fase 11)
+
+- **Medido:** firmar o comprobar un datagrama entero (1 200 bytes) con SipHash-2-4 cuesta 0,69 µs
+  (`sip::tests::signing_a_datagram_costs_next_to_nothing`): con 16 jugadores a 60 datagramas por
+  segundo cada uno, menos de 1 ms por segundo del servidor. Sin reservas: se firma en el búfer del
+  canal.
+
 ## V41c (2026-10-08): reconectar y guardar la partida (fase 9)
 
 - **Medido:** guardar 16 estructuras (34 kB) cuesta 0,2 ms en el hilo de la partida; el disco va en

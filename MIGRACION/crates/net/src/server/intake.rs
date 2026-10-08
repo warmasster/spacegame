@@ -6,8 +6,10 @@ use crate::proto::Msg;
 use crate::text;
 
 /// What clients said to the game and it has not taken yet, at most (a game that stalls must not
-/// make the server keep everything a flood of them says).
+/// make the server keep everything a flood of them says), and of each one (a game says a few a
+/// step; one who floods loses what is past this, not the others).
 const MAX_GAME_IN: usize = 1 << 14;
+pub(super) const MAX_GAME_IN_EACH: u32 = 512;
 
 impl Server {
     pub(super) fn message(&mut self, i: usize, reliable: bool, bytes: &[u8], now: f64) {
@@ -27,8 +29,12 @@ impl Server {
             }
             // (for the game that runs in the server: kept until it takes it)
             Msg::Game(data) | Msg::Quick(data) => {
-                if self.game_in.len() < MAX_GAME_IN {
+                let s = &mut self.sessions[i];
+                if self.game_in.len() < MAX_GAME_IN && s.game_in < MAX_GAME_IN_EACH {
+                    s.game_in += 1;
                     self.game_in.push(GameIn { from: id, reliable, data: data.to_vec() });
+                } else {
+                    self.stats.flooded += 1;
                 }
             }
             Msg::Chat { text } => {

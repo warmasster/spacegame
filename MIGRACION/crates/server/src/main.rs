@@ -64,6 +64,7 @@ fn describe(event: &ServerEvent) -> String {
             format!("Sale {name} (jugador {id}): {reason}. {remain}.")
         }
         ServerEvent::Refused { addr, name, reason } => format!("No se deja entrar a {name} (desde {addr}): {reason}."),
+        ServerEvent::Moved { id, name, addr } => format!("{name} (jugador {id}) sigue desde otra dirección: {addr}."),
         ServerEvent::Chat { name, text, .. } => format!("<{name}> {text}"),
         ServerEvent::Empty => "El servidor se queda vacío (la partida sigue).".to_string(),
     }

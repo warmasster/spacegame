@@ -706,6 +706,13 @@ silueta lejana, oclusión. Falta:
   correcciones en 2 s en la bodega del Cachalote recién creado; 0 con la nave ya en reposo. Idea:
   la nave que lleva al jugador, sin corregir mientras el desvío sea menor que lo que el cuerpo
   tolera, o su estado exacto (no redondeado) mientras alguien la pisa.
+- [ ] (2026-10-08) Servidor autoritativo: el servidor no comprueba que lo que se dispara con la
+  mano sea lo que se lleva (el equipo de la mano, `gear.jsonc`, es de la ventana, y el comando solo
+  dice su número): un tramposo podría disparar un misil sin lanzamisiles, al ritmo de su tipo y
+  desde su mano. Llevar el equipo a datos de `lunar-play` y comprobar `Cmd::tool` contra lo lanzado.
+- [ ] (2026-10-08) Decisión para Fernando: cifrar el tráfico contra quien sí lo ve (la misma wifi)
+  pide un intercambio de claves (una dependencia, p. ej. x25519 + chacha20poly1305). Hoy las
+  firmas paran a quien no ve el tráfico, no a quien lo ve.
 - [ ] (2026-10-08) Servidor autoritativo: con el relevo se fueron sus pruebas de partidas enteras
   (`app/src/multi/tests.rs`). Falta su equivalente por el servidor que tiene la partida: **todas las
   armas de los datos una a una** desde una nave a 2 km/s (cada una arranca una vez en cada juego,

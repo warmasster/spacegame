@@ -6,7 +6,10 @@
 //! - `intake`: what the clients send (for the game, pings, chat);
 //! - `session`: one connected player.
 //!
-//! Nothing that comes from the wire is trusted: sizes are capped and texts cleaned.
+//! Nothing that comes from the wire is trusted: sizes are capped, texts cleaned, and every
+//! datagram of a session is signed with its key (`sip`): what does not pass is dropped unread, and
+//! a session whose datagrams start coming from another address (a router that changed it) is
+//! known by them and follows them there.
 mod intake;
 mod join;
 mod session;
@@ -47,6 +50,9 @@ pub enum ServerEvent {
     Left { id: u32, name: String, reason: String, players: usize },
     /// Someone was not let in, and why.
     Refused { addr: Addr, name: String, reason: String },
+    /// Someone's datagrams, signed as theirs, come from another address now (their router
+    /// changed it): they go on from there.
+    Moved { id: u32, name: String, addr: Addr },
     /// A chat line.
     Chat { id: u32, name: String, text: String },
     /// The last player left.
@@ -64,6 +70,10 @@ pub struct ServerStats {
     pub garbled: u64,
     /// Datagrams from addresses that are not connected.
     pub strays: u64,
+    /// Datagrams of a session whose signature did not pass (dropped unread).
+    pub forged: u64,
+    /// Messages for the game dropped for coming faster than the game takes them.
+    pub flooded: u64,
 }
 
 /// Something a client said to the game that runs in the server (`Msg::Game`, `Msg::Quick`).
@@ -129,6 +139,8 @@ struct Hello<'a> {
 /// Refusals said in any one second: more hellos than this that cannot come in are not answered
 /// (nor logged), so a flood of them costs the server and its log next to nothing.
 const REFUSALS_A_SECOND: u32 = 8;
+/// Datagrams from unknown addresses checked against the sessions' keys in any one second.
+const STRAYS_CHECKED_A_SECOND: u32 = 256;
 
 pub struct Server {
     config: ServerConfig,
@@ -142,8 +154,10 @@ pub struct Server {
     stats: ServerStats,
     /// The key of the cookies of this run: what proves a hello comes from the address it says.
     secret: RandomState,
-    /// The second we are counting refusals in, and how many so far.
+    /// The second we are counting refusals in, and how many so far; and the same for datagrams
+    /// from addresses we do not know that were checked against every session's key.
     refused: (f64, u32),
+    strays_checked: (f64, u32),
     // Buffers that go round.
     inbox: Inbox,
     datagram: Vec<u8>,
@@ -164,6 +178,7 @@ impl Server {
             stats: ServerStats::default(),
             secret: RandomState::new(),
             refused: (0.0, 0),
+            strays_checked: (0.0, 0),
             inbox: Inbox::new(),
             datagram: vec![0; 2048],
             msg: Vec::new(),
@@ -197,16 +212,17 @@ impl Server {
     fn take(&mut self, from: Addr, bytes: &[u8], now: f64, t: &mut dyn Transport) {
         match Datagram::decode(bytes) {
             Ok(Datagram::Data(body)) => {
-                let Some(i) = self.find(from) else {
+                let Some(i) = self.find(from).or_else(|| self.moved(from, body, now)) else {
                     self.stats.strays += 1;
                     return;
                 };
                 let mut inbox = std::mem::take(&mut self.inbox);
                 inbox.clear();
-                self.sessions[i].confirmed = true;
                 match self.sessions[i].channel.receive(body, now, &mut inbox) {
-                    Ok(()) => {}
+                    Ok(()) => self.sessions[i].confirmed = true,
                     Err(ChannelError::Wire(_)) => self.stats.garbled += 1,
+                    // (not theirs: it changes nothing of theirs)
+                    Err(ChannelError::Forged) => self.stats.forged += 1,
                     Err(_) => self.expel(i, text::BROKEN, Some(text::BROKEN)),
                 }
                 for (reliable, msg) in inbox.iter() {
@@ -222,6 +238,24 @@ impl Server {
             }
             _ => self.stats.garbled += 1,
         }
+    }
+
+    /// The session a datagram from an address we do not know is signed by (its router gave it
+    /// another address): it follows it there. A few hundred such a second are looked into at most,
+    /// so a flood of them costs next to nothing.
+    fn moved(&mut self, from: Addr, body: &[u8], now: f64) -> Option<usize> {
+        if now - self.strays_checked.0 >= 1.0 {
+            self.strays_checked = (now, 0);
+        }
+        if self.strays_checked.1 >= STRAYS_CHECKED_A_SECOND || body.len() < crate::channel::HEADER {
+            return None;
+        }
+        self.strays_checked.1 += 1;
+        let i = self.sessions.iter().position(|s| s.confirmed && s.leaving.is_none() && s.channel.signed(body))?;
+        let s = &mut self.sessions[i];
+        s.addr = from;
+        self.events.push(ServerEvent::Moved { id: s.id, name: s.name.clone(), addr: from });
+        Some(i)
     }
 
     /// Marks session `i` to be dropped at the end of this update.
@@ -283,6 +317,9 @@ impl Server {
     /// What clients said to the game that runs in the server since the last call, in the order it
     /// came (each one's reliable messages in the order they were sent).
     pub fn take_game(&mut self) -> std::vec::Drain<'_, GameIn> {
+        for s in &mut self.sessions {
+            s.game_in = 0;
+        }
         self.game_in.drain(..)
     }
 

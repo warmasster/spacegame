@@ -4,7 +4,7 @@
 mod common;
 
 use common::Dice;
-use lunar_net::channel::{FRAGMENT, HEADER, KEEPALIVE, MAX_MESSAGE, MAX_UNRELIABLE};
+use lunar_net::channel::{FRAGMENT, HEADER, KEEPALIVE, MAX_MESSAGE, MAX_UNRELIABLE, TAG};
 use lunar_net::{Channel, Conditions, Inbox, MTU, Memory, MemoryNet, Transport};
 
 const LEAD: u8 = 4;
@@ -32,7 +32,12 @@ impl Pair {
         let (ea, eb) = (net.endpoint(), net.endpoint());
         let now = 50.0;
         net.set_time(now);
-        Pair { net, a: (Channel::new(now, LEAD), ea), b: (Channel::new(now, LEAD), eb), now, buf: vec![0; 2048], got_a: Vec::new(), got_b: Vec::new(), inbox: Inbox::new(), largest: 0 }
+        // (signed, as every session's channel is)
+        let key = lunar_net::sip::session_key(0x5EED ^ seed, 77);
+        let (mut a, mut b) = (Channel::new(now, LEAD), Channel::new(now, LEAD));
+        a.sign(key);
+        b.sign(key);
+        Pair { net, a: (a, ea), b: (b, eb), now, buf: vec![0; 2048], got_a: Vec::new(), got_b: Vec::new(), inbox: Inbox::new(), largest: 0 }
     }
     fn step(&mut self) {
         self.now += STEP;
@@ -197,7 +202,7 @@ fn keep_alives_keep_a_quiet_peer_heard_and_a_dead_one_is_noticed() {
     assert!(pair.a.0.silence(pair.now) < KEEPALIVE + 0.1 && pair.b.0.silence(pair.now) < KEEPALIVE + 0.1);
     let quiet = pair.a.0.stats();
     assert!((9..=12).contains(&quiet.sent_datagrams), "about one keep-alive a second: {}", quiet.sent_datagrams);
-    assert_eq!(quiet.sent_bytes, quiet.sent_datagrams * HEADER as u64, "and each is only a header");
+    assert_eq!(quiet.sent_bytes, quiet.sent_datagrams * (HEADER + TAG) as u64, "and each is only a header (and its tag)");
     // b's cable is cut: a hears nothing more, and its reliable message stays unacked.
     pair.net.cut(pair.b.1.addr(), true);
     pair.a.0.send_reliable(b"anyone?");
@@ -256,4 +261,54 @@ fn the_same_seed_gives_the_same_run() {
     };
     assert_eq!(run(808), run(808));
     assert_ne!(run(808), run(809));
+}
+
+#[test]
+fn a_datagram_not_signed_with_the_key_is_dropped_unread() {
+    // whoever does not know the session's key: a datagram of a channel of their own (another key,
+    // or none), a real one with a bit changed, one cut short. None of them gets in, none changes
+    // what the channel had, and the real ones go on
+    let mut pair = Pair::new(707, Conditions::default());
+    pair.a.0.send_reliable(b"uno");
+    pair.step();
+    pair.step();
+    let mut stranger = Channel::new(pair.now, LEAD);
+    stranger.sign(lunar_net::sip::session_key(1, 2));
+    stranger.send_reliable(b"falso");
+    let mut unsigned = Channel::new(pair.now, LEAD);
+    unsigned.send_reliable(b"sin firma");
+    let to = pair.b.1.addr();
+    let mut caught = Vec::new();
+    {
+        let mut tap = Tap(&mut caught);
+        stranger.flush(pair.now, to, &mut tap);
+        unsigned.flush(pair.now, to, &mut tap);
+    }
+    let mut inbox = Inbox::new();
+    for d in &caught {
+        assert_eq!(pair.b.0.receive(&d[1..], pair.now, &mut inbox), Err(lunar_net::ChannelError::Forged));
+        let mut flipped = d.clone();
+        let at = flipped.len() / 2;
+        flipped[at] ^= 1;
+        assert_eq!(pair.b.0.receive(&flipped[1..], pair.now, &mut inbox), Err(lunar_net::ChannelError::Forged));
+        assert_eq!(pair.b.0.receive(&d[1..d.len() / 3], pair.now, &mut inbox), Err(lunar_net::ChannelError::Forged));
+    }
+    assert!(inbox.iter().next().is_none(), "nothing of theirs got in");
+    pair.a.0.send_reliable(b"dos");
+    pair.step();
+    pair.step();
+    let got: Vec<&[u8]> = pair.got_b.iter().map(|g| &g.1[..]).collect();
+    assert_eq!(got, [&b"uno"[..], &b"dos"[..]]);
+}
+
+/// A transport that keeps what is sent through it.
+struct Tap<'a>(&'a mut Vec<Vec<u8>>);
+
+impl lunar_net::Transport for Tap<'_> {
+    fn send(&mut self, _: lunar_net::Addr, data: &[u8]) {
+        self.0.push(data.to_vec());
+    }
+    fn recv(&mut self, _: &mut [u8]) -> Option<(lunar_net::Addr, usize)> {
+        None
+    }
 }

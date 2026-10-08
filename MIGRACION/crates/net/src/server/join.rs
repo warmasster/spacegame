@@ -70,7 +70,9 @@ impl Server {
         self.next_id += 1;
         // Two players with one name would be told apart by nobody.
         let name = if self.sessions.iter().any(|s| s.name.eq_ignore_ascii_case(&name)) { format!("{} ({id})", text::clean(&name, text::NAME_CHARS - 6)) } else { name };
-        self.sessions.push(Session { id, addr: from, salt, name: name.clone(), channel: Channel::new(now, lead::DATA), confirmed: false, leaving: None });
+        let mut channel = Channel::new(now, lead::DATA);
+        channel.sign(crate::sip::session_key(cookie, salt));
+        self.sessions.push(Session { id, addr: from, salt, name: name.clone(), channel, confirmed: false, leaving: None, game_in: 0 });
         let i = self.sessions.len() - 1;
         self.welcome(i, t);
         // The others learn of the newcomer; the newcomer is told who is here in one go.

@@ -58,6 +58,15 @@ const RELOAD: u64 = 12;
 /// how many (what a player's game reads in one).
 const EVENTS_ROOM: usize = lunar_net::MAX_TELL - 32;
 const EVENTS_MOST: usize = 4096;
+/// What one player may send, by the step: messages of commands (one a step, and a frame that
+/// catches up sends several at once), acts (a lever dragged sends one a step) and structures
+/// asked for again; each with what may come at once. Past that it is dropped and counted.
+const CMDS_RATE: f32 = 2.0;
+const CMDS_BURST: f32 = 24.0;
+const ACTS_RATE: f32 = 1.5;
+const ACTS_BURST: f32 = 120.0;
+const RESYNC_RATE: f32 = 8.0 / 60.0;
+const RESYNC_BURST: f32 = 16.0;
 /// Steps in a row a player's command may be guessed as the last one; past them nothing more is
 /// asked of the body (its game is not heard: it does not go on walking, or firing, on its own).
 const GUESS_MOST: u32 = 30;
@@ -106,6 +115,9 @@ pub struct HostStats {
     pub forgotten: u64,
     /// Events too big for any message (they could not be told).
     pub too_big: u64,
+    /// Messages dropped for coming faster than a player may send them (commands, acts,
+    /// structures asked for again).
+    pub flooded: u64,
 }
 
 /// One player, as the server has them besides their body.
@@ -153,6 +165,11 @@ struct Peer {
     launches: f32,
     mend: f32,
     fired: Vec<(crate::blasts::What, u64)>,
+    /// What may still come of their commands, acts and structures asked for again (refilled each
+    /// step, `CMDS_RATE`…).
+    cmds_left: f32,
+    acts_left: f32,
+    resyncs_left: f32,
     /// (reused)
     snap: Snap,
     order: Vec<usize>,
@@ -188,6 +205,9 @@ impl Peer {
             launches: 0.0,
             mend: 0.0,
             fired: Vec::new(),
+            cmds_left: CMDS_BURST,
+            acts_left: ACTS_BURST,
+            resyncs_left: RESYNC_BURST,
             snap: Snap::default(),
             order: Vec::new(),
         }
@@ -196,6 +216,17 @@ impl Peer {
     fn cmd_at(&self, step: u64) -> Option<&Cmd> {
         let c = &self.cmds[(step % RING as u64) as usize];
         (c.step == step && self.newest.is_some_and(|n| n >= step)).then_some(c)
+    }
+
+    /// Whether a message of kind `kind` (`CMDS`, `ACT`) comes faster than they may send it (else
+    /// it is counted against what may come).
+    fn flooded(&mut self, kind: u8) -> bool {
+        let left = if kind == CMDS { &mut self.cmds_left } else { &mut self.acts_left };
+        if *left < 1.0 {
+            return true;
+        }
+        *left -= 1.0;
+        false
     }
 
     fn tell(&mut self, e: &Event) {
@@ -252,6 +283,7 @@ pub struct Host {
 const OUT_OF_REACH: &str = "fuera de alcance";
 const NOT_ALLOWED: &str = "no permitido en este servidor";
 const TOO_FAST: &str = "demasiado deprisa";
+const TAKEN: &str = "lo lleva otro";
 
 impl Host {
     /// The game `game`, run as a server (its players' games are told what it does).
@@ -453,6 +485,11 @@ impl Host {
         let Some(k) = self.peers.iter().position(|p| p.id == from) else { return };
         let mut r = Reader::new(data);
         let ok = match r.u8() {
+            // (no faster than a player's game sends them: the rest is not read)
+            Ok(CMDS | ACT) if self.peers[k].flooded(data[0]) => {
+                self.stats.flooded += 1;
+                true
+            }
             Ok(CMDS) => {
                 self.cmds_in.clear();
                 match net::read_cmds(&mut r, &mut self.cmds_in) {
@@ -605,6 +642,9 @@ impl Host {
             apply(&cmd, p, cheats);
             peer.last = cmd;
             (peer.launches, peer.mend) = ((peer.launches + self.config.launches * STEP as f32).min(self.config.launches), (peer.mend + MEND_RATE * STEP as f32).min(MEND_RATE));
+            peer.cmds_left = (peer.cmds_left + CMDS_RATE).min(CMDS_BURST);
+            peer.acts_left = (peer.acts_left + ACTS_RATE).min(ACTS_BURST);
+            peer.resyncs_left = (peer.resyncs_left + RESYNC_RATE).min(RESYNC_BURST);
             while peer.acts.front().is_some_and(|a| a.0 <= s) {
                 if let Some((_, a)) = peer.acts.pop_front() {
                     self.due.push((k, a));
@@ -751,8 +791,14 @@ impl Host {
             }
             Act::Stand => seats::stand(&mut p.pilot, &g.ships, &g.builds.set),
             Act::Grab => {
+                // (what another has in their hands is theirs)
+                let held: Vec<u64> = self.players.iter().enumerate().filter(|(j, _)| *j != k).filter_map(|(_, o)| o.hands.holding()).collect();
+                let p = &mut self.players[k];
                 let view = p.acting_view(set);
                 let on = p.pilot.ride.map(|r| r.id);
+                if p.hands.reach(set, &g.ships, &view, on).is_some_and(|(r, _, _)| held.contains(&r.id)) {
+                    return Err(TAKEN);
+                }
                 p.hands.grab(set, &g.ships, &view, on)?;
             }
             Act::Release => p.hands.release(&mut g.builds),
@@ -837,8 +883,13 @@ impl Host {
                 p.pilot.read_state(&state).map_err(|_| NOT_ALLOWED)?;
             }
             Act::Resync { id } => {
-                // (told anew: as if it had just come to be known)
+                // (told anew: as if it had just come to be known; not in a loop)
                 let peer = &mut self.peers[k];
+                if peer.resyncs_left < 1.0 {
+                    self.stats.flooded += 1;
+                    return Err(TOO_FAST);
+                }
+                peer.resyncs_left -= 1.0;
                 if peer.interest.knows(id) {
                     peer.came.push(id);
                 }
@@ -1185,7 +1236,10 @@ const REBUILT: f32 = 0.2;
 /// (free flight only with `cheats`). The same in the server and in the player's own game.
 pub(crate) fn apply(c: &Cmd, p: &mut Player, cheats: bool) {
     p.input = c.input;
-    (p.pilot.yaw, p.pilot.pitch) = (c.yaw, c.pitch);
+    // (a look as a head can: up and down no further than its neck, round no further than a
+    // number that still turns finely)
+    let most = p.pilot.look_limit();
+    (p.pilot.yaw, p.pilot.pitch) = (c.yaw.clamp(-1e6, 1e6), c.pitch.clamp(-most, most));
     (p.pilot.pack_on, p.pilot.steady, p.pilot.lamps) = (c.pack, c.steady, c.lamps);
     if cheats && c.fly != p.pilot.flying {
         p.pilot.toggle_flight();

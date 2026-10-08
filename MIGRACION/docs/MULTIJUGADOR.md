@@ -86,6 +86,20 @@ Detrás, los mensajes: `[etiqueta][id, si es fiable][longitud][bytes]`.
 | `Joined`, `Left` | sí | servidor | quién está |
 | `Bundle`, `Synced` | sí | servidor | la puesta al día de quien entra (quién está), y su final |
 
+## Firmas y límites (fase 11)
+
+- **Cada datagrama de una sesión va firmado** (`channel::Channel::sign`): al final, 8 bytes de
+  SipHash-2-4 (`sip.rs`) de lo que lleva, con la clave de la sesión, que sale del saludo (la
+  galleta del `Challenge` y la sal del cliente: `sip::session_key`). Uno que no pasa se tira sin
+  leerlo (`ChannelError::Forged`, `ServerStats::forged`) y no echa a nadie. No es cifrado: quien
+  ve el tráfico (la misma wifi) ve el saludo.
+- **La sesión es su clave, no su dirección**: un datagrama firmado por una sesión que llega desde
+  otra dirección la lleva allí (`ServerEvent::Moved`): el router que cambia la dirección del
+  jugador no lo echa. Se comprueban como mucho 256 por segundo de direcciones desconocidas.
+- **Cada uno, lo suyo**: como mucho 512 mensajes para la partida de cada jugador cada vez que la
+  partida los toma (`ServerStats::flooded`); los límites de lo que dice la partida (comandos,
+  actos, `Resync`) son de `lunar_play::host`.
+
 ## Tamaños y errores
 
 Medidos por `tests/wire.rs` (posición en la superficie de la Luna, sin ningún eje cerca de cero).
