@@ -54,6 +54,10 @@ struct Thing {
 
 #[derive(Default)]
 pub struct Tactics {
+    /// The ships this game knows only from afar (a player's game over a server: `Online::far`,
+    /// where each is now): found by the radars, followed by guided missiles and autopilots, as
+    /// what it knows in full. By id, where it is, how it goes, its kind.
+    pub far: Vec<FarShip>,
     things: Vec<Thing>,
     /// Where each traffic craft was when last looked at, and when: how it moves is the difference.
     craft_was: Vec<DVec3>,
@@ -65,12 +69,32 @@ pub struct Tactics {
     launches: Vec<Shot>,
 }
 
+/// A ship known only from afar (`Tactics::far`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FarShip {
+    pub id: u64,
+    pub pos: DVec3,
+    pub vel: DVec3,
+    /// Its kind: its place among `Ships::kinds`.
+    pub kind: u16,
+}
+
+/// How warm a ship known only from afar is taken to be (W): its engines are not told.
+const FAR_HEAT: f32 = 3.0e4;
+/// Its size, if its kind does not say what it reflects (m).
+const FAR_RADIUS: f32 = 15.0;
+
 /// What a structure of radius `r` reflects when nothing says otherwise (m²).
 fn rcs_of(r: f32) -> f32 {
     0.08 * std::f32::consts::PI * r * r
 }
 
 impl Tactics {
+    /// What a ship known only from afar reflects: what its kind says, else what its size would.
+    fn far_rcs(ships: &Ships, f: &FarShip) -> f32 {
+        ships.kinds.get(usize::from(f.kind)).and_then(|k| k.def.firma).map_or(rcs_of(FAR_RADIUS), |firma| firma.rcs)
+    }
+
     /// Every weapon of every kind of ship fires something there is.
     pub fn check(ships: &Ships, blasts: &Blasts) -> Result<(), String> {
         for kind in &ships.kinds {
@@ -90,14 +114,18 @@ impl Tactics {
     }
 
     /// Where a target of the guided missiles is and how it shines.
-    fn aim(id: u64, ships: &Ships, builds: &Builds, traffic: Option<&Traffic>, was: &[DVec3], dt: f64) -> Option<Aim> {
+    fn aim(id: u64, ships: &Ships, builds: &Builds, traffic: Option<&Traffic>, far: &[FarShip], was: &[DVec3], dt: f64) -> Option<Aim> {
         if id & CRAFT_ID != 0 {
             let k = (id & !CRAFT_ID) as usize;
             let pos = *traffic?.pos.get(k)?;
             let vel = was.get(k).filter(|_| dt > 0.0).map_or(DVec3::ZERO, |w| (pos - *w) / dt);
             return Some(Aim { pos, vel, rcs: CRAFT_RCS, heat: 5.0e6 });
         }
-        let s = builds.set.get(id)?;
+        let Some(s) = builds.set.get(id) else {
+            // (known only from afar: where it is told it is)
+            let f = far.iter().find(|f| f.id == id)?;
+            return Some(Aim { pos: f.pos, vel: f.vel, rcs: Self::far_rcs(ships, f), heat: FAR_HEAT });
+        };
         let ship = ships.by_structure(id).map(|n| &ships.list[n]);
         let rcs = ship.and_then(|sh| sh.kind.def.firma).map_or(rcs_of(s.radius), |f| f.rcs);
         Some(Aim { pos: s.to_world(s.center), vel: s.vel, rcs, heat: ship.map_or(0.0, |sh| sh.heat) })
@@ -124,7 +152,7 @@ impl Tactics {
             if blasts.aims.iter().any(|a| a.0 == id) {
                 continue;
             }
-            if let Some(a) = Self::aim(id, ships, builds, traffic, &self.craft_was, now - self.craft_t) {
+            if let Some(a) = Self::aim(id, ships, builds, traffic, &self.far, &self.craft_was, now - self.craft_t) {
                 blasts.aims.push((id, a));
             }
         }
@@ -148,6 +176,10 @@ impl Tactics {
             let rcs = sh.kind.def.firma.map_or(rcs_of(s.radius), |f| f.rcs);
             let e = sh.tactical.as_ref().map(|t| t.emission).unwrap_or_default();
             self.things.push(Thing { id: s.id, pos, vel, rcs, heat: sh.heat, erp: e.erp, beam: (s.rot * e.beam).as_dvec3(), cone: e.cone, lock: e.lock, jam: e.jam, code: e.code, class: Class::Ship });
+        }
+        for f in &self.far {
+            let rcs = Self::far_rcs(ships, f);
+            self.things.push(Thing { id: f.id, pos: f.pos, vel: f.vel, rcs, heat: FAR_HEAT, erp: 0.0, beam: DVec3::Z, cone: -1.0, lock: None, jam: 0.0, code: 0, class: Class::Ship });
         }
         if let Some(t) = traffic {
             let dt = now - self.craft_t;
@@ -272,3 +304,33 @@ pub enum Shot {
     Launch(Launch),
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{defs::Defs, game::Game};
+
+    #[test]
+    fn a_ship_known_only_from_afar_is_on_the_radar_and_can_be_followed() {
+        let dir = crate::root().join("assets/defs");
+        let defs = Defs::load(&dir).unwrap_or_else(|e| panic!("{}: {}", e.file, e.message));
+        let mut g = Game::new_apart(&defs, &dir, 256, |_| true).unwrap();
+        let n = g.ships.list.iter().position(|sh| sh.tactical.is_some()).expect("a ship with sensors in the scenario");
+        let (own, up) = {
+            let s = g.builds.set.get(g.ships.list[n].structure).unwrap();
+            let at = s.to_world(s.center);
+            (at, g.bodies.get(g.site.body).up(at))
+        };
+        // (one 20 km off, overhead: never known in full here)
+        let id = 987_654;
+        g.tactics.far.push(FarShip { id, pos: own + up * 20_000.0, vel: DVec3::X * 300.0, kind: 0 });
+        g.ships.list[n].tactical.as_mut().unwrap().looking = true;
+        let bodies = g.bodies.clone();
+        g.tactics.look(&mut g.ships, &g.builds, &bodies, None, &mut g.blasts);
+        let tac = g.ships.list[n].tactical.as_ref().unwrap();
+        let c = tac.sensed.iter().find(|c| c.id == id).expect("not on the radar");
+        assert_eq!(c.class, Class::Ship);
+        // (and a guided missile can be told where it is)
+        let aim = Tactics::aim(id, &g.ships, &g.builds, None, &g.tactics.far, &[], 0.0).expect("cannot be aimed at");
+        assert!(aim.pos.distance(own + up * 20_000.0) < 1e-6);
+    }
+}

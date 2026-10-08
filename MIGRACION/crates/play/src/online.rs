@@ -408,6 +408,15 @@ impl Online {
         self.cmds[(s % RING as u64) as usize] = cmd;
         self.moved.clear();
         self.drive.step(&me.pilot, self.keys, &mut game.ships, &game.builds.set, STEP as f32, &mut self.moved);
+        // (the ships known only from afar, where each is at this step: for the radars)
+        game.tactics.far.clear();
+        let t = game.step.saturating_sub(self.far_step) as f64 * STEP;
+        for f in &self.far {
+            if let FarWhat::Ship { id, kind } = f.what {
+                let vel = f.vel.as_dvec3();
+                game.tactics.far.push(crate::tactics::FarShip { id, pos: f.pos + vel * t, vel, kind });
+            }
+        }
         game.tick(&mut [&mut *me]);
         self.stats.steps += 1;
         // (what came into being here this step — a piece let go by a clamp, one off what was
