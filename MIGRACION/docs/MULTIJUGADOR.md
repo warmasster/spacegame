@@ -265,8 +265,8 @@ Cada partida simula todo; la red solo la mantiene de acuerdo con las demás.
   simulándose (sus mandos también llegan) y, antes de que el mundo avance, se la lleva hacia donde
   dice el dueño con una semivida de 80 ms, igual a cualquier fps (`follow::steer`): ningún salto de
   un frame a otro, y quien va dentro va con ella. Solo una copia muy lejos (> 40 m o > 0,6 rad: una
-  nave puesta de golpe) se pone allí de una vez; y una copia que el mundo no simula a fondo (lejos:
-  `SimLevel::Coarse`/`Dormant`) se pone exacta, con su reloj al del mundo.
+  nave puesta de golpe) se pone allí de una vez; y una copia que el mundo no simula a fondo (una
+  política que la duerma; la del juego no lo hace) se pone exacta, con su reloj al del mundo.
 - **Con la aceleración de su dueño.** A la copia se le da además lo que acelera la nave de verdad
   (de sus dos últimos estados, `Client::rigid_speeding`, menos la gravedad, que su física ya pone):
   una nave que esquiva a 7 g no se queda un metro atrás en cada viraje; la corrección solo quita lo
@@ -451,10 +451,16 @@ servidor; a 0,04 mm en lo que lo lleva. Lo que hizo falta para eso (y vale en cu
 **Batalla** (`a_small_battle…`, 5 contra 5, en la batería; `a_battle_of_a_hundred_ships`, 50 contra
 50, a mano, como mucho cuatro minutos de reloj): Azores manejados solo por sus mandos, por las
 manos del servidor (`Host::control`, lo que usará una IA o un guion: se cuenta por adelantado y se
-hace en el mismo paso en todos, `net::HAND_LEAD`). Con cien: 90 s de batalla en 98 s de reloj,
-20 000 impactos, 28 naves deshechas y 464 pedazos; el jugador que mira, 1 corrección, ninguna nave
-pedida entera; el paso del servidor, 7–10 ms de media (10 ms en el cañoneo, peor 33 ms). Lo que
-le llega al jugador en el cañoneo, en [`OPTIMIZACION.md`](OPTIMIZACION.md) (V41g, B). Los
+hace en el mismo paso en todos, `net::HAND_LEAD`). Con cien y dos jugadores (uno entre las
+líneas, otro a 6 km): 90 s de batalla en 113–115 s de reloj (el servidor y los dos juegos en el
+mismo proceso), 20 430 impactos, 34 naves deshechas y 529 pedazos; los dos jugadores, 1
+corrección, ninguna nave pedida entera, nadie echado; el paso del servidor, 7–11 ms de media
+(10,4 en el cañoneo, el 5 % más lento por encima de 20 ms; el peor, 46 ms en una pasada y un pico
+suelto de 118 en otra). La primera medida (98 s de reloj, 1 corrección) estaba mal: al jugador lo
+echaba el servidor en el cañoneo («su conexión no da abasto»: más de 8 192 mensajes fiables sin
+confirmar) y desde ahí ni se le mandaba nada ni su juego hacía nada; ahora la prueba falla si
+echan a alguien. Lo que le llega al jugador en el cañoneo, en [`OPTIMIZACION.md`](OPTIMIZACION.md)
+(V41g, B). Los
 indicadores de los paneles (luces, agujas, pantallas) y los dibujos del táctico solo se calculan
 en una partida que alguien mira y para las naves a menos de 60 m de quien mira (`Ship::shown`;
 se dibujan a 22 m como mucho): el servidor no los calcula nunca. Nada más los lee: los mandos, las
@@ -503,3 +509,42 @@ nada de ella.
 cambian; no mandar lo que no cambia y marcar el primer estado tras un silencio; retraso de
 interpolación que se adapta; no mandar nada por el canal hasta que el cliente contesta al
 `Welcome` (sin eso la puesta al día de 81 kB costaba 222 kB).
+
+## El mundo no depende de quién mira (2026-10-08)
+
+Lo que pasa en el mundo es lo mismo esté quien esté dentro, mire desde donde mire y sepa lo que
+sepa. Un jugador lo cambia solo con lo que hacen en él su cuerpo y sus manos.
+
+**Lo que había.** Cada estructura se simulaba según lo lejos que estaba de quien mira (los
+jugadores, una cámara, y hasta el primer proyectil en vuelo): a menos de 1,5 km, entera y en cada
+paso, chocando con las demás; hasta 15 km, sola y a saltos de 0,25 s; más allá, dormida, siguiendo
+su vuelo a pasos de un segundo. Los sistemas de una nave quieta, igual: en cada paso a menos de
+120 m de alguien o con alguien a bordo; cada medio segundo hasta 4 km; cada 4 s más allá. Así, un
+jugador lejos de una batalla, o una cámara encima, cambiaba la batalla: en la de cien, con un
+segundo jugador a 6 km, 912 impactos en los primeros 10 s en vez de 956; y una batalla que nadie
+miraba iba a saltos y sin choques.
+
+**Lo que hay.** El nivel de cada estructura lo da su `LodPolicy` a partir de la estructura sola
+(`level(&Structure)`: no se le da nada más), y la del juego, `Full`, las simula todas enteras,
+juntas y en cada paso. Lo que reposa sigue sin costar casi nada: la física no mueve lo que reposa
+(`resting`) hasta que algo lo toca. Lo que vive entre las estructuras (`Among`: los jugadores, lo
+que vuela) ya no dice dónde está para que se simule lo de alrededor. El ritmo de los sistemas de
+una nave lo da lo que pasa en ella (`Ships::update`): en cada paso si se mueve, la tocan o la
+golpean (o si lo pide quien ejecuta el juego, `Game::awake`: el editor, un guion); si no, cada
+medio segundo con el tiempo de en medio asentado; vaya quien vaya a bordo o cerca. Quien mira solo
+decide lo que se dibuja (`Game::watchers` y los jugadores: los paneles de las naves a menos de
+60 m, `Ship::shown`).
+
+**Cómo se sabe** (`online::the_world_is_the_same_whoever_is_in_it`, en la batería): una batalla de
+cinco contra cinco, 20 s con cañones y misiles, sin nadie; con una cámara encima; con un jugador a
+2,5 km por encima; con ése y otro a 20 km. En cada paso y al bit: dónde está cada estructura y
+cómo va, lo que queda de cada pieza, lo que guardan las máquinas de cada nave y a qué ritmo van,
+cuánto se ha disparado y cuántos impactos. Antes del cambio la cámara sola ya lo cambiaba (en el
+paso en que las naves echan a andar); ahora los cuatro son iguales. En el núcleo,
+`schedule::what_lives_among_structures_changes_nothing_of_them_it_does_not_touch`: una estructura
+cayendo a 0, 1 600 y 7 800 m/s, sola y con alguien flotando a 100 m, 5 km y 500 km, igual al bit.
+
+**Lo que cuesta.** Lo que antes nadie miraba casi no costaba; ahora cuesta lo que costaría
+mirado. La batalla de cien, que ya se simulaba entera, igual que antes: 10,4 ms de media por paso
+en el cañoneo (antes 10,8) y el mismo resultado que con la cámara en medio. Lo pendiente, en
+[`OPTIMIZACION.md`](OPTIMIZACION.md) (V41g, E).

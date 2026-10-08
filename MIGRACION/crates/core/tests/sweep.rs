@@ -6,7 +6,7 @@ use lunar_core::{
     structure::{
         Library,
         motion::Sweep,
-        schedule::DistancePolicy,
+        schedule::Full,
         set::Structures,
         state::{Part, Structure},
     },
@@ -27,7 +27,7 @@ fn block(set: &mut Structures, at: DVec3) -> u64 {
 }
 
 #[test]
-fn a_moving_wall_hits_even_a_world_stationary_round_far_from_the_camera() {
+fn a_moving_wall_hits_even_a_world_stationary_round() {
     let (bodies, mut set) = world();
     let from = DVec3::new(4e6, 3e6, 2e6);
     let id = block(&mut set, from + DVec3::X * 20.0);
@@ -41,7 +41,7 @@ fn a_moving_wall_hits_even_a_world_stationary_round_far_from_the_camera() {
     let mut impacts = Vec::with_capacity(2);
     let mut sweep = Sweep::default();
     let mut flight = Flight { rounds: &mut rounds, impacts: &mut impacts, sweep: &mut sweep };
-    set.simulate_with(1.0 / 60.0, 1.0 / 60.0, &bodies, &DistancePolicy::default(), &[DVec3::ZERO], &mut [&mut flight]);
+    set.simulate_with(1.0 / 60.0, 1.0 / 60.0, &bodies, &Full, &mut [&mut flight]);
     assert_eq!(impacts.len(), 1);
     assert_eq!(impacts[0].surface.unwrap().id, id);
     assert!(impacts[0].surface.unwrap().dir.x > 0.99);

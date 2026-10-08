@@ -20,11 +20,6 @@ use std::{
     sync::Arc,
 };
 
-/// A ship this near the eye (m) runs every tick; one farther than `ASLEEP_FROM` and at rest is
-/// only looked at now and then. In between, and near but with nothing happening in it, it ticks
-/// twice a second with the rest settled (`lunar_ship::Pace`).
-const FULL_WITHIN: f64 = 120.0;
-const ASLEEP_FROM: f64 = 4000.0;
 /// The panels of a ship this near an eye (m, from its hull) are shown: their lamps, needles and
 /// screens follow what they show (they are drawn from 22 m at most, `lunar_ship::scene`; the
 /// rest so that they have settled when one comes near).
@@ -150,14 +145,16 @@ impl Ships {
     }
 
     /// Run every ship's systems for `dt` s, all at once (each on its own structure, a thread
-    /// each as there are cores), each at its pace: in full the ones in `awake` (the ones players
-    /// ride, the one a tool works on), the ones near any of `watchers` (the players, a camera) and
-    /// the ones with something going on; the rest a tick now and then.
+    /// each as there are cores), each at its pace (`lunar_ship::Pace`), from what goes on in it
+    /// and nothing else: in full the ones with something going on (moving, touched, hit) and the
+    /// ones in `awake` (what whoever runs the game asks: the one a tool works on); the rest tick
+    /// twice a second with the time between settled. Never from who is aboard or near, or looks:
+    /// the world is the same whoever is in it.
     /// `people`: whoever stands about (spheres in the world): what moves stops at them. `eyes`:
     /// where this game is seen from (none in a server's): the panels of the ships within
     /// `PANELS_SEEN` of one are shown (`Ship::shown`), the rest's indicators wait.
     #[allow(clippy::too_many_arguments)]
-    pub fn update(&mut self, dt: f64, builds: &mut Builds, bodies: &BodyRegistry, fx: &mut Effects, sun: DVec3, watchers: &[DVec3], awake: &[u64], people: &[(DVec3, f32)], eyes: &[DVec3]) {
+    pub fn update(&mut self, dt: f64, builds: &mut Builds, bodies: &BodyRegistry, fx: &mut Effects, sun: DVec3, awake: &[u64], people: &[(DVec3, f32)], eyes: &[DVec3]) {
         // ships whose structure is gone are gone
         if self.list.len() != self.paired {
             let alive: HashSet<u64> = builds.set.list.iter().map(|s| s.id).collect();
@@ -168,16 +165,8 @@ impl Ships {
         let mut pairs: Vec<(&mut Ship, &mut Structure)> = self.list.iter_mut().filter_map(|sh| by_id.remove(&sh.structure).map(|s| (sh, s))).collect();
         self.paired = pairs.len();
         let pace = |sh: &Ship, s: &Structure| {
-            let c = s.to_world(s.center);
-            let d = watchers.iter().map(|w| c.distance(*w)).fold(f64::MAX, f64::min) - f64::from(s.radius);
             let moving = !s.anchored && !s.resting;
-            if awake.contains(&s.id) || sh.busy() || moving || s.awake_until > now || d < FULL_WITHIN {
-                Pace::Full
-            } else if d < ASLEEP_FROM {
-                Pace::Slow
-            } else {
-                Pace::Asleep
-            }
+            if awake.contains(&s.id) || sh.busy() || moving || s.awake_until > now { Pace::Full } else { Pace::Slow }
         };
         let run = |(sh, s): &mut (&mut Ship, &mut Structure)| {
             let com = s.to_world(s.com);

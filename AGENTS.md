@@ -127,6 +127,16 @@ Toda regla nueva de este tipo se prueba barriendo cuerpos (los dos que hay y uno
 dentro, en la franja y fuera, velocidades de 0 a 7 800 m/s, fotogramas de 10 a 240 fps y la
 nave derecha, volcada y girando (`app/src/pilot/frames.rs` tiene los sitios y las posturas).
 
+**El mundo no depende de quién mira, en el prototipo Rust** ([`migracion/docs/MULTIJUGADOR.md`](migracion/docs/MULTIJUGADOR.md)
+«El mundo no depende de quién mira»). Lo que pasa en el mundo es lo mismo esté quien esté dentro,
+mire desde donde mire y sepa lo que sepa: nada de lo simulado (física, nivel de cada estructura,
+ritmo de los sistemas de una nave, despertar) se decide por la presencia, la posición o el interés
+de un jugador o de una cámara. Un jugador cambia el mundo solo con lo que su cuerpo y sus manos
+hacen en él. Lo que solo se dibuja (indicadores, efectos) sí va por quien mira (`Game::watchers`,
+los ojos de `Ships::update`). El nivel de una estructura lo da su `LodPolicy` a partir de la
+estructura sola (la del juego, `Full`: todo entero); el ritmo de una nave, lo que pasa en ella. Lo
+prueba `online::the_world_is_the_same_whoever_is_in_it`, al bit y paso a paso.
+
 **Coherencia de las naves en Rust** ([`migracion/docs/NAVES.md`](migracion/docs/NAVES.md) «Coherencia
 y ordenador de vuelo»): toda nave que vuela pasa `crates/ship/tests/coherencia.rs` (lo que un
 piloto llamaría «no va»: teclas mantenidas, pasos de ruedas, retenes, cada tecla por su eje, nave

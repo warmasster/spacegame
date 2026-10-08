@@ -424,12 +424,11 @@ impl Loop {
         self.p.begin(input, self.c);
         let bodies = self.p.bodies.clone();
         if self.world {
-            let eye = self.p.position;
             let mut among: Vec<&mut dyn Among> = vec![&mut self.p];
             for other in others.iter_mut() {
                 among.push(&mut **other);
             }
-            self.set.simulate_with(self.now, dt, &bodies, &lunar_core::structure::schedule::DistancePolicy::default(), &[eye], &mut among);
+            self.set.simulate_with(self.now, dt, &bodies, &lunar_core::structure::schedule::Full, &mut among);
         } else {
             // the world's slices as it takes them: the structures on, then what lives among them
             let n = lunar_core::structure::physics::slices(dt as f32);

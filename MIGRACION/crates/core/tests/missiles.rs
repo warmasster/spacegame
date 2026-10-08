@@ -1,16 +1,11 @@
 //! Long-range missiles: solved launches land where aimed a hundred kilometres away; a strike on a
-//! structure nobody watches wakes it in time and wrecks it; every flight is the same.
+//! sleeping structure wakes it in time and wrecks it; every flight is the same.
 use glam::DVec3;
 use lunar_core::{
     body::{Body, BodyDef, BodyRegistry},
     defs,
     missiles::{MissileDef, Missiles, Strike, Target},
-    structure::{
-        Library,
-        breakup::Rules,
-        schedule::{DistancePolicy, SimLevel},
-        set::Structures,
-    },
+    structure::{Library, breakup::Rules, schedule::SimLevel, set::Structures, state::Structure},
 };
 use std::{path::Path, sync::Arc};
 
@@ -27,15 +22,16 @@ fn away(bodies: &BodyRegistry, km: f64) -> DVec3 {
     (DVec3::Y + DVec3::new(0.6, 0.0, -0.8) * (km * 1000.0 / bodies.get(0).radius)).normalize()
 }
 
-/// Fly until everything lands (fixed frames); the strikes, and the structure levels seen.
-fn fly(m: &mut Missiles, bodies: &BodyRegistry, set: &mut Structures, eye: DVec3, mut each: impl FnMut(f64, &Structures, &Missiles)) -> Vec<Strike> {
-    let policy = DistancePolicy::default();
+/// Fly until everything lands (fixed frames), every structure asleep but for what wakes it; the
+/// strikes, and the structure levels seen.
+fn fly(m: &mut Missiles, bodies: &BodyRegistry, set: &mut Structures, mut each: impl FnMut(f64, &Structures, &Missiles)) -> Vec<Strike> {
+    let policy = |_: &Structure| SimLevel::Dormant;
     let mut strikes = Vec::new();
     let mut t = 0.0;
     while !m.list.is_empty() && t < 1200.0 {
         t += 1.0 / 30.0;
         m.update(1.0 / 30.0, bodies, set, &mut strikes);
-        set.simulate(t, 1.0 / 30.0, bodies, &policy, &[eye]);
+        set.simulate(t, 1.0 / 30.0, bodies, &policy);
         each(t, set, m);
     }
     strikes
@@ -50,7 +46,7 @@ fn a_hundred_kilometres_on_target() {
     let mut m = missiles();
     m.launch("misil", from, to, &bodies).unwrap();
     let mut set = Structures::new(Arc::new(Library::load(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/defs/structures")).unwrap()));
-    let strikes = fly(&mut m, &bodies, &mut set, from, |_, _, _| {});
+    let strikes = fly(&mut m, &bodies, &mut set, |_, _, _| {});
     assert_eq!(strikes.len(), 1);
     let miss = strikes[0].at.distance(to);
     println!("100 km shot: lands {miss:.1} m from the aim at {:.0} m/s", strikes[0].vel.length());
@@ -74,7 +70,7 @@ fn a_far_station_wakes_before_the_strike_and_is_wrecked() {
         m.launch("misil", from, aim, &bodies).unwrap();
         let mut woke = None;
         let mut flight = 0.0;
-        let strikes = fly(&mut m, &bodies, &mut set, from, |t, set, m| {
+        let strikes = fly(&mut m, &bodies, &mut set, |t, set, m| {
             if woke.is_none() && set.list[0].sim == SimLevel::Active {
                 woke = Some(t);
             }

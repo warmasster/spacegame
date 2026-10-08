@@ -51,7 +51,7 @@ todo (también cómo se mueven las naves y los jugadores, con predicción en el 
 | Núcleo del mundo (tiempo, cola, tablas, azar, registro de causas) | `src/sim/core/` (~1 500 líneas) | — | todo |
 | Guardar y cargar la partida | `src/sim/persist/` (binario por columnas, dos ranuras, segmentos) | — | todo |
 | Hilo del mundo con presupuesto | `src/sim/host/` (runner, protocolo, worker) | — | todo |
-| Niveles de detalle con conservación, lugares | `src/sim/kit/` (`lod.ts`, `place.ts`) | `SimLevel` de estructuras (solo física, sin agregados) | los agregados |
+| Niveles de detalle con conservación, lugares | `src/sim/kit/` (`lod.ts`, `place.ts`) | `SimLevel` de estructuras (solo física, sin agregados; por el estado de cada una, nunca por quién mira) | los agregados |
 | Módulos (jugadores, objetos, personas, lo que saben, «qué hay aquí») | `src/sim/modules/` | — | todo |
 | Servidor | `src/server/room.ts` y cía.: simula cajas y NPC, decide daño | `crates/net/src/server*` + `crates/server`: solo reparte, ordena y da dueños | simular |
 | Objetos sueltos del servidor | `server/objects.ts` (dueño = quien la maneja, si no reposa) | trozos y cajas locales de cada partida | todo |
@@ -179,7 +179,8 @@ resumen del servidor es igual al de los clientes (lo que ya está sincronizado: 
 resúmenes coinciden con los de los clientes en todo lo compartido.
 
 **Riesgos.** CPU: el servidor simula las naves de todos. Hay que medir: naves activas por núcleo.
-Los niveles de detalle (`SimLevel`) se calculan desde *todos* los jugadores (`watchers`).
+Nada se simula distinto por quién mira (`MULTIJUGADOR.md`, «El mundo no depende de quién mira»):
+todo a paso completo; lo que reposa, la física no lo mueve.
 
 ### Fase 2 — Objetos sueltos del servidor, réplica por interés · L
 
@@ -209,9 +210,9 @@ servidor, como en la web (`server/objects.ts`):
    falta para casarlos.
 4. **Carga suelta** (`lunar-core::structure::hold`, cajas y bidones del escenario): la misma
    réplica. Coger una caja = pedir su llave (`Claim`); soltarla = devolverla.
-5. **Niveles de detalle**: el servidor simula en fino lo que algún jugador ve de cerca, a grandes
-   pasos lo lejano y nada lo que reposa (lo que ya hace `SimLevel`, ahora con todos los jugadores
-   como observadores).
+5. **Niveles de detalle**: nunca por quién mira (el mundo es el mismo esté quien esté): todo a
+   paso completo, y lo que reposa no se mueve. Un atajo para lo lejano solo si da lo mismo, o si
+   lo decide el estado de lo abreviado, igual en todas las partidas.
 
 **Pruebas.** Port de `tools/net/check.ts` («réplica por interés contra fuerza bruta»): mil objetos,
 jugadores moviéndose al azar; cada uno sabe exactamente lo que la regla dice, y nada parpadea en el
@@ -361,7 +362,7 @@ Una versión nueva por fase (el servidor rechaza con su motivo a quien llegue co
 | Bajada por jugador | < 64 kB/s en combate, < 8 kB/s en calma | `tests/bandwidth.rs` ampliado |
 | Subida por jugador | < 8 kB/s | idem |
 | Trozos tras una gran explosión | 100 trozos en interés sin pasarse de la bajada | prioridad por tamaño y distancia |
-| Lo que cuesta un objeto en reposo | nada por paso | `SimLevel::Dormant` |
+| Lo que cuesta un objeto en reposo | casi nada por paso | lo que reposa no se mueve (`resting`) |
 | Partida guardada | 100 000 entidades en < 20 MB | `bench` del mundo |
 
 Todo lo nuevo entra en `OPTIMIZACION.md` con su medida, como siempre.

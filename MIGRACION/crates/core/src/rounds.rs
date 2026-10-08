@@ -85,10 +85,6 @@ impl Among for Flight<'_> {
         self.sweep.end(set);
         self.rounds.fly(dt, bodies, |from, to| self.sweep.hit(set, from, to), self.impacts);
     }
-
-    fn at(&self) -> DVec3 {
-        self.rounds.list.first().map_or(DVec3::splat(f64::INFINITY), |round| round.pos)
-    }
 }
 
 pub struct Rounds {

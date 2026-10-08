@@ -83,8 +83,8 @@ impl Player {
 }
 
 /// Every player as one thing that lives among the structures (`Among`): each stepped, in turn,
-/// with every slice (where they are is watched through `Game::seen_from`).
-struct Crowd<'a, P>(&'a mut [P], DVec3);
+/// with every slice.
+struct Crowd<'a, P>(&'a mut [P]);
 
 impl<P: AsMut<Player>> Among for Crowd<'_, P> {
     fn wake(&mut self, set: &mut Structures, dt: f64) {
@@ -103,10 +103,6 @@ impl<P: AsMut<Player>> Among for Crowd<'_, P> {
         for p in self.0.iter_mut().map(|p| p.as_mut()).filter(|p| !p.away) {
             p.pilot.slice(set, bodies, dt);
         }
-    }
-
-    fn at(&self) -> DVec3 {
-        self.1
     }
 }
 
@@ -159,10 +155,13 @@ pub struct Game {
     pub sun: DVec3,
     /// Steps taken since the start.
     pub step: u64,
-    /// Where someone looks from besides the players (a camera, a script's eye): what is round
-    /// them is simulated in full too. Set by whoever runs the game.
+    /// Where someone looks from besides the players (a camera, a script's eye): what is drawn
+    /// round them is kept up to be drawn (the panels of the ships near, `Ships::update`). Only
+    /// that: the world goes the same whoever looks at it and from wherever (`LodPolicy`). Set by
+    /// whoever runs the game.
     pub watchers: Vec<DVec3>,
-    /// Ships to run in full whatever their distance (the one a tool works on, a script's).
+    /// Ships whose systems run every tick even with nothing going on in them (the one a tool
+    /// works on, a script's). Set by whoever runs the game, never by who is in it.
     pub awake: Vec<u64>,
     pub out: Out,
     pub say: Say,
@@ -170,11 +169,9 @@ pub struct Game {
     pub struck: u64,
     /// (reused) the strikes of a step.
     strike_list: Vec<Strike>,
-    /// What a step works with (reused).
-    seen_from: Vec<DVec3>,
-    /// Where this game is seen from (none in a server's: nobody looks at it).
+    /// What a step works with (reused): where this game is seen from (none in a server's: nobody
+    /// looks at it), and the bodies of whoever stands about.
     eyes: Vec<DVec3>,
-    awake_now: Vec<u64>,
     people: Vec<(DVec3, f32)>,
 }
 
@@ -215,9 +212,7 @@ impl Game {
             say: Say::Alone,
             struck: 0,
             strike_list: Vec::new(),
-            seen_from: Vec::new(),
             eyes: Vec::new(),
-            awake_now: Vec::new(),
             people: Vec::new(),
         })
     }
@@ -272,30 +267,21 @@ impl Game {
             None => (View { eye: DVec3::ZERO, forward: DVec3::Z, up: DVec3::Y, fov_y: 1.0, near: 0.1 }, Motion::default()),
         };
         self.blasts.update(dt, &bodies, view, motion, &mut self.builds);
-        // who watches: whoever looks from somewhere, and every player
-        self.seen_from.clear();
-        self.seen_from.extend_from_slice(&self.watchers);
-        self.awake_now.clear();
-        self.awake_now.extend_from_slice(&self.awake);
-        self.people.clear();
-        for p in players.iter_mut().map(|p| p.as_mut()) {
-            // (where one who is coming will be is watched already: what is there is run in full
-            // from when their game is told of it, as theirs runs it)
-            self.seen_from.push(p.pilot.position);
-            if p.away {
-                continue;
-            }
-            let pilot = &p.pilot;
-            // in full: the ships the players ride, and what whoever runs the game asks
-            self.awake_now.extend(pilot.ride.map(|r| r.id));
-            pilot.body_into(&mut self.people);
-        }
+        // where this game is seen from (none in a server's): whoever looks from somewhere, and
+        // every player. Only for what is drawn: nothing of the world is run otherwise for it
+        // (the world is the same whoever is in it, `LodPolicy`)
         self.eyes.clear();
         if self.say != Say::Server {
-            self.eyes.extend_from_slice(&self.seen_from);
+            self.eyes.extend_from_slice(&self.watchers);
+            self.eyes.extend(players.iter_mut().map(|p| p.as_mut().pilot.position));
+        }
+        // whoever stands about: what moves stops at them (a body in the world, like any other)
+        self.people.clear();
+        for p in players.iter_mut().map(|p| p.as_mut()).filter(|p| !p.away) {
+            p.pilot.body_into(&mut self.people);
         }
         self.tactics.look(&mut self.ships, &self.builds, &bodies, self.traffic.as_ref(), &mut self.blasts);
-        self.ships.update(dt, &mut self.builds, &bodies, &mut self.blasts.fx, self.sun, &self.seen_from, &self.awake_now, &self.people, &self.eyes);
+        self.ships.update(dt, &mut self.builds, &bodies, &mut self.blasts.fx, self.sun, &self.awake, &self.people, &self.eyes);
         // (a player's game over a server does not fire the ships' weapons: what they fire is told)
         if self.say != Say::Client {
             self.tactics.fire(&mut self.ships, &mut self.builds, &bodies, &mut self.blasts);
@@ -317,9 +303,8 @@ impl Game {
         // always of the same instant (`lunar_core::structure::schedule::Among`)
         {
             let (effects, mut flight) = self.blasts.flight();
-            let at = players.first_mut().map_or(DVec3::ZERO, |p| p.as_mut().pilot.position);
-            let mut crowd = Crowd(players, at);
-            self.builds.update(dt, &bodies, effects, &self.seen_from, &mut [&mut crowd, &mut flight]);
+            let mut crowd = Crowd(players);
+            self.builds.update(dt, &bodies, effects, &mut [&mut crowd, &mut flight]);
         }
         self.blasts.land_rounds(&bodies, &mut self.builds);
         // bare hands on what is loose: pulled toward where each player's look holds it

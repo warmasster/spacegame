@@ -81,6 +81,10 @@ struct Table {
     spied: Vec<(u64, Vec<f64>)>,
     /// How long each of the server's steps took, what it sends included (ms).
     took: Vec<f32>,
+    /// Who was thrown out or left, and why (network id: reason).
+    left: Vec<String>,
+    /// The world at each of the server's steps, to the bit, while this is on (`print`).
+    prints: Option<Vec<Print>>,
 }
 
 /// What ship `id`'s machines keep (what two copies compare: `Machine::kept`), one after another,
@@ -101,6 +105,47 @@ fn machines_of(g: &Game, id: u64) -> Option<Vec<f64>> {
         lunar_ship::Pace::Asleep => 2.0,
     });
     Some(out)
+}
+
+/// What one structure is, to the bit, in four: where it is and how it is turned; how fast it
+/// goes and turns; what is left of each of its parts; what its ship's machines keep and how they
+/// are run (`machines_of`).
+type Bits = [u64; 4];
+
+/// The world at one of the server's steps, to the bit: every structure in it (`Bits`), and how
+/// much has been fired and has struck.
+#[derive(PartialEq)]
+struct Print {
+    step: u64,
+    each: Vec<(u64, Bits)>,
+    fired: u64,
+    struck: u64,
+}
+
+fn print(g: &Game) -> Print {
+    let fnv = |values: &mut dyn Iterator<Item = u64>| {
+        let mut h = 0xcbf2_9ce4_8422_2325u64;
+        for v in values {
+            for b in v.to_le_bytes() {
+                h = (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3);
+            }
+        }
+        h
+    };
+    let each = g
+        .builds
+        .set
+        .list
+        .iter()
+        .map(|s| {
+            let place = fnv(&mut s.pos.to_array().into_iter().map(f64::to_bits).chain(s.rot.to_array().into_iter().map(|v| u64::from(v.to_bits()))));
+            let motion = fnv(&mut s.vel.to_array().into_iter().map(f64::to_bits).chain(s.spin.to_array().into_iter().map(|v| u64::from(v.to_bits()))));
+            let parts = fnv(&mut s.parts.iter().flat_map(|p| [u64::from(p.alive), u64::from(p.hp.to_bits())]));
+            let machines = fnv(&mut machines_of(g, s.id).unwrap_or_default().into_iter().map(f64::to_bits));
+            (s.id, [place, motion, parts, machines])
+        })
+        .collect();
+    Print { step: g.step, each, fired: g.blasts.started, struck: g.struck }
 }
 
 impl Table {
@@ -131,7 +176,7 @@ impl Table {
                 Seat { at, online: Online::new(client, defs.scenario.player), game, me, path: Vec::new(), said: Vec::new(), rides: Vec::new(), spied: Vec::new() }
             })
             .collect();
-        let mut t = Table { net, link, server: Server::new(config), host, seats, now: 10.0, due: 0.0, truth: Vec::new(), told: Vec::new(), rides: Vec::new(), defs, spy, spied: Vec::new(), took: Vec::new() };
+        let mut t = Table { net, link, server: Server::new(config), host, seats, now: 10.0, due: 0.0, truth: Vec::new(), told: Vec::new(), rides: Vec::new(), defs, spy, spied: Vec::new(), took: Vec::new(), left: Vec::new(), prints: None };
         for _ in 0..600 {
             t.frame(1.0 / 60.0, |_, _, _| {});
             if t.seats.iter().all(|s| s.online.live()) {
@@ -178,7 +223,10 @@ impl Table {
             for e in self.server.events() {
                 match e {
                     ServerEvent::Joined { id, .. } => self.host.join(id),
-                    ServerEvent::Left { id, .. } => self.host.leave(id),
+                    ServerEvent::Left { id, reason, .. } => {
+                        self.left.push(format!("{id}: {reason}"));
+                        self.host.leave(id);
+                    }
                     _ => {}
                 }
             }
@@ -187,6 +235,9 @@ impl Table {
                 self.host.take(m.from, &m.data);
             }
             self.host.step();
+            if let Some(prints) = &mut self.prints {
+                prints.push(print(&self.host.game));
+            }
             let step = self.host.game.step;
             let ids: Vec<u32> = self.host.ids().collect();
             for id in ids {
@@ -211,7 +262,10 @@ impl Table {
         for e in self.server.events() {
             match e {
                 ServerEvent::Joined { id, .. } => self.host.join(id),
-                ServerEvent::Left { id, .. } => self.host.leave(id),
+                ServerEvent::Left { id, reason, .. } => {
+                    self.left.push(format!("{id}: {reason}"));
+                    self.host.leave(id);
+                }
                 _ => {}
             }
         }
@@ -2592,6 +2646,84 @@ struct Battle {
     worst_step: f32,
 }
 
+/// `per_side` Azores a side round `center` (far from every body, say): two lines 2 km apart
+/// facing each other, ten abreast and 150 m apart. Each side's, and all of them with their side.
+fn lines(t: &mut Table, per_side: usize, center: DVec3) -> ([Vec<u64>; 2], Vec<(usize, u64)>) {
+    let (gap, spacing, cols) = (2000.0, 150.0, 10usize);
+    let mut sides: [Vec<u64>; 2] = [Vec::new(), Vec::new()];
+    let g = &mut t.host.game;
+    for (side, list) in sides.iter_mut().enumerate() {
+        let rot = if side == 0 { Quat::IDENTITY } else { Quat::from_rotation_y(std::f32::consts::PI) };
+        for i in 0..per_side {
+            let (col, row) = ((i % cols) as f64 - (cols as f64 - 1.0) * 0.5, (i / cols) as f64);
+            let at = center + DVec3::new(col * spacing, row * spacing, if side == 0 { -gap * 0.5 } else { gap * 0.5 });
+            list.push(g.ships.spawn_free(&mut g.builds, "azor", at, rot).unwrap());
+        }
+    }
+    let ships = sides.iter().enumerate().flat_map(|(k, l)| l.iter().map(move |&id| (k, id))).collect();
+    (sides, ships)
+}
+
+/// Every ship switched on as a pilot would by the server's own hands (`Host::control`): radar
+/// and transponder (its side's code), the weapons armed and on automatic fire, how near the
+/// autopilot is to keep.
+fn arm(t: &mut Table, ships: &[(usize, u64)]) {
+    for &(side, id) in ships {
+        for (c, v) in [("sensores/sens_codigo", 100.0 + side as f64), ("sensores/radar_enc", 1.0), ("sensores/radar_emitir", 1.0), ("sensores/radar_escala", 0.0), ("combate/armas_tapa", 1.0), ("combate/armas_maestro", 1.0), ("combate/armas_auto", 1.0), ("combate/ap_distancia", 600.0)] {
+            t.host.control(id, c, v);
+        }
+    }
+}
+
+/// One second of battle (`battle`): every fourth, each ship with nothing in hand chooses again
+/// (what is before its nose, hostile, locked; the autopilot after it) and pulls what it has (the
+/// guns until second 12, then missiles by radar, by heat from second 36).
+fn orders(t: &mut Table, ships: &[(usize, u64)], second: usize) {
+    if second % 4 == 0 {
+        for &(_, id) in ships {
+            let g = &t.host.game;
+            let chosen = g.ships.by_structure(id).and_then(|n| g.ships.list[n].signal("tac.elegido")).unwrap_or(0.0);
+            if chosen == 0.0 {
+                t.host.control(id, "principal/obj_morro", 1.0);
+            }
+        }
+        t.run(0.1, 60.0, |_, _, _| {});
+        for &(_, id) in ships {
+            t.host.control(id, "principal/obj_morro", 0.0);
+            let g = &t.host.game;
+            let (iff, locked) = g.ships.by_structure(id).map_or((0.0, 0.0), |n| (g.ships.list[n].signal("tac.obj.iff").unwrap_or(0.0), g.ships.list[n].signal("tac.fijado").unwrap_or(0.0)));
+            if iff != 3.0 {
+                t.host.control(id, "principal/obj_hostil", 1.0);
+            }
+            if locked == 0.0 {
+                t.host.control(id, "principal/obj_fijar", 1.0);
+            }
+            t.host.control(id, "combate/ap_modo", 1.0);
+        }
+        t.run(0.1, 60.0, |_, _, _| {});
+        // (the guns empty, the missiles: by radar first, then the heat seekers; one each time)
+        let weapon = if second >= 36 { 1.0 } else if second >= 12 { 2.0 } else { 0.0 };
+        for &(_, id) in ships {
+            t.host.control(id, "principal/obj_hostil", 0.0);
+            t.host.control(id, "principal/obj_fijar", 0.0);
+            t.host.control(id, "combate/seleccion", weapon);
+            // (a missile goes at each pull: the automatic fire, which holds the trigger while
+            // it has a solution, is let go)
+            if weapon > 0.0 {
+                t.host.control(id, "combate/armas_auto", 0.0);
+                t.host.control(id, "mando/gatillo", 1.0);
+            }
+        }
+        t.run(0.4, 60.0, |_, _, _| {});
+        for &(_, id) in ships {
+            t.host.control(id, "mando/gatillo", 0.0);
+        }
+        t.run(0.4, 60.0, |_, _, _| {});
+    } else {
+        t.run(1.0, 60.0, |_, _, _| {});
+    }
+}
+
 /// `per_side` Azores a side, far from every body, two lines 2 km apart facing each other; each
 /// flown only by its controls, as a pilot would, by the server's own hands (`Host::control`):
 /// radar and transponder (its side's code) on, the track before its nose chosen, declared hostile
@@ -2605,21 +2737,7 @@ fn battle(per_side: usize, most: usize, budget: u64) -> Battle {
     let cond = Conditions { delay: 0.04, jitter: 0.005, loss: 0.01, ..Conditions::default() };
     let mut t = Table::new(2, 211, cond);
     let far = DVec3::new(-2.0e6, 3.0e6, 1.5e6);
-    let (gap, spacing, cols) = (2000.0, 150.0, 10usize);
-    let mut sides: [Vec<u64>; 2] = [Vec::new(), Vec::new()];
-    {
-        let g = &mut t.host.game;
-        g.watchers.push(far);
-        for (side, list) in sides.iter_mut().enumerate() {
-            let rot = if side == 0 { Quat::IDENTITY } else { Quat::from_rotation_y(std::f32::consts::PI) };
-            for i in 0..per_side {
-                let (col, row) = ((i % cols) as f64 - (cols as f64 - 1.0) * 0.5, (i / cols) as f64);
-                let at = far + DVec3::new(col * spacing, row * spacing, if side == 0 { -gap * 0.5 } else { gap * 0.5 });
-                list.push(g.ships.spawn_free(&mut g.builds, "azor", at, rot).unwrap());
-            }
-        }
-    }
-    let ships: Vec<(usize, u64)> = sides.iter().enumerate().flat_map(|(k, l)| l.iter().map(move |&id| (k, id))).collect();
+    let (sides, ships) = lines(&mut t, per_side, far);
     // the one who watches: floating in the middle, between the lines; and another one 6 km off
     let you = t.seats[0].online.you.unwrap();
     t.host.player_mut(you).unwrap().pilot.put(far + DVec3::new(0.0, 300.0, 0.0), DVec3::Y);
@@ -2627,11 +2745,7 @@ fn battle(per_side: usize, most: usize, budget: u64) -> Battle {
     t.host.player_mut(off).unwrap().pilot.put(far + DVec3::new(6000.0, 300.0, 0.0), DVec3::Y);
     t.run(1.0, 60.0, |_, _, _| {});
     // (switched on as a pilot would, and a moment for it all to come up)
-    for &(side, id) in &ships {
-        for (c, v) in [("sensores/sens_codigo", 100.0 + side as f64), ("sensores/radar_enc", 1.0), ("sensores/radar_emitir", 1.0), ("sensores/radar_escala", 0.0), ("combate/armas_tapa", 1.0), ("combate/armas_maestro", 1.0), ("combate/armas_auto", 1.0), ("combate/ap_distancia", 600.0)] {
-            t.host.control(id, c, v);
-        }
-    }
+    arm(&mut t, &ships);
     t.run(3.0, 60.0, |_, _, _| {});
     let alive = |g: &Game, id: u64| g.builds.set.get(id).map_or(0.0, |s| s.parts.iter().filter(|p| p.alive).count() as f64 / s.parts.len().max(1) as f64);
     let hp = |g: &Game, id: u64| g.builds.set.get(id).map_or(0.0, |s| s.parts.iter().map(|p| if p.alive { f64::from(p.hp) } else { 0.0 }).sum::<f64>() / s.parts.iter().map(|p| f64::from(p.max_hp)).sum::<f64>().max(1.0));
@@ -2643,49 +2757,7 @@ fn battle(per_side: usize, most: usize, budget: u64) -> Battle {
     while wall.elapsed() < budget && second < most {
         // (each one with nothing in hand chooses again: what is before its nose, hostile, locked;
         // the autopilot after it)
-        if second % 4 == 0 {
-            for &(_, id) in &ships {
-                let g = &t.host.game;
-                let chosen = g.ships.by_structure(id).and_then(|n| g.ships.list[n].signal("tac.elegido")).unwrap_or(0.0);
-                if chosen == 0.0 {
-                    t.host.control(id, "principal/obj_morro", 1.0);
-                }
-            }
-            t.run(0.1, 60.0, |_, _, _| {});
-            for &(_, id) in &ships {
-                t.host.control(id, "principal/obj_morro", 0.0);
-                let g = &t.host.game;
-                let (iff, locked) = g.ships.by_structure(id).map_or((0.0, 0.0), |n| (g.ships.list[n].signal("tac.obj.iff").unwrap_or(0.0), g.ships.list[n].signal("tac.fijado").unwrap_or(0.0)));
-                if iff != 3.0 {
-                    t.host.control(id, "principal/obj_hostil", 1.0);
-                }
-                if locked == 0.0 {
-                    t.host.control(id, "principal/obj_fijar", 1.0);
-                }
-                t.host.control(id, "combate/ap_modo", 1.0);
-            }
-            t.run(0.1, 60.0, |_, _, _| {});
-            // (the guns empty, the missiles: by radar first, then the heat seekers; one each time)
-            let weapon = if second >= 36 { 1.0 } else if second >= 12 { 2.0 } else { 0.0 };
-            for &(_, id) in &ships {
-                t.host.control(id, "principal/obj_hostil", 0.0);
-                t.host.control(id, "principal/obj_fijar", 0.0);
-                t.host.control(id, "combate/seleccion", weapon);
-                // (a missile goes at each pull: the automatic fire, which holds the trigger while
-                // it has a solution, is let go)
-                if weapon > 0.0 {
-                    t.host.control(id, "combate/armas_auto", 0.0);
-                    t.host.control(id, "mando/gatillo", 1.0);
-                }
-            }
-            t.run(0.4, 60.0, |_, _, _| {});
-            for &(_, id) in &ships {
-                t.host.control(id, "mando/gatillo", 0.0);
-            }
-            t.run(0.4, 60.0, |_, _, _| {});
-        } else {
-            t.run(1.0, 60.0, |_, _, _| {});
-        }
+        orders(&mut t, &ships, second);
         second += 1;
         if second % 10 == 0 {
             let g = &t.host.game;
@@ -2729,6 +2801,7 @@ fn battle(per_side: usize, most: usize, budget: u64) -> Battle {
         }
     }
     println!("{} s de batalla en {:.0} s de reloj", second, wall.elapsed().as_secs_f64());
+    assert!(t.left.is_empty(), "no one is thrown out of the battle: {:?}", t.left);
     let g = &t.host.game;
     Battle {
         seconds: second,
@@ -2738,6 +2811,74 @@ fn battle(per_side: usize, most: usize, budget: u64) -> Battle {
         resyncs: t.seats.iter().map(|s| s.online.stats.resyncs).sum(),
         too_big: t.host.stats.too_big,
         worst_step,
+    }
+}
+
+/// The world is the same whoever is in it and wherever they are, as long as they touch nothing
+/// (`docs/MULTIJUGADOR.md`, «El mundo no depende de quién mira»): a battle, five a side, with
+/// nobody in; with a camera over it; with a player 2.5 km over it; with that one and another 20
+/// km off. Every step, to the bit, the same: where each structure is and how it goes, what is
+/// left of it, what its ship's machines keep and how they are run.
+#[test]
+fn the_world_is_the_same_whoever_is_in_it() {
+    // (every run from the same step of the world, however long its players took to come in)
+    const FROM: u64 = 300;
+    let center = DVec3::new(-2.0e6, 3.0e6, 1.5e6);
+    let run = |players: &[DVec3], camera: bool| -> Vec<Print> {
+        let mut t = Table::new(players.len(), 211, Conditions::default());
+        assert!(t.host.game.step <= FROM, "coming in took {} steps", t.host.game.step);
+        while t.host.game.step < FROM {
+            t.frame(1.0 / 240.0, |_, _, _| {});
+        }
+        assert_eq!(t.host.game.step, FROM);
+        if camera {
+            t.host.game.watchers.push(center);
+        }
+        for (k, at) in players.iter().enumerate() {
+            let id = t.seats[k].online.you.unwrap();
+            t.host.player_mut(id).unwrap().pilot.put(center + *at, DVec3::Y);
+        }
+        t.prints = Some(Vec::new());
+        let (_, ships) = lines(&mut t, 5, center);
+        t.run(1.0, 60.0, |_, _, _| {});
+        arm(&mut t, &ships);
+        t.run(3.0, 60.0, |_, _, _| {});
+        for second in 0..16 {
+            orders(&mut t, &ships, second);
+        }
+        assert!(t.left.is_empty(), "{:?}", t.left);
+        t.prints.take().unwrap()
+    };
+    let above = DVec3::new(0.0, 2500.0, 0.0);
+    let alone = run(&[], false);
+    let end = alone.last().unwrap();
+    assert!(end.struck > 100 && end.fired > 1000, "a battle with blows: {} fired, {} struck", end.fired, end.struck);
+    for (name, players, camera) in [("una cámara encima", vec![], true), ("uno a 2,5 km por encima", vec![above], false), ("ése y otro a 20 km", vec![above, DVec3::new(-20_000.0, 0.0, 0.0)], false)] {
+        let other = run(&players, camera);
+        assert_eq!(alone.len(), other.len(), "con {name}");
+        let Some((a, b)) = alone.iter().zip(&other).find(|(a, b)| a != b) else { continue };
+        let differ: Vec<String> = a
+            .each
+            .iter()
+            .zip(&b.each)
+            .filter(|(x, y)| x != y)
+            .take(6)
+            .map(|((id, x), (_, y))| {
+                let what: Vec<&str> = ["dónde", "cómo va", "piezas", "máquinas"].into_iter().zip(x.iter().zip(y)).filter(|(_, (p, q))| p != q).map(|(n, _)| n).collect();
+                format!("{id}: {}", what.join(", "))
+            })
+            .collect();
+        panic!(
+            "con {name}, el mundo cambia en el paso {} ({} s después de empezar): {} / {} estructuras, {} / {} disparos, {} / {} impactos; las primeras que cambian: {differ:?}",
+            a.step,
+            (a.step - FROM) as f64 * STEP,
+            a.each.len(),
+            b.each.len(),
+            a.fired,
+            b.fired,
+            a.struck,
+            b.struck
+        );
     }
 }
 

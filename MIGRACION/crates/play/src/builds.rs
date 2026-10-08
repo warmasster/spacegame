@@ -18,7 +18,7 @@ use lunar_core::{
     structure::{
         Library,
         breakup::{Event, Rules},
-        schedule::{Among, DistancePolicy, LodPolicy, SimStats},
+        schedule::{Among, Full, LodPolicy, SimStats},
         set::Structures,
     },
 };
@@ -85,7 +85,7 @@ impl Builds {
             set.place(&p.build, bodies, site.body, site.at(p.east, p.north), p.yaw.to_radians(), p.lift)?;
         }
         let scenario_end = set.next_free();
-        Ok(Builds { scenario_end, set, rules, policy: Box::new(DistancePolicy::default()), events: Vec::new(), bursts: Vec::new(), hits: 0, now: 0.0, stats: SimStats::default(), strikes: Vec::new() })
+        Ok(Builds { scenario_end, set, rules, policy: Box::new(Full), events: Vec::new(), bursts: Vec::new(), hits: 0, now: 0.0, stats: SimStats::default(), strikes: Vec::new() })
     }
 
     pub fn blast(&mut self, at: DVec3, d: BlastDef) {
@@ -193,10 +193,10 @@ impl Builds {
         self.set.now = clock.0;
     }
 
-    /// Structures run at their level (watched from `watchers`, and from wherever what lives among
-    /// them is), and what lives among them is stepped with them (`among`: the world has no other
-    /// clock); what broke since the last step shows its material's effect.
-    pub fn update(&mut self, dt: f64, bodies: &BodyRegistry, fx: &mut Effects, watchers: &[DVec3], among: &mut [&mut dyn Among]) {
+    /// Structures run at their level (`policy`: from what each is, never from who looks), and
+    /// what lives among them is stepped with them (`among`: the world has no other clock); what
+    /// broke since the last step shows its material's effect.
+    pub fn update(&mut self, dt: f64, bodies: &BodyRegistry, fx: &mut Effects, among: &mut [&mut dyn Among]) {
         self.now += dt;
         // what was let go of (a clamp opened, what held it destroyed) comes off as its own body
         self.set.separate();
@@ -213,7 +213,7 @@ impl Builds {
                 self.set.blast(at, b.energy, b.radius, &self.rules, &mut self.events, seed ^ self.hits);
             }
         }
-        self.stats = self.set.simulate_with(self.now, dt, bodies, self.policy.as_ref(), watchers, among);
+        self.stats = self.set.simulate_with(self.now, dt, bodies, self.policy.as_ref(), among);
         let cat = &self.set.lib.catalog;
         let mut shown = 0;
         for e in self.events.drain(..) {

@@ -106,9 +106,12 @@ Núcleo (`cargo test -p lunar-core --test schedule --test physics`):
   loncha está donde estaba respecto a ella.
 - `the_smallest_push_counts_the_same_however_fast_it_goes`,
   `what_a_body_holds_is_that_body_to_what_runs_into_it`.
-- `what_lives_among_structures_keeps_them_stepped_with_it_wherever_the_watcher_is`: lo mismo con
-  quien mira a 100 m, a 5 km y a 500 km. Con la regla anterior el punto se iba 1,15 m de una
-  estructura que cae parada vista desde 5 km (y cientos de metros a velocidad orbital).
+- `what_lives_among_structures_changes_nothing_of_them_it_does_not_touch`: la misma estructura
+  cayendo, sola y con alguien flotando a 100 m, a 5 km y a 500 km: al final está donde está sola,
+  al bit. Antes quien mira (o lo que vive entre las estructuras) decidía qué se simulaba entero y
+  qué a saltos o dormido; ahora el nivel de cada estructura sale de ella sola y el juego las
+  simula todas enteras (`LodPolicy`, `Full`; `MULTIJUGADOR.md`, «El mundo no depende de quién
+  mira»).
 
 Jugador (`cargo test -p lunar-app pilot::`): `Loop` corre el fotograma como el juego —las teclas,
 y el mundo con el jugador dentro—, con las estructuras movidas a mano o con la física real, y mide

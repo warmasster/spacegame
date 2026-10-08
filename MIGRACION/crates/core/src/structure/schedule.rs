@@ -1,8 +1,11 @@
-//! How much simulation each structure gets. A `LodPolicy` gives every structure a level from where
-//! the watchers are (players, cameras); anything can wake one (a hit, an incoming projectile) for a
-//! while. Active structures step every frame, coarse ones a few times a second with the time
-//! gathered, dormant ones not at all: when they wake, the time they slept is caught up at once
-//! (ballistically for anything in flight), so nothing jumps and no state is lost.
+//! How much simulation each structure gets. A `LodPolicy` gives every structure a level from what
+//! it is and what goes on in it, and from nothing else: never from who is in the world, where
+//! anyone looks from or what anyone knows (the world is the same whoever is in it: a camera or a
+//! player somewhere must not change what happens anywhere). Anything can wake one (a hit, an
+//! incoming projectile) for a while. Active structures step every frame, coarse ones a few times
+//! a second with the time gathered, dormant ones not at all: when they wake, the time they slept
+//! is caught up at once (ballistically for anything in flight). The game's policy (`Full`) has
+//! every one active.
 //!
 //! This is the world's only clock. What lives among the structures without being one of them
 //! (`Among`: someone on foot, anything else that walks, floats or is carried among them) has no
@@ -20,35 +23,23 @@ pub enum SimLevel {
 }
 
 pub trait LodPolicy: Send + Sync {
-    /// The level `s` gets with the watchers at `watchers` (world points).
-    fn level(&self, s: &Structure, watchers: &[DVec3]) -> SimLevel;
+    /// The level `s` gets, from what it is: it is given nothing else to go by.
+    fn level(&self, s: &Structure) -> SimLevel;
 }
 
-/// By the distance to the nearest watcher.
-pub struct DistancePolicy {
-    /// Active within (m).
-    pub active: f64,
-    /// Coarse within (m); dormant beyond.
-    pub coarse: f64,
-}
+/// Every structure stepped every frame, together (they collide): what the game runs.
+pub struct Full;
 
-impl Default for DistancePolicy {
-    fn default() -> Self {
-        DistancePolicy { active: 1500.0, coarse: 15_000.0 }
+impl LodPolicy for Full {
+    fn level(&self, _: &Structure) -> SimLevel {
+        SimLevel::Active
     }
 }
 
-impl LodPolicy for DistancePolicy {
-    fn level(&self, s: &Structure, watchers: &[DVec3]) -> SimLevel {
-        let c = s.to_world(s.center);
-        let d = watchers.iter().map(|w| w.distance(c)).fold(f64::MAX, f64::min) - f64::from(s.radius);
-        if d < self.active {
-            SimLevel::Active
-        } else if d < self.coarse {
-            SimLevel::Coarse
-        } else {
-            SimLevel::Dormant
-        }
+/// A level by structure as a closure says (tests of the levels themselves).
+impl<F: Fn(&Structure) -> SimLevel + Send + Sync> LodPolicy for F {
+    fn level(&self, s: &Structure) -> SimLevel {
+        self(s)
     }
 }
 
@@ -73,10 +64,6 @@ const RELIEF: f64 = 12_000.0;
 /// slice by slice and right after them (`Structures::simulate_with`), so it and they are always
 /// of the same instant: nothing of it lags a structure, however fast that goes and however long
 /// the frame is. Nothing that moves among structures is stepped any other way.
-///
-/// And what it is among is stepped as it is: the structures round it get every slice it gets,
-/// wherever whoever watches the world is looking from (`at`). Else a structure beside it, seen
-/// from afar, would wait for its next coarse step while it went on: a frame apart again.
 pub trait Among {
     fn wake(&mut self, _set: &mut Structures, _dt: f64) {}
 
@@ -84,9 +71,6 @@ pub trait Among {
 
     /// `dt` s on (more than none), among the structures as they are now.
     fn slice(&mut self, set: &Structures, bodies: &BodyRegistry, dt: f64);
-
-    /// Where it is (world): what is round it is simulated as round any watcher.
-    fn at(&self) -> DVec3;
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -157,13 +141,13 @@ impl Structures {
 
     /// Advance the world by `dt` to time `now`, each structure at its level: the active ones
     /// together (they collide), the coarse ones each with the time it gathered.
-    pub fn simulate(&mut self, now: f64, dt: f64, bodies: &BodyRegistry, policy: &dyn LodPolicy, watchers: &[DVec3]) -> SimStats {
-        self.simulate_with(now, dt, bodies, policy, watchers, &mut [])
+    pub fn simulate(&mut self, now: f64, dt: f64, bodies: &BodyRegistry, policy: &dyn LodPolicy) -> SimStats {
+        self.simulate_with(now, dt, bodies, policy, &mut [])
     }
 
     /// The same, and `among` with them: each of them stepped after every slice the active
     /// structures take (`Among`).
-    pub fn simulate_with(&mut self, now: f64, dt: f64, bodies: &BodyRegistry, policy: &dyn LodPolicy, watchers: &[DVec3], among: &mut [&mut dyn Among]) -> SimStats {
+    pub fn simulate_with(&mut self, now: f64, dt: f64, bodies: &BodyRegistry, policy: &dyn LodPolicy, among: &mut [&mut dyn Among]) -> SimStats {
         self.now = now;
         for item in among.iter_mut() {
             item.wake(self, dt);
@@ -172,12 +156,6 @@ impl Structures {
         let (mut together, mut alone) = std::mem::take(&mut self.due);
         together.clear();
         alone.clear();
-        // (whoever lives among the structures watches the ones round it)
-        let mut watch = std::mem::take(&mut self.watch);
-        watch.clear();
-        watch.extend_from_slice(watchers);
-        watch.extend(among.iter().map(|a| a.at()));
-        let watchers = &watch[..];
         for (k, s) in self.list.iter_mut().enumerate() {
             if s.clock.is_nan() {
                 s.clock = now - dt;
@@ -185,7 +163,7 @@ impl Structures {
             if s.net_clock.is_nan() {
                 s.net_clock = now - dt;
             }
-            let mut level = policy.level(s, watchers);
+            let mut level = policy.level(s);
             if s.awake_until > now {
                 level = SimLevel::Active;
             }
@@ -231,7 +209,6 @@ impl Structures {
         }
         self.physics_among(&together, dt as f32, bodies, among);
         self.due = (together, alone);
-        self.watch = watch;
         // what is held goes where its holder went
         self.follow();
         // networks: often while active, now and then while coarse, and the whole nap of a

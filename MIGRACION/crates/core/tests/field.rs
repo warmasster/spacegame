@@ -9,7 +9,7 @@ use lunar_core::{
     defs,
     structure::{
         Library,
-        schedule::{DistancePolicy, coast},
+        schedule::{Full, SimLevel, coast},
         set::Structures,
         state::{Part, Structure},
     },
@@ -218,22 +218,22 @@ fn a_sleeper_catches_up_as_it_is_pulled_where_it_is() {
             assert!((fell - want).abs() < 1e-9 + 1e-9 * want, "{} a {alt:.0} m: cae {fell:.4} m, serían {want:.4}", b.name);
         }
     }
-    // and through the world's own clock: far from every watcher it sleeps, going on along its fall
-    // a second at a time, and woken it is where free flight would have taken it
+    // and through the world's own clock: asleep (as a policy may have it), it goes on along its
+    // fall a second at a time, and woken it is where free flight would have taken it
     let b = bodies.get(1);
     let dir = clear_of_the_rest(&bodies, 1);
     let mut set = structures();
     let k = block(&mut set, b.center + dir * (b.radius + b.whole_to() * 0.5));
     let from = set.list[k].pos;
-    let far = [from + dir * 1.0e6];
+    let asleep = |_: &Structure| SimLevel::Dormant;
     let mut now = 0.0;
     for _ in 0..4 {
         now += 0.5;
-        set.simulate(now, 0.5, &bodies, &DistancePolicy::default(), &far);
+        set.simulate(now, 0.5, &bodies, &asleep);
     }
     assert!(set.list[k].clock == now && set.list[k].pos != from, "dormida, no sigue su caída (reloj {})", set.list[k].clock);
     now += 1.0 / 60.0;
-    set.simulate(now, 1.0 / 60.0, &bodies, &DistancePolicy::default(), &[from]);
+    set.simulate(now, 1.0 / 60.0, &bodies, &Full);
     let fell = (from - set.list[k].pos).dot(dir);
     let g = bodies.field(from).g();
     eprintln!("dormida 2 s junto a la luna menor y despertada: ha caído {fell:.3} m (g = {g:.3})");
@@ -242,7 +242,7 @@ fn a_sleeper_catches_up_as_it_is_pulled_where_it_is() {
 
 #[test]
 fn an_orbit_slept_through_stays_an_orbit_and_a_fall_is_woken_before_the_ground() {
-    // round each body where its pull is whole, nobody near for three hours: it goes on along its
+    // round each body where its pull is whole, asleep for three hours: it goes on along its
     // orbit (where its pull is each second, not where it fell asleep), its height and speed as
     // they were. And one falling to the ground from as high: woken short of it, never under it
     let bodies = bodies();
@@ -255,11 +255,11 @@ fn an_orbit_slept_through_stays_an_orbit_and_a_fall_is_woken_before_the_ground()
         let mut set = structures();
         let k = block(&mut set, b.center + dir * r);
         set.list[k].vel = dir.any_orthonormal_vector() * speed;
-        let far = [b.center - dir * 1.0e9];
+        let asleep = |_: &Structure| SimLevel::Dormant;
         let (mut now, mut low, mut high) = (0.0, f64::MAX, 0.0f64);
         for _ in 0..3 * 3600 {
             now += 1.0;
-            set.simulate(now, 1.0, &bodies, &DistancePolicy::default(), &far);
+            set.simulate(now, 1.0, &bodies, &asleep);
             let s = &set.list[k];
             let h = (s.to_world(s.com) - b.center).length();
             (low, high) = (low.min(h), high.max(h));
@@ -276,7 +276,7 @@ fn an_orbit_slept_through_stays_an_orbit_and_a_fall_is_woken_before_the_ground()
         let mut now = 0.0;
         while set.list[k].awake_until <= now && now < 3600.0 {
             now += 1.0;
-            set.simulate(now, 1.0, &bodies, &DistancePolicy::default(), &far);
+            set.simulate(now, 1.0, &bodies, &asleep);
             let s = &set.list[k];
             assert!(b.altitude(s.to_world(s.com)) > 0.0, "{}: bajo el suelo a los {now} s", b.name);
         }

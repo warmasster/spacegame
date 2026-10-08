@@ -18,7 +18,12 @@ Cincuenta Azores por bando, a 2 km, que se manejan solos por sus mandos (radar, 
 traza ante el morro hostil y fijada, piloto automático en PERSEG., cañones en fuego automático y
 luego misiles), un jugador mirando entre las líneas; servidor y cliente en el mismo proceso, en un
 contenedor de 4 núcleos. 90 s de batalla en 98 s de reloj; 28 naves deshechas, 464 pedazos,
-20 000 impactos; 1 corrección, 0 peticiones de nave entera, 0 mensajes demasiado grandes.
+20 000 impactos; 1 corrección, 0 peticiones de nave entera, 0 mensajes demasiado grandes. **Esa
+primera medida estaba mal:** al jugador lo echaba el servidor hacia el segundo 15 («su conexión no
+da abasto») y desde ahí ni se le mandaba nada ni su juego hacía nada; la prueba no lo miraba (ahora
+falla si echan a alguien). Medida buena (2026-10-08, dos jugadores, nadie echado): 90 s en 113–115 s
+de reloj, 34 naves deshechas, 529 pedazos, 20 430 impactos, 1 corrección, 0 peticiones, 0
+demasiado grandes; el paso del servidor, 10,4 ms de media en el cañoneo.
 
 - ~~**A. Cada impacto pesaba la nave entera.**~~ (2026-10-08) Cada impacto, aunque solo quitara
   puntos de vida, volvía a pesar la nave (masa, centro, inercia, el índice de sus piezas) y la
@@ -46,7 +51,8 @@ contenedor de 4 núcleos. 90 s de batalla en 98 s de reloj; 28 naves deshechas, 
     `Ships::update` reserva en cada paso un mapa y unas listas con todas las naves (poca cosa con
     cien; basura en un camino caliente).
 - ~~**B. Lo que se manda en el cañoneo.**~~ (2026-10-08) Al jugador entre las líneas le llegaban
-  unos 1 100 kB/s en los 10 s del cañoneo (columna kB/s de `a_battle_of_a_hundred_ships`: los
+  unos 1 100 kB/s en los 10 s del cañoneo, y lo echaban (más de 8 192 mensajes fiables sin
+  confirmar) (columna kB/s de `a_battle_of_a_hundred_ships`: los
   golpes de cada impacto y lo que vuela, a todo el que conoce la nave). Ahora 195 kB/s, y a un
   segundo jugador a 6 km, 44 kB/s; de lo que les llega a los dos, 35 kB/s son instantáneas y el
   resto sucesos. Mismo resultado (0 peticiones de nave, 1 corrección).
@@ -72,10 +78,21 @@ contenedor de 4 núcleos. 90 s de batalla en 98 s de reloj; 28 naves deshechas, 
   quitan un 1 % de vida): lo que deshace naves son los misiles. Apuntado en `PENDIENTES.md`.
 - **D. Un tic del Azor quemando cuesta casi el doble que en reposo** (2026-10-08). La prueba
   `masa::a_ship_with_nothing_flowing_is_never_weighed…` pide que cueste menos de 1,5 veces el de
-  reposo más 5 µs. El Azor da 29–33 µs quemando contra 18–19 en reposo, justo en el borde: sola
-  pasa (3 de 3, y también con el código anterior), pero falla cuando otras pruebas cargan la
-  máquina (2 de 2 en la batería entera). Mirar qué encarece su tic quemando (ordenador de vuelo,
-  toberas, escape) antes que aflojar la prueba.
+  reposo más 5 µs. El Azor da 29–34 µs quemando contra 16–19 en reposo, justo en el borde: sola
+  pasa unas veces sí y otras no (3 de 3, luego 1 de 2), y falla cuando otras pruebas cargan la
+  máquina (3 de 3 en la batería entera) o sin compilación incremental (en reposo baja a 16 µs y el
+  límite con él). Mirar qué encarece su tic quemando (ordenador de vuelo, toberas, escape) antes
+  que aflojar la prueba.
+- **E. Todo se simula entero, siempre** (2026-10-08). Lo que nadie miraba iba a saltos (de 1,5 a
+  15 km de quien mira) o dormido (más lejos), y las naves quietas lejos de todos hacían sus cuentas
+  cada 4 s: barato, pero el mundo dependía de quién miraba (`MULTIJUGADOR.md`, «El mundo no
+  depende de quién mira»). Ahora todo va entero (`schedule::Full`) y el ritmo de una nave sale de
+  lo que pasa en ella. En la batalla de cien, que ya se simulaba entera, no cambia: 10,4 ms de
+  media en el cañoneo (antes 10,8). Cuesta más lo que vuela lejos de todos (una batalla a 20 km de
+  cualquiera, los pedazos que quedan en órbita): lo que costaría mirado. Sin medir: un mundo con
+  miles de pedazos en órbita. Si hace falta abaratarlo, solo con atajos que den lo mismo (lo que
+  vuela solo, lejos de todo lo demás, con los mismos pasos de 1/60 s pero sin buscar contactos) o
+  que decida el estado del mundo igual en todas las partidas; nunca por quién mira.
 
 ## V41f (2026-10-08): sesiones selladas
 
@@ -172,7 +189,7 @@ Fernando: «acuérdate de hiperoptimizar todo» y «aprovechar la mayor cantidad
 - **Contra el suelo** (`ground_ahead`): solo lo que va más de 25 cm por paso y está a menos de lo
   que recorre en un paso sobre el suelo; hasta 32 muestras del relieve y 12 bisecciones.
 - **Jugadores sin reservas por paso**: todos los cuerpos van como un solo `Among` (`Crowd`), sin
-  lista nueva por paso; `seen_from`, `awake_now` y `people` del `Game` se reutilizan.
+  lista nueva por paso; `eyes` y `people` del `Game` se reutilizan.
 - **Hilos**: la física ya busca contactos en todos los núcleos (`rayon`, desde 6 cuerpos) y los
   sistemas de las naves corren en paralelo (desde 8). Lo que viene (el servidor) reparte por
   jugador el interés y las instantáneas (fase 5 del plan).

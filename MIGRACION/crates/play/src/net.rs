@@ -34,7 +34,7 @@ pub const TRACKS: u8 = 5;
 /// fingerprint of its data, `defs::fingerprint`, as the scenario): the server lets in only its own.
 /// After the `+`, the version of what they say to each other here: a new event, act or field is
 /// a new one.
-pub const BUILD: &str = "V41+p9";
+pub const BUILD: &str = "V41+p10";
 
 /// The commands a `CMDS` message repeats (one lost datagram, or three, loses nothing).
 pub const REPEAT: usize = 4;

@@ -37,9 +37,6 @@ pub struct Structures {
     pub(crate) physics: super::physics::Physics,
     /// Scratch of the scheduler: structures to step together, and alone with their own time.
     pub(crate) due: (Vec<usize>, Vec<(usize, f32)>),
-    /// (and where the world is watched from this step: the watchers given, and whatever lives
-    /// among the structures)
-    pub(crate) watch: Vec<DVec3>,
     /// Something is held (`hold`): held structures follow their holders after every step.
     pub(crate) any_held: bool,
     /// Hits decided here on what is simulated elsewhere or done in one order by every game
@@ -59,7 +56,7 @@ impl Structures {
     pub fn new(lib: Arc<Library>) -> Structures {
         // checked when the library loaded
         let machines = Machines::new(&lib.catalog).unwrap_or_else(|e| panic!("{e}"));
-        Structures { list: Vec::new(), lib, next: 1, groups: Groups::default(), now: 0.0, sun: DVec3::Y, machines, solver: Solver::default(), physics: Default::default(), due: Default::default(), watch: Vec::new(), any_held: false, told: Vec::new(), shown: Vec::new(), part_hits: Vec::new(), joint_hits: Vec::new() }
+        Structures { list: Vec::new(), lib, next: 1, groups: Groups::default(), now: 0.0, sun: DVec3::Y, machines, solver: Solver::default(), physics: Default::default(), due: Default::default(), any_held: false, told: Vec::new(), shown: Vec::new(), part_hits: Vec::new(), joint_hits: Vec::new() }
     }
 
     /// A step begins: where each structure is now is where it was, for whoever draws between

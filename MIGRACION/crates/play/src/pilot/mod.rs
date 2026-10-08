@@ -977,8 +977,4 @@ impl Among for Pilot {
         self.input.jump = false;
         (self.landed, self.stepped) = (self.landed.max(landed), self.stepped.max(stepped));
     }
-
-    fn at(&self) -> DVec3 {
-        self.position
-    }
 }
