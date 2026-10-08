@@ -706,6 +706,11 @@ silueta lejana, oclusión. Falta:
   correcciones en 2 s en la bodega del Cachalote recién creado; 0 con la nave ya en reposo. Idea:
   la nave que lleva al jugador, sin corregir mientras el desvío sea menor que lo que el cuerpo
   tolera, o su estado exacto (no redondeado) mientras alguien la pisa.
+- [ ] (2026-10-08) Servidor autoritativo: poner a alguien en una nave (`Pilot::put_on`, las pruebas y
+  el «empezar junto a» del menú) toma su posición de la estructura tal como está: si nadie la ve
+  y solo se simula a ratos, está atrasada (a 7,8 km/s, 780 m) y quien se pone se queda donde
+  estaba. Y recién hecha una nave hacen falta unos pasos antes de que lleve a nadie. `put_on`
+  debería tomar la nave en el momento del mundo (`coasted`) y despertarla.
 - [ ] (2026-10-08) Servidor autoritativo: el servidor no comprueba que lo que se dispara con la
   mano sea lo que se lleva (el equipo de la mano, `gear.jsonc`, es de la ventana, y el comando solo
   dice su número): un tramposo podría disparar un misil sin lanzamisiles, al ritmo de su tipo y

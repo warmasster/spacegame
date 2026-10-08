@@ -723,6 +723,8 @@ pub enum Event {
         id: u64,
         held: Option<Held>,
     },
+    /// Your hands hold nothing: what you took in them another has (let it go in your game).
+    Unheld,
 }
 
 fn write_held(w: &mut Writer, h: &Option<Held>) {
@@ -949,6 +951,7 @@ fn write_event(w: &mut Writer, e: &Event) {
             w.var(*id);
             write_held(w, held);
         }
+        Event::Unheld => w.u8(18),
         Event::Rest { id, pos, rot } => {
             w.u8(15);
             w.var(*id);
@@ -1038,6 +1041,7 @@ pub fn read_event(r: &mut Reader) -> Wire<Event> {
         }
         16 => Event::Hold { id: r.var()?, held: read_held(r)? },
         17 => Event::Back { step: r.var()?, state: read_blob(r)? },
+        18 => Event::Unheld,
         _ => return Err(WireError::Value),
     })
 }
@@ -1136,6 +1140,7 @@ mod tests {
         let events = vec![
             Event::Hello { step: 99, you: 3, sun: DVec3::Y, region: 7, key: u64::MAX - 5 },
             Event::Back { step: 97, state: vec![4, 5] },
+            Event::Unheld,
             Event::Correct { step: 98, state: vec![1, 2, 3] },
             Event::Made {
                 id: 77,

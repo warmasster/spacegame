@@ -804,6 +804,8 @@ impl Host {
                 let view = p.acting_view(set);
                 let on = p.pilot.ride.map(|r| r.id);
                 if p.hands.reach(set, &g.ships, &view, on).is_some_and(|(r, _, _)| held.contains(&r.id)) {
+                    // (their game took it already: let it go there too)
+                    self.peers[k].tell(&Event::Unheld);
                     return Err(TAKEN);
                 }
                 p.hands.grab(set, &g.ships, &view, on)?;

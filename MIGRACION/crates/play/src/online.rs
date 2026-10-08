@@ -629,6 +629,10 @@ impl Online {
                     let _ = sync::read_delta(&mut game.builds.set.list[k], &mut inp, &mut self.died);
                 }
             }
+            Event::Unheld => {
+                me.hands.release(&mut game.builds);
+                self.holding = None;
+            }
             Event::Denied(why) => {
                 self.stats.denied += 1;
                 self.said.push((why, 1));

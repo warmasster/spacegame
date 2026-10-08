@@ -1014,3 +1014,205 @@ fn a_ships_gun_fired_from_its_seat_fires_in_the_server_and_everyone_sees_it() {
     assert!(fired > 0, "the gun did not fire in the server");
     assert_eq!((pilot, watcher), (fired, fired), "each sees each once");
 }
+
+#[test]
+fn two_who_reach_for_one_crate_one_has_it_and_a_weld_is_the_same_for_all() {
+    // in the hold of the Cachalote two reach for the same crate: the first has it, the other's
+    // game lets it go (`Event::Unheld`). Then a part of the ship hurt, welded by one of them: it
+    // mends no faster than a welder can, and the three games have it alike
+    let cond = Conditions { delay: 0.03, jitter: 0.005, loss: 0.01, ..Conditions::default() };
+    let mut t = Table::new(3, 37, cond);
+    let ship = t.host.game.ships.list.iter().find(|sh| sh.kind.id == "cachalote").expect("the Cachalote").structure;
+    for _ in 0..20 {
+        t.run(0.5, 60.0, |_, _, _| {});
+        if t.host.game.builds.set.get(ship).is_some_and(|s| s.resting) {
+            break;
+        }
+    }
+    let (clamp, zone) = {
+        let g = &t.host.game;
+        let sh = &g.ships.list[g.ships.by_structure(ship).unwrap()];
+        let c = sh.kind.clamps.iter().position(|c| c.id == "anclaje_a4").expect("the clamp");
+        let s = g.builds.set.get(ship).unwrap();
+        (c, s.to_world(sh.kind.clamps[c].zone.map_or(glam::Vec3::ZERO, |z| z.centre)))
+    };
+    let at = glam::Vec3::new(0.0, 0.05, -13.0);
+    for (k, off) in [(0usize, 0.0f32), (1, 0.9)] {
+        let id = t.seats[k].online.you.unwrap();
+        let (game, p) = t.host.game_and_player(id).unwrap();
+        p.pilot.put_on(&game.builds.set, ship, at + glam::Vec3::X * off);
+    }
+    t.run(2.0, 60.0, |_, _, _| {});
+    let made_from = t.host.game.builds.set.next_free();
+    {
+        let s = &mut t.seats[0];
+        lunar_play::controls::act(&mut s.game.ships, ship, lunar_play::controls::Act::Clamp(clamp as u16, true));
+        s.online.act(s.game.step, &lunar_play::net::Act::Hand { ship, act: lunar_play::controls::Act::Clamp(clamp as u16, true) });
+    }
+    t.run(1.5, 60.0, |_, _, _| {});
+    let cargo = t.host.game.builds.set.list.iter().filter(|s| s.id >= made_from && t.host.game.ships.by_structure(s.id).is_none()).min_by(|a, b| a.pos.distance(zone).total_cmp(&b.pos.distance(zone))).map(|s| s.id).expect("nothing came loose");
+    // (each looks at it and takes it, the first a moment before the other)
+    let take = |t: &mut Table, k: usize| {
+        let s = &mut t.seats[k];
+        let c = s.game.builds.set.get(cargo).unwrap();
+        s.me.pilot.look_at(c.to_world(c.center));
+        let view = s.me.pilot.view_aboard(&s.game.builds.set).unwrap_or_else(|| s.me.pilot.view());
+        s.me.hands.grab(&s.game.builds.set, &s.game.ships, &view, Some(ship)).expect("it can be taken here");
+    };
+    take(&mut t, 0);
+    t.run(0.5, 60.0, |_, _, _| {});
+    take(&mut t, 1);
+    t.run(1.0, 60.0, |_, _, _| {});
+    let (a, b) = (t.seats[0].online.you.unwrap(), t.seats[1].online.you.unwrap());
+    assert_eq!(t.host.player(a).unwrap().hands.holding(), Some(cargo), "the first has it");
+    assert_eq!(t.host.player(b).unwrap().hands.holding(), None, "the other does not");
+    assert_eq!(t.seats[1].me.hands.holding(), None, "and the other's game let it go");
+    {
+        let s = &mut t.seats[0];
+        s.me.hands.release(&mut s.game.builds);
+    }
+    t.run(1.0, 60.0, |_, _, _| {});
+    // (a part of the ship near the second, hurt: as a blow would leave it, told to all)
+    let (part, max) = {
+        let g = &t.host.game;
+        let eye = t.host.player(b).unwrap().pilot.position;
+        let s = g.builds.set.get(ship).unwrap();
+        let k = (0..s.parts.len())
+            .filter(|&k| s.parts[k].alive && s.parts[k].max_hp > 0.0)
+            .min_by(|&i, &j| s.to_world(s.parts[i].local.translation.into()).distance(eye).total_cmp(&s.to_world(s.parts[j].local.translation.into()).distance(eye)))
+            .unwrap();
+        (k, s.parts[k].max_hp)
+    };
+    {
+        let k = t.host.game.builds.set.index_of(ship).unwrap();
+        let st = &mut t.host.game.builds.set.list[k];
+        st.parts[part].hp = max * 0.01;
+        st.version += 1;
+    }
+    t.run(0.5, 60.0, |_, _, _| {});
+    let hp = |g: &Game| g.builds.set.get(ship).unwrap().parts[part].hp;
+    for (k, s) in t.seats.iter().enumerate() {
+        assert_eq!(hp(&s.game), hp(&t.host.game), "player {k} does not have the part as hurt");
+    }
+    // (welded: asked for all of it in each step, for half a second: a welder gives half of it at
+    // once and half of it a second, no more)
+    for _ in 0..30 {
+        let s = &mut t.seats[1];
+        let step = s.game.step;
+        s.online.act(step, &lunar_play::net::Act::Mend { structure: ship, part: part as u32, hp: max });
+        t.frame(1.0 / 60.0, |_, _, _| {});
+    }
+    t.run(0.2, 60.0, |_, _, _| {});
+    let mended = hp(&t.host.game);
+    println!("welded: {:.0} of {max:.0} hp ({:.0} at the start)", mended, max * 0.01);
+    assert!(mended > max * 0.3, "the weld did little: {mended} of {max}");
+    assert!(mended < max * 0.9, "it mended faster than a welder can: {mended} of {max}");
+    t.run(0.5, 60.0, |_, _, _| {});
+    let mended = hp(&t.host.game);
+    for (k, s) in t.seats.iter().enumerate() {
+        assert_eq!(hp(&s.game), mended, "player {k} does not have the weld");
+    }
+}
+
+#[test]
+fn the_pilot_hands_over_at_orbital_speed_and_the_ship_goes_on_without_a_jerk() {
+    // the Alcotán at 7.8 km/s far from every body, two aboard: one flies it a while, gets up, the
+    // other sits and flies on. The ship goes on as the keys say, without a jump, the same in the
+    // server and in the games; nobody is put right for it
+    let cond = Conditions { delay: 0.04, jitter: 0.005, loss: 0.01, ..Conditions::default() };
+    let mut t = Table::new(2, 41, cond);
+    let far = DVec3::new(2.0e6, 3.0e6, -1.0e6);
+    t.host.game.watchers.push(far);
+    let id = t.host.game.ships.spawn_free(&mut t.host.game.builds, "alcotan", far, Quat::IDENTITY).unwrap();
+    {
+        let k = t.host.game.builds.set.index_of(id).unwrap();
+        t.host.game.builds.set.list[k].vel = DVec3::new(7800.0, 0.0, 0.0);
+    }
+    // (a few steps for it to be whole, not so many that it is out of sight of where it was made:
+    // a ship nobody is aboard nor near is stepped now and then, and one put aboard it then is
+    // left where it was)
+    t.run(0.2, 60.0, |_, _, _| {});
+    // (where to stand: where one gets off the seat, and beside it, within reach of the seat)
+    let spots: Vec<glam::Vec3> = {
+        let g = &t.host.game;
+        let n = g.ships.by_structure(id).unwrap();
+        let exit = glam::Vec3::from_array(g.ships.list[n].kind.seats[0].def.salida);
+        vec![exit, exit + glam::Vec3::X * 0.6]
+    };
+    // (the first aboard now; the second where one gets off, once the first sits)
+    let put = |t: &mut Table, k: usize| {
+        let you = t.seats[k].online.you.unwrap();
+        let (game, p) = t.host.game_and_player(you).unwrap();
+        p.pilot.put_on(&game.builds.set, id, spots[0]);
+        t.run(2.0, 60.0, |_, _, _| {});
+    };
+    put(&mut t, 0);
+    for k in 0..1 {
+        let you = t.seats[k].online.you.unwrap();
+        let srv = &t.host.player(you).unwrap().pilot;
+        let mine = &t.seats[k].me.pilot;
+        assert!(srv.ride.is_some_and(|r| r.id == id) && mine.ride.is_some_and(|r| r.id == id), "player {k} is not aboard: server {:?}, theirs {:?}", srv.ride.map(|r| r.local), mine.ride.map(|r| r.local));
+    }
+    let key = |t: &Table, name: &str| {
+        let g = &t.seats[0].game;
+        let (keys, _) = lunar_ship::seat_keys::keys(&g.ships.list[g.ships.by_structure(id).unwrap()], 0);
+        keys.iter().position(|k| k.key == name).expect("the key")
+    };
+    let (ahead, up) = (key(&t, "avanzar"), key(&t, "subir"));
+    let mut fixed = [t.seats[0].online.stats.corrections, t.seats[1].online.stats.corrections];
+    let mut server: Vec<(u64, DVec3, DVec3)> = Vec::new();
+    let mut worst_off = 0.0f64;
+    // (who sits, what they hold, and for how long)
+    let turns = [(0usize, ahead, 90), (1usize, up, 90)];
+    for (who, k, frames) in turns {
+        {
+            let s = &mut t.seats[who];
+            lunar_play::seats::sit(&mut s.me.pilot, &s.game.ships, &s.game.builds.set, id, 0, |_, _| false).unwrap();
+        }
+        t.run(0.3, 60.0, |_, _, _| {});
+        let you = t.seats[who].online.you.unwrap();
+        assert!(t.host.player(you).unwrap().pilot.seat.is_some_and(|s| s.structure == id), "the server did not sit player {who}");
+        if who == 0 {
+            put(&mut t, 1);
+            let other = t.seats[1].online.you.unwrap();
+            assert!(t.host.player(other).unwrap().pilot.ride.is_some_and(|r| r.id == id), "the second is not aboard");
+            // (put aboard by the server, their game did not know: from here on, nothing)
+            fixed = [t.seats[0].online.stats.corrections, t.seats[1].online.stats.corrections];
+        }
+        let phase = [t.seats[0].online.stats.corrections, t.seats[1].online.stats.corrections];
+        for _ in 0..frames {
+            t.seats[who].online.keys = 1 << k;
+            t.frame(1.0 / 60.0, |_, _, _| {});
+            let s = t.host.game.builds.set.get(id).unwrap();
+            server.push((t.host.game.step, s.pos, s.vel));
+            // (the pilot's game has the ship where the server has it, step by step)
+            let mine = &t.seats[who].game;
+            let ahead = (mine.step - t.host.game.step) as f64 * STEP;
+            let m = mine.builds.set.get(id).unwrap();
+            worst_off = worst_off.max((m.pos - m.vel * ahead).distance(s.pos));
+        }
+        t.seats[who].online.keys = 0;
+        let flown = [t.seats[0].online.stats.corrections - phase[0], t.seats[1].online.stats.corrections - phase[1]];
+        {
+            let s = &mut t.seats[who];
+            lunar_play::seats::stand(&mut s.me.pilot, &s.game.ships, &s.game.builds.set);
+        }
+        t.run(0.3, 60.0, |_, _, _| {});
+        println!("player {who} flew: corrections while flying {flown:?}, then up: {:?}", [t.seats[0].online.stats.corrections - phase[0], t.seats[1].online.stats.corrections - phase[1]]);
+        assert_eq!(flown, [0, 0], "put right while player {who} flew");
+    }
+    // (no jump from one step to the next: where it is follows from where it was and how it went)
+    let mut worst_jump = 0.0f64;
+    for w in server.windows(2) {
+        let ((s0, p0, v0), (s1, p1, v1)) = (w[0], w[1]);
+        let dt = (s1 - s0) as f64 * STEP;
+        worst_jump = worst_jump.max((p1 - (p0 + (v0 + v1) * 0.5 * dt)).length());
+    }
+    let fixes = [t.seats[0].online.stats.corrections - fixed[0], t.seats[1].online.stats.corrections - fixed[1]];
+    println!("handover at 7.8 km/s: worst jump {worst_jump:.4} m, the pilot's copy at most {worst_off:.3} m off, corrections {fixes:?}");
+    assert!(worst_jump < 0.01, "the ship jumped {worst_jump:.4} m");
+    assert!(worst_off < 0.3, "the pilot's game had the ship {worst_off:.3} m off");
+    // (getting up where the other stands: each game puts them by where it has the other, a
+    // moment old; a few, and only then)
+    assert!(fixes.iter().all(|f| *f <= 5), "put right {fixes:?}");
+}
