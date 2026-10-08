@@ -12,6 +12,7 @@
 use crate::{
     game::{Game, STEP},
     host::{Host, HostConfig},
+    keep::{self, Keeper, Keeping},
 };
 use lunar_core::scenario::PlayerDef;
 use lunar_net::{Addr, Client, Memory, MemoryNet, Server, ServerConfig, ServerEvent, Transport, Udp, now};
@@ -56,6 +57,9 @@ pub struct Local {
     fingerprint: u32,
     quit: Arc<AtomicBool>,
     thread: Option<JoinHandle<Host>>,
+    /// The key of the body that waits in the game taken up (`start_kept`): who plays it comes
+    /// back to it (`Online::back`).
+    pub back: Option<u64>,
     /// What the server says (who came and went, what it could not do).
     pub notes: Receiver<String>,
     pub stats: Arc<Mutex<LocalStats>>,
@@ -93,8 +97,30 @@ impl Local {
         Local::start_host(host, config)
     }
 
+    /// The game kept in `keeping` taken up (the newest whole one), or a new one `make` makes, kept
+    /// as it goes and when it is stopped.
+    pub fn start_kept(make: impl Fn() -> Result<Game, String>, def: PlayerDef, config: LocalConfig, mut keeping: Keeping) -> Result<Local, String> {
+        let (says, notes) = channel();
+        let mut say = |n: String| {
+            let _ = says.send(n);
+        };
+        let host = match keep::take_up(&mut keeping, &make, def, &config.host, config.fingerprint, &mut say)? {
+            Some(h) => h,
+            None => Host::new(make()?, def, config.host.clone()),
+        };
+        let back = host.waiting_key();
+        let mut local = Local::launch(host, config, Some(keeping), says, notes)?;
+        local.back = back;
+        Ok(local)
+    }
+
     /// The same, with a game already made into a server (taken up from a game kept: `Host::load`).
     pub fn start_host(host: Host, config: LocalConfig) -> Result<Local, String> {
+        let (says, notes) = channel();
+        Local::launch(host, config, None, says, notes)
+    }
+
+    fn launch(host: Host, config: LocalConfig, keeping: Option<Keeping>, says: Sender<String>, notes: Receiver<String>) -> Result<Local, String> {
         let net = MemoryNet::new(0);
         let mem = net.endpoint();
         let server = mem.addr();
@@ -106,17 +132,14 @@ impl Local {
             }
             None => (None, None),
         };
-        Local::run(net, server, Both { mem, udp }, port, host, config)
-    }
-
-    fn run(net: MemoryNet, server: Addr, way: Both, udp: Option<u16>, host: Host, config: LocalConfig) -> Result<Local, String> {
         let quit = Arc::new(AtomicBool::new(false));
         let stats = Arc::new(Mutex::new(LocalStats::default()));
-        let (says, notes) = channel();
         let (q, st, n) = (quit.clone(), stats.clone(), net.clone());
         let sc = ServerConfig { name: config.name.clone(), max_players: config.max_players, game: Some((config.build.clone(), config.fingerprint)), ..ServerConfig::default() };
-        let thread = std::thread::Builder::new().name("servidor-local".to_string()).spawn(move || serve(host, Server::new(sc), way, n, q, st, says)).map_err(|e| e.to_string())?;
-        Ok(Local { net, server, udp, build: config.build, fingerprint: config.fingerprint, quit, thread: Some(thread), notes, stats })
+        let keeper = keeping.map(|k| Keeper::new(k, config.fingerprint, now()));
+        let way = Both { mem, udp };
+        let thread = std::thread::Builder::new().name("servidor-local".to_string()).spawn(move || serve(host, Server::new(sc), way, n, q, st, says, keeper)).map_err(|e| e.to_string())?;
+        Ok(Local { net, server, udp: port, build: config.build, fingerprint: config.fingerprint, quit, thread: Some(thread), back: None, notes, stats })
     }
 
     /// A connection for a player of this machine, as `name`.
@@ -142,7 +165,11 @@ impl Drop for Local {
     }
 }
 
-fn serve(mut host: Host, mut server: Server, mut way: Both, net: MemoryNet, quit: Arc<AtomicBool>, stats: Arc<Mutex<LocalStats>>, says: Sender<String>) -> Host {
+#[allow(clippy::too_many_arguments)]
+fn serve(mut host: Host, mut server: Server, mut way: Both, net: MemoryNet, quit: Arc<AtomicBool>, stats: Arc<Mutex<LocalStats>>, says: Sender<String>, mut keeper: Option<Keeper>) -> Host {
+    let mut say = |n: String| {
+        let _ = says.send(n);
+    };
     let mut next = now();
     let (mut second, mut work, mut worst, mut n) = (now(), 0.0f64, 0.0f64, 0u32);
     while !quit.load(Ordering::Relaxed) {
@@ -153,15 +180,13 @@ fn serve(mut host: Host, mut server: Server, mut way: Both, net: MemoryNet, quit
             match &e {
                 ServerEvent::Joined { id, name, .. } => {
                     host.join(*id);
-                    let _ = says.send(format!("Entra {name}"));
+                    say(format!("Entra {name}"));
                 }
                 ServerEvent::Left { id, name, reason, .. } => {
                     host.leave(*id);
-                    let _ = says.send(format!("Sale {name}: {reason}"));
+                    say(format!("Sale {name}: {reason}"));
                 }
-                ServerEvent::Refused { name, reason, .. } => {
-                    let _ = says.send(format!("No se deja entrar a {name}: {reason}"));
-                }
+                ServerEvent::Refused { name, reason, .. } => say(format!("No se deja entrar a {name}: {reason}")),
                 _ => {}
             }
         }
@@ -192,10 +217,17 @@ fn serve(mut host: Host, mut server: Server, mut way: Both, net: MemoryNet, quit
             }
             (second, work, worst, n) = (now(), 0.0, 0.0, 0);
         }
+        if let Some(k) = &mut keeper {
+            k.tick(&mut host, now(), &mut say);
+        }
         let wait = next - now();
         if wait > 0.0 {
             std::thread::sleep(Duration::from_secs_f64(wait.min(0.001)));
         }
+    }
+    // (kept as it ends)
+    if let Some(k) = &mut keeper {
+        k.save(&mut host, true, &mut say);
     }
     host
 }

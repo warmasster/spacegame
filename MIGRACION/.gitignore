@@ -12,3 +12,5 @@
 /SELENE_V39/ajustes/
 /.mcp.json
 **/__pycache__/
+/partidas/
+/servidores/partidas/

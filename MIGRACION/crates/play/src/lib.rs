@@ -13,6 +13,7 @@ pub mod game;
 pub mod hands;
 pub mod host;
 pub mod interest;
+pub mod keep;
 pub mod local;
 pub mod net;
 pub mod online;

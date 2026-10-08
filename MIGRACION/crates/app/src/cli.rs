@@ -45,6 +45,8 @@ pub struct Options {
     pub direct: bool,
     /// The game of one's own hosted for others at this UDP port (`--anfitrion`).
     pub host: Option<u16>,
+    /// A game of one's own begun anew, whatever is kept (`--nueva`).
+    pub fresh: bool,
     /// Pictures of the start-up screen at a few moments of it, into this folder, and out (no
     /// window is shown, nothing is loaded).
     pub splash_test: Option<PathBuf>,
@@ -81,6 +83,7 @@ pub const HELP: &str = "SELENE (migración Rust)
   --nombre NOMBRE              cómo te llamas en el servidor
   --anfitrion PUERTO           alojar la partida propia: otros entran con --servidor ESTA_IP:PUERTO
   --directo                    sin conexión, el juego solo, sin el servidor dentro del proceso (como antes)
+  --nueva                      empezar una partida propia nueva aunque haya una guardada (partidas/propia)
   --prueba-carga CARPETA       fotos de la pantalla de carga en varios momentos, sin abrir ventana ni cargar nada
   --prueba-arranque            arranca como para jugar (carga en su hilo tras la pantalla de carga) sin enseñar ventana, hace unos fotogramas y sale
   --visible                    con --guion, --bench o --shot: enseña la ventana (por defecto corren sin ventana a la vista)
@@ -130,6 +133,7 @@ impl Options {
             name: None,
             direct: false,
             host: None,
+            fresh: false,
             splash_test: None,
             boot_test: false,
             visible: false,
@@ -202,6 +206,7 @@ impl Options {
                 "--nombre" => o.name = Some(value()?.clone()),
                 "--relevo" => return Err("--relevo ya no existe: todo servidor tiene la partida".into()),
                 "--directo" => o.direct = true,
+                "--nueva" => o.fresh = true,
                 "--anfitrion" => {
                     let v = value()?;
                     o.host = Some(v.parse::<u16>().ok().filter(|p| *p != 0).ok_or(format!("--anfitrion: un puerto (1 a 65535), no '{v}'"))?);

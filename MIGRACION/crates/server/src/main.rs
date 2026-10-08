@@ -6,11 +6,10 @@
 //! - `console`: the orders typed while it runs;
 //! - `journal`: what it says, to the console and to `servidor.log`;
 //! - `sim`: the game, on its thread;
-//! - `keep`: its two slots on disk.
+//! (its two slots on disk: `lunar_play::keep`).
 mod config;
 mod console;
 mod journal;
-mod keep;
 mod sim;
 
 use config::Config;
@@ -109,7 +108,7 @@ fn main() -> ExitCode {
     let keeping = config.partida.as_ref().map(|p| {
         let p = PathBuf::from(p);
         let base = if p.is_absolute() { p } else { dir.join(p) };
-        sim::Keeping { slots: keep::Slots::new(&base), every: config.guardar_cada, fresh: config.nueva }
+        lunar_play::keep::Keeping { slots: lunar_play::keep::Slots::new(&base), every: config.guardar_cada, fresh: config.nueva }
     });
     let mut game = match sim::start(defs, &data, config.trucos, keeping) {
         Ok(s) => s,

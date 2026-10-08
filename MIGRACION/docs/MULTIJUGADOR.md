@@ -29,9 +29,10 @@ naves y estados repartidos. Se quitó en la fase 10 del plan; queda aquí lo med
 | `client.rs` (+ `client/`) | `Client`: lo que usa el juego (`send_game`, `send_quick`, `events`, `chat`). |
 | `text.rs` | Todos los textos que lee una persona (en castellano) y la limpieza de lo que la gente escribe. |
 
-`crates/server/src`: `main.rs` (la red), `sim.rs` (la partida en su hilo), `keep.rs` (las dos
-ranuras de la partida guardada), `config.rs` (`servidor.jsonc` y opciones), `console.rs`
-(órdenes), `journal.rs` (consola + `servidor.log`).
+`crates/server/src`: `main.rs` (la red), `sim.rs` (la partida en su hilo), `config.rs`
+(`servidor.jsonc` y opciones), `console.rs` (órdenes), `journal.rs` (consola + `servidor.log`).
+Las dos ranuras de la partida guardada y quien la guarda cada tanto están en `lunar_play::keep`:
+las usan el servidor y la partida propia de la ventana (`lunar_play::local`).
 
 ## El protocolo
 
@@ -357,11 +358,12 @@ los guarda y los lee tras `follow`): un final cae sobre el casco ya en su sitio.
 | Fichero | Qué comprueba |
 |---|---|
 | `net/tests/wire.rs` (16) | ida y vuelta de cada tipo, cotas de error, tamaños; 200 000 datagramas de basura y mensajes reales cortados o con bits cambiados en todos los descodificadores, sin un `panic` |
-| `net/tests/channel.rs` (8) | 30 % de pérdidas + desorden + duplicados: 1000 fiables llegan una vez y en orden; los no fiables nunca llegan viejos; 5 kB y 64 KiB llegan enteros; latidos y silencio; 70 000 datagramas (los contadores dan la vuelta) |
-| `net/tests/session.rs` (13) | 2 y 8 clientes se conocen y lo que dice cada juego llega a la partida del servidor (y lo que ella dice, a cada uno); con 20 % de pérdidas lo fiable llega entero y en orden; versión, escenario y protocolo distintos rechazados con su motivo; servidor lleno; cliente que desaparece; nombres; expulsar, decir, cerrar; reconexión desde la misma dirección; basura contra un servidor en marcha; lo más largo que se puede decir llega entero y lo más largo no se manda |
-| `net/tests/udp.rs` (2 + 1) | servidor y 2 clientes por UDP real en `127.0.0.1:0` |
-| `server/src` (11), `server/tests/programa.rs` (3) | ajustes, órdenes, fechas, ranuras; el `.exe` arrancado de verdad: entra un jugador y anda, «salir» guarda, se arranca y retoma, se vuelve con la clave |
-| `play/tests/online.rs` (15), `local.rs`, `load.rs` | la partida por red: ver [`PLAN_AUTORITATIVO.md`](PLAN_AUTORITATIVO.md), «Avance» |
+| `net/tests/channel.rs` (9) | 30 % de pérdidas + desorden + duplicados: 1000 fiables llegan una vez y en orden; los no fiables nunca llegan viejos; 5 kB y 64 KiB llegan enteros; latidos y silencio; 70 000 datagramas (los contadores dan la vuelta) |
+| `net/tests/session.rs` (15) | 2 y 8 clientes se conocen y lo que dice cada juego llega a la partida del servidor (y lo que ella dice, a cada uno); con 20 % de pérdidas lo fiable llega entero y en orden; versión, escenario y protocolo distintos rechazados con su motivo; servidor lleno; cliente que desaparece; nombres; expulsar, decir, cerrar; reconexión desde la misma dirección; basura contra un servidor en marcha; lo más largo que se puede decir llega entero y lo más largo no se manda |
+| `net/tests/udp.rs` (3) | servidor y 2 clientes por UDP real en `127.0.0.1:0` |
+| `server/src` (10), `server/tests/programa.rs` (3) | ajustes, órdenes, fechas; el `.exe` arrancado de verdad: entra un jugador y anda, «salir» guarda, se arranca y retoma, se vuelve con la clave; 3 000 datagramas basura |
+| `play/src/keep.rs` | las ranuras: la más nueva entera se retoma, la rota o de otra versión se aparta, se escribe sobre la más vieja |
+| `play/tests/online.rs` (20), `local.rs` (2), `load.rs`, `interest.rs` | la partida por red, la propia (se guarda al cerrar y se vuelve al mismo cuerpo), muchos jugadores, el interés contra mirarlo todo: ver [`PLAN_AUTORITATIVO.md`](PLAN_AUTORITATIVO.md), «Avance» |
 
 Las pruebas del relevo (`app/src/multi/tests.rs`: formaciones a 7,8 km/s, armas de los datos una a
 una, guiados, tiradores a la vez) se fueron con él; lo que probaban se prueba por el servidor que
@@ -369,27 +371,21 @@ tiene la partida a medida que llega cada fase (lo que falta, en `PENDIENTES.md`)
 
 ## Lo que no hace (todavía)
 
-- **Naves que vuelan juntas a mucha velocidad**: ya se ven suaves y en su sitio (arriba); queda
-  el error de los relojes (1–4 ms: unos metros a 7,8 km/s, estable). Contar cada nave en el marco
-  de la otra no lo quita: las referencias mutuas se persiguen (se probó: 12 m de deriva).
-- **Carga suelta** (cajas, bidones) no se comparte todavía; ni lo que lleva otro en la mano ni
-  sus gestos; quien entra tarde no recibe el estado de las máquinas (solo los mandos).
-- **El servidor no simula nada** (a diferencia de la versión web, cuyo servidor tiene la verdad de
-  los objetos sueltos y un núcleo del mundo). Cómo llegar a un servidor que simula y decide
-  todo, por fases: [`PLAN_AUTORITATIVO.md`](PLAN_AUTORITATIVO.md); el mundo vivo encima,
-  [`PLAN_SERVIDOR_MUNDO.md`](PLAN_SERVIDOR_MUNDO.md) (fases 6–8).
-- **Dónde está cada trozo** no se sincroniza: los trozos nacen igual y se dañan igual en todas,
-  pero cada partida los mueve con su física y se separan poco a poco.
+Lo que falta de cada fase está en [`PLAN_AUTORITATIVO.md`](PLAN_AUTORITATIVO.md), «Avance»; lo
+que más se nota al jugar:
 
-- **No se puede migrar de dirección**: si el router cambia el puerto de salida de un jugador a
-  media partida, el servidor deja de reconocerlo y el jugador cae por silencio.
-- **Sin cifrado ni autenticación**: la `cookie` impide suplantar direcciones al entrar, pero
-  los datagramas del canal no llevan firma. No hay límite de mensajes por jugador.
-- **La puesta al día de mandos** recuerda los últimos 4096; lo anterior se pierde para quien
-  entre después.
-- **El servidor no guarda la partida** ni valida lo que dicen los dueños de las naves.
-- No hay compresión por diferencias entre instantáneas ni prioridad por distancia: todos
-  reciben todo.
+- **Sin pantalla de carga**: quien entra juega mientras le llega el mundo (lo cercano, en 1,2 s
+  con una partida llena; lo lejano, detrás).
+- **Lo que vuela al guardar se pierde** (proyectiles en el aire); Ctrl+C en la consola del
+  servidor no guarda (la orden «salir», sí).
+- **Sin cifrado**: los datagramas van firmados (nadie se hace pasar por otro ni mete nada en
+  una sesión ajena), pero quien ve el tráfico lo puede leer.
+- **El servidor no conoce el equipo de la mano**: comprueba el alcance y la cadencia de cada
+  arma, no que el arma disparada sea la que se lleva (`gear.jsonc` es de la ventana).
+- **Los jugadores no tienen vida**: no hay que rebobinar el mundo para ver a quién se dio
+  (compensación de retraso); el día que la tengan, va en el servidor (`PLAN_AUTORITATIVO.md` §6).
+- **Una nave sin piloto en órbita** la lleva el servidor con su física; no se ha probado aún a
+  quien entra y la ve pasar a 7,8 km/s.
 
 ## Investigación
 

@@ -260,8 +260,8 @@ impl State {
         // a game of one's own goes through a server in the process: its world made on a thread of
         // its own while ours is (its data read again there: nothing waits for the other)
         let local = o.local().then(|| {
-            let (dir, host) = (root.join("assets/defs"), o.host);
-            std::thread::Builder::new().name("servidor-local-arranque".to_string()).spawn(move || start_local(&dir, host))
+            let (dir, host, kept, fresh) = (root.join("assets/defs"), o.host, root.join("partidas/propia"), o.fresh);
+            std::thread::Builder::new().name("servidor-local-arranque".to_string()).spawn(move || start_local(&dir, host, &kept, fresh))
         });
         let defs = Defs::load(&root.join("assets/defs"))?;
         lap("defs");
@@ -363,7 +363,12 @@ impl State {
             None => None,
         };
         if let Some(l) = &local {
-            online = Some(lunar_play::online::Online::new(l.client(o.name.as_deref().unwrap_or("Jugador")), sc.player));
+            // (a game taken up: back in the body that waits in it)
+            let client = l.client(o.name.as_deref().unwrap_or("Jugador"));
+            online = Some(match l.back {
+                Some(key) => lunar_play::online::Online::back(client, sc.player, key),
+                None => lunar_play::online::Online::new(client, sc.player),
+            });
         }
         lap("servidor");
         let preset_name = preset.map_or("personalizado".into(), |p| p.name().to_string());
@@ -2058,11 +2063,12 @@ impl ApplicationHandler for App {
 
 
 /// The server in the process a game of one's own goes through (`lunar_play::local`): its own data
-/// and world (of the scenario), let be what a game of one's own lets be (`HostConfig::cheats`:
-/// free flight, ships put anywhere); for others too at UDP port `host`, if asked.
-fn start_local(dir: &std::path::Path, host: Option<u16>) -> Result<lunar_play::local::Local, String> {
+/// and world (the one kept at `kept`, taken up, unless `fresh`; else the scenario's), let be what a
+/// game of one's own lets be (`HostConfig::cheats`: free flight, ships put anywhere); for others
+/// too at UDP port `host`, if asked. It is kept every five minutes and when the game ends.
+fn start_local(dir: &std::path::Path, host: Option<u16>, kept: &std::path::Path, fresh: bool) -> Result<lunar_play::local::Local, String> {
     let defs = Defs::load(dir).map_err(|e| format!("{}: {}", e.file, e.message))?;
-    let game = Game::new_apart(&defs, dir, 256, |_| true)?;
+    let make = || Game::new_apart(&defs, dir, 256, |_| true);
     let config = lunar_play::local::LocalConfig {
         host: lunar_play::host::HostConfig { cheats: true, ..Default::default() },
         udp: host,
@@ -2071,8 +2077,12 @@ fn start_local(dir: &std::path::Path, host: Option<u16>) -> Result<lunar_play::l
         build: lunar_play::net::BUILD.to_string(),
         fingerprint: defs.fingerprint,
     };
-    lunar_play::local::Local::start(game, defs.scenario.player, config)
+    let keeping = lunar_play::keep::Keeping { slots: lunar_play::keep::Slots::new(kept), every: KEEP_EVERY, fresh };
+    lunar_play::local::Local::start_kept(make, defs.scenario.player, config, keeping)
 }
+
+/// Seconds between two saves of a game of one's own.
+const KEEP_EVERY: f64 = 300.0;
 
 /// Seconds between two tries to come back to a server whose connection was lost.
 const RETRY_EVERY: f64 = 4.0;

@@ -110,3 +110,54 @@ fn a_game_of_ones_own_is_a_game_over_a_server_in_the_process_and_others_can_come
     println!("in after {in_after:.2} s; server: {stats:?}");
     assert!(stats.mean_ms < 16.0 && stats.players == 2, "{stats:?}");
 }
+
+#[test]
+fn a_game_of_ones_own_is_kept_when_it_ends_and_taken_up_where_it_was() {
+    let defs = defs();
+    let dir = std::env::temp_dir().join(format!("luna-propia-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let keeping = || lunar_play::keep::Keeping { slots: lunar_play::keep::Slots::new(&dir.join("propia")), every: 0.0, fresh: false };
+    let config = || LocalConfig { host: HostConfig { cheats: true, ..HostConfig::default() }, udp: None, name: "Partida propia".to_string(), max_players: 4, build: BUILD.to_string(), fingerprint: defs.fingerprint };
+    let make = || Game::new_apart(&defs, &lunar_play::root().join("assets/defs"), 256, |_| true);
+    // (played a while, walking off)
+    let mut local = Local::start_kept(make, defs.scenario.player, config(), keeping()).unwrap();
+    assert_eq!(local.back, None, "nothing kept yet");
+    let mine = game(&defs);
+    let me = Player::new(mine.bodies.clone(), &mine.site, defs.scenario.player);
+    let mut a = Seat { online: Online::new(local.client("yo"), defs.scenario.player), game: mine, me, last: now() };
+    let t0 = now();
+    while now() - t0 < 3.0 {
+        a.frame(walk);
+        std::thread::sleep(Duration::from_millis(3));
+    }
+    let you = a.online.you.unwrap();
+    let host = local.stop().expect("the game back");
+    let was = host.player(you).unwrap().pilot.position;
+    drop(local);
+    assert!(dir.join("propia.a.bin").exists(), "kept when it ended");
+    // (opened again: taken up, and back in that body)
+    let mut local = Local::start_kept(make, defs.scenario.player, config(), keeping()).unwrap();
+    let key = local.back.expect("a body waits");
+    let mine = game(&defs);
+    let me = Player::new(mine.bodies.clone(), &mine.site, defs.scenario.player);
+    let mut b = Seat { online: Online::back(local.client("yo"), defs.scenario.player, key), game: mine, me, last: now() };
+    let began = now();
+    while !b.online.live() {
+        assert!(now() - began < 5.0, "never back in: {:?}", b.online.status());
+        b.frame(|_, _| {});
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert!(b.online.stats.back, "back in the body that waited");
+    assert!(b.me.pilot.position.distance(was) < 0.5, "where it was: {:.2} m off", b.me.pilot.position.distance(was));
+    let t0 = now();
+    while now() - t0 < 1.5 {
+        b.frame(walk);
+        std::thread::sleep(Duration::from_millis(3));
+    }
+    assert_eq!(b.online.stats.corrections, 0, "{:?}", b.online.stats);
+    while let Ok(n) = local.notes.try_recv() {
+        println!("servidor: {n}");
+    }
+    local.stop();
+    let _ = std::fs::remove_dir_all(&dir);
+}

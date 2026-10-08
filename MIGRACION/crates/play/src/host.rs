@@ -329,6 +329,12 @@ impl Host {
         self.peers.iter().filter(|p| p.lost.is_none()).map(|p| p.id)
     }
 
+    /// The key of the body that has waited longest for whoever was cut off (a game of one's own
+    /// taken up again: the one who plays it comes back to it).
+    pub fn waiting_key(&self) -> Option<u64> {
+        self.peers.iter().find(|p| p.lost.is_some()).map(|p| p.key)
+    }
+
     /// The bodies waiting for who was cut off, by the id they go by meanwhile.
     pub fn waiting(&self) -> impl Iterator<Item = u32> + '_ {
         self.peers.iter().filter(|p| p.lost.is_some()).map(|p| p.id)
