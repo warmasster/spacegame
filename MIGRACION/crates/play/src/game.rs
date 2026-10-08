@@ -182,6 +182,8 @@ impl Game {
         for a in sc.ships.iter().filter(|a| wanted(&a.ship)) {
             ships.spawn(&mut builds, &bodies, &a.ship, site.body, site.at(a.east, a.north), a.yaw.to_radians())?;
         }
+        // (its ships are the scenario's too: every game that starts with it has them by these ids)
+        builds.scenario_end = builds.set.next_free();
         Ok(Game {
             bodies,
             site,

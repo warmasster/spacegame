@@ -14,7 +14,7 @@ analiza y planea todo a la perfección». Planeado, sin empezar:
 N jugadores, servidor que simula, comandos arriba y estado abajo, interés, daño, naves, carga,
 entrar tarde, sin conexión en el proceso, seguridad; la gráfica del servidor, solo para mirar).
 Faltan sus decisiones (§8 del plan). **En marcha (Fernando: «vamos con todo, todas las fases menos
-la última»):** fases 0 a 2 hechas (2026-10-07), ver el plan, «Avance».
+la última»):** fases 0 a 8 hechas o casi y la 9 a tres cuartos (2026-10-08), ver el plan, «Avance».
 
 - ~~**Dos naves rápidas se atraviesan**~~ **Hecho (2026-10-07, V41):** barrido entre estructuras
   (`physics.rs::sweep`: rayos del centro y las esquinas de cada pieza a lo largo del camino
@@ -706,6 +706,14 @@ silueta lejana, oclusión. Falta:
   correcciones en 2 s en la bodega del Cachalote recién creado; 0 con la nave ya en reposo. Idea:
   la nave que lleva al jugador, sin corregir mientras el desvío sea menor que lo que el cuerpo
   tolera, o su estado exacto (no redondeado) mientras alguien la pisa.
+- [ ] (2026-10-08) Servidor autoritativo: el servidor guarda la partida cada 5 minutos y con
+  «salir», pero no si se cierra la ventana de la consola o con Ctrl+C (no hay manejador de señales):
+  se pierde lo de desde el último guardado. Y lo que vuela en el momento de guardar (balas, misiles)
+  no se guarda.
+- [ ] (2026-10-08) Servidor autoritativo: quien entra recibe lo que tiene cerca a medida que su
+  interés lo va conociendo, en los pasos que tarde; falta la puesta al día por prioridad (lo cercano
+  primero, en pocos mensajes grandes) con la pantalla de carga hasta tenerlo todo, y la prueba de
+  entrar con 100 trozos, 6 naves y 10 jugadores con 10 % de pérdidas en menos de 2 s.
 - [ ] (2026-10-07) Servidor autoritativo: tras una corrección el cuerpo se vuelve a dar contra el
   mundo como está ahora (`Game::step_alone`), no como estaba en cada paso repetido: junto a piezas
   de una nave que se mueven (sus huesos) salen 2–3 correcciones más al aterrizar. El plan (§3.3)

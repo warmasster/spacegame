@@ -27,6 +27,8 @@ fn new_game() -> Game {
 /// A player's game: its connection, its world, its body; and where the body was at each step
 /// (in the world, and as it says it to the server).
 struct Seat {
+    /// Its address on the network.
+    at: lunar_net::Addr,
     online: Online,
     game: Game,
     me: Player,
@@ -58,10 +60,12 @@ impl Table {
         let host = Host::new(new_game(), defs().scenario.player, HostConfig { cheats: true, ..HostConfig::default() });
         let seats = (0..players)
             .map(|k| {
-                let client = lunar_net::Client::with_transport(Box::new(net.endpoint()), addr, &format!("jugador{k}"), BUILD, defs().fingerprint);
+                let end = net.endpoint();
+                let at = end.addr();
+                let client = lunar_net::Client::with_transport(Box::new(end), addr, &format!("jugador{k}"), BUILD, defs().fingerprint);
                 let game = new_game();
                 let me = Player::new(game.bodies.clone(), &game.site, defs().scenario.player);
-                Seat { online: Online::new(client, defs().scenario.player), game, me, path: Vec::new(), said: Vec::new() }
+                Seat { at, online: Online::new(client, defs().scenario.player), game, me, path: Vec::new(), said: Vec::new() }
             })
             .collect();
         let mut t = Table { net, link, server: Server::new(config), host, seats, now: 10.0, due: 0.0, truth: Vec::new(), told: Vec::new() };
@@ -78,10 +82,12 @@ impl Table {
     /// One more player comes in (until their game is in the game).
     fn join(&mut self, name: &str) -> usize {
         let addr = self.link.addr();
-        let client = lunar_net::Client::with_transport(Box::new(self.net.endpoint()), addr, name, BUILD, defs().fingerprint);
+        let end = self.net.endpoint();
+        let at = end.addr();
+        let client = lunar_net::Client::with_transport(Box::new(end), addr, name, BUILD, defs().fingerprint);
         let game = new_game();
         let me = Player::new(game.bodies.clone(), &game.site, defs().scenario.player);
-        self.seats.push(Seat { online: Online::new(client, defs().scenario.player), game, me, path: Vec::new(), said: Vec::new() });
+        self.seats.push(Seat { at, online: Online::new(client, defs().scenario.player), game, me, path: Vec::new(), said: Vec::new() });
         let k = self.seats.len() - 1;
         for _ in 0..600 {
             self.frame(1.0 / 60.0, |_, _, _| {});
@@ -601,4 +607,165 @@ fn floating_with_the_pack_the_mouse_turns_the_body_and_nobody_puts_it_right() {
     assert_eq!(t.seats[0].online.stats.corrections, first, "floating, put right ({:?})", t.seats[0].online.stats);
     assert!(t.off(0, 120) < 1e-3, "{:.4} m off", t.off(0, 120));
     assert!(t.seats[0].me.pilot.position.distance(far) > 2.0, "the jets took us nowhere");
+}
+
+/// A new connection for player `k` coming back with `key` (their game and body kept as they were).
+fn come_back(t: &mut Table, k: usize, key: u64) {
+    let end = t.net.endpoint();
+    t.seats[k].at = end.addr();
+    let client = lunar_net::Client::with_transport(Box::new(end), t.link.addr(), &format!("jugador{k}"), BUILD, defs().fingerprint);
+    t.seats[k].online = Online::back(client, defs().scenario.player, key);
+    (t.seats[k].path.clear(), t.seats[k].said.clear());
+    for _ in 0..600 {
+        t.frame(1.0 / 60.0, |_, _, _| {});
+        if t.seats[k].online.live() {
+            break;
+        }
+    }
+    assert!(t.seats[k].online.live(), "never came back: {:?}", t.seats[k].online.status());
+}
+
+#[test]
+fn who_is_cut_off_comes_back_to_their_body_where_it_waited() {
+    let mut t = Table::new(2, 47, Conditions::default());
+    t.run(4.0, 60.0, |k, me, n| {
+        if k == 0 {
+            walk(me, n)
+        }
+    });
+    let key = t.seats[0].online.key.expect("a key to come back with");
+    let id = t.seats[0].online.you.unwrap();
+    let at_cut = t.host.player(id).unwrap().pilot.position;
+    // (20 s with no network: the server lets the connection go after its wait; the body waits)
+    t.net.cut(t.seats[0].at, true);
+    t.run(20.0, 60.0, |_, me, _| me.input = Input::default());
+    assert!(t.host.player(id).is_none(), "the connection is gone");
+    let waiting: Vec<u32> = t.host.waiting().collect();
+    assert_eq!(waiting.len(), 1, "one body waits");
+    let waited = t.host.player(waiting[0]).unwrap().pilot.position;
+    // (it went on with what it last asked only a moment: then it stood)
+    assert!(waited.distance(at_cut) < 3.0, "it walked off on its own: {:.2} m", waited.distance(at_cut));
+    // (the other sees it standing where it is)
+    let seen = t.seats[1].online.others.iter().find(|(o, _)| *o == waiting[0]).map(|(_, st)| st.pos);
+    assert!(seen.is_some_and(|p| p.distance(waited) < 0.05), "the other does not see it: {seen:?}");
+    come_back(&mut t, 0, key);
+    let you = t.seats[0].online.you.unwrap();
+    assert!(t.seats[0].online.stats.back, "came back to it");
+    assert_eq!(t.seats[0].online.key, Some(key), "the same key holds");
+    assert_eq!(t.host.waiting().count(), 0, "nothing waits any more");
+    let back_at = t.host.player(you).unwrap().pilot.position;
+    assert!(back_at.distance(waited) < 0.05, "back where it waited: {:.3} m off", back_at.distance(waited));
+    assert!(t.seats[0].me.pilot.position.distance(back_at) < 0.05, "our game has it there too");
+    let fixed = t.seats[0].online.stats.corrections;
+    t.run(6.0, 60.0, |k, me, n| {
+        if k == 0 {
+            walk(me, n)
+        }
+    });
+    let fixes = t.seats[0].online.stats.corrections - fixed;
+    let off = t.off(0, 240);
+    println!("back: {fixes} corrections, {off:.5} m off, the key held");
+    assert!(fixes == 0, "{fixes} corrections after coming back");
+    assert!(off < 1e-3, "{off} m off");
+    // (a key that takes no body: in anew, at the start, with a key of its own)
+    let k = t.join("jugador2");
+    let _ = k;
+    let end = t.net.endpoint();
+    let client = lunar_net::Client::with_transport(Box::new(end), t.link.addr(), "jugador3", BUILD, defs().fingerprint);
+    let game = new_game();
+    let me = Player::new(game.bodies.clone(), &game.site, defs().scenario.player);
+    t.seats.push(Seat { at: t.link.addr(), online: Online::back(client, defs().scenario.player, 0x1234), game, me, path: Vec::new(), said: Vec::new() });
+    let n = t.seats.len() - 1;
+    for _ in 0..600 {
+        t.frame(1.0 / 60.0, |_, _, _| {});
+        if t.seats[n].online.live() {
+            break;
+        }
+    }
+    assert!(t.seats[n].online.live());
+    assert!(!t.seats[n].online.stats.back);
+    assert!(t.seats[n].online.key.is_some_and(|k| k != 0x1234));
+    // (and what nobody comes back for is gone after its while)
+    t.host.config.keep = 2.0;
+    t.net.cut(t.seats[1].at, true);
+    t.run(14.0, 60.0, |_, _, _| {});
+    assert_eq!(t.host.stats.forgotten, 1, "forgotten after its while");
+    assert_eq!(t.host.waiting().count(), 0);
+}
+
+#[test]
+fn the_game_kept_and_taken_up_again_is_as_it_was_and_each_comes_back_to_their_body() {
+    // a shot that breaks a ship and digs the ground, a walk; the game kept, the server stopped
+    // and started again from what it kept: every structure, piece and crater as it was, and the
+    // player, coming back with their key, in their body where it was
+    let mut t = Table::new(1, 61, Conditions::default());
+    t.run(1.0, 60.0, |_, _, _| {});
+    {
+        let s = &mut t.seats[0];
+        let eye = s.me.pilot.position;
+        let set = &s.game.builds.set;
+        let st = s.game.ships.list.iter().filter_map(|sh| set.get(sh.structure)).min_by(|a, b| a.pos.distance(eye).total_cmp(&b.pos.distance(eye))).unwrap();
+        let dir = (st.to_world(st.center) - eye).normalize();
+        let bodies = s.game.bodies.clone();
+        assert!(s.game.blasts.fire_from("personalizado", eye + dir, dir, DVec3::ZERO, None, &bodies, &mut s.game.builds));
+    }
+    t.run(6.0, 60.0, |_, me, n| walk(me, n));
+    assert!(t.host.game.struck > 0, "the shot struck nothing");
+    let key = t.seats[0].online.key.unwrap();
+    let id = t.seats[0].online.you.unwrap();
+    let body = t.host.player(id).unwrap().pilot.summary();
+    let mut kept = Vec::new();
+    let began = std::time::Instant::now();
+    t.host.save(defs().fingerprint, &mut kept);
+    let save_ms = began.elapsed().as_secs_f64() * 1000.0;
+    assert_eq!(lunar_play::save::saves(&kept), Some(1));
+    // (cut short, or a bit wrong, or of other data: not taken up)
+    assert!(lunar_play::save::saves(&kept[..kept.len() - 1]).is_none());
+    let mut bad = kept.clone();
+    bad[kept.len() / 2] ^= 4;
+    assert!(lunar_play::save::saves(&bad).is_none());
+    let config = HostConfig { cheats: true, ..HostConfig::default() };
+    assert!(Host::load(new_game(), defs().scenario.player, config.clone(), defs().fingerprint ^ 1, &kept).is_err());
+    let fresh = new_game();
+    let began = std::time::Instant::now();
+    let host = Host::load(fresh, defs().scenario.player, config, defs().fingerprint, &kept).unwrap_or_else(|e| panic!("{e}"));
+    let load_ms = began.elapsed().as_secs_f64() * 1000.0;
+    let (a, b) = (&t.host.game, &host.game);
+    assert_eq!(a.step, b.step);
+    assert_eq!(a.struck, b.struck);
+    assert_eq!(a.builds.set.next_free(), b.builds.set.next_free());
+    let ids = |g: &Game| g.builds.set.list.iter().map(|s| s.id).collect::<Vec<_>>();
+    assert_eq!(ids(a), ids(b), "the same structures");
+    let digest = |g: &Game, id: u64| {
+        let s = g.builds.set.get(id)?;
+        let sh = g.ships.by_structure(id).map(|n| &g.ships.list[n]);
+        Some(lunar_ship::sync::Digest::of(sh, s).hash)
+    };
+    for s in &a.builds.set.list {
+        let o = b.builds.set.get(s.id).unwrap();
+        assert_eq!(digest(a, s.id), digest(b, s.id), "structure {} is not as it was", s.id);
+        assert_eq!((s.lineage, s.born, s.resting, s.held), (o.lineage, o.born, o.resting, o.held), "structure {}", s.id);
+        assert!(s.pos.distance(o.pos) < 1e-9 && s.rot.angle_between(o.rot) < 1e-6, "structure {} moved: {:.2e} m", s.id, s.pos.distance(o.pos));
+    }
+    assert_eq!(a.ships.list.len(), b.ships.list.len());
+    let ground = |g: &Game| g.bodies.get(g.site.body).deform().craters().to_vec();
+    assert!(!ground(a).is_empty(), "the shot dug nothing");
+    assert_eq!(ground(a), ground(b), "the ground as it was");
+    let waiting: Vec<u32> = host.waiting().collect();
+    assert_eq!(waiting.len(), 1, "the body waits");
+    assert!(host.player(waiting[0]).unwrap().pilot.summary().near(&body), "the body as it was");
+    // (the server stopped and started again: the player comes back)
+    t.host = host;
+    t.server = Server::new(ServerConfig { game: Some((BUILD.to_string(), defs().fingerprint)), ..ServerConfig::default() });
+    come_back(&mut t, 0, key);
+    assert!(t.seats[0].online.stats.back, "came back to it");
+    let you = t.seats[0].online.you.unwrap();
+    assert!(t.host.player(you).unwrap().pilot.summary().near(&body), "back in it where it was");
+    let fixed = t.seats[0].online.stats.corrections;
+    t.run(5.0, 60.0, |_, me, n| walk(me, n));
+    let fixes = t.seats[0].online.stats.corrections - fixed;
+    let off = t.off(0, 240);
+    println!("kept: {} structures, {:.1} kB in {save_ms:.2} ms, taken up in {load_ms:.2} ms; back: {fixes} corrections, {off:.5} m off", t.host.game.builds.set.list.len(), kept.len() as f64 / 1000.0);
+    assert!(fixes == 0, "{fixes} corrections after coming back");
+    assert!(off < 1e-3, "{off} m off");
 }

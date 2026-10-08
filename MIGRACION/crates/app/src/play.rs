@@ -203,6 +203,10 @@ struct State {
     player_def: lunar_core::scenario::PlayerDef,
     /// The server asked for only passes things on (`--relevo`).
     relay: bool,
+    /// The server we play on and the name we go by there, and when to try to come back to it
+    /// if the connection is lost (our body waits for us there a while: `Online::back`).
+    server_at: Option<(String, String)>,
+    retry_at: f64,
     body_source: Option<crate::multi::BodySource>,
     /// The player's own body (if its model is there), and what of it is drawn this frame.
     body: Option<crate::body::Body>,
@@ -426,6 +430,8 @@ impl State {
             fingerprint,
             player_def,
             relay: o.relay,
+            server_at: o.server.clone().map(|a| (a, o.name.clone().unwrap_or_else(|| "Jugador".to_string()))),
+            retry_at: 0.0,
             body_source,
             body,
             figures: lunar_core::anim::BodyScene::default(),
@@ -1222,6 +1228,20 @@ impl State {
             for (text, level) in o.said.drain(..) {
                 self.ui.hud.notice("red", &text, [Level::Normal, Level::Caution, Level::Warning][usize::from(level.min(2))], 5.0);
             }
+            // (cut off: back to the server every few seconds, to the body that waits for us there)
+            let t = lunar_net::now();
+            if let (lunar_net::Status::Failed(_), Some(key), Some((addr, name))) = (o.status(), o.key, &self.server_at)
+                && t >= self.retry_at
+            {
+                self.retry_at = t + RETRY_EVERY;
+                match lunar_net::Client::connect(addr, name, lunar_play::net::BUILD, self.fingerprint) {
+                    Ok(client) => {
+                        *o = lunar_play::online::Online::back(client, self.player_def, key);
+                        self.ui.hud.notice("red", &format!("Volviendo a {addr}…"), Level::Caution, 3.0);
+                    }
+                    Err(e) => self.ui.hud.notice("red", &format!("No se puede volver a {addr}: {e}"), Level::Warning, 3.0),
+                }
+            }
         }
         // the game on: as many steps as the time since the last frame owes it, each exactly
         // `STEP` s and with what the player asks of it (a slow frame takes more of them, up to
@@ -1636,13 +1656,17 @@ impl State {
                 // with others: the server written in the menu is asked to let us in
                 Some(crate::start::Action::Connect) => {
                     if let Some((addr, name)) = self.start.as_ref().map(|st| (st.server.trim().to_string(), st.name.trim().to_string())) {
-                        match connect(&addr, if name.is_empty() { "Jugador" } else { &name }, self.relay, &self.game, self.fingerprint, self.player_def) {
-                            Ok((m, o)) => (self.multi, self.online) = (m, o),
+                        let name = if name.is_empty() { "Jugador".to_string() } else { name };
+                        match connect(&addr, &name, self.relay, &self.game, self.fingerprint, self.player_def) {
+                            Ok((m, o)) => {
+                                (self.multi, self.online) = (m, o);
+                                self.server_at = Some((addr, name));
+                            }
                             Err(e) => self.ui.hud.notice("red", &format!("No se puede conectar a {addr}: {e}"), Level::Warning, 6.0),
                         }
                     }
                 }
-                Some(crate::start::Action::Disconnect) => (self.multi, self.online) = (None, None),
+                Some(crate::start::Action::Disconnect) => (self.multi, self.online, self.server_at) = (None, None, None),
                 None => {}
             }
             // what the menu's own foot asks: back to the start menu, or out
@@ -2000,6 +2024,9 @@ impl ApplicationHandler for App {
     }
 }
 
+
+/// Seconds between two tries to come back to a server whose connection was lost.
+const RETRY_EVERY: f64 = 4.0;
 
 /// Asks the server at `addr` to let us in as `name`: one that only passes on what each game says
 /// (`relay`: ours simulates the world with the rest), or one that has the game (ours predicts what

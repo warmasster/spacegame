@@ -24,15 +24,34 @@ pub struct Config {
     pub datos: Option<String>,
     /// Free flight and ships put anywhere let be (tests).
     pub trucos: bool,
+    /// Where the game is kept (a path with no extension, beside the program if not absolute:
+    /// its two slots are `<partida>.a.bin` and `<partida>.b.bin`); none: it is not kept.
+    pub partida: Option<String>,
+    /// Seconds between two saves (0: only when the server stops).
+    pub guardar_cada: f64,
+    /// A new game, whatever is kept.
+    pub nueva: bool,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Config { puerto: lunar_net::DEFAULT_PORT, nombre: "Servidor de Selene".to_string(), max_jugadores: 16, tasa: 20, espera: 10.0, simula: true, datos: None, trucos: false }
+        Config {
+            puerto: lunar_net::DEFAULT_PORT,
+            nombre: "Servidor de Selene".to_string(),
+            max_jugadores: 16,
+            tasa: 20,
+            espera: 10.0,
+            simula: true,
+            datos: None,
+            trucos: false,
+            partida: Some("partidas/partida".to_string()),
+            guardar_cada: 300.0,
+            nueva: false,
+        }
     }
 }
 
-pub const USAGE: &str = "Uso: SeleneServidor [--puerto N] [--nombre TEXTO] [--datos CARPETA] [--relevo] [--trucos]\n  --puerto N        puerto UDP en el que escuchar (por defecto 47600)\n  --nombre TEXTO    nombre del servidor\n  --datos CARPETA   dónde están los datos del juego (la carpeta assets, con defs dentro)\n  --relevo          no simular: solo pasar lo que dice cada juego (la forma antigua)\n  --trucos          dejar volar libre y poner naves (pruebas)\nEl resto de ajustes están en servidor.jsonc, junto al programa.";
+pub const USAGE: &str = "Uso: SeleneServidor [--puerto N] [--nombre TEXTO] [--datos CARPETA] [--partida RUTA] [--nueva] [--sin-guardar] [--relevo] [--trucos]\n  --puerto N        puerto UDP en el que escuchar (por defecto 47600)\n  --nombre TEXTO    nombre del servidor\n  --datos CARPETA   dónde están los datos del juego (la carpeta assets, con defs dentro)\n  --partida RUTA    dónde se guarda la partida (por defecto partidas/partida, junto al programa: partida.a.bin y partida.b.bin)\n  --nueva           empezar una partida nueva aunque haya una guardada\n  --sin-guardar     no guardar la partida\n  --relevo          no simular: solo pasar lo que dice cada juego (la forma antigua)\n  --trucos          dejar volar libre y poner naves (pruebas)\nEl resto de ajustes están en servidor.jsonc, junto al programa.";
 
 /// What the settings could not be read for: said to the person as it is.
 pub type Problem = String;
@@ -127,6 +146,16 @@ impl Config {
                 "simula" => self.simula = v.as_bool().ok_or_else(|| format!("«simula» tiene que ser true o false (pone {v})"))?,
                 "trucos" => self.trucos = v.as_bool().ok_or_else(|| format!("«trucos» tiene que ser true o false (pone {v})"))?,
                 "datos" => self.datos = Some(v.as_str().map(str::to_string).ok_or_else(|| format!("«datos» tiene que ser una carpeta entre comillas (pone {v})"))?),
+                "partida" => {
+                    self.partida = match v {
+                        Value::Null => None,
+                        Value::String(p) if !p.trim().is_empty() => Some(p.clone()),
+                        _ => return Err(format!("«partida» tiene que ser una ruta entre comillas, o null para no guardarla (pone {v})")),
+                    }
+                }
+                "guardar_cada" => {
+                    self.guardar_cada = v.as_f64().filter(|s| *s == 0.0 || (10.0..=86_400.0).contains(s)).ok_or_else(|| format!("«guardar_cada» tiene que ser un número de segundos entre 10 y 86400, o 0 para guardar solo al parar (pone {v})"))?
+                }
                 other => notes.push(format!("{FILE}: no conozco el ajuste «{other}»; lo ignoro.")),
             }
         }
@@ -145,6 +174,9 @@ impl Config {
                 "--nombre" => self.nombre = args.next().ok_or("falta el texto después de --nombre")?,
                 "--datos" => self.datos = Some(args.next().ok_or("falta la carpeta después de --datos")?),
                 "--relevo" => self.simula = false,
+                "--partida" => self.partida = Some(args.next().ok_or("falta la ruta después de --partida")?),
+                "--nueva" => self.nueva = true,
+                "--sin-guardar" => self.partida = None,
                 "--trucos" => self.trucos = true,
                 "--ayuda" | "-h" | "--help" | "/?" => return Ok(false),
                 other => return Err(format!("no conozco la opción «{other}»")),

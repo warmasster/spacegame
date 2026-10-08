@@ -25,4 +25,14 @@
 
   // Dejar volar libre y poner naves donde se quiera (para pruebas). También: --trucos
   "trucos": false,
+
+  // Dónde se guarda la partida (junto al programa si no es una ruta entera): en dos ranuras,
+  // partida.a.bin y partida.b.bin; cada guardado va sobre la más vieja, así que si algo corta uno
+  // a medias queda la otra. Al arrancar se retoma la más nueva que esté entera, y quien estaba
+  // vuelve a su cuerpo (lo espera 60 s). null: no se guarda. También: --partida RUTA, --sin-guardar;
+  // y --nueva para empezar de cero aunque haya una guardada.
+  "partida": "partidas/partida",
+
+  // Segundos entre dos guardados (de 10 a 86400); 0 = solo al parar con «salir».
+  "guardar_cada": 300,
 }

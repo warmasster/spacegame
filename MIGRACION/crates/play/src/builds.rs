@@ -154,6 +154,18 @@ impl Builds {
         }
     }
 
+    /// Its clock (s) and how many bursts it has set off (what each one's dice follow from): what
+    /// a game kept on disk keeps of it (`save`).
+    pub fn clock(&self) -> (f64, u64) {
+        (self.now, self.hits)
+    }
+
+    /// Taken up again at `clock` (what `clock` said of the game kept).
+    pub fn resume(&mut self, clock: (f64, u64)) {
+        (self.now, self.hits) = clock;
+        self.set.now = clock.0;
+    }
+
     /// Structures run at their level (watched from `watchers`, and from wherever what lives among
     /// them is), and what lives among them is stepped with them (`among`: the world has no other
     /// clock); what broke since the last step shows its material's effect.

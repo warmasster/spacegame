@@ -54,6 +54,9 @@ const LAUNCH_SLIP: f64 = 50.0;
 const MEND_RATE: f32 = 0.5;
 /// Steps between two things of a kind with no rate of its own let fly by one player (a reload).
 const RELOAD: u64 = 12;
+/// Steps in a row a player's command may be guessed as the last one; past them nothing more is
+/// asked of the body (its game is not heard: it does not go on walking, or firing, on its own).
+const GUESS_MOST: u32 = 30;
 
 #[derive(Clone, Debug)]
 pub struct HostConfig {
@@ -68,11 +71,14 @@ pub struct HostConfig {
     pub launches: f32,
     /// The region of the galaxy this game is of (`Event::Hello`).
     pub region: u32,
+    /// Seconds the body of who is cut off waits for them where it is, standing still, to be
+    /// taken back by their key (`Act::Back`); 0: it goes with them.
+    pub keep: f64,
 }
 
 impl Default for HostConfig {
     fn default() -> HostConfig {
-        HostConfig { cheats: false, snap_every: 2, snap_room: lunar_net::MAX_HINT - 8, rule: Rule::default(), launches: 30.0, region: 0 }
+        HostConfig { cheats: false, snap_every: 2, snap_room: lunar_net::MAX_HINT - 8, rule: Rule::default(), launches: 30.0, region: 0, keep: 60.0 }
     }
 }
 
@@ -91,11 +97,18 @@ pub struct HostStats {
     /// Bytes of snapshots and of events sent.
     pub snap_bytes: u64,
     pub event_bytes: u64,
+    /// Bodies taken back by who had been cut off, and left for good (nobody came back for them).
+    pub back: u64,
+    pub forgotten: u64,
 }
 
 /// One player, as the server has them besides their body.
 struct Peer {
     id: u32,
+    /// What takes their body back if they are cut off (`Event::Hello`, `Act::Back`).
+    key: u64,
+    /// Cut off: their body waits for them until this step (its id is one no connection has).
+    lost: Option<u64>,
     /// Their commands by step (`RING` of them, each at `step % RING`).
     cmds: Vec<Cmd>,
     /// The newest step of theirs we have (to step with), the newest heard of at all (late ones
@@ -105,6 +118,8 @@ struct Peer {
     /// Not in the world yet and catching up with it, alone: the step the body is at.
     behind: Option<u64>,
     last: Cmd,
+    /// Steps in a row their command was guessed.
+    guessing: u32,
     /// How many steps ahead of its step the command of each step came, at least, since the last
     /// snapshot (less than 0: it had not come).
     lead: i64,
@@ -138,14 +153,17 @@ struct Peer {
 }
 
 impl Peer {
-    fn new(id: u32) -> Peer {
+    fn new(id: u32, key: u64) -> Peer {
         Peer {
             id,
+            key,
+            lost: None,
             cmds: vec![Cmd::default(); RING],
             newest: None,
             heard: None,
             behind: None,
             last: Cmd::default(),
+            guessing: 0,
             lead: i64::MAX,
             claims: vec![(0, Summary::default()); RING],
             mine: vec![(0, Summary::default()); RING],
@@ -210,6 +228,12 @@ pub struct Host {
     pinned: Vec<Vec<u64>>,
     /// The ship whose digest goes in this step's snapshots, in turns.
     check_turn: usize,
+    /// What the keys are made with (a secret of this run), and the id the next body left waiting
+    /// takes (from the top down: never one of a connection's).
+    keys: std::hash::RandomState,
+    next_lost: u32,
+    /// Times the game was saved (`save`): the newest of two slots is the one with more.
+    pub saves: u64,
 }
 
 /// Why an act was refused (what the player reads).
@@ -240,12 +264,26 @@ impl Host {
             seen: Vec::new(),
             pinned: Vec::new(),
             check_turn: 0,
+            keys: std::hash::RandomState::new(),
+            next_lost: u32::MAX,
+            saves: 0,
         }
     }
 
-    /// The players in the game, by id.
+    /// The players in the game, by id (not the bodies waiting for who was cut off).
     pub fn ids(&self) -> impl Iterator<Item = u32> + '_ {
-        self.peers.iter().map(|p| p.id)
+        self.peers.iter().filter(|p| p.lost.is_none()).map(|p| p.id)
+    }
+
+    /// The bodies waiting for who was cut off, by the id they go by meanwhile.
+    pub fn waiting(&self) -> impl Iterator<Item = u32> + '_ {
+        self.peers.iter().filter(|p| p.lost.is_some()).map(|p| p.id)
+    }
+
+    /// A key no one could guess.
+    fn new_key(&self, id: u32) -> u64 {
+        use std::hash::BuildHasher;
+        self.keys.hash_one((id, self.game.step, self.stats.steps, self.peers.len(), self.next_lost))
     }
 
     /// Player `id`'s body and hands as the server has them.
@@ -270,8 +308,9 @@ impl Host {
         if self.peers.iter().any(|p| p.id == id) {
             return;
         }
-        let mut peer = Peer::new(id);
-        peer.tell(&Event::Hello { step: self.game.step, you: id, sun: self.game.sun, region: self.config.region });
+        let key = self.new_key(id);
+        let mut peer = Peer::new(id, key);
+        peer.tell(&Event::Hello { step: self.game.step, you: id, sun: self.game.sun, region: self.config.region, key });
         // (the ground as it is: every crater dug so far)
         for (b, body) in self.game.bodies.iter() {
             let craters = body.deform().craters().to_vec();
@@ -292,11 +331,110 @@ impl Host {
         self.peers.push(peer);
     }
 
-    /// Player `id` is gone (their body with them).
+    /// Player `id` is gone: their body waits for them where it is, standing still and seen by
+    /// the others, `HostConfig::keep` s (what was in its hands let go), for them to come back to
+    /// it by their key (`Act::Back`); if it never was in the world, it goes with them.
     pub fn leave(&mut self, id: u32) {
-        if let Some(k) = self.peers.iter().position(|p| p.id == id) {
+        let Some(k) = self.peers.iter().position(|p| p.id == id && p.lost.is_none()) else { return };
+        if self.players[k].away || self.config.keep <= 0.0 {
             self.peers.remove(k);
             self.players.remove(k);
+            return;
+        }
+        self.players[k].hands.release(&mut self.game.builds);
+        let until = self.game.step + (self.config.keep / STEP).ceil() as u64;
+        let lost = self.next_lost;
+        self.next_lost -= 1;
+        let peer = &mut self.peers[k];
+        (peer.id, peer.lost) = (lost, Some(until));
+        peer.acts.clear();
+        peer.interest.clear();
+        (peer.newest, peer.heard, peer.behind) = (None, None, None);
+        peer.events.clear();
+        peer.count = 0;
+        peer.quick.clear();
+    }
+
+    /// Who came in as player `k` was here before, as the one given `key`: their body back, as it
+    /// waited (`Event::Back`; with nothing, if there is no such body or they had begun anew).
+    fn back(&mut self, k: usize, key: u64) {
+        let step = self.game.step.saturating_sub(1);
+        let mut state = Vec::new();
+        let found = self.peers.iter().position(|p| p.lost.is_some() && p.key == key);
+        if let Some(j) = found
+            && self.players[k].away
+            && self.peers[k].newest.is_none()
+        {
+            self.players.swap(k, j);
+            let was = &mut self.peers[j];
+            let (drive, last, key) = (std::mem::take(&mut was.drive), was.last, was.key);
+            self.peers.remove(j);
+            self.players.remove(j);
+            let k = if j < k { k - 1 } else { k };
+            let peer = &mut self.peers[k];
+            (peer.drive, peer.last, peer.key) = (drive, last, key);
+            let p = &mut self.players[k];
+            // (out of the world until its game is in it again, as anyone who comes in)
+            p.away = true;
+            p.pilot.write_state(&mut state);
+            self.stats.back += 1;
+            self.peers[k].tell(&Event::Back { step, state });
+            return;
+        }
+        self.peers[k].tell(&Event::Back { step, state });
+    }
+
+    /// The game kept into `out` (`save`): its world and every body in it, of who is here and of
+    /// who was cut off, by the key each is theirs by. `scenario`: the fingerprint of its data.
+    pub fn save(&mut self, scenario: u32, out: &mut Vec<u8>) {
+        self.saves += 1;
+        let mut bodies: Vec<(u64, Vec<u8>)> = Vec::with_capacity(self.peers.len());
+        for (peer, p) in self.peers.iter().zip(&self.players) {
+            if p.away && peer.lost.is_none() {
+                continue;
+            }
+            let mut state = Vec::with_capacity(256);
+            p.pilot.write_state(&mut state);
+            bodies.push((peer.key, state));
+        }
+        crate::save::write(&self.game, self.saves, scenario, bodies.iter().map(|(k, b)| (*k, &b[..])), out);
+    }
+
+    /// The game kept in `data` (`save`) taken up again in `game` (as its scenario starts): its
+    /// world as it was, and every body in it waiting `config.keep` s for whoever comes back to it.
+    pub fn load(mut game: Game, def: PlayerDef, config: HostConfig, scenario: u32, data: &[u8]) -> Result<Host, String> {
+        let kept = crate::save::read(&mut game, scenario, data)?;
+        let mut host = Host::new(game, def, config);
+        host.saves = kept.saves;
+        let until = host.game.step + (host.config.keep / STEP).ceil() as u64;
+        for (key, state) in kept.bodies {
+            let mut p = Player::new(host.game.bodies.clone(), &host.game.site, def);
+            if p.pilot.read_state(&state).is_err() {
+                continue;
+            }
+            let mut peer = Peer::new(host.next_lost, key);
+            host.next_lost -= 1;
+            peer.lost = Some(until);
+            peer.last = Cmd { yaw: p.pilot.yaw, pitch: p.pilot.pitch, pack: p.pilot.pack_on, steady: p.pilot.steady, lamps: p.pilot.lamps, fly: p.pilot.flying, ..Cmd::default() };
+            host.players.push(p);
+            host.peers.push(peer);
+        }
+        Ok(host)
+    }
+
+    /// The bodies nobody came back for in time, gone.
+    fn forget(&mut self) {
+        let s = self.game.step;
+        let mut k = 0;
+        while k < self.peers.len() {
+            if self.peers[k].lost.is_some_and(|t| t <= s) {
+                self.players[k].hands.release(&mut self.game.builds);
+                self.peers.remove(k);
+                self.players.remove(k);
+                self.stats.forgotten += 1;
+            } else {
+                k += 1;
+            }
         }
     }
 
@@ -316,6 +454,10 @@ impl Host {
                 }
             }
             Ok(ACT) => match net::read_act(&mut r) {
+                Ok((_, Act::Back { key })) => {
+                    self.back(k, key);
+                    true
+                }
                 Ok((step, act)) => {
                     let peer = &mut self.peers[k];
                     if peer.acts.len() < ACTS_MOST {
@@ -418,23 +560,35 @@ impl Host {
     /// One step of the game, and what each player is to be told of it (`send`).
     pub fn step(&mut self) {
         let s = self.game.step;
+        self.forget();
         // ---- 1. what each asks of this step, and what each does that is due
         let cheats = self.config.cheats;
         self.due.clear();
         for (k, peer) in self.peers.iter_mut().enumerate() {
             let p = &mut self.players[k];
-            let cmd = match peer.cmd_at(s) {
+            let cmd = match peer.cmd_at(s).copied() {
+                // (waiting for whoever was cut off: standing still, looking where they looked)
+                _ if peer.lost.is_some() => {
+                    let mut c = peer.last;
+                    (c.step, c.input, c.keys, c.trigger) = (s, crate::pilot::Input::default(), 0, false);
+                    c
+                }
                 Some(c) => {
                     // (its first: in the world from this step, as it is in its own game)
                     p.away = false;
-                    *c
+                    peer.guessing = 0;
+                    c
                 }
                 // (none yet: not in the world)
                 None if p.away => continue,
                 None => {
                     self.stats.guessed += 1;
+                    peer.guessing += 1;
                     let mut c = peer.last;
                     (c.step, c.input.jump) = (s, false);
+                    if peer.guessing > GUESS_MOST {
+                        (c.input, c.keys, c.trigger) = (crate::pilot::Input::default(), 0, false);
+                    }
                     c
                 }
             };
@@ -474,7 +628,7 @@ impl Host {
         self.stats.steps += 1;
         // ---- 5. each body against what its game got
         for k in 0..self.peers.len() {
-            if self.players[k].away {
+            if self.players[k].away || self.peers[k].lost.is_some() {
                 continue;
             }
             let body = self.players[k].pilot.summary();
@@ -503,6 +657,13 @@ impl Host {
     pub fn send(&mut self, mut send: impl FnMut(u32, bool, &[u8]) -> bool) {
         let step = self.game.step;
         for peer in &mut self.peers {
+            if peer.lost.is_some() {
+                // (nobody to tell)
+                peer.events.clear();
+                peer.count = 0;
+                peer.quick.clear();
+                continue;
+            }
             if peer.count > 0 {
                 net::events_message(step, peer.count, &peer.events, &mut peer.sure);
                 if send(peer.id, true, &peer.sure) {
@@ -637,6 +798,8 @@ impl Host {
                 }
                 g.ships.spawn_free(&mut g.builds, &kind, pos, rot).map_err(|_| NOT_ALLOWED)?;
             }
+            // (taken as it comes, not at a step: `take`)
+            Act::Back { .. } => return Err(NOT_ALLOWED),
             Act::Resync { id } => {
                 // (told anew: as if it had just come to be known)
                 let peer = &mut self.peers[k];
@@ -783,9 +946,14 @@ impl Host {
         let players = &self.players;
         let pinned = &self.pinned;
         let scenario_end = self.game.builds.scenario_end;
+        let ships = &self.game.ships;
         self.peers.par_iter_mut().enumerate().with_min_len(2).for_each(|(k, peer)| {
             let p = &players[k].pilot;
             peer.went.clear();
+            if peer.lost.is_some() {
+                (peer.came.clear(), peer.rested.clear());
+                return;
+            }
             let from = peer.came.len();
             peer.interest.update(&rule, set, p.position, p.velocity_in(set), &pinned[k], dt, &mut peer.came, &mut peer.went);
             peer.interest.owe(set, p.position, &pinned[k], dt);
@@ -796,7 +964,7 @@ impl Host {
             let mut i = from;
             while i < peer.came.len() {
                 let id = peer.came[i];
-                let untouched = id < scenario_end && set.get(id).is_some_and(|s| s.anchored && s.version == 0);
+                let untouched = id < scenario_end && set.get(id).is_some_and(|s| s.anchored && s.version == 0) && ships.by_structure(id).is_none();
                 if untouched {
                     peer.came.swap_remove(i);
                 } else {
@@ -934,7 +1102,7 @@ impl Host {
             .enumerate()
             .with_min_len(2)
             .map(|(k, peer)| {
-                if (step + k as u64) % every != 0 {
+                if (step + k as u64) % every != 0 || peer.lost.is_some() {
                     return 0;
                 }
                 let me = &players[k].pilot;

@@ -12,6 +12,18 @@ rendimiento del juego en TS están en [`../../docs/RENDIMIENTO.md`](../../docs/R
 Prioridad: **A** (se nota jugando), **B** (se nota con muchas cosas en pantalla), **C** (limpieza o
 código muerto).
 
+## V41c (2026-10-08): reconectar y guardar la partida (fase 9)
+
+- **Medido:** guardar 16 estructuras (34 kB) cuesta 0,2 ms en el hilo de la partida; el disco va en
+  un hilo propio (`guardado`), así que ningún paso espera al disco. Retomar: 3 ms.
+- **B · Pendiente:** `Ships::adopt` cuesta de 0,6 a 1,8 ms por nave (hace la nave entera: sistemas,
+  máquinas, señales). Lo paga el jugador en su fotograma cada vez que le entra una nave en el
+  interés (`Event::Made`); con varias a la vez (llegar a un puerto) es un tirón. Medido cronometrando
+  `online::put_made` por estructura al retomar. Arreglo: hacer en otro hilo lo que es solo datos
+  (catálogo, máquinas) o repartir las adopciones entre fotogramas.
+- **C · Pendiente:** `save::write` hace un `Event::Made` por estructura (tres `Vec`) y copia los
+  cráteres: cada 5 minutos no importa; con decenas de miles de estructuras, escribir directo al búfer.
+
 ## V41b (2026-10-07): el servidor que simula (`lunar_play::host`) y el jugador que predice (`online`)
 
 - **Codificado una vez** (`net::append_event`): lo que va a muchos (un golpe, lo que nace, lo

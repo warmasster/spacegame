@@ -16,6 +16,7 @@ pub mod interest;
 pub mod net;
 pub mod online;
 pub mod pilot;
+pub mod save;
 pub mod seats;
 pub mod ships;
 pub mod tactics;

@@ -19,8 +19,8 @@ use crate::{
     told,
 };
 use glam::{DVec3, Quat, Vec3};
-use lunar_net::{PlayerState, Reader, RigidState, WireError, Writer};
 use lunar_core::structure::hold::Held;
+use lunar_net::{PlayerState, Reader, RigidState, WireError, Writer};
 use lunar_ship::sync::Digest;
 
 /// What travels: the kind of a message, its first byte.
@@ -34,7 +34,7 @@ pub const EVENTS: u8 = 4;
 pub const PROTOCOL: &str = "p2";
 /// What a player's game says it is in its hello to a server that has the game (and the
 /// fingerprint of its data, `defs::fingerprint`, as the scenario): the server lets in only its own.
-pub const BUILD: &str = "V41+p2";
+pub const BUILD: &str = "V41+p3";
 
 /// The commands a `CMDS` message repeats (one lost datagram, or three, loses nothing).
 pub const REPEAT: usize = 4;
@@ -348,6 +348,11 @@ pub enum Act {
     Resync {
         id: u64,
     },
+    /// I was here before, as the one `Event::Hello` gave this key to: my body, please (it waited
+    /// for me, `HostConfig::keep`). Said first, before any command.
+    Back {
+        key: u64,
+    },
 }
 
 fn write_launch(w: &mut Writer, l: &Launch) {
@@ -432,6 +437,10 @@ pub fn write_act(step: u64, act: &Act, out: &mut Vec<u8>) {
                 w.u8(23);
                 w.var(*id);
             }
+            Act::Back { key } => {
+                w.u8(24);
+                w.u64(*key);
+            }
             Act::Spawn { kind, pos, rot } => {
                 w.u8(22);
                 w.str(kind);
@@ -491,6 +500,7 @@ pub fn read_act(r: &mut Reader) -> Wire<(u64, Act)> {
             Act::Spawn { kind, pos, rot: rot.normalize() }
         }
         23 => Act::Resync { id: r.var()? },
+        24 => Act::Back { key: r.u64()? },
         _ => return Err(WireError::Value),
     };
     Ok((step, act))
@@ -584,14 +594,21 @@ pub fn read_snap(r: &mut Reader, out: &mut Snap) -> Wire<()> {
 /// What happened, as a player's game is told of it.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Event {
-    /// You are in: the step the game is at, your id on the network, toward the sun, and the
-    /// region of the galaxy the server's game is of (0: the scenario's; each region is a game of
-    /// its own, `docs/MUNDO.md` §14).
+    /// You are in: the step the game is at, your id on the network, toward the sun, the region
+    /// of the galaxy the server's game is of (0: the scenario's; each region is a game of its own,
+    /// `docs/MUNDO.md` §14), and the key to come back with if you are cut off (`Act::Back`).
     Hello {
         step: u64,
         you: u32,
         sun: DVec3,
         region: u32,
+        key: u64,
+    },
+    /// What `Act::Back` asked: your body as it waited for you, at the end of step `step`
+    /// (`Pilot::write_state`; empty: there is none of that key, you start anew).
+    Back {
+        step: u64,
+        state: Vec<u8>,
     },
     /// Your body as the server has it at the end of step `step` (`Pilot::write_state`): your game
     /// went astray there; put it so and step on from there with what you asked since.
@@ -661,13 +678,26 @@ pub enum Event {
     },
     /// A crater dug in the ground of body `body` (the ground is the server's: every game digs it
     /// the same, in the order it was dug).
-    Crater { body: u16, crater: lunar_core::deform::Crater },
+    Crater {
+        body: u16,
+        crater: lunar_core::deform::Crater,
+    },
     /// Every crater of body `body`, oldest first, in place of what your game has (on coming in).
-    Ground { body: u16, craters: Vec<lunar_core::deform::Crater> },
+    Ground {
+        body: u16,
+        craters: Vec<lunar_core::deform::Crater>,
+    },
     /// Structure `id` came to rest here, exactly (snapshots no longer tell of it until it moves).
-    Rest { id: u64, pos: DVec3, rot: Quat },
+    Rest {
+        id: u64,
+        pos: DVec3,
+        rot: Quat,
+    },
     /// Structure `id` is held so now (none: let go): by what, which bone of it, and where in it.
-    Hold { id: u64, held: Option<Held> },
+    Hold {
+        id: u64,
+        held: Option<Held>,
+    },
 }
 
 fn write_held(w: &mut Writer, h: &Option<Held>) {
@@ -733,7 +763,7 @@ fn read_blob(r: &mut Reader) -> Wire<Vec<u8>> {
 /// Room an event takes on the wire, at most.
 fn event_room(e: &Event) -> usize {
     64 + match e {
-        Event::Correct { state, .. } => state.len() + 16,
+        Event::Correct { state, .. } | Event::Back { state, .. } => state.len() + 16,
         Event::Made { make, state, systems, .. } => make.len() + state.len() + systems.len() + 256,
         Event::Strikes(b) | Event::Seen(b) => b.len() + 8,
         Event::Systems { data, .. } => data.len() + 16,
@@ -789,7 +819,7 @@ pub fn events_message(step: u64, n: u32, bytes: &[u8], out: &mut Vec<u8>) {
 
 fn write_event(w: &mut Writer, e: &Event) {
     match e {
-        Event::Hello { step, you, sun, region } => {
+        Event::Hello { step, you, sun, region, key } => {
             w.u8(1);
             w.var(*step);
             w.var(u64::from(*you));
@@ -797,6 +827,12 @@ fn write_event(w: &mut Writer, e: &Event) {
             w.f64(sun.y);
             w.f64(sun.z);
             w.var(u64::from(*region));
+            w.u64(*key);
+        }
+        Event::Back { step, state } => {
+            w.u8(17);
+            w.var(*step);
+            blob(w, state);
         }
         Event::Correct { step, state } => {
             w.u8(2);
@@ -894,75 +930,80 @@ pub fn read_events(r: &mut Reader, out: &mut Vec<Event>) -> Wire<u64> {
         return Err(WireError::Long);
     }
     for _ in 0..n {
-        let e = match r.u8()? {
-            1 => {
-                let (step, you) = (r.var()?, r.var32()?);
-                let sun = DVec3::new(r.f64()?, r.f64()?, r.f64()?);
-                Event::Hello { step, you, sun, region: r.var32()? }
-            }
-            2 => Event::Correct { step: r.var()?, state: read_blob(r)? },
-            3 => {
-                let (id, lineage, born) = (r.var()?, r.var()?, r.var32()?);
-                let ship = r.str(64)?.to_string();
-                let seed = r.u64()?;
-                let pos = DVec3::new(r.f64()?, r.f64()?, r.f64()?);
-                let rot = Quat::from_xyzw(r.f32()?, r.f32()?, r.f32()?, r.f32()?);
-                let (vel, spin, resting) = (r.vec3()?, r.vec3()?, r.u8()? != 0);
-                if !pos.is_finite() || !rot.is_finite() || !vel.is_finite() || !spin.is_finite() {
-                    return Err(WireError::Value);
-                }
-                let held = read_held(r)?;
-                Event::Made { id, lineage, born, ship, seed, pos, rot: rot.normalize(), vel, spin, resting, held, make: read_blob(r)?, state: read_blob(r)?, systems: read_blob(r)? }
-            }
-            4 => Event::Gone { id: r.var()? },
-            5 => Event::Strikes(read_blob(r)?),
-            6 => Event::Seen(read_blob(r)?),
-            7 => {
-                if r.u8()? != told::CONTROL {
-                    return Err(WireError::Value);
-                }
-                let (ship, control, value) = told::read_control(r)?;
-                Event::Control { ship, control, value }
-            }
-            8 => {
-                if r.u8()? != told::ACT {
-                    return Err(WireError::Value);
-                }
-                let (ship, act) = told::read_act(r)?;
-                Event::Hand { ship, act }
-            }
-            9 => Event::Said { ship: r.var()?, about: r.str(256)?.to_string(), text: r.str(1024)?.to_string(), level: r.u8()? },
-            10 => Event::Systems { ship: r.var()?, data: read_blob(r)? },
-            11 => Event::Denied(r.str(1024)?.to_string()),
-            12 => Event::State { id: r.var()?, delta: read_blob(r)? },
-            13 => Event::Crater { body: r.u16()?, crater: read_crater(r)? },
-            14 => {
-                let body = r.u16()?;
-                let n = r.var()?;
-                if n > 4096 {
-                    return Err(WireError::Long);
-                }
-                let mut craters = Vec::with_capacity(n as usize);
-                for _ in 0..n {
-                    craters.push(read_crater(r)?);
-                }
-                Event::Ground { body, craters }
-            }
-            15 => {
-                let id = r.var()?;
-                let pos = DVec3::new(r.f64()?, r.f64()?, r.f64()?);
-                let rot = Quat::from_xyzw(r.f32()?, r.f32()?, r.f32()?, r.f32()?);
-                if !pos.is_finite() || !rot.is_finite() {
-                    return Err(WireError::Value);
-                }
-                Event::Rest { id, pos, rot: rot.normalize() }
-            }
-            16 => Event::Hold { id: r.var()?, held: read_held(r)? },
-            _ => return Err(WireError::Value),
-        };
-        out.push(e);
+        out.push(read_event(r)?);
     }
     Ok(step)
+}
+
+/// One event as `append_event` wrote it.
+pub fn read_event(r: &mut Reader) -> Wire<Event> {
+    Ok(match r.u8()? {
+        1 => {
+            let (step, you) = (r.var()?, r.var32()?);
+            let sun = DVec3::new(r.f64()?, r.f64()?, r.f64()?);
+            Event::Hello { step, you, sun, region: r.var32()?, key: r.u64()? }
+        }
+        2 => Event::Correct { step: r.var()?, state: read_blob(r)? },
+        3 => {
+            let (id, lineage, born) = (r.var()?, r.var()?, r.var32()?);
+            let ship = r.str(64)?.to_string();
+            let seed = r.u64()?;
+            let pos = DVec3::new(r.f64()?, r.f64()?, r.f64()?);
+            let rot = Quat::from_xyzw(r.f32()?, r.f32()?, r.f32()?, r.f32()?);
+            let (vel, spin, resting) = (r.vec3()?, r.vec3()?, r.u8()? != 0);
+            if !pos.is_finite() || !rot.is_finite() || !vel.is_finite() || !spin.is_finite() {
+                return Err(WireError::Value);
+            }
+            let held = read_held(r)?;
+            Event::Made { id, lineage, born, ship, seed, pos, rot: rot.normalize(), vel, spin, resting, held, make: read_blob(r)?, state: read_blob(r)?, systems: read_blob(r)? }
+        }
+        4 => Event::Gone { id: r.var()? },
+        5 => Event::Strikes(read_blob(r)?),
+        6 => Event::Seen(read_blob(r)?),
+        7 => {
+            if r.u8()? != told::CONTROL {
+                return Err(WireError::Value);
+            }
+            let (ship, control, value) = told::read_control(r)?;
+            Event::Control { ship, control, value }
+        }
+        8 => {
+            if r.u8()? != told::ACT {
+                return Err(WireError::Value);
+            }
+            let (ship, act) = told::read_act(r)?;
+            Event::Hand { ship, act }
+        }
+        9 => Event::Said { ship: r.var()?, about: r.str(256)?.to_string(), text: r.str(1024)?.to_string(), level: r.u8()? },
+        10 => Event::Systems { ship: r.var()?, data: read_blob(r)? },
+        11 => Event::Denied(r.str(1024)?.to_string()),
+        12 => Event::State { id: r.var()?, delta: read_blob(r)? },
+        13 => Event::Crater { body: r.u16()?, crater: read_crater(r)? },
+        14 => {
+            let body = r.u16()?;
+            let n = r.var()?;
+            if n > 4096 {
+                return Err(WireError::Long);
+            }
+            let mut craters = Vec::with_capacity(n as usize);
+            for _ in 0..n {
+                craters.push(read_crater(r)?);
+            }
+            Event::Ground { body, craters }
+        }
+        15 => {
+            let id = r.var()?;
+            let pos = DVec3::new(r.f64()?, r.f64()?, r.f64()?);
+            let rot = Quat::from_xyzw(r.f32()?, r.f32()?, r.f32()?, r.f32()?);
+            if !pos.is_finite() || !rot.is_finite() {
+                return Err(WireError::Value);
+            }
+            Event::Rest { id, pos, rot: rot.normalize() }
+        }
+        16 => Event::Hold { id: r.var()?, held: read_held(r)? },
+        17 => Event::Back { step: r.var()?, state: read_blob(r)? },
+        _ => return Err(WireError::Value),
+    })
 }
 
 /// Writes into `out` (made as long as `room` first, then cut to what was written; left empty if
@@ -1045,6 +1086,7 @@ mod tests {
             Act::Rebuild { structure: 9, part: 32 },
             Act::Spawn { kind: "alcotan".into(), pos: DVec3::new(1.0, 2.0, 3.0), rot: Quat::IDENTITY },
             Act::Resync { id: 1 << 41 },
+            Act::Back { key: 0xdead_beef_0123_4567 },
         ];
         for (k, a) in acts.iter().enumerate() {
             let mut out = Vec::new();
@@ -1055,9 +1097,25 @@ mod tests {
             assert!(r.is_empty());
         }
         let events = vec![
-            Event::Hello { step: 99, you: 3, sun: DVec3::Y, region: 7 },
+            Event::Hello { step: 99, you: 3, sun: DVec3::Y, region: 7, key: u64::MAX - 5 },
+            Event::Back { step: 97, state: vec![4, 5] },
             Event::Correct { step: 98, state: vec![1, 2, 3] },
-            Event::Made { id: 77, lineage: 5, born: 2, ship: "abejorro".into(), seed: 11, pos: DVec3::new(1.5e6, 2.0, 3.0), rot: Quat::IDENTITY, vel: Vec3::X, spin: Vec3::ZERO, resting: true, held: Some(Held { by: 6, bone: 2, pos: Vec3::Y, rot: Quat::IDENTITY }), make: vec![9; 40], state: vec![], systems: vec![1] },
+            Event::Made {
+                id: 77,
+                lineage: 5,
+                born: 2,
+                ship: "abejorro".into(),
+                seed: 11,
+                pos: DVec3::new(1.5e6, 2.0, 3.0),
+                rot: Quat::IDENTITY,
+                vel: Vec3::X,
+                spin: Vec3::ZERO,
+                resting: true,
+                held: Some(Held { by: 6, bone: 2, pos: Vec3::Y, rot: Quat::IDENTITY }),
+                make: vec![9; 40],
+                state: vec![],
+                systems: vec![1],
+            },
             Event::Gone { id: 77 },
             Event::Strikes(vec![3, 1, 2]),
             Event::Seen(vec![4]),

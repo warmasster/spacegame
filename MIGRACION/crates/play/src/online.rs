@@ -110,6 +110,8 @@ pub struct OnlineStats {
     pub resyncs: u64,
     pub denied: u64,
     pub garbled: u64,
+    /// We came back to the body that waited for us.
+    pub back: bool,
 }
 
 pub struct Online {
@@ -132,6 +134,13 @@ pub struct Online {
     /// The others, as the newest snapshot has them, and the step it is of.
     pub others: Vec<(u32, PlayerState)>,
     pub others_step: u64,
+    /// The key our body is ours by if we are cut off: what to come back with (`Act::Back`).
+    pub key: Option<u64>,
+    /// Coming back with this key (`back`): what the server answers is awaited before anything
+    /// is stepped; and the key this connection was given, if there is no body to come back to.
+    back: Option<u64>,
+    awaiting: bool,
+    given: u64,
     /// Times our body was put right (`Check::fixes`).
     fixes: u8,
     cmds: Vec<Cmd>,
@@ -190,6 +199,10 @@ impl Online {
             said: Vec::new(),
             others: Vec::new(),
             others_step: 0,
+            key: None,
+            back: None,
+            awaiting: false,
+            given: 0,
             fixes: 0,
             cmds: vec![Cmd::default(); RING],
             due: 0.0,
@@ -218,6 +231,16 @@ impl Online {
             poses: Vec::new(),
             seen: Vec::new(),
         }
+    }
+
+    /// A game over `client` for who was cut off and comes back with `key` (`Online::key` of the
+    /// game they had): their body as it waited for them, if it still does. The game they had may
+    /// be kept: what is not of the scenario is forgotten on coming in, and told again.
+    pub fn back(client: Client, def: PlayerDef, key: u64) -> Online {
+        let mut o = Online::new(client, def);
+        // (ours still: if this connection is lost too, it is the one to try again with)
+        (o.back, o.key) = (Some(key), Some(key));
+        o
     }
 
     pub fn status(&self) -> Status {
@@ -459,10 +482,29 @@ impl Online {
 
     fn event(&mut self, e: Event, at: u64, game: &mut Game, me: &mut Player) {
         match e {
-            Event::Hello { step, you, sun, region } => {
+            Event::Hello { step, you, sun, region, key } => {
                 // (the clock is set by the first snapshot, which is never old: this may have come
                 // again after it was lost)
                 game.step = step.max(at);
+                // (what this game had of its own or was told before, forgotten: what is, is told
+                // again; the scenario's is as every game has it, and what of it is no more, told)
+                let end = game.builds.scenario_end;
+                let had: Vec<u64> = game.builds.set.list.iter().filter(|s| s.id >= end).map(|s| s.id).collect();
+                for id in had {
+                    remove(game, id);
+                }
+                self.ours.clear();
+                self.asked.clear();
+                (self.seated, self.holding, self.pending) = (None, None, None);
+                self.given = key;
+                match self.back {
+                    Some(back) => {
+                        self.awaiting = true;
+                        net::write_act(step, &Act::Back { key: back }, &mut self.out);
+                        self.client.send_game(&self.out);
+                    }
+                    None => self.key = Some(key),
+                }
                 self.clock = false;
                 game.sun = sun;
                 game.say = Say::Client;
@@ -474,6 +516,20 @@ impl Online {
                 self.tracks.clear();
                 (self.due, self.rate, self.early) = (0.0, 1.0, TARGET);
             }
+            Event::Back { step: _, state } => {
+                // (the body as it waited: ours again, by the key we came with; or none, and we
+                // start anew with the one this connection was given)
+                self.awaiting = false;
+                if !state.is_empty() && me.pilot.read_state(&state).is_ok() {
+                    self.key = self.back.take();
+                    self.stats.back = true;
+                    // (seated as it waited: said already)
+                    self.seated = me.pilot.seat.map(|x| (x.structure, x.index));
+                } else {
+                    (self.key, self.back) = (Some(self.given), None);
+                    self.said.push(("Tu cuerpo ya no te esperaba: empiezas de nuevo".to_string(), 1));
+                }
+            }
             Event::Correct { step, state } => {
                 // (counted as the server counts them, each one: what we say from now on is of a
                 // body put right this many times; only the newest is put)
@@ -482,10 +538,7 @@ impl Online {
                     self.pending = Some((step, state));
                 }
             }
-            Event::Made { id, lineage, born, ship, seed, pos, rot, vel, spin, resting, held, make, state, systems } => {
-                self.made(game, at, id, lineage, born, &ship, seed, (pos, rot, vel, spin, resting), &make, &state, &systems);
-                game.builds.set.hold_as(id, held);
-            }
+            e @ Event::Made { .. } => self.made(game, at, &e),
             Event::Hold { id, held } => {
                 let world = game.builds.set.now;
                 game.builds.set.hold_as(id, held);
@@ -595,13 +648,11 @@ impl Online {
         }
     }
 
-    /// All of structure `id`, as the server had it at the end of step `at`: ours already (put as it
-    /// says), a piece of ours by its lineage (named so), or new here.
-    #[allow(clippy::too_many_arguments)]
-    fn made(&mut self, game: &mut Game, at: u64, id: u64, lineage: u64, born: u32, ship: &str, seed: u64, rigid: (DVec3, Quat, Vec3, Vec3, bool), make: &[u8], state: &[u8], systems: &[u8]) {
-        let (pos, rot, vel, spin, resting) = rigid;
+    /// All of a structure (`Event::Made`), as the server had it at the end of step `at`: ours
+    /// already (put as it says), a piece of ours by its lineage (named so), or new here.
+    fn made(&mut self, game: &mut Game, at: u64, e: &Event) {
+        let Event::Made { id, lineage, .. } = *e else { return };
         self.stats.made += 1;
-        let lib = game.builds.set.lib.clone();
         // (a piece we broke off the same: the server's name for it)
         if game.builds.set.index_of(id).is_none()
             && let Some(k) = self.ours.iter().position(|o| game.builds.set.get(o.0).is_some_and(|s| s.lineage == lineage))
@@ -611,45 +662,8 @@ impl Online {
                 self.stats.renamed += 1;
             }
         }
-        // (ours, but not of what the server says it is made of: made anew)
-        if let Some(s) = game.builds.set.get(id)
-            && !sync::made_as(s, &lib, make)
-        {
-            remove(game, id);
-        }
-        if game.builds.set.index_of(id).is_none() {
-            let mut inp = sync::In::new(make);
-            let Ok(s) = sync::make(&lib, id, pos, rot, &mut inp) else {
-                self.stats.garbled += 1;
-                return;
-            };
-            game.builds.set.insert(s);
-            if !ship.is_empty() && game.ships.adopt(&mut game.builds, ship, id, seed).is_err() {
-                self.stats.garbled += 1;
-            }
-        }
-        let Some(k) = game.builds.set.index_of(id) else { return };
-        self.died.clear();
-        let s = &mut game.builds.set.list[k];
-        let mut inp = sync::In::new(state);
-        let _ = sync::read_state(s, &mut inp, &mut self.died);
-        (s.lineage, s.born) = (lineage, born);
-        (s.pos, s.rot, s.vel, s.spin) = (pos, rot, vel.as_dvec3(), spin);
-        if resting {
-            // (at rest there: at rest here, where it rests)
-            s.resting = true;
-        } else {
-            // (as it was then, carried on to now)
-            (s.resting, s.still) = (false, 0.0);
-            carry(s, &game.bodies, game.step.saturating_sub(at) as f64 * STEP);
-        }
-        s.clock = game.builds.set.now;
-        if !systems.is_empty()
-            && let Some(n) = game.ships.by_structure(id)
-        {
-            let mut inp = sync::In::new(systems);
-            let _ = sync::read_ship(&mut game.ships.list[n], &mut game.builds.set.list[k], &|x| Some(x), &mut inp);
-            catch_up(game, n, at);
+        if !put_made(game, at, e, &mut self.died) {
+            self.stats.garbled += 1;
         }
         self.forget_track(id);
     }
@@ -746,7 +760,7 @@ impl Online {
         // ---- the clock, the first time: ahead of the server by half the way there and a few
         // steps (early enough to spare: the first commands must not come late, as the body starts
         // at the first the server has; the clock takes off what is too much)
-        if !self.clock {
+        if !self.clock && !self.awaiting {
             let ping = match self.client.status() {
                 Status::Connected { ping_ms, .. } => f64::from(ping_ms) / 1000.0,
                 _ => 0.1,
@@ -894,8 +908,57 @@ fn catch_up(game: &mut Game, n: usize, at: u64) {
     game.ships.catch_up(n, ticks, &mut game.builds, &bodies, game.sun, STEP);
 }
 
+/// A structure as `Event::Made` tells it, as the server had it at the end of step `at`, put in
+/// `game`: made if it has none of that id (or one not made of what it says), and put as it says,
+/// carried on to the game's step (resting: where it rests), with its ship's systems run on to it.
+/// False if what it says made no sense (what could be put, is).
+pub(crate) fn put_made(game: &mut Game, at: u64, e: &Event, died: &mut Vec<u32>) -> bool {
+    let Event::Made { id, lineage, born, ref ship, seed, pos, rot, vel, spin, resting, held, ref make, ref state, ref systems } = *e else { return false };
+    let lib = game.builds.set.lib.clone();
+    let mut ok = true;
+    // (ours, but not of what the server says it is made of: made anew)
+    if let Some(s) = game.builds.set.get(id)
+        && !sync::made_as(s, &lib, make)
+    {
+        remove(game, id);
+    }
+    if game.builds.set.index_of(id).is_none() {
+        let mut inp = sync::In::new(make);
+        let Ok(s) = sync::make(&lib, id, pos, rot, &mut inp) else { return false };
+        game.builds.set.insert(s);
+        if !ship.is_empty() && game.ships.adopt(&mut game.builds, ship, id, seed).is_err() {
+            ok = false;
+        }
+    }
+    let Some(k) = game.builds.set.index_of(id) else { return false };
+    died.clear();
+    let s = &mut game.builds.set.list[k];
+    let mut inp = sync::In::new(state);
+    let _ = sync::read_state(s, &mut inp, died);
+    (s.lineage, s.born) = (lineage, born);
+    (s.pos, s.rot, s.vel, s.spin) = (pos, rot, vel.as_dvec3(), spin);
+    if resting {
+        // (at rest there: at rest here, where it rests)
+        s.resting = true;
+    } else {
+        // (as it was then, carried on to now)
+        (s.resting, s.still) = (false, 0.0);
+        carry(s, &game.bodies, game.step.saturating_sub(at) as f64 * STEP);
+    }
+    s.clock = game.builds.set.now;
+    if !systems.is_empty()
+        && let Some(n) = game.ships.by_structure(id)
+    {
+        let mut inp = sync::In::new(systems);
+        let _ = sync::read_ship(&mut game.ships.list[n], &mut game.builds.set.list[k], &|x| Some(x), &mut inp);
+        catch_up(game, n, at);
+    }
+    game.builds.set.hold_as(id, held);
+    ok
+}
+
 /// Structure `id` (and its ship) gone from this game.
-fn remove(game: &mut Game, id: u64) {
+pub(crate) fn remove(game: &mut Game, id: u64) {
     game.ships.list.retain(|sh| sh.structure != id);
     game.builds.set.remove(id);
 }

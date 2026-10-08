@@ -9,6 +9,7 @@
 mod config;
 mod console;
 mod journal;
+mod keep;
 mod sim;
 
 use config::Config;
@@ -113,7 +114,12 @@ fn main() -> ExitCode {
             }
         };
         fixed = Some((lunar_play::net::BUILD.to_string(), defs.fingerprint));
-        match sim::start(defs, &data, config.trucos) {
+        let keeping = config.partida.as_ref().map(|p| {
+            let p = PathBuf::from(p);
+            let base = if p.is_absolute() { p } else { dir.join(p) };
+            sim::Keeping { slots: keep::Slots::new(&base), every: config.guardar_cada, fresh: config.nueva }
+        });
+        match sim::start(defs, &data, config.trucos, keeping) {
             Ok(s) => game = Some(s),
             Err(e) => {
                 journal.say(&format!("No se puede montar la partida: {e}"));
@@ -221,7 +227,13 @@ fn main() -> ExitCode {
                 }
                 Command::Quit => {
                     if let Some(g) = &mut game {
+                        // (it keeps the game before it ends: what it says of that, said)
                         g.stop();
+                        while let Ok(out) = g.from.try_recv() {
+                            if let sim::Out::Note(n) = out {
+                                journal.say(&n);
+                            }
+                        }
                     }
                     server.close(&mut socket);
                     server.events().for_each(|e| journal.say(&describe(&e)));

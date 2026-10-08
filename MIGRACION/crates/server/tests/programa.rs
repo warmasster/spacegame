@@ -165,7 +165,7 @@ fn a_port_already_taken_is_said_and_help_is_given() {
 
     let out = Command::new(env!("CARGO_BIN_EXE_luna-servidor")).arg("--ayuda").output().expect("the program runs");
     assert!(out.status.success());
-    assert!(String::from_utf8_lossy(&out.stdout).starts_with("Uso: SeleneServidor [--puerto N] [--nombre TEXTO] [--datos CARPETA] [--relevo] [--trucos]"));
+    assert!(String::from_utf8_lossy(&out.stdout).starts_with("Uso: SeleneServidor [--puerto N] [--nombre TEXTO] [--datos CARPETA] [--partida RUTA] [--nueva] [--sin-guardar] [--relevo] [--trucos]"));
     let out = Command::new(env!("CARGO_BIN_EXE_luna-servidor")).args(["--puerto", "cero"]).output().expect("the program runs");
     assert!(!out.status.success());
     assert!(String::from_utf8_lossy(&out.stderr).starts_with("--puerto: «cero» no es un puerto (un número entre 1 y 65535)"));
@@ -175,11 +175,18 @@ fn a_port_already_taken_is_said_and_help_is_given() {
 fn the_program_has_the_game_and_a_player_walks_in_it() {
     // started as it is by default: it loads the game and simulates it; a player's game comes in over
     // UDP, is told where the game is, walks, and is never put right; one of another build is not
-    // let in, and says why
+    // let in, and says why. Stopped, it keeps the game; started again, it takes it up, and the
+    // player comes back to their body with their key
     use lunar_play::{defs::Defs, game::Game, game::Player, online::Online};
     let port = free_port();
     let addr = format!("127.0.0.1:{port}");
-    let mut program = Program::start(&["--puerto", &port.to_string(), "--datos", lunar_play::root().join("assets").to_str().expect("a path")]);
+    let kept = std::env::temp_dir().join(format!("luna-partida-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&kept);
+    let base = kept.join("partida");
+    let data = lunar_play::root().join("assets");
+    let args = ["--puerto", &port.to_string(), "--datos", data.to_str().expect("a path"), "--partida", base.to_str().expect("a path")].map(str::to_string);
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    let mut program = Program::start(&args);
     // (the game's data is read first: a moment)
     let line = program.expect_within("en marcha", 120.0, || {});
     assert!(line.contains("la partida la simula él, 60 pasos por segundo"), "{line}");
@@ -206,8 +213,31 @@ fn the_program_has_the_game_and_a_player_walks_in_it() {
     assert_eq!(online.stats.corrections, 0, "{:?}", online.stats);
     let mut old = Client::connect(&addr, "Marta", "V39", 3).expect("a client");
     let refused = program.expect("No se deja entrar a Marta", || old.update(now()));
-    assert!(refused.contains("V41+p2") && refused.contains("V39"), "{refused}");
+    assert!(refused.contains(lunar_play::net::BUILD) && refused.contains("V39"), "{refused}");
+    let key = online.key.expect("a key to come back with");
     program.order("salir");
+    let saved = program.expect("Partida guardada en", || online.receive(now(), &mut game, &mut me));
+    assert!(saved.contains("partida.a.bin"), "{saved}");
     program.expect("Servidor parado.", || online.receive(now(), &mut game, &mut me));
     assert!(program.child.wait().expect("it ends").success());
+    // started again: the game as it was, and the body waiting for its player
+    let mut program = Program::start(&args);
+    let line = program.expect_within("Partida retomada", 120.0, || {});
+    assert!(line.contains("1 cuerpo esperando"), "{line}");
+    program.expect_within("en marcha", 60.0, || {});
+    let client = Client::connect(&addr, "Ana", lunar_play::net::BUILD, defs.fingerprint).expect("a client");
+    let mut online = Online::back(client, defs.scenario.player, key);
+    let start = Instant::now();
+    while !online.live() {
+        assert!(start.elapsed() < Duration::from_secs(20), "it never let us back: {:?}", online.status());
+        online.receive(now(), &mut game, &mut me);
+        std::thread::sleep(Duration::from_millis(4));
+    }
+    assert!(online.stats.back, "back in the body that waited");
+    program.order("salir");
+    let saved = program.expect("Partida guardada en", || online.receive(now(), &mut game, &mut me));
+    assert!(saved.contains("partida.b.bin"), "the other slot: {saved}");
+    program.expect("Servidor parado.", || online.receive(now(), &mut game, &mut me));
+    assert!(program.child.wait().expect("it ends").success());
+    let _ = std::fs::remove_dir_all(&kept);
 }
