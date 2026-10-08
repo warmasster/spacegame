@@ -101,6 +101,9 @@ pub enum Seen {
 /// The mark, in a tag, of what was let fly in another player's game: it flies and is seen here,
 /// does nothing, and ends where its game says it ended (`Seen::End`).
 const FOREIGN: u32 = 1 << 31;
+/// The mark, in a tag told back to the game that let it fly, of its own number for it: where it
+/// ends (and where a guided one is) is told so, and it is not started again here.
+pub const OWN: u32 = 1 << 30;
 /// A guided missile's own push off the rail (m/s).
 pub const RAIL: f32 = 25.0;
 /// How often where our guided missiles are is told (s); and how long the number another game
@@ -377,7 +380,7 @@ impl Blasts {
             self.kept.push(l);
             return true;
         }
-        self.next_tag = (self.next_tag + 1) % FOREIGN;
+        self.next_tag = (self.next_tag + 1) % OWN;
         let tag = self.next_tag.max(1);
         if !self.start(&l, tag, 0.0, bodies, builds) {
             return false;
@@ -649,11 +652,37 @@ impl Blasts {
     pub fn show(&mut self, from: u32, what: &Seen, age: f32, bodies: &BodyRegistry, builds: &mut Builds) {
         let key = |tag: u32| (u64::from(from) << 32) | u64::from(tag);
         match *what {
+            // (ours, told back: it flies here already)
+            Seen::Launch { tag, .. } if tag & OWN != 0 => {}
+            // (ours, told back: still flying here, it ends now where it did there; ended here
+            // already, it is not seen ending twice)
+            Seen::End { tag, what, at, dir, vel, on, extra } if tag & OWN != 0 => {
+                let mine = tag & !OWN;
+                let flying = self.rounds.list.iter().any(|r| r.tag == mine) || self.missiles.list.iter().any(|m| m.tag == mine) || self.guided.list.iter().any(|m| m.tag == mine);
+                if flying {
+                    self.rounds.list.retain(|r| r.tag != mine);
+                    self.missiles.list.retain(|m| m.tag != mine);
+                    self.guided.list.retain(|m| m.tag != mine);
+                    if age < STALE {
+                        self.end(FOREIGN, what, at, dir, vel, on, extra, bodies, builds);
+                    }
+                }
+            }
+            Seen::Track { tag, pos, vel, .. } if tag & OWN != 0 => {
+                // (ours, as it flies there: brought to it, as another's is)
+                if let Some(m) = self.guided.list.iter_mut().find(|m| m.tag == tag & !OWN) {
+                    let age = f64::from(age.min(STALE));
+                    let want = pos + vel * age;
+                    let k = if m.pos.distance(want) < TRACK_SNAP { 1.0 } else { 0.5 };
+                    m.pos += (want - m.pos) * k;
+                    m.vel += (vel - m.vel) * k;
+                }
+            }
             Seen::Launch { tag, launch } => {
                 if age > STALE {
                     return;
                 }
-                self.next_tag = (self.next_tag + 1) % FOREIGN;
+                self.next_tag = (self.next_tag + 1) % OWN;
                 let here = self.next_tag.max(1) | FOREIGN;
                 self.foreign.push((key(tag), here, self.time));
                 self.start(&launch, here, age, bodies, builds);

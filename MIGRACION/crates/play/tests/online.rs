@@ -387,6 +387,9 @@ fn what_a_player_fires_the_server_decides_and_every_game_ends_alike() {
     }
     t.run(4.0, 60.0, |_, _, _| {});
     assert!(t.host.game.struck > 0, "the server struck nothing");
+    // (seen once by each: the one who fired it, as theirs; the other, as the server let it fly)
+    let started = |k: usize| t.seats[k].game.blasts.started;
+    assert_eq!((started(0), started(1)), (t.host.game.blasts.started, t.host.game.blasts.started), "what was let fly is seen once by each");
     let made = t.host.game.builds.set.list.len() - before;
     assert!(made > 0, "nothing came off");
     let site = t.host.game.builds.set.get(target).map_or(DVec3::ZERO, |s| s.pos);
@@ -848,8 +851,8 @@ fn a_cheating_client_gets_nothing_by_it_and_the_honest_one_plays_on() {
         let acts = [
             Act::Body(vec![0; 40]),
             Act::Spawn { kind: "cachalote".into(), pos: far, rot: Quat::IDENTITY },
-            Act::Launch(Launch { what: What::Boom(0), from: far, dir: DVec3::X, speed: 10.0, vel: DVec3::ZERO, target: None, by: None }),
-            Act::Launch(Launch { what: What::Shot(0), from: far, dir: DVec3::X, speed: 900.0, vel: DVec3::ZERO, target: None, by: None }),
+            Act::Launch(Launch { what: What::Boom(0), from: far, dir: DVec3::X, speed: 10.0, vel: DVec3::ZERO, target: None, by: None }, 1),
+            Act::Launch(Launch { what: What::Shot(0), from: far, dir: DVec3::X, speed: 900.0, vel: DVec3::ZERO, target: None, by: None }, 2),
             Act::Mend { structure: 1, part: 0, hp: 1e9 },
             Act::Resync { id: 1 },
             Act::Resync { id: 2 },
@@ -955,4 +958,59 @@ fn garbage_said_to_the_game_breaks_nothing() {
     assert!(t.host.stats.garbled - before > 10_000);
     assert_eq!(t.seats[0].online.stats.corrections, 0);
     assert!(t.off(0, 120) < 1e-3);
+}
+
+#[test]
+fn a_ships_gun_fired_from_its_seat_fires_in_the_server_and_everyone_sees_it() {
+    // the Azor far from every body, its pilot sat by their own game, the master armed, the
+    // trigger key held: its gun fires in the server (the seat's keys drive its controls there as
+    // here), and the pilot and the one who watches see each round once
+    let mut t = Table::new(2, 97, Conditions { delay: 0.03, loss: 0.01, ..Conditions::default() });
+    (t.host.config.rule.near, t.host.config.rule.most) = (1.0e8, 1.0e8);
+    let far = DVec3::new(-2.0e6, 3.0e6, 1.5e6);
+    t.host.game.watchers.push(far);
+    let id = t.host.game.ships.spawn_free(&mut t.host.game.builds, "azor", far, Quat::IDENTITY).unwrap();
+    t.run(0.3, 60.0, |_, _, _| {});
+    let you = t.seats[0].online.you.unwrap();
+    let n = t.host.game.ships.by_structure(id).unwrap();
+    let exit = glam::Vec3::from_array(t.host.game.ships.list[n].kind.seats[0].def.salida);
+    let (game, p) = t.host.game_and_player(you).unwrap();
+    p.pilot.put_on(&game.builds.set, id, exit);
+    t.run(2.0, 60.0, |_, _, _| {});
+    {
+        let s = &mut t.seats[0];
+        lunar_play::seats::sit(&mut s.me.pilot, &s.game.ships, &s.game.builds.set, id, 0, |_, _| false).unwrap();
+    }
+    t.run(0.5, 60.0, |_, _, _| {});
+    assert!(t.host.player(you).unwrap().pilot.seat.is_some_and(|s| s.structure == id), "the server did not sit us");
+    // (armed by the pilot's hand: the cover up, the master to ARMADO; done in their game and said)
+    for want in ["combate/armas_tapa", "combate/armas_maestro"] {
+        let s = &mut t.seats[0];
+        let n = s.game.ships.by_structure(id).unwrap();
+        let control = s.game.ships.list[n].panels.controls.iter().position(|c| c.id == want).expect("the control");
+        assert!(lunar_play::controls::set(&mut s.game.ships, &s.game.builds.set, id, control, 1.0));
+        let step = s.game.step;
+        s.online.act(step, &lunar_play::net::Act::Control { ship: id, control: control as u16, value: 1.0 });
+        t.run(0.2, 60.0, |_, _, _| {});
+    }
+    let armed = |g: &Game| g.ships.list[g.ships.by_structure(id).unwrap()].signal("armas.maestro");
+    // (the one who watches is thousands of kilometres off: its copy runs coarse, and what its
+    // switches say is worked out when it runs in full)
+    assert_eq!((armed(&t.host.game), armed(&t.seats[0].game)), (Some(1.0), Some(1.0)), "armed in the server and in the pilot's game");
+    let k = {
+        let g = &t.seats[0].game;
+        let (keys, _) = lunar_ship::seat_keys::keys(&g.ships.list[g.ships.by_structure(id).unwrap()], 0);
+        keys.iter().position(|k| k.key == "disparar").expect("a key to fire")
+    };
+    let before = (t.host.game.blasts.started, t.seats[0].game.blasts.started, t.seats[1].game.blasts.started);
+    for frame in 0..120 {
+        t.seats[0].online.keys = if frame < 60 { 1 << k } else { 0 };
+        t.frame(1.0 / 60.0, |_, _, _| {});
+    }
+    t.run(1.0, 60.0, |_, _, _| {});
+    let fired = t.host.game.blasts.started - before.0;
+    let (pilot, watcher) = (t.seats[0].game.blasts.started - before.1, t.seats[1].game.blasts.started - before.2);
+    println!("the Azor's gun from its seat: {fired} let fly by the server; the pilot saw {pilot}, the one who watches {watcher}");
+    assert!(fired > 0, "the gun did not fire in the server");
+    assert_eq!((pilot, watcher), (fired, fired), "each sees each once");
 }

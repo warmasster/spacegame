@@ -415,8 +415,8 @@ impl Online {
         // (what was let fly here: the server lets it fly; where it ends it says)
         let mut seen = std::mem::take(&mut game.blasts.seen);
         for x in seen.drain(..) {
-            if let Seen::Launch { launch, .. } = x {
-                self.act(s, &Act::Launch(launch));
+            if let Seen::Launch { launch, tag } = x {
+                self.act(s, &Act::Launch(launch, tag));
             }
         }
         game.blasts.seen = seen;

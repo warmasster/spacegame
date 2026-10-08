@@ -325,8 +325,9 @@ pub enum Act {
     Grab,
     Release,
     Wheel(f32),
-    /// Something let fly (a tool in hand, a test key): from where and how.
-    Launch(Launch),
+    /// What the hand lets fly (`Blasts::launch`), with the number this game gave it: where it
+    /// ends is told back to this game by that number (`blasts::OWN`), so it is not seen twice.
+    Launch(Launch, u32),
     /// The welder at work on part `part` of `structure`: mended by `hp`, or put back.
     Mend {
         structure: u64,
@@ -428,9 +429,10 @@ pub fn write_act(step: u64, act: &Act, out: &mut Vec<u8>) {
                 w.u8(14);
                 w.f32(*n);
             }
-            Act::Launch(l) => {
+            Act::Launch(l, tag) => {
                 w.u8(15);
                 write_launch(w, l);
+                w.var(u64::from(*tag));
             }
             Act::Mend { structure, part, hp } => {
                 w.u8(16);
@@ -495,7 +497,7 @@ pub fn read_act(r: &mut Reader) -> Wire<(u64, Act)> {
             }
             Act::Wheel(n)
         }
-        15 => Act::Launch(read_launch(r)?),
+        15 => Act::Launch(read_launch(r)?, r.var32()?),
         16 => {
             let (structure, part, hp) = (r.var()?, r.var32()?, r.f32()?);
             if !hp.is_finite() {
@@ -1115,7 +1117,7 @@ mod tests {
             Act::Grab,
             Act::Release,
             Act::Wheel(-2.0),
-            Act::Launch(launch),
+            Act::Launch(launch, 77),
             Act::Mend { structure: 9, part: 31, hp: 12.5 },
             Act::Rebuild { structure: 9, part: 32 },
             Act::Spawn { kind: "alcotan".into(), pos: DVec3::new(1.0, 2.0, 3.0), rot: Quat::IDENTITY },
