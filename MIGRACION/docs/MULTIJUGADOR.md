@@ -29,6 +29,12 @@ naves y estados repartidos. Se quitó en la fase 10 del plan; queda aquí lo med
 | `client.rs` (+ `client/`) | `Client`: lo que usa el juego (`send_game`, `send_quick`, `events`, `chat`). |
 | `text.rs` | Todos los textos que lee una persona (en castellano) y la limpieza de lo que la gente escribe. |
 
+`servidores/LunaServidor.exe` se rehace desde Linux (2026-10-08, con `rustup target add
+x86_64-pc-windows-gnu` y el paquete `mingw-w64` por sus bibliotecas):
+`CARGO_TARGET_DIR=target/win CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=<sysroot>/lib/rustlib/x86_64-unknown-linux-gnu/bin/rust-lld CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUSTFLAGS="-C linker-flavor=ld.lld -C link-self-contained=yes -L /usr/x86_64-w64-mingw32/lib -L /usr/lib/gcc/x86_64-w64-mingw32/13-posix" cargo build --release -p luna-servidor --target x86_64-pc-windows-gnu`
+y `x86_64-w64-mingw32-strip`; en Windows, `cargo build --release -p luna-servidor` con la
+configuración de `.cargo/config.toml`.
+
 `crates/server/src`: `main.rs` (la red), `sim.rs` (la partida en su hilo), `config.rs`
 (`servidor.jsonc` y opciones), `console.rs` (órdenes), `journal.rs` (consola + `servidor.log`).
 Las dos ranuras de la partida guardada y quien la guarda cada tanto están en `lunar_play::keep`:
