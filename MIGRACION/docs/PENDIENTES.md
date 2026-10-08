@@ -711,10 +711,14 @@ silueta lejana, oclusión. Falta:
   y solo se simula a ratos, está atrasada (a 7,8 km/s, 780 m) y quien se pone se queda donde
   estaba. Y recién hecha una nave hacen falta unos pasos antes de que lleve a nadie. `put_on`
   debería tomar la nave en el momento del mundo (`coasted`) y despertarla.
-- [ ] (2026-10-08) Servidor autoritativo: el servidor no comprueba que lo que se dispara con la
+- [x] ~~(2026-10-08) Servidor autoritativo: el servidor no comprueba que lo que se dispara con la
   mano sea lo que se lleva (el equipo de la mano, `gear.jsonc`, es de la ventana, y el comando solo
   dice su número): un tramposo podría disparar un misil sin lanzamisiles, al ritmo de su tipo y
-  desde su mano. Llevar el equipo a datos de `lunar-play` y comprobar `Cmd::tool` contra lo lanzado.
+  desde su mano.~~ **Hecho (2026-10-08):** lo que hace cada herramienta está en `lunar_play::gear`
+  (la ventana pone encima cómo se ve y se lleva); donde no se dejan las pruebas solo vuela el tiro
+  de la herramienta de la mano y a su recarga, y solo se suelda con el soldador, a su ritmo (y uno
+  y medio), y se repone una pieza a la vez. Lo que no se deja volar desaparece del juego que lo
+  lanzó (`Event::Unfired`). Prueba: `what_is_let_fly_is_what_the_hands_carry…`.
 - [ ] (2026-10-08) Decisión para Fernando: cifrar el tráfico contra quien sí lo ve (la misma wifi)
   pide un intercambio de claves (una dependencia, p. ej. x25519 + chacha20poly1305). Hoy las
   firmas paran a quien no ve el tráfico, no a quien lo ve.
@@ -727,7 +731,11 @@ silueta lejana, oclusión. Falta:
 - [ ] (2026-10-08) Servidor autoritativo: el servidor guarda la partida cada 5 minutos y con
   «salir», pero no si se cierra la ventana de la consola o con Ctrl+C (no hay manejador de señales):
   se pierde lo de desde el último guardado. Y lo que vuela en el momento de guardar (balas, misiles)
-  no se guarda.
+  no se guarda. **Decisión para Fernando:** oír Ctrl+C y el cierre de la consola pide llamar al
+  sistema (`SetConsoleCtrlHandler` en Windows, `signal` en Linux), que es código `unsafe`, y el
+  espacio de trabajo lo prohíbe (`unsafe_code = "forbid"`): o una excepción en un fichero pequeño
+  del servidor, o la dependencia `ctrlc` (que en Windows no espera a que se guarde al cerrar la
+  ventana).
 - [ ] (2026-10-08) Servidor autoritativo: quien entra juega mientras le llega lo de alrededor (con
   10 jugadores, 6 naves, 100 estructuras y 10 % de pérdidas: a 1,2 s juega y ya lo tiene todo); falta
   la pantalla de carga que espere a tenerlo para un mundo mucho más grande.

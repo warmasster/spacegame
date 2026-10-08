@@ -341,13 +341,18 @@ impl Blasts {
         self.rounds.list.iter().any(|r| r.tag & FOREIGN == 0) || !self.missiles.list.is_empty() || self.guided.list.iter().any(|m| m.tag & FOREIGN == 0)
     }
 
-    /// The speed shot `id` leaves at (m/s) and how far it reaches (m): what a gun's sight is
-    /// worked out with.
     /// How many rounds a second shot kind `i` fires while its key is held (none: one a press).
     pub fn shot_rate(&self, i: u16) -> Option<f32> {
         self.shots.get(usize::from(i)).and_then(|(_, s)| s.rate)
     }
 
+    /// The number of shot `id` (`What::Shot`), if there is one.
+    pub fn shot_index(&self, id: &str) -> Option<u16> {
+        self.shots.iter().position(|(s, _)| s == id).map(|i| i as u16)
+    }
+
+    /// The speed shot `id` leaves at (m/s) and how far it reaches (m): what a gun's sight is
+    /// worked out with.
     pub fn shot_speed(&self, id: &str) -> Option<(f32, f32)> {
         self.shots.iter().find(|(s, _)| s == id).and_then(|(_, s)| s.speed.map(|v| (v, s.range)))
     }
@@ -644,6 +649,18 @@ impl Blasts {
         if self.tell {
             self.seen.push(what);
         }
+    }
+
+    /// What was let fly here as `tag` gone, as if it never was (the server did not let it fly).
+    pub fn unfire(&mut self, tag: u32) {
+        let tag = tag & !OWN;
+        // (what strikes at once has no number: it struck already)
+        if tag == 0 {
+            return;
+        }
+        self.rounds.list.retain(|r| r.tag != tag);
+        self.missiles.list.retain(|m| m.tag != tag);
+        self.guided.list.retain(|m| m.tag != tag);
     }
 
     /// What player `from`'s game told, `age` s ago, done here: what they let fly flies here from

@@ -380,8 +380,6 @@ que más se nota al jugar:
   servidor no guarda (la orden «salir», sí).
 - **Sin cifrado**: los datagramas van firmados (nadie se hace pasar por otro ni mete nada en
   una sesión ajena), pero quien ve el tráfico lo puede leer.
-- **El servidor no conoce el equipo de la mano**: comprueba el alcance y la cadencia de cada
-  arma, no que el arma disparada sea la que se lleva (`gear.jsonc` es de la ventana).
 - **Los jugadores no tienen vida**: no hay que rebobinar el mundo para ver a quién se dio
   (compensación de retraso); el día que la tengan, va en el servidor (`PLAN_AUTORITATIVO.md` §6).
 - **Una nave sin piloto en órbita** la lleva el servidor con su física; no se ha probado aún a

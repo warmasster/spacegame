@@ -50,8 +50,17 @@ const HAND_REACH: f64 = 6.0;
 const CONTROL_REACH: f64 = 8.0;
 /// How much faster than what lets it fly a launch may say it goes besides its own speed (m/s).
 const LAUNCH_SLIP: f64 = 50.0;
-/// Hit points a second a hand may mend, as a share of what the part has (a welder's best and some).
+/// Hit points a second a hand may mend, as a share of what the part has, where tests are let be
+/// (whatever is in the hands); elsewhere its welder's rate (`gear.jsonc`) and this much more
+/// (acts held up on the way that come together). A second's worth may come at once.
 const MEND_RATE: f32 = 0.5;
+const MEND_SLACK: f32 = 1.5;
+/// Of the time a welder takes to put back a part that is gone, what one player must let pass
+/// between two.
+const REBUILD_SLACK: f64 = 0.8;
+/// Steps a structure changed by a hand is left as it is before what was not worth telling of it
+/// (less than `lunar_ship::sync`'s step of hit points) is told.
+const SETTLE: u64 = 15;
 /// Steps between two things of a kind with no rate of its own let fly by one player (a reload).
 const RELOAD: u64 = 12;
 /// Bytes of events in one message at most (what a reliable message carries, less its head), and
@@ -165,6 +174,8 @@ struct Peer {
     launches: f32,
     mend: f32,
     fired: Vec<(crate::blasts::What, u64)>,
+    /// When they last put back a part that was gone (step).
+    rebuilt: Option<u64>,
     /// What may still come of their commands, acts and structures asked for again (refilled each
     /// step, `CMDS_RATE`…).
     cmds_left: f32,
@@ -205,6 +216,7 @@ impl Peer {
             launches: 0.0,
             mend: 0.0,
             fired: Vec::new(),
+            rebuilt: None,
             cmds_left: CMDS_BURST,
             acts_left: ACTS_BURST,
             resyncs_left: RESYNC_BURST,
@@ -254,8 +266,8 @@ pub struct Host {
     players: Vec<Player>,
     peers: Vec<Peer>,
     /// What each structure was last told as (parts and joints), to tell only what changed of it by
-    /// a hand (`Event::State`); by id.
-    shadows: Vec<(u64, u64, Shadow)>,
+    /// a hand (`Event::State`), and when what is left untold of it is to be told (step); by id.
+    shadows: Vec<(u64, u64, Shadow, u64)>,
     /// What holds each structure, as last told (by id): what changed is told (`Event::Hold`), and
     /// the systems of the ships that took or let go (their clamps' lists).
     helds: Vec<(u64, Option<lunar_core::structure::hold::Held>)>,
@@ -289,6 +301,7 @@ pub struct Host {
 /// Why an act was refused (what the player reads).
 const OUT_OF_REACH: &str = "fuera de alcance";
 const NOT_ALLOWED: &str = "no permitido en este servidor";
+const NOT_CARRIED: &str = "no lo llevas en las manos";
 const TOO_FAST: &str = "demasiado deprisa";
 const TAKEN: &str = "lo lleva otro";
 
@@ -657,7 +670,13 @@ impl Host {
             };
             apply(&cmd, p, cheats);
             peer.last = cmd;
-            (peer.launches, peer.mend) = ((peer.launches + self.config.launches * STEP as f32).min(self.config.launches), (peer.mend + MEND_RATE * STEP as f32).min(MEND_RATE));
+            // (what may be mended: as fast as the welder in the hands, nothing with none)
+            let mend = match self.game.gear.mends(cmd.tool) {
+                Some((rate, _)) => rate * MEND_SLACK,
+                None if cheats => MEND_RATE,
+                None => 0.0,
+            };
+            (peer.launches, peer.mend) = ((peer.launches + self.config.launches * STEP as f32).min(self.config.launches), (peer.mend + mend * STEP as f32).min(mend));
             peer.cmds_left = (peer.cmds_left + CMDS_RATE).min(CMDS_BURST);
             peer.acts_left = (peer.acts_left + ACTS_RATE).min(ACTS_BURST);
             peer.resyncs_left = (peer.resyncs_left + RESYNC_RATE).min(RESYNC_BURST);
@@ -669,9 +688,14 @@ impl Host {
         }
         let mut due = std::mem::take(&mut self.due);
         for (k, a) in due.drain(..) {
+            let fired = if let Act::Launch(_, tag) = a { Some(tag) } else { None };
             if let Err(why) = self.act(k, a) {
                 self.stats.denied += 1;
                 self.peers[k].tell(&Event::Denied(why.to_string()));
+                // (what flies in their game already is gone from it)
+                if let Some(tag) = fired {
+                    self.peers[k].tell(&Event::Unfired { tag });
+                }
             }
         }
         self.due = due;
@@ -825,11 +849,12 @@ impl Host {
             }
             Act::Launch(mut l, theirs) => {
                 let peer = &mut self.peers[k];
-                // (no faster than its kind: a gun its rate, the rest a reload's worth; what only a
-                // test key sets off, only where tests are let be)
-                let every = match l.what {
-                    crate::blasts::What::Shot(i) => g.blasts.shot_rate(i).map_or(RELOAD, |r| (1.0 / f64::from(r.max(0.1)) / STEP).floor() as u64),
-                    crate::blasts::What::Boom(_) if !self.config.cheats => return Err(NOT_ALLOWED),
+                // (what the hands carry, a reload's worth apart; anything else, at the pace of its
+                // kind, only where tests are let be: a test key)
+                let every = match (l.what, g.gear.fires(peer.last.tool)) {
+                    (crate::blasts::What::Shot(i), Some((shot, reload))) if i == shot => (reload / STEP).floor() as u64,
+                    _ if !self.config.cheats => return Err(NOT_CARRIED),
+                    (crate::blasts::What::Shot(i), _) => g.blasts.shot_rate(i).map_or(RELOAD, |r| (1.0 / f64::from(r.max(0.1)) / STEP).floor() as u64),
                     _ => RELOAD,
                 };
                 let last = peer.fired.iter().position(|f| f.0 == l.what);
@@ -867,6 +892,10 @@ impl Host {
             }
             Act::Mend { structure, part, hp } => {
                 let peer = &mut self.peers[k];
+                // (with a welder in the hands: what it gives is `peer.mend`)
+                if !self.config.cheats && g.gear.mends(peer.last.tool).is_none() {
+                    return Err(NOT_CARRIED);
+                }
                 let lib = g.builds.set.lib.clone();
                 let Some(i) = g.builds.set.index_of(structure) else { return Err(OUT_OF_REACH) };
                 let s = &mut g.builds.set.list[i];
@@ -884,6 +913,15 @@ impl Host {
                 }
             }
             Act::Rebuild { structure, part } => {
+                // (with a welder in the hands, one part at a time, as long as it takes)
+                let peer = &mut self.peers[k];
+                if !self.config.cheats {
+                    let Some((_, takes)) = g.gear.mends(peer.last.tool) else { return Err(NOT_CARRIED) };
+                    let apart = (f64::from(takes) * REBUILD_SLACK / STEP) as u64;
+                    if peer.rebuilt.is_some_and(|at| g.step < at + apart) {
+                        return Err(TOO_FAST);
+                    }
+                }
                 let lib = g.builds.set.lib.clone();
                 let Some(i) = g.builds.set.index_of(structure) else { return Err(OUT_OF_REACH) };
                 let s = &mut g.builds.set.list[i];
@@ -891,7 +929,9 @@ impl Host {
                 if s.to_world(pt.local.translation.into()).distance(eye) > HAND_REACH + f64::from(pt.shape.sphere().1) {
                     return Err(OUT_OF_REACH);
                 }
-                s.rebuild(&lib.catalog, part as usize, REBUILT);
+                if s.rebuild(&lib.catalog, part as usize, REBUILT) {
+                    peer.rebuilt = Some(g.step);
+                }
             }
             Act::Spawn { kind, pos, rot } => {
                 if !self.config.cheats {
@@ -926,23 +966,31 @@ impl Host {
     /// What a hand changed of the structures since the last step (mended, put back), told to
     /// whoever knows each; what strikes did is not told so (every game does the strike itself).
     fn hand_changes(&mut self) {
-        let set = &self.game.builds.set;
+        let (set, now) = (&self.game.builds.set, self.game.step);
         // (kept in the order of the ids, as the structures are)
         self.shadows.retain(|sh| set.index_of(sh.0).is_some());
         for s in &set.list {
             let i = match self.shadows.binary_search_by_key(&s.id, |sh| sh.0) {
                 Ok(i) => i,
                 Err(i) => {
-                    self.shadows.insert(i, (s.id, s.version, Shadow::of(s)));
+                    self.shadows.insert(i, (s.id, s.version, Shadow::of(s), u64::MAX));
                     continue;
                 }
             };
-            if self.shadows[i].1 == s.version {
-                continue;
-            }
-            self.shadows[i].1 = s.version;
+            // (what changed, as far as it is worth telling; once it is left as it is, the rest
+            // of it: every copy ends alike)
+            let sh = &mut self.shadows[i];
             let mut delta = Vec::new();
-            if self.shadows[i].2.delta(s, &mut delta) {
+            let told = if sh.1 != s.version {
+                (sh.1, sh.3) = (s.version, now + SETTLE);
+                sh.2.delta(s, &mut delta)
+            } else if now >= sh.3 {
+                sh.3 = u64::MAX;
+                sh.2.settle(s, &mut delta)
+            } else {
+                continue;
+            };
+            if told {
                 let e = Event::State { id: s.id, delta };
                 self.encoded.clear();
                 net::append_event(&e, &mut self.encoded);

@@ -10,6 +10,7 @@ pub mod controls;
 pub mod defs;
 pub mod follow;
 pub mod game;
+pub mod gear;
 pub mod hands;
 pub mod host;
 pub mod interest;

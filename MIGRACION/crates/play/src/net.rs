@@ -29,12 +29,11 @@ pub const ACT: u8 = 2;
 pub const SNAP: u8 = 3;
 pub const EVENTS: u8 = 4;
 
-/// What the server and the players' games say to each other, besides the network's own: said
-/// in the hello after the build (`V41+p2`). Another version of this is not let in.
-pub const PROTOCOL: &str = "p2";
 /// What a player's game says it is in its hello to a server that has the game (and the
 /// fingerprint of its data, `defs::fingerprint`, as the scenario): the server lets in only its own.
-pub const BUILD: &str = "V41+p3";
+/// After the `+`, the version of what they say to each other here: a new event, act or field is
+/// a new one.
+pub const BUILD: &str = "V41+p4";
 
 /// The commands a `CMDS` message repeats (one lost datagram, or three, loses nothing).
 pub const REPEAT: usize = 4;
@@ -725,6 +724,9 @@ pub enum Event {
     },
     /// Your hands hold nothing: what you took in them another has (let it go in your game).
     Unheld,
+    /// What you let fly as your `tag` was not let fly here (not what your hands carry, or not
+    /// yet): gone from your game, as if it never was.
+    Unfired { tag: u32 },
 }
 
 fn write_held(w: &mut Writer, h: &Option<Held>) {
@@ -952,6 +954,10 @@ fn write_event(w: &mut Writer, e: &Event) {
             write_held(w, held);
         }
         Event::Unheld => w.u8(18),
+        Event::Unfired { tag } => {
+            w.u8(19);
+            w.u32(*tag);
+        }
         Event::Rest { id, pos, rot } => {
             w.u8(15);
             w.var(*id);
@@ -1042,6 +1048,7 @@ pub fn read_event(r: &mut Reader) -> Wire<Event> {
         16 => Event::Hold { id: r.var()?, held: read_held(r)? },
         17 => Event::Back { step: r.var()?, state: read_blob(r)? },
         18 => Event::Unheld,
+        19 => Event::Unfired { tag: r.u32()? },
         _ => return Err(WireError::Value),
     })
 }
@@ -1141,6 +1148,7 @@ mod tests {
             Event::Hello { step: 99, you: 3, sun: DVec3::Y, region: 7, key: u64::MAX - 5 },
             Event::Back { step: 97, state: vec![4, 5] },
             Event::Unheld,
+            Event::Unfired { tag: 0x3FFF_FFFF },
             Event::Correct { step: 98, state: vec![1, 2, 3] },
             Event::Made {
                 id: 77,

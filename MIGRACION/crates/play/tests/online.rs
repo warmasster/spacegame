@@ -8,6 +8,7 @@ use lunar_play::{
     defs::Defs,
     game::{Game, Player, STEP},
     host::{Host, HostConfig},
+    gear::ToolKind,
     online::Online,
     pilot::{Input, Summary},
 };
@@ -1099,24 +1100,90 @@ fn two_who_reach_for_one_crate_one_has_it_and_a_weld_is_the_same_for_all() {
     for (k, s) in t.seats.iter().enumerate() {
         assert_eq!(hp(&s.game), hp(&t.host.game), "player {k} does not have the part as hurt");
     }
-    // (welded: asked for all of it in each step, for half a second: a welder gives half of it at
-    // once and half of it a second, no more)
-    for _ in 0..30 {
-        let s = &mut t.seats[1];
-        let step = s.game.step;
-        s.online.act(step, &lunar_play::net::Act::Mend { structure: ship, part: part as u32, hp: max });
-        t.frame(1.0 / 60.0, |_, _, _| {});
-    }
+    // (welded: asked for all of it in each step, for half a second: first with the hands free,
+    // which mends nothing where tests are not let be; then with the welder, which gives what it
+    // gives a second and a little more, no more)
+    t.host.config.cheats = false;
+    let (welder, rate) = t.host.game.gear.tools.iter().enumerate().find_map(|(k, x)| match x.kind {
+        ToolKind::Soldador { ritmo, .. } => Some((k as u8 + 1, ritmo)),
+        ToolKind::Lanzador { .. } => None,
+    }).expect("a welder");
+    let weld = |t: &mut Table| {
+        for _ in 0..30 {
+            let s = &mut t.seats[1];
+            let step = s.game.step;
+            s.online.act(step, &lunar_play::net::Act::Mend { structure: ship, part: part as u32, hp: max });
+            t.frame(1.0 / 60.0, |_, _, _| {});
+        }
+        t.run(0.2, 60.0, |_, _, _| {});
+    };
+    let start = hp(&t.host.game);
+    weld(&mut t);
+    assert_eq!(hp(&t.host.game), start, "it mended with the hands free");
+    t.seats[1].online.tool = welder;
     t.run(0.2, 60.0, |_, _, _| {});
+    weld(&mut t);
     let mended = hp(&t.host.game);
-    println!("welded: {:.0} of {max:.0} hp ({:.0} at the start)", mended, max * 0.01);
-    assert!(mended > max * 0.3, "the weld did little: {mended} of {max}");
-    assert!(mended < max * 0.9, "it mended faster than a welder can: {mended} of {max}");
+    println!("welded: {:.0} of {max:.0} hp ({start:.0} at the start; a welder, {:.0} a second)", mended, rate * max);
+    assert!(mended - start > max * rate * 0.5 * 0.9, "the weld did little: {mended} of {max}");
+    assert!(mended - start < max * rate * 1.5, "it mended faster than a welder can: {mended} of {max}");
     t.run(0.5, 60.0, |_, _, _| {});
     let mended = hp(&t.host.game);
     for (k, s) in t.seats.iter().enumerate() {
         assert_eq!(hp(&s.game), mended, "player {k} does not have the weld");
     }
+}
+
+#[test]
+fn what_is_let_fly_is_what_the_hands_carry_and_what_is_not_is_gone_from_the_game_that_fired_it() {
+    // where tests are not let be, a rocket fired with the hands free, before the launcher is
+    // loaded again, or a test key's gun with the launcher in hand, is not let fly: the game that
+    // fired it is told (`Event::Unfired`) and it is gone there as if it never was. With the
+    // launcher in hand, at its pace, it flies in both
+    let mut t = Table::new(1, 91, Conditions { delay: 0.03, jitter: 0.005, ..Conditions::default() });
+    t.host.config.cheats = false;
+    let (launcher, reload) = t.host.game.gear.tools.iter().enumerate().find_map(|(k, x)| match x.kind {
+        ToolKind::Lanzador { recarga, .. } => Some((k as u8 + 1, recarga)),
+        ToolKind::Soldador { .. } => None,
+    }).expect("a launcher");
+    let rocket = match &t.host.game.gear.tools[usize::from(launcher) - 1].kind {
+        ToolKind::Lanzador { tiro, .. } => tiro.clone(),
+        ToolKind::Soldador { .. } => unreachable!(),
+    };
+    t.run(1.0, 60.0, |_, _, _| {});
+    // (fired as the window fires it: from before the eye, straight up, going as the body goes)
+    let fire = |t: &mut Table, id: &str| {
+        let s = &mut t.seats[0];
+        let view = s.me.pilot.view();
+        let from = view.eye + view.up * 0.5;
+        let vel = s.me.pilot.motion_in(&s.game.builds.set).velocity_at(from);
+        let bodies = s.game.bodies.clone();
+        assert!(s.game.blasts.fire_from(id, from, view.up, vel, None, &bodies, &mut s.game.builds), "{id} did not fire");
+    };
+    let flying = |g: &Game| g.blasts.rounds.list.iter().filter(|r| r.tag != 0 && r.tag < lunar_play::blasts::OWN).count();
+    let denied = t.host.stats.denied;
+    // (the hands free)
+    fire(&mut t, &rocket);
+    assert_eq!(flying(&t.seats[0].game), 1);
+    t.run(0.5, 60.0, |_, _, _| {});
+    assert_eq!((flying(&t.seats[0].game), flying(&t.host.game)), (0, 0), "a rocket with the hands free");
+    // (the launcher in hand: it flies; once more at once: not loaded yet)
+    t.seats[0].online.tool = launcher;
+    t.run(0.3, 60.0, |_, _, _| {});
+    fire(&mut t, &rocket);
+    t.run(0.5, 60.0, |_, _, _| {});
+    assert_eq!((flying(&t.seats[0].game), flying(&t.host.game)), (1, 1), "the rocket of the launcher in hand");
+    fire(&mut t, &rocket);
+    t.run(0.5, 60.0, |_, _, _| {});
+    assert_eq!((flying(&t.seats[0].game), flying(&t.host.game)), (1, 1), "a rocket before the launcher is loaded");
+    // (loaded again: it flies; a test key's gun: not with this in hand)
+    t.run(reload, 60.0, |_, _, _| {});
+    fire(&mut t, &rocket);
+    fire(&mut t, "metralleta");
+    t.run(0.5, 60.0, |_, _, _| {});
+    assert_eq!((flying(&t.seats[0].game), flying(&t.host.game)), (2, 2), "loaded again, the launcher's alone");
+    assert_eq!(t.host.stats.denied - denied, 3, "what was refused");
+    assert_eq!(t.seats[0].online.stats.corrections, 0);
 }
 
 #[test]

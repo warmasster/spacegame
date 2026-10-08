@@ -633,6 +633,7 @@ impl Online {
                 me.hands.release(&mut game.builds);
                 self.holding = None;
             }
+            Event::Unfired { tag } => game.blasts.unfire(tag),
             Event::Denied(why) => {
                 self.stats.denied += 1;
                 self.said.push((why, 1));

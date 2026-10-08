@@ -438,6 +438,16 @@ impl Shadow {
     /// were made again), written to `out` for `read_delta`, and taken for told. False (and
     /// nothing written) if nothing did.
     pub fn delta(&mut self, s: &Structure, out: &mut Vec<u8>) -> bool {
+        self.delta_by(s, out, HP_STEP)
+    }
+
+    /// The same down to the last hit point: what `delta` left untold (less than a step of it),
+    /// for when the structure has stopped changing, so that every copy ends alike.
+    pub fn settle(&mut self, s: &Structure, out: &mut Vec<u8>) -> bool {
+        self.delta_by(s, out, 0.0)
+    }
+
+    fn delta_by(&mut self, s: &Structure, out: &mut Vec<u8>, step: f32) -> bool {
         // (another structure altogether: a piece just come off, a ship rebuilt: all of it)
         if self.parts.len() != s.parts.len() || self.joints.len() != s.joints.len() {
             self.parts.clear();
@@ -446,8 +456,10 @@ impl Shadow {
             self.joints.resize(s.joints.len(), (f32::NAN, true));
         }
         // (whether it is whole is in its hit points: a scratch is not news by itself)
-        let part = |p: &Part, was: &(f32, u8)| (part_bits(p) ^ was.1) & !bit::WHOLE != 0 || !((p.hp - was.0).abs() < p.max_hp * HP_STEP);
-        let joint = |j: &Joint, was: &(f32, bool)| j.alive != was.1 || !((j.hp - was.0).abs() < j.max_hp * HP_STEP);
+        // (what was never told, NaN, is always news)
+        let near = |hp: f32, was: f32, all: f32| if step > 0.0 { (hp - was).abs() < all * step } else { hp == was };
+        let part = |p: &Part, was: &(f32, u8)| (part_bits(p) ^ was.1) & !bit::WHOLE != 0 || !near(p.hp, was.0, p.max_hp);
+        let joint = |j: &Joint, was: &(f32, bool)| j.alive != was.1 || !near(j.hp, was.0, j.max_hp);
         let parts = s.parts.iter().zip(&self.parts).filter(|(p, was)| part(p, was)).count();
         let joints = s.joints.iter().zip(&self.joints).filter(|(j, was)| joint(j, was)).count();
         if parts == 0 && joints == 0 {

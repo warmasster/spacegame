@@ -1,5 +1,5 @@
 //! What the game is made of, from `assets/defs`: the star system, the scenario, the structures'
-//! catalog and blueprints, the ships, the effects, the missiles and the font their panels are
+//! catalog and blueprints, the ships, the effects, the missiles, the tools and the font their panels are
 //! lettered with. The same for every machine that plays it (the server included): what only
 //! draws (models' meshes, textures) is loaded by whoever draws.
 use lunar_core::{
@@ -28,6 +28,8 @@ pub struct Defs {
     pub structures: Arc<Library>,
     /// Long-range missiles (`missiles.jsonc`).
     pub missiles: Vec<(String, MissileDef)>,
+    /// What each tool the suit carries does (`gear.jsonc`, in the order of the number keys).
+    pub gear: Vec<(String, crate::gear::ToolKind)>,
     /// Ship kinds (`ships/`, `components/`, `panels/`): their parts are in the structure catalog
     /// and their blueprints among the structures'.
     pub ships: Vec<Arc<ShipKind>>,
@@ -57,6 +59,7 @@ impl Defs {
             effects: EffectDefs::load(dir)?,
             structures: Arc::new(structures),
             missiles: defs::load::<std::collections::BTreeMap<String, MissileDef>>(&defs::file(dir, "missiles"))?.into_iter().collect(),
+            gear: crate::gear::ToolEntry::load(dir)?,
             ships: ships.kinds,
             font: load_font(&dir.join("../fonts/serigrafia"))?,
             fingerprint: fingerprint(dir),

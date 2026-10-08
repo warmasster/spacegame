@@ -142,6 +142,8 @@ pub struct Game {
     pub builds: Builds,
     pub ships: Ships,
     pub blasts: Blasts,
+    /// What each tool in the hands does (what a player may let fly and mend with it).
+    pub gear: crate::gear::Gear,
     pub tactics: Tactics,
     /// Ships going about between fields: where each is is a formula of the time, the same
     /// wherever it is worked out (none in a bench).
@@ -179,6 +181,7 @@ impl Game {
         let mut builds = Builds::new(defs.structures.clone(), sc, &site, &bodies, &effects)?;
         let mut ships = Ships::new(defs.ships.clone(), defs.font.0.clone());
         Tactics::check(&ships, &blasts)?;
+        let gear = crate::gear::Gear::new(&defs.gear, &blasts)?;
         for a in sc.ships.iter().filter(|a| wanted(&a.ship)) {
             ships.spawn(&mut builds, &bodies, &a.ship, site.body, site.at(a.east, a.north), a.yaw.to_radians())?;
         }
@@ -190,6 +193,7 @@ impl Game {
             builds,
             ships,
             blasts,
+            gear,
             tactics: Tactics::default(),
             traffic: None,
             sun: DVec3::Y,

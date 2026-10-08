@@ -42,6 +42,8 @@ pub struct ToolDef {
     /// Whose a click is with it in hand.
     #[serde(default)]
     pub clic: Click,
+    /// (a field new here is named in `lunar_play::gear::ToolEntry` too: the server reads the
+    /// same file)
     #[serde(flatten)]
     pub kind: ToolKind,
 }
@@ -58,15 +60,9 @@ pub enum Click {
     Herramienta,
 }
 
-#[derive(Clone, Debug, Deserialize)]
-#[serde(tag = "tipo", rename_all = "snake_case", deny_unknown_fields)]
-pub enum ToolKind {
-    /// Reach (m); share of a part's hit points mended per second; seconds to put back a part
-    /// that is gone; how far round you its view shows integrity (m).
-    Soldador { alcance: f64, ritmo: f32, reconstruir: f32, vista: f64 },
-    /// The shot it fires (`shots.jsonc`) and the seconds to load the next.
-    Lanzador { tiro: String, recarga: f64 },
-}
+/// What each kind of tool does and its numbers: the game's (`lunar_play::gear`), which the server
+/// holds each player to; what it looks like and how it is held, here.
+pub use lunar_play::gear::ToolKind;
 
 /// What the scanner reads of what you look at.
 #[derive(Clone, Debug, PartialEq)]
