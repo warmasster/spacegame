@@ -753,9 +753,14 @@ impl Blasts {
         if tag == 0 {
             return;
         }
+        let before = self.rounds.list.len() + self.missiles.list.len() + self.guided.list.len();
         self.rounds.list.retain(|r| r.tag != tag);
         self.missiles.list.retain(|m| m.tag != tag);
         self.guided.list.retain(|m| m.tag != tag);
+        // (nor is it counted as started)
+        if self.rounds.list.len() + self.missiles.list.len() + self.guided.list.len() < before {
+            self.started = self.started.saturating_sub(1);
+        }
     }
 
     /// What player `from`'s game told, `age` s ago, done here: what they let fly flies here from

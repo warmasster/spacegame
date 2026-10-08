@@ -453,6 +453,153 @@ fn every_weapon_of_the_data_fired_from_beside_a_ship_at_2_kms_ends_alike_in_ever
 }
 
 #[test]
+fn two_shoot_at_once_at_a_ship_that_dodges_and_every_game_ends_alike() {
+    // far from every body, an Alcotán flown by one who dodges (ahead, then up, by turns); two
+    // float 300 m off and shoot at it at once: one a radar-guided missile, the other bursts of the
+    // machine gun. Every launch starts once in each of the four games, the ship and each piece of
+    // it end alike in all of them, and neither shooter nor the pilot is put right for it
+    use lunar_play::blasts::{Launch, RAIL};
+    let cond = Conditions { delay: 0.04, jitter: 0.005, loss: 0.01, ..Conditions::default() };
+    let mut t = Table::new(3, 59, cond);
+    (t.host.config.rule.near, t.host.config.rule.most) = (1.0e8, 1.0e8);
+    let far = DVec3::new(2.0e6, 3.0e6, -1.0e6);
+    t.host.game.watchers.push(far);
+    let ship = t.host.game.ships.spawn_free(&mut t.host.game.builds, "alcotan", far, Quat::IDENTITY).unwrap();
+    t.run(0.2, 60.0, |_, _, _| {});
+    let ids: Vec<u32> = t.seats.iter().map(|s| s.online.you.unwrap()).collect();
+    {
+        let (game, p) = t.host.game_and_player(ids[0]).unwrap();
+        let n = game.ships.by_structure(ship).unwrap();
+        let exit = glam::Vec3::from_array(game.ships.list[n].kind.seats[0].def.salida);
+        p.pilot.put_on(&game.builds.set, ship, exit);
+        for (k, side) in [(1usize, 1.0), (2, -1.0)] {
+            let (game, p) = t.host.game_and_player(ids[k]).unwrap();
+            let s = game.builds.set.get(ship).unwrap();
+            p.pilot.put(s.to_world(s.center) + DVec3::new(side * 200.0, 50.0, 220.0), DVec3::Y);
+            p.pilot.still_to(&game.builds.set, ship);
+        }
+    }
+    t.run(2.0, 60.0, |_, _, _| {});
+    {
+        let s = &mut t.seats[0];
+        lunar_play::seats::sit(&mut s.me.pilot, &s.game.ships, &s.game.builds.set, ship, 0, |_, _| false).unwrap();
+    }
+    t.run(0.5, 60.0, |_, _, _| {});
+    assert!(t.host.player(ids[0]).unwrap().pilot.seat.is_some_and(|x| x.structure == ship), "the pilot is not sat");
+    let key = |t: &Table, name: &str| {
+        let g = &t.seats[0].game;
+        let (keys, _) = lunar_ship::seat_keys::keys(&g.ships.list[g.ships.by_structure(ship).unwrap()], 0);
+        keys.iter().position(|k| k.key == name).expect("the key")
+    };
+    let (ahead, up) = (key(&t, "avanzar"), key(&t, "subir"));
+    let fixed: Vec<u64> = t.seats.iter().map(|s| s.online.stats.corrections).collect();
+    // (where each shooter aims: at the ship as their game has it now, going as they go)
+    let aim = |s: &mut Seat| {
+        let target = s.game.builds.set.get(ship).unwrap();
+        let eye = s.me.pilot.position;
+        let dir = (target.to_world(target.center) - eye).normalize();
+        let from = eye + dir;
+        (from, dir, s.me.pilot.motion_in(&s.game.builds.set).velocity_at(from))
+    };
+    for frame in 0..(6 * 60) {
+        t.seats[0].online.keys = if (frame / 60) % 2 == 0 { 1 << ahead } else { 1 << up };
+        if frame == 30 {
+            let s = &mut t.seats[1];
+            let (from, dir, vel) = aim(s);
+            let what = s.game.blasts.what("lanza").unwrap();
+            let bodies = s.game.bodies.clone();
+            assert!(s.game.blasts.launch(Launch { what, from, dir, speed: RAIL, vel, target: Some(ship), by: None }, &bodies, &mut s.game.builds));
+        }
+        // (bursts of a second, twelve rounds a second)
+        if (frame / 60) % 2 == 1 && frame % 5 == 0 {
+            let s = &mut t.seats[2];
+            let (from, dir, vel) = aim(s);
+            let bodies = s.game.bodies.clone();
+            assert!(s.game.blasts.fire_from("metralleta", from, dir, vel, None, &bodies, &mut s.game.builds));
+        }
+        t.frame(1.0 / 60.0, |_, _, _| {});
+    }
+    t.seats[0].online.keys = 0;
+    t.run(3.0, 60.0, |_, _, _| {});
+    let started: Vec<u64> = t.seats.iter().map(|s| s.game.blasts.started).collect();
+    let fixes: Vec<u64> = t.seats.iter().zip(&fixed).map(|(s, f)| s.online.stats.corrections - f).collect();
+    println!("two shooting at a ship that dodges: started {} in the server, {started:?} in the games; struck {}; put right {fixes:?}", t.host.game.blasts.started, t.host.game.struck);
+    assert!(started.iter().all(|&n| n == t.host.game.blasts.started), "not every launch seen once by each");
+    assert!(t.host.game.struck > 0, "nothing struck the ship");
+    let digest = |g: &Game, id: u64| {
+        let s = g.builds.set.get(id)?;
+        let sh = g.ships.by_structure(id).map(|n| &g.ships.list[n]);
+        Some(lunar_ship::sync::Digest::of(sh, s).hash)
+    };
+    let site = t.host.game.builds.set.get(ship).map_or(far, |s| s.pos);
+    let near: Vec<u64> = t.host.game.builds.set.list.iter().filter(|s| s.pos.distance(site) < 2000.0).map(|s| s.id).collect();
+    for (k, s) in t.seats.iter().enumerate() {
+        for &id in &near {
+            assert_eq!(digest(&s.game, id), digest(&t.host.game, id), "player {k}: structure {id} is not the server's ({:?})", s.online.stats);
+        }
+    }
+    assert_eq!(&fixes[1..], &[0, 0], "a shooter was put right");
+    assert!(fixes[0] <= 3, "the pilot was put right {} times", fixes[0]);
+}
+
+#[test]
+fn ships_in_formation_at_any_speed_are_seen_side_by_side_at_any_frame_rate() {
+    // two Alcotanes 60 m apart going together far from every body, from 0 to 7.8 km/s, each with
+    // one aboard; drawn at 30 and 240 frames a second, each sees the other ship where it is beside
+    // their own (as drawn, between steps: the picture), and nobody is put right
+    let cond = Conditions { delay: 0.04, jitter: 0.005, loss: 0.01, ..Conditions::default() };
+    let mut report = Vec::new();
+    for (speed, fps) in [(0.0, 60.0), (300.0, 30.0), (1600.0, 144.0), (7800.0, 240.0), (7800.0, 30.0)] {
+        let mut t = Table::new(2, 67, cond);
+        (t.host.config.rule.near, t.host.config.rule.most) = (1.0e8, 1.0e8);
+        let far = DVec3::new(2.0e6, 3.0e6, -1.0e6);
+        t.host.game.watchers.push(far);
+        let ships: Vec<u64> = (0..2)
+            .map(|k| {
+                let g = &mut t.host.game;
+                let id = g.ships.spawn_free(&mut g.builds, "alcotan", far + DVec3::Z * 60.0 * k as f64, Quat::IDENTITY).unwrap();
+                let i = g.builds.set.index_of(id).unwrap();
+                g.builds.set.list[i].vel = DVec3::new(speed, 0.0, 0.0);
+                id
+            })
+            .collect();
+        t.run(0.2, 60.0, |_, _, _| {});
+        for k in 0..2 {
+            let you = t.seats[k].online.you.unwrap();
+            let (game, p) = t.host.game_and_player(you).unwrap();
+            let n = game.ships.by_structure(ships[k]).unwrap();
+            let exit = glam::Vec3::from_array(game.ships.list[n].kind.seats[0].def.salida);
+            p.pilot.put_on(&game.builds.set, ships[k], exit);
+        }
+        t.run(2.0, fps, |_, _, _| {});
+        let fixed: Vec<u64> = t.seats.iter().map(|s| s.online.stats.corrections).collect();
+        let mut worst = 0.0f64;
+        for _ in 0..(2.0 * fps) as usize {
+            t.frame(1.0 / fps, |_, _, _| {});
+            // (the server's: one beside the other)
+            let truth = {
+                let set = &t.host.game.builds.set;
+                set.get(ships[1]).unwrap().pos - set.get(ships[0]).unwrap().pos
+            };
+            for k in 0..2 {
+                let s = &mut t.seats[k];
+                let alpha = s.online.alpha();
+                s.game.present(alpha, &mut [&mut s.me]);
+                let set = &s.game.builds.set;
+                let drawn = set.get(ships[1]).unwrap().pos - set.get(ships[0]).unwrap().pos;
+                s.game.restore(&mut [&mut s.me]);
+                worst = worst.max(drawn.distance(truth));
+            }
+        }
+        let fixes: Vec<u64> = t.seats.iter().zip(&fixed).map(|(s, f)| s.online.stats.corrections - f).collect();
+        report.push(format!("{speed:.0} m/s a {fps:.0} fps: {:.1} mm, {fixes:?}", worst * 1000.0));
+        assert!(worst < 0.02, "{speed} m/s at {fps} fps: one sees the other {:.1} mm off its place", worst * 1000.0);
+        assert_eq!(fixes, [0, 0], "{speed} m/s at {fps} fps: put right");
+    }
+    println!("ships in formation: {}", report.join("; "));
+}
+
+#[test]
 fn the_server_keeps_where_each_body_was_a_moment_ago() {
     // two walking: the server has where each body was at each of the last 300 ms, as it had them
     // then, and nothing older (what a shot at a person will be judged against)
