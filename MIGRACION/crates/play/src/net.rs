@@ -353,6 +353,10 @@ pub enum Act {
     Back {
         key: u64,
     },
+    /// My body was put so by whoever runs my game (a menu's «start here», a script):
+    /// `Pilot::write_state`. Only where tests are let be (`HostConfig::cheats`: a game of one's
+    /// own, a test server).
+    Body(Vec<u8>),
 }
 
 fn write_launch(w: &mut Writer, l: &Launch) {
@@ -400,7 +404,13 @@ fn read_launch(r: &mut Reader) -> Wire<Launch> {
 
 /// An act of step `step` into `out`.
 pub fn write_act(step: u64, act: &Act, out: &mut Vec<u8>) {
-    framed(out, 256, |w| {
+    let room = 256
+        + match act {
+            Act::Body(b) => b.len(),
+            Act::Spawn { kind, .. } => kind.len(),
+            _ => 0,
+        };
+    framed(out, room, |w| {
         w.u8(ACT);
         w.var(step);
         match act {
@@ -440,6 +450,10 @@ pub fn write_act(step: u64, act: &Act, out: &mut Vec<u8>) {
             Act::Back { key } => {
                 w.u8(24);
                 w.u64(*key);
+            }
+            Act::Body(state) => {
+                w.u8(25);
+                blob(w, state);
             }
             Act::Spawn { kind, pos, rot } => {
                 w.u8(22);
@@ -501,6 +515,13 @@ pub fn read_act(r: &mut Reader) -> Wire<(u64, Act)> {
         }
         23 => Act::Resync { id: r.var()? },
         24 => Act::Back { key: r.u64()? },
+        25 => {
+            let n = r.var()?;
+            if n > 4096 {
+                return Err(WireError::Long);
+            }
+            Act::Body(r.bytes(n as usize)?.to_vec())
+        }
         _ => return Err(WireError::Value),
     };
     Ok((step, act))
@@ -1087,6 +1108,7 @@ mod tests {
             Act::Spawn { kind: "alcotan".into(), pos: DVec3::new(1.0, 2.0, 3.0), rot: Quat::IDENTITY },
             Act::Resync { id: 1 << 41 },
             Act::Back { key: 0xdead_beef_0123_4567 },
+            Act::Body(vec![7; 300]),
         ];
         for (k, a) in acts.iter().enumerate() {
             let mut out = Vec::new();

@@ -800,6 +800,12 @@ impl Host {
             }
             // (taken as it comes, not at a step: `take`)
             Act::Back { .. } => return Err(NOT_ALLOWED),
+            Act::Body(state) => {
+                if !self.config.cheats {
+                    return Err(NOT_ALLOWED);
+                }
+                p.pilot.read_state(&state).map_err(|_| NOT_ALLOWED)?;
+            }
             Act::Resync { id } => {
                 // (told anew: as if it had just come to be known)
                 let peer = &mut self.peers[k];

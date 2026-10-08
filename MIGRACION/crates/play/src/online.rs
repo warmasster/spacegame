@@ -422,6 +422,14 @@ impl Online {
         game.blasts.seen = seen;
     }
 
+    /// The body was put where it is by whoever runs this game (a menu's «start here», a script):
+    /// said, so the server puts it there too (where tests are let be: else it is put back).
+    pub fn put(&mut self, game: &Game, me: &Player) {
+        let mut state = Vec::with_capacity(256);
+        me.pilot.write_state(&mut state);
+        self.act(game.step, &Act::Body(state));
+    }
+
     /// Something the player does that the server must check (sent; done here by whoever calls,
     /// as a prediction, before the next step).
     pub fn act(&mut self, step: u64, act: &Act) {
