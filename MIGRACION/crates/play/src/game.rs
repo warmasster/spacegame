@@ -269,9 +269,14 @@ impl Game {
         self.awake_now.clear();
         self.awake_now.extend_from_slice(&self.awake);
         self.people.clear();
-        for p in players.iter_mut().map(|p| p.as_mut()).filter(|p| !p.away) {
+        for p in players.iter_mut().map(|p| p.as_mut()) {
+            // (where one who is coming will be is watched already: what is there is run in full
+            // from when their game is told of it, as theirs runs it)
+            self.seen_from.push(p.pilot.position);
+            if p.away {
+                continue;
+            }
             let pilot = &p.pilot;
-            self.seen_from.push(pilot.position);
             // in full: the ships the players ride, and what whoever runs the game asks
             self.awake_now.extend(pilot.ride.map(|r| r.id));
             pilot.body_into(&mut self.people);

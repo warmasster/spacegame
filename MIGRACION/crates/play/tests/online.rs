@@ -22,7 +22,27 @@ fn defs() -> &'static Defs {
 }
 
 fn new_game() -> Game {
-    Game::new_apart(defs(), &lunar_play::root().join("assets/defs"), 2000, |_| true).unwrap()
+    game_of(defs())
+}
+
+fn game_of(defs: &Defs) -> Game {
+    Game::new_apart(defs, &lunar_play::root().join("assets/defs"), 2000, |_| true).unwrap()
+}
+
+/// The game's data with a third body made up besides the two of the data: another size, another
+/// pull, another reach, its axis another way, far from the others.
+fn worlds() -> &'static Defs {
+    static DEFS: OnceLock<Defs> = OnceLock::new();
+    DEFS.get_or_init(|| {
+        use lunar_core::body::{Body, BodyDef, BodyRegistry};
+        let dir = lunar_play::root().join("assets/defs");
+        let mut d = Defs::load(&dir).unwrap_or_else(|e| panic!("{}: {}", e.file, e.message));
+        let of = |id: &str| -> BodyDef { lunar_core::defs::load(&dir.join(format!("bodies/{id}.jsonc"))).unwrap() };
+        let other: BodyDef = lunar_core::defs::parse("prueba", r#"{ "name": "Prueba", "center": [4.0e6, 2.5e6, -3.0e6], "radius": 300000, "gravity": 3.7, "reach": { "to": 90000, "band": 35000 }, "north": [0.3, 1.0, 0.2], "horizon_depth": 100 }"#).unwrap();
+        let bodies = vec![Body::from_def("luna", &of("luna")).unwrap(), Body::from_def("luna_menor", &of("luna_menor")).unwrap(), Body::from_def("prueba", &other).unwrap()];
+        d.system.bodies = std::sync::Arc::new(BodyRegistry::new(bodies));
+        d
+    })
 }
 
 /// A player's game: its connection, its world, its body; and where the body was at each step
@@ -35,6 +55,9 @@ struct Seat {
     me: Player,
     path: Vec<(u64, DVec3)>,
     said: Vec<(u64, Summary)>,
+    /// What carried the body at each step, as this game had it: its id, where, how turned.
+    rides: Vec<(u64, u64, DVec3, Quat)>,
+    spied: Vec<(u64, Vec<f64>)>,
 }
 
 /// A server and some players' games on a network of their own.
@@ -49,27 +72,66 @@ struct Table {
     /// Where each player's body was at each step, as the server has it (by network id).
     truth: Vec<(u32, u64, DVec3)>,
     told: Vec<(u32, u64, Summary)>,
+    /// What carried each player's body at each step, as the server had it.
+    rides: Vec<(u32, u64, u64, DVec3, Quat)>,
+    /// What the game is made of, for every game at the table.
+    defs: &'static Defs,
+    /// A ship whose machines are written down at every step, here and in every seat's game.
+    spy: Option<u64>,
+    spied: Vec<(u64, Vec<f64>)>,
+    /// How long each of the server's steps took, what it sends included (ms).
+    took: Vec<f32>,
+}
+
+/// What ship `id`'s machines keep (what two copies compare: `Machine::kept`), one after another,
+/// and whether each works, and its air.
+fn machines_of(g: &Game, id: u64) -> Option<Vec<f64>> {
+    let sh = &g.ships.list[g.ships.by_structure(id)?];
+    let mut out = Vec::new();
+    for m in &sh.machines {
+        m.m.kept(&mut out);
+        out.push(f64::from(u8::from(m.working)));
+    }
+    for a in &sh.atmos.air {
+        out.extend([a.o2, a.n2, a.co2, a.t]);
+    }
+    out.push(match sh.pace {
+        lunar_ship::Pace::Full => 0.0,
+        lunar_ship::Pace::Slow => 1.0,
+        lunar_ship::Pace::Asleep => 2.0,
+    });
+    Some(out)
 }
 
 impl Table {
     fn new(players: usize, seed: u64, cond: Conditions) -> Table {
+        Table::of(players, seed, cond, defs())
+    }
+
+    /// The same, the games made of `defs`.
+    fn of(players: usize, seed: u64, cond: Conditions, defs: &'static Defs) -> Table {
+        Table::spying(players, seed, cond, defs, None)
+    }
+
+    /// The same, with ship `spy`'s machines written down at every step from the very start.
+    fn spying(players: usize, seed: u64, cond: Conditions, defs: &'static Defs, spy: Option<u64>) -> Table {
         let net = MemoryNet::new(seed);
         net.conditions(cond);
         let link = net.endpoint();
         let addr = link.addr();
-        let config = ServerConfig { game: Some((BUILD.to_string(), defs().fingerprint)), ..ServerConfig::default() };
-        let host = Host::new(new_game(), defs().scenario.player, HostConfig { cheats: true, ..HostConfig::default() });
+        let config = ServerConfig { game: Some((BUILD.to_string(), defs.fingerprint)), ..ServerConfig::default() };
+        let host = Host::new(game_of(defs), defs.scenario.player, HostConfig { cheats: true, ..HostConfig::default() });
         let seats = (0..players)
             .map(|k| {
                 let end = net.endpoint();
                 let at = end.addr();
-                let client = lunar_net::Client::with_transport(Box::new(end), addr, &format!("jugador{k}"), BUILD, defs().fingerprint);
-                let game = new_game();
-                let me = Player::new(game.bodies.clone(), &game.site, defs().scenario.player);
-                Seat { at, online: Online::new(client, defs().scenario.player), game, me, path: Vec::new(), said: Vec::new() }
+                let client = lunar_net::Client::with_transport(Box::new(end), addr, &format!("jugador{k}"), BUILD, defs.fingerprint);
+                let game = game_of(defs);
+                let me = Player::new(game.bodies.clone(), &game.site, defs.scenario.player);
+                Seat { at, online: Online::new(client, defs.scenario.player), game, me, path: Vec::new(), said: Vec::new(), rides: Vec::new(), spied: Vec::new() }
             })
             .collect();
-        let mut t = Table { net, link, server: Server::new(config), host, seats, now: 10.0, due: 0.0, truth: Vec::new(), told: Vec::new() };
+        let mut t = Table { net, link, server: Server::new(config), host, seats, now: 10.0, due: 0.0, truth: Vec::new(), told: Vec::new(), rides: Vec::new(), defs, spy, spied: Vec::new(), took: Vec::new() };
         for _ in 0..600 {
             t.frame(1.0 / 60.0, |_, _, _| {});
             if t.seats.iter().all(|s| s.online.live()) {
@@ -85,10 +147,10 @@ impl Table {
         let addr = self.link.addr();
         let end = self.net.endpoint();
         let at = end.addr();
-        let client = lunar_net::Client::with_transport(Box::new(end), addr, name, BUILD, defs().fingerprint);
-        let game = new_game();
-        let me = Player::new(game.bodies.clone(), &game.site, defs().scenario.player);
-        self.seats.push(Seat { at, online: Online::new(client, defs().scenario.player), game, me, path: Vec::new(), said: Vec::new() });
+        let client = lunar_net::Client::with_transport(Box::new(end), addr, name, BUILD, self.defs.fingerprint);
+        let game = game_of(self.defs);
+        let me = Player::new(game.bodies.clone(), &game.site, self.defs.scenario.player);
+        self.seats.push(Seat { at, online: Online::new(client, self.defs.scenario.player), game, me, path: Vec::new(), said: Vec::new(), rides: Vec::new(), spied: Vec::new() });
         let k = self.seats.len() - 1;
         for _ in 0..600 {
             self.frame(1.0 / 60.0, |_, _, _| {});
@@ -102,8 +164,48 @@ impl Table {
 
     /// One frame of `dt` s for everyone: the server's steps that are due, and each player's game
     /// with what `input(player, me, step)` asks of each of its steps.
+    /// A frame of `dt` s of each player's game; the server, as its own process does, takes what
+    /// came and steps at each of its steps within it (it does not wait for the players' frames).
     fn frame(&mut self, dt: f64, mut input: impl FnMut(usize, &mut Player, u64)) {
-        self.now += dt;
+        let start = self.now;
+        self.due += dt;
+        let mut at = start;
+        while self.due >= STEP {
+            self.due -= STEP;
+            at = (at + STEP).min(start + dt);
+            self.net.set_time(at);
+            self.server.update(at, &mut self.link);
+            for e in self.server.events() {
+                match e {
+                    ServerEvent::Joined { id, .. } => self.host.join(id),
+                    ServerEvent::Left { id, .. } => self.host.leave(id),
+                    _ => {}
+                }
+            }
+            let began = std::time::Instant::now();
+            for m in self.server.take_game().collect::<Vec<_>>() {
+                self.host.take(m.from, &m.data);
+            }
+            self.host.step();
+            let step = self.host.game.step;
+            let ids: Vec<u32> = self.host.ids().collect();
+            for id in ids {
+                let p = self.host.player(id).unwrap();
+                self.truth.push((id, step, p.pilot.position));
+                self.told.push((id, step, p.pilot.summary()));
+                if let Some(s) = p.pilot.ride.and_then(|r| self.host.game.builds.set.get(r.id)) {
+                    self.rides.push((id, step, s.id, s.pos, s.rot));
+                }
+            }
+            if let Some(m) = self.spy.and_then(|id| machines_of(&self.host.game, id)) {
+                self.spied.push((step, m));
+            }
+            let server = &mut self.server;
+            self.host.send(|to, reliable, bytes| server.send_game(to, reliable, bytes));
+            self.took.push(began.elapsed().as_secs_f32() * 1000.0);
+            self.server.update(at, &mut self.link);
+        }
+        self.now = start + dt;
         self.net.set_time(self.now);
         self.server.update(self.now, &mut self.link);
         for e in self.server.events() {
@@ -113,24 +215,6 @@ impl Table {
                 _ => {}
             }
         }
-        for m in self.server.take_game().collect::<Vec<_>>() {
-            self.host.take(m.from, &m.data);
-        }
-        self.due += dt;
-        while self.due >= STEP {
-            self.due -= STEP;
-            self.host.step();
-            let step = self.host.game.step;
-            let ids: Vec<u32> = self.host.ids().collect();
-            for id in ids {
-                let p = self.host.player(id).unwrap();
-                self.truth.push((id, step, p.pilot.position));
-                self.told.push((id, step, p.pilot.summary()));
-            }
-            let server = &mut self.server;
-            self.host.send(|to, reliable, bytes| server.send_game(to, reliable, bytes));
-        }
-        self.server.update(self.now, &mut self.link);
         for (k, s) in self.seats.iter_mut().enumerate() {
             s.online.receive(self.now, &mut s.game, &mut s.me);
             for _ in 0..s.online.steps(dt) {
@@ -138,6 +222,12 @@ impl Table {
                 s.online.step(&mut s.game, &mut s.me);
                 s.path.push((s.game.step, s.me.pilot.position));
                 s.said.push((s.game.step, s.me.pilot.summary()));
+                if let Some(r) = s.me.pilot.ride.and_then(|r| s.game.builds.set.get(r.id)) {
+                    s.rides.push((s.game.step, r.id, r.pos, r.rot));
+                }
+                if let Some(m) = self.spy.and_then(|id| machines_of(&s.game, id)) {
+                    s.spied.push((s.game.step, m));
+                }
             }
         }
     }
@@ -157,6 +247,25 @@ impl Table {
             }
         }
         worst
+    }
+
+    /// How far what carried player `k`'s body was in their game from where the server had it, at
+    /// the same steps (the worst of the last `steps`): metres, radians.
+    fn ride_off(&self, k: usize, steps: u64) -> (f64, f32) {
+        let id = self.seats[k].online.you.unwrap();
+        let newest = self.host.game.step;
+        let (mut pos, mut rot) = (0.0f64, 0.0f32);
+        for &(who, step, ship, at, turn) in &self.rides {
+            if who != id || step + steps < newest {
+                continue;
+            }
+            if let Some(&(_, mine, p, r)) = self.seats[k].rides.iter().rev().find(|x| x.0 == step) {
+                if mine == ship {
+                    (pos, rot) = (pos.max(p.distance(at)), rot.max(r.angle_between(turn)));
+                }
+            }
+        }
+        (pos, rot)
     }
 
     fn run(&mut self, seconds: f64, fps: f64, mut input: impl FnMut(usize, &mut Player, u64)) {
@@ -718,6 +827,156 @@ fn each_key_of_every_ships_seat_held_over_the_network_does_what_it_does_held_at_
     assert!(bad.is_empty(), "{}", bad.join("\n"));
 }
 
+/// The way out from body `k` that is furthest from the others.
+fn clear_of_the_rest(bodies: &lunar_core::body::BodyRegistry, k: u16) -> DVec3 {
+    let b = bodies.get(k);
+    let others: DVec3 = bodies.iter().filter(|(i, _)| *i != k).map(|(_, o)| (o.center - b.center).normalize()).sum();
+    (-others).normalize_or(DVec3::Y)
+}
+
+/// The flattest ground of body `b` within a few hundred metres of the way `dir` (where a ship is
+/// set down to rest on its gear: on a slope it slides).
+fn flat_near(b: &lunar_core::body::Body, dir: DVec3) -> DVec3 {
+    let (e1, e2) = (dir.any_orthonormal_vector(), dir.cross(dir.any_orthonormal_vector()));
+    let step = 40.0 / b.radius;
+    let probe = 4.0 / b.radius;
+    let mut best = (f64::MAX, dir);
+    for i in -6..=6 {
+        for j in -6..=6 {
+            let d = (dir + e1 * (f64::from(i) * step) + e2 * (f64::from(j) * step)).normalize();
+            let mut worst = 0.0f64;
+            // (how much the ground rises across a ship's width, any way)
+            for (a, c) in [(e1, e2), (e2, e1)] {
+                for k in [-1.0, 1.0] {
+                    let h = |x: f64, y: f64| b.height((d + a * (x * probe) + c * (y * probe)).normalize());
+                    worst = worst.max((h(k, 0.0) - h(0.0, 0.0)).abs().max((h(k, k) - h(0.0, 0.0)).abs()));
+                }
+            }
+            if worst < best.0 {
+                best = (worst, d);
+            }
+        }
+    }
+    best.1
+}
+
+#[test]
+fn on_every_body_on_foot_and_aboard_in_its_pull_where_it_fades_and_past_it_nobody_is_put_right() {
+    // the game's two bodies and one made up (bigger, pulling harder, reaching further); on each:
+    // on the ground walking, in the band where its pull fades falling, past its reach floating;
+    // and standing aboard an Alcotán set down on its gear, and up there upright, overturned and
+    // tumbling, from still to 7.8 km/s; at 10 to 240 frames a second. Put there by the server
+    // (put right once for that), nobody is put right after by anything anyone could see (a
+    // millimetre: an unpiloted ship's stabiliser fires its pulses a step apart in each copy, and
+    // what stands in it may be told of it), the body is within a centimetre of where the server has
+    // it, and to the millimetre in what carries it
+    let cond = Conditions { delay: 0.04, jitter: 0.005, loss: 0.01, ..Conditions::default() };
+    let rates = [10.0, 30.0, 60.0, 144.0, 240.0];
+    let speeds = [0.0, 300.0, 1600.0, 7800.0];
+    let (mut report, mut bad, mut cases) = (Vec::new(), Vec::new(), 0usize);
+    let only: Option<u16> = std::env::var("LUNAR_BODY").ok().and_then(|v| v.parse().ok());
+    for body in 0..3u16 {
+        if only.is_some_and(|o| o != body) {
+            continue;
+        }
+        let mut t = Table::of(1, 113 + u64::from(body), cond, worlds());
+        (t.host.config.rule.near, t.host.config.rule.most) = (1.0e8, 1.0e8);
+        t.run(0.5, 60.0, |_, _, _| {});
+        let you = t.seats[0].online.you.unwrap();
+        let (center, radius, whole, reach, name) = {
+            let b = t.host.game.bodies.get(body);
+            (b.center, b.radius, b.whole_to(), b.reach, b.name.clone())
+        };
+        let dir = clear_of_the_rest(&t.host.game.bodies, body);
+        // (how a case went: put there, a moment to settle, then three seconds watched)
+        let watch = |t: &mut Table, what: String, fps: f64, walking: bool| {
+            let input = move |_: usize, me: &mut Player, n: u64| {
+                if walking {
+                    walk(me, n)
+                }
+            };
+            t.run(1.5, fps, input);
+            let first = t.seats[0].online.stats.corrections;
+            t.seats[0].online.stats.jumped = 0.0;
+            t.run(3.0, fps, input);
+            let (fixes, jumped, off, local, ride) = (t.seats[0].online.stats.corrections - first, t.seats[0].online.stats.jumped, t.off(0, 60), t.off_aboard(0, 60), t.ride_off(0, 60));
+            let line = format!(
+                "{name}, {what} a {fps:.0} fps: {fixes} correcciones (la mayor lo movió {:.2} mm); {:.2} mm de donde lo tiene el servidor, {:.2} mm en lo que lo lleva (y eso, {:.2} mm)",
+                jumped * 1000.0,
+                off * 1000.0,
+                local * 1000.0,
+                ride.0 * 1000.0
+            );
+            (line, jumped > 1e-3 || off > 0.01 || local > 1e-3)
+        };
+        let mut note = |(line, wrong): (String, bool)| {
+            if wrong {
+                bad.push(line.clone());
+            }
+            report.push(line);
+        };
+        // on foot
+        for (regime, alt) in [("en el suelo", None), ("en la franja", Some((whole + reach) * 0.5)), ("fuera de su alcance", Some(reach * 1.6))] {
+            let fps = rates[cases % rates.len()];
+            cases += 1;
+            {
+                let g = &t.host.game;
+                let b = g.bodies.get(body);
+                let at = alt.map_or_else(|| b.above_ground(dir, 0.0), |h| center + dir * (radius + h));
+                t.host.player_mut(you).unwrap().pilot.put(at, dir);
+            }
+            note(watch(&mut t, format!("a pie {regime}"), fps, true));
+        }
+        // aboard: set down, and up there as it lies, as fast as it goes
+        let tangent = dir.any_orthonormal_vector();
+        let up = Quat::from_rotation_arc(glam::Vec3::Y, dir.as_vec3());
+        let mut lies: Vec<(String, DVec3, Quat, glam::Vec3, f64)> = vec![("posada en su tren".into(), DVec3::ZERO, up, glam::Vec3::ZERO, 0.0)];
+        for (k, (regime, h)) in [("en la franja", (whole + reach) * 0.5), ("fuera de su alcance", reach * 1.6)].into_iter().enumerate() {
+            for (j, (how, rot, spin)) in [("derecha", up, glam::Vec3::ZERO), ("volcada", Quat::from_axis_angle(tangent.as_vec3(), std::f32::consts::PI) * up, glam::Vec3::ZERO), ("dando tumbos", up, glam::Vec3::new(0.21, 0.13, -0.17))].into_iter().enumerate() {
+                // (each one its own place: what flies on does not meet the next)
+                let at = center + (dir * (radius + h) + tangent * 3000.0 * (3 * k + j + 1) as f64);
+                lies.push((format!("a bordo {regime}, {how}"), at, rot, spin, speeds[(3 * k + j) % speeds.len()]));
+            }
+        }
+        for (what, at, rot, spin, speed) in lies {
+            let fps = rates[cases % rates.len()];
+            cases += 1;
+            let ship = {
+                let g = &mut t.host.game;
+                let b = g.bodies.get(body);
+                let at = if at == DVec3::ZERO { b.above_ground(flat_near(b, (dir.cross(tangent).normalize() * 0.02 + dir).normalize()), 4.0) } else { at };
+                let id = g.ships.spawn_free(&mut g.builds, "alcotan", at, rot).unwrap();
+                let k = g.builds.set.index_of(id).unwrap();
+                (g.builds.set.list[k].vel, g.builds.set.list[k].spin) = (tangent.cross(dir).normalize() * speed, spin);
+                g.watchers.push(at);
+                id
+            };
+            // (one set down, settled on its gear first, as it is when anyone comes to it)
+            if speed == 0.0 && spin == glam::Vec3::ZERO && what.contains("tren") {
+                for _ in 0..40 {
+                    t.run(0.25, 60.0, |_, _, _| {});
+                    if t.host.game.builds.set.get(ship).is_some_and(|s| s.resting) {
+                        break;
+                    }
+                }
+            } else {
+                t.run(0.2, 60.0, |_, _, _| {});
+            }
+            {
+                let (game, p) = t.host.game_and_player(you).unwrap();
+                let n = game.ships.by_structure(ship).unwrap();
+                let exit = glam::Vec3::from_array(game.ships.list[n].kind.seats[0].def.salida);
+                p.pilot.put_on(&game.builds.set, ship, exit);
+            }
+            let (line, wrong) = watch(&mut t, format!("{what} a {speed:.0} m/s"), fps, false);
+            let aboard = t.host.player(you).unwrap().pilot.ride.is_some_and(|r| r.id == ship);
+            note((if aboard { line } else { format!("{line}: NO VA A BORDO") }, wrong || !aboard));
+        }
+    }
+    println!("sobre cada cuerpo, a pie y a bordo:\n  {}", report.join("\n  "));
+    assert!(bad.is_empty(), "{}", bad.join("\n"));
+}
+
 #[test]
 fn the_server_keeps_where_each_body_was_a_moment_ago() {
     // two walking: the server has where each body was at each of the last 300 ms, as it had them
@@ -1131,7 +1390,7 @@ fn who_is_cut_off_comes_back_to_their_body_where_it_waited() {
     let client = lunar_net::Client::with_transport(Box::new(end), t.link.addr(), "jugador3", BUILD, defs().fingerprint);
     let game = new_game();
     let me = Player::new(game.bodies.clone(), &game.site, defs().scenario.player);
-    t.seats.push(Seat { at: t.link.addr(), online: Online::back(client, defs().scenario.player, 0x1234), game, me, path: Vec::new(), said: Vec::new() });
+    t.seats.push(Seat { at: t.link.addr(), online: Online::back(client, defs().scenario.player, 0x1234), game, me, path: Vec::new(), said: Vec::new(), rides: Vec::new(), spied: Vec::new() });
     let n = t.seats.len() - 1;
     for _ in 0..600 {
         t.frame(1.0 / 60.0, |_, _, _| {});
@@ -2161,3 +2420,273 @@ fn one_who_comes_into_a_busy_game_on_a_bad_network_plays_at_once_and_soon_has_it
     assert!(playing < 2.0, "it took {playing:.2} s to play");
     assert!(all < 2.0, "and {all:.2} s more to have everything near");
 }
+
+#[test]
+fn a_ship_keeps_the_same_systems_in_every_game_step_by_step() {
+    // an Alcotán nobody flies, tumbling past a small body at 1.6 km/s with a player aboard: what
+    // its machines keep is, at each step, what the server's copy keeps (to what a digest tells
+    // apart: not a stabiliser's pulses), so nothing of it is asked for again after the start
+    let cond = Conditions { delay: 0.04, jitter: 0.005, loss: 0.01, ..Conditions::default() };
+    let body = 1u16;
+    let mut t = Table::of(1, 114, cond, worlds());
+    (t.host.config.rule.near, t.host.config.rule.most) = (1.0e8, 1.0e8);
+    t.run(0.5, 60.0, |_, _, _| {});
+    let you = t.seats[0].online.you.unwrap();
+    let (center, radius, whole, reach) = {
+        let b = t.host.game.bodies.get(body);
+        (b.center, b.radius, b.whole_to(), b.reach)
+    };
+    let dir = clear_of_the_rest(&t.host.game.bodies, body);
+    let tangent = dir.any_orthonormal_vector();
+    let up = Quat::from_rotation_arc(glam::Vec3::Y, dir.as_vec3());
+    let at = center + dir * (radius + (whole + reach) * 0.5) + tangent * 3000.0;
+    let ship = {
+        let g = &mut t.host.game;
+        let id = g.ships.spawn_free(&mut g.builds, "alcotan", at, up).unwrap();
+        let k = g.builds.set.index_of(id).unwrap();
+        (g.builds.set.list[k].vel, g.builds.set.list[k].spin) = (tangent.cross(dir).normalize() * 1600.0, glam::Vec3::new(0.21, 0.13, -0.17));
+        id
+    };
+    t.run(0.2, 60.0, |_, _, _| {});
+    {
+        let (game, p) = t.host.game_and_player(you).unwrap();
+        let n = game.ships.by_structure(ship).unwrap();
+        let exit = glam::Vec3::from_array(game.ships.list[n].kind.seats[0].def.salida);
+        p.pilot.put_on(&game.builds.set, ship, exit);
+    }
+    t.run(2.0, 30.0, |_, _, _| {});
+    let asked = t.seats[0].online.stats.resyncs;
+    t.spy = Some(ship);
+    t.run(20.0, 30.0, |_, _, _| {});
+    let again = t.seats[0].online.stats.resyncs - asked;
+    // (what drifted apart most, if anything did, by name: where to look)
+    let names: Vec<String> = {
+        let g = &t.host.game;
+        let sh = &g.ships.list[g.ships.by_structure(ship).unwrap()];
+        let mut names = Vec::new();
+        let mut out = Vec::new();
+        for (i, m) in sh.machines.iter().enumerate() {
+            out.clear();
+            m.m.kept(&mut out);
+            names.extend((0..out.len()).map(|k| format!("{}[{k}]", sh.kind.machines[i].id)));
+            names.push(format!("{} en marcha", sh.kind.machines[i].id));
+        }
+        for r in 0..sh.atmos.air.len() {
+            names.extend(["o2", "n2", "co2", "t"].map(|w| format!("aire{r}.{w}")));
+        }
+        names
+    };
+    let (mut compared, mut worst) = (0, (0.0f64, String::new()));
+    for (step, mine) in &t.seats[0].spied {
+        let Some((_, theirs)) = t.spied.iter().find(|x| x.0 == *step) else { continue };
+        compared += 1;
+        for (k, (a, b)) in mine.iter().zip(theirs).enumerate() {
+            let d = (a.abs().ln_1p() - b.abs().ln_1p()).abs();
+            if d > worst.0 {
+                worst = (d, format!("{} en el paso {step}: {a} aquí, {b} en el servidor", names.get(k).map_or("?", |n| n.as_str())));
+            }
+        }
+    }
+    println!("{compared} pasos comparados; {again} veces pedida otra vez; lo que más se apartó: {}", worst.1);
+    assert!(compared > 500, "{compared}");
+    assert_eq!(again, 0, "asked for again: the most apart, {}", worst.1);
+}
+
+#[test]
+fn a_ship_of_the_scenario_is_in_a_game_that_comes_in_what_it_is_in_the_server_to_the_bit() {
+    // the scenario's ships run in the server from its first step; a game that comes in is told
+    // them as they are, and runs them on from there as the server does: what their machines keep,
+    // their air, is the same in both at every step, to the last bit (what a digest is taken of
+    // agrees, and nothing is asked for again)
+    let cond = Conditions { delay: 0.04, jitter: 0.005, loss: 0.01, ..Conditions::default() };
+    let mut t = Table::spying(1, 114, cond, worlds(), Some(7));
+    t.run(5.0, 60.0, |_, _, _| {});
+    let (mut compared, mut apart) = (0, Vec::new());
+    for (step, mine) in &t.seats[0].spied {
+        let Some((_, theirs)) = t.spied.iter().find(|x| x.0 == *step) else { continue };
+        compared += 1;
+        if mine != theirs && apart.len() < 5 {
+            let k = mine.iter().zip(theirs).position(|(a, b)| a != b).unwrap_or(0);
+            apart.push(format!("paso {step}, valor {k}: {:?} aquí, {:?} en el servidor", mine.get(k), theirs.get(k)));
+        }
+    }
+    assert!(compared > 250, "{compared}");
+    assert!(apart.is_empty(), "{}", apart.join("\n"));
+    assert_eq!(t.seats[0].online.stats.resyncs, 0);
+}
+
+
+/// How a battle went (`battle`).
+struct Battle {
+    seconds: usize,
+    pieces: usize,
+    broken: f64,
+    corrections: u64,
+    resyncs: u64,
+    too_big: u64,
+    worst_step: f32,
+}
+
+/// `per_side` Azores a side, far from every body, two lines 2 km apart facing each other; each
+/// flown only by its controls, as a pilot would, by the server's own hands (`Host::control`):
+/// radar and transponder (its side's code) on, the track before its nose chosen, declared hostile
+/// and locked, the autopilot on PERSEG.; the guns on automatic fire first, and when they are
+/// empty the missiles, by radar and then by heat, one at each pull; chosen again whenever what it
+/// had is gone. A player watches from between the lines. `most` seconds of battle at most, and
+/// no more than `budget` seconds of a clock on the wall. Every ten seconds, how it goes.
+fn battle(per_side: usize, most: usize, budget: u64) -> Battle {
+    let wall = std::time::Instant::now();
+    let budget = std::time::Duration::from_secs(budget);
+    let cond = Conditions { delay: 0.04, jitter: 0.005, loss: 0.01, ..Conditions::default() };
+    let mut t = Table::new(1, 211, cond);
+    let far = DVec3::new(-2.0e6, 3.0e6, 1.5e6);
+    let (gap, spacing, cols) = (2000.0, 150.0, 10usize);
+    let mut sides: [Vec<u64>; 2] = [Vec::new(), Vec::new()];
+    {
+        let g = &mut t.host.game;
+        g.watchers.push(far);
+        for (side, list) in sides.iter_mut().enumerate() {
+            let rot = if side == 0 { Quat::IDENTITY } else { Quat::from_rotation_y(std::f32::consts::PI) };
+            for i in 0..per_side {
+                let (col, row) = ((i % cols) as f64 - (cols as f64 - 1.0) * 0.5, (i / cols) as f64);
+                let at = far + DVec3::new(col * spacing, row * spacing, if side == 0 { -gap * 0.5 } else { gap * 0.5 });
+                list.push(g.ships.spawn_free(&mut g.builds, "azor", at, rot).unwrap());
+            }
+        }
+    }
+    let ships: Vec<(usize, u64)> = sides.iter().enumerate().flat_map(|(k, l)| l.iter().map(move |&id| (k, id))).collect();
+    // the one who watches: floating in the middle, between the lines
+    let you = t.seats[0].online.you.unwrap();
+    t.host.player_mut(you).unwrap().pilot.put(far + DVec3::new(0.0, 300.0, 0.0), DVec3::Y);
+    t.run(1.0, 60.0, |_, _, _| {});
+    // (switched on as a pilot would, and a moment for it all to come up)
+    for &(side, id) in &ships {
+        for (c, v) in [("sensores/sens_codigo", 100.0 + side as f64), ("sensores/radar_enc", 1.0), ("sensores/radar_emitir", 1.0), ("sensores/radar_escala", 0.0), ("combate/armas_tapa", 1.0), ("combate/armas_maestro", 1.0), ("combate/armas_auto", 1.0), ("combate/ap_distancia", 600.0)] {
+            t.host.control(id, c, v);
+        }
+    }
+    t.run(3.0, 60.0, |_, _, _| {});
+    let alive = |g: &Game, id: u64| g.builds.set.get(id).map_or(0.0, |s| s.parts.iter().filter(|p| p.alive).count() as f64 / s.parts.len().max(1) as f64);
+    let hp = |g: &Game, id: u64| g.builds.set.get(id).map_or(0.0, |s| s.parts.iter().map(|p| if p.alive { f64::from(p.hp) } else { 0.0 }).sum::<f64>() / s.parts.iter().map(|p| f64::from(p.max_hp)).sum::<f64>().max(1.0));
+    let start = (t.host.game.builds.set.list.len(), t.host.game.blasts.started);
+    let mut window = (t.host.stats.snap_bytes + t.host.stats.event_bytes, t.host.game.step);
+    t.took.clear();
+    let (mut second, mut worst_step) = (0, 0.0f32);
+    while wall.elapsed() < budget && second < most {
+        // (each one with nothing in hand chooses again: what is before its nose, hostile, locked;
+        // the autopilot after it)
+        if second % 4 == 0 {
+            for &(_, id) in &ships {
+                let g = &t.host.game;
+                let chosen = g.ships.by_structure(id).and_then(|n| g.ships.list[n].signal("tac.elegido")).unwrap_or(0.0);
+                if chosen == 0.0 {
+                    t.host.control(id, "principal/obj_morro", 1.0);
+                }
+            }
+            t.run(0.1, 60.0, |_, _, _| {});
+            for &(_, id) in &ships {
+                t.host.control(id, "principal/obj_morro", 0.0);
+                let g = &t.host.game;
+                let (iff, locked) = g.ships.by_structure(id).map_or((0.0, 0.0), |n| (g.ships.list[n].signal("tac.obj.iff").unwrap_or(0.0), g.ships.list[n].signal("tac.fijado").unwrap_or(0.0)));
+                if iff != 3.0 {
+                    t.host.control(id, "principal/obj_hostil", 1.0);
+                }
+                if locked == 0.0 {
+                    t.host.control(id, "principal/obj_fijar", 1.0);
+                }
+                t.host.control(id, "combate/ap_modo", 1.0);
+            }
+            t.run(0.1, 60.0, |_, _, _| {});
+            // (the guns empty, the missiles: by radar first, then the heat seekers; one each time)
+            let weapon = if second >= 36 { 1.0 } else if second >= 12 { 2.0 } else { 0.0 };
+            for &(_, id) in &ships {
+                t.host.control(id, "principal/obj_hostil", 0.0);
+                t.host.control(id, "principal/obj_fijar", 0.0);
+                t.host.control(id, "combate/seleccion", weapon);
+                // (a missile goes at each pull: the automatic fire, which holds the trigger while
+                // it has a solution, is let go)
+                if weapon > 0.0 {
+                    t.host.control(id, "combate/armas_auto", 0.0);
+                    t.host.control(id, "mando/gatillo", 1.0);
+                }
+            }
+            t.run(0.4, 60.0, |_, _, _| {});
+            for &(_, id) in &ships {
+                t.host.control(id, "mando/gatillo", 0.0);
+            }
+            t.run(0.4, 60.0, |_, _, _| {});
+        } else {
+            t.run(1.0, 60.0, |_, _, _| {});
+        }
+        second += 1;
+        if second % 10 == 0 {
+            let g = &t.host.game;
+            let health: Vec<f64> = sides.iter().map(|l| l.iter().map(|&id| alive(g, id)).sum::<f64>() / l.len() as f64).collect();
+            let gone = sides.iter().map(|l| l.iter().filter(|&&id| alive(g, id) < 0.6).count()).collect::<Vec<_>>();
+            let life: Vec<f64> = sides.iter().map(|l| l.iter().map(|&id| hp(g, id)).sum::<f64>() / l.len() as f64).collect();
+            let mut took = t.took.clone();
+            took.sort_by(f32::total_cmp);
+            worst_step = worst_step.max(took.last().copied().unwrap_or(0.0));
+            let sent = t.host.stats.snap_bytes + t.host.stats.event_bytes;
+            let rate = (sent - window.0) as f64 / ((g.step - window.1) as f64 * STEP) / 1000.0;
+            window = (sent, g.step);
+            let line = format!(
+                "{second:>3} s: estructuras {} (+{}), disparos {}, impactos {}, piezas en pie {:.1} % / {:.1} %, vida {:.1} % / {:.1} %, deshechas {} / {}; paso del servidor {:.2} ms de media, p95 {:.2}, peor {:.2}; al jugador {:.1} kB/s, correcciones {}, peticiones de nave {}, demasiado grandes {}",
+                g.builds.set.list.len(),
+                g.builds.set.list.len() - start.0,
+                g.blasts.started - start.1,
+                g.struck,
+                health[0] * 100.0,
+                health[1] * 100.0,
+                life[0] * 100.0,
+                life[1] * 100.0,
+                gone[0],
+                gone[1],
+                took.iter().sum::<f32>() / took.len().max(1) as f32,
+                took[(took.len() * 95 / 100).min(took.len().saturating_sub(1))],
+                took.last().copied().unwrap_or(0.0),
+                rate,
+                t.seats[0].online.stats.corrections,
+                t.seats[0].online.stats.resyncs,
+                t.host.stats.too_big,
+            );
+            println!("{line}");
+            t.took.clear();
+        }
+    }
+    println!("{} s de batalla en {:.0} s de reloj", second, wall.elapsed().as_secs_f64());
+    let g = &t.host.game;
+    Battle {
+        seconds: second,
+        pieces: g.builds.set.list.len() - start.0,
+        broken: 1.0 - ships.iter().map(|&(_, id)| alive(g, id)).sum::<f64>() / ships.len() as f64,
+        corrections: t.seats[0].online.stats.corrections,
+        resyncs: t.seats[0].online.stats.resyncs,
+        too_big: t.host.stats.too_big,
+        worst_step,
+    }
+}
+
+#[test]
+fn a_small_battle_breaks_ships_and_every_game_keeps_up() {
+    // five a side for half a minute: the guns hit, the missiles break them up, and the one who
+    // watches is not put right more than once nor asks for any ship again (nothing the server's
+    // hands do comes to their game late, nor what its copies' radars see apart counts)
+    let b = battle(5, 30, 120);
+    println!("{} s: {} pedazos, {:.0} % de piezas rotas, {} correcciones, {} peticiones de nave, el peor paso {:.1} ms", b.seconds, b.pieces, b.broken * 100.0, b.corrections, b.resyncs, b.worst_step);
+    assert!(b.seconds >= 30, "only {} s in the time given", b.seconds);
+    assert!(b.pieces > 10 && b.broken > 0.05, "{} pieces, {:.1} % broken", b.pieces, b.broken * 100.0);
+    assert!(b.corrections <= 1, "{} corrections", b.corrections);
+    assert_eq!((b.resyncs, b.too_big), (0, 0));
+}
+
+#[test]
+#[ignore]
+fn a_battle_of_a_hundred_ships() {
+    // fifty a side, ninety seconds or four minutes of a clock on the wall, whichever comes first:
+    // what it costs and what each game makes of it (`docs/MULTIJUGADOR.md`, «Batalla de cien naves»)
+    let b = battle(50, 90, 240);
+    println!("{} s: {} pedazos, {:.0} % de piezas rotas, {} correcciones, {} peticiones de nave, el peor paso {:.1} ms", b.seconds, b.pieces, b.broken * 100.0, b.corrections, b.resyncs, b.worst_step);
+    assert_eq!((b.resyncs, b.too_big), (0, 0));
+}
+

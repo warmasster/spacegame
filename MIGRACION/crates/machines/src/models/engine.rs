@@ -383,6 +383,7 @@ impl Machine for Thruster {
     fn thrust(&self) -> f64 {
         self.thrust
     }
+    fn kept(&self, _: &mut Vec<f64>) {}
     fn save(&self, out: &mut Vec<f64>) {
         out.push(self.pulse);
     }

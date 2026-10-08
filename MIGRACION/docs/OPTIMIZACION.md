@@ -12,6 +12,37 @@ rendimiento del juego en TS están en [`../../docs/RENDIMIENTO.md`](../../docs/R
 Prioridad: **A** (se nota jugando), **B** (se nota con muchas cosas en pantalla), **C** (limpieza o
 código muerto).
 
+## V41g (2026-10-08): batalla de cien naves (`online::a_battle_of_a_hundred_ships`)
+
+Cincuenta Azores por bando, a 2 km, que se manejan solos por sus mandos (radar, transpondedor,
+traza ante el morro hostil y fijada, piloto automático en PERSEG., cañones en fuego automático y
+luego misiles), un jugador mirando entre las líneas; servidor y cliente en el mismo proceso, en un
+contenedor de 4 núcleos. 90 s de batalla en 98 s de reloj; 28 naves deshechas, 464 pedazos,
+20 000 impactos; 1 corrección, 0 peticiones de nave entera, 0 mensajes demasiado grandes.
+
+- ~~**A. Cada impacto pesaba la nave entera.**~~ (2026-10-08) Cada impacto, aunque solo quitara
+  puntos de vida, volvía a pesar la nave (masa, centro, inercia, el índice de sus piezas) y la
+  miraba entera para ver qué se soltaba (`breakup::apply` → `refresh`, `detach`, `tidy`). Ahora
+  solo cuando algo se rompe (una pieza perdida o desconchada, una unión que cede); el resto solo
+  sube la versión. Medido en la batalla, en los 10 s del intercambio de cañonazos (18 000
+  impactos): aplicar los impactos pasó de 9,9 s a 0,6 s de CPU del servidor y el paso del servidor
+  de 26 ms de media (p95 80, peor 110) a 10 ms (p95 19, peor 31). El resultado, el mismo impacto a
+  impacto (mismas cuentas).
+- **A. Los sistemas de cien naves.** En los 10 primeros segundos (todas arrancando, radares,
+  dirección de tiro, piloto automático) `Ships::update` se lleva 10 ms por paso del servidor
+  (4 núcleos); luego unos 4 ms. CPU de los sistemas de nave en esos 10 s, servidor y cliente
+  juntos: máquinas 4,1 s, **paneles (indicadores, luces, pantallas: `panels.after`) 2,6 s**,
+  mandos que escriben (`panels.write`) 1,4 s, ordenador de vuelo 1,4 s, uniones 1,2 s, táctico
+  1,0 s, señales derivadas 0,5 s, aire 0,3 s. Lo más barato de quitar: los paneles de una nave
+  que nadie mira (nadie a bordo ni cerca) no tienen por qué refrescar sus indicadores en cada
+  paso. Falta hacerlo.
+- **B. Lo que se manda en el cañoneo.** Al jugador entre las líneas le llegaban hasta unos
+  600 kB/s mientras las cien naves se tiroteaban (los golpes de cada impacto y lo que vuela, a
+  todo el que conoce la nave), 140 kB/s después. Juntar los golpes de un mismo paso por nave, o
+  contar menos de lo que vuela lejos del jugador, está por hacer.
+- **C. Equilibrio, no rendimiento:** el cañón de 20 mm apenas araña al Azor (5 000 impactos le
+  quitan un 1 % de vida): lo que deshace naves son los misiles. Apuntado en `PENDIENTES.md`.
+
 ## V41f (2026-10-08): sesiones selladas
 
 - **Medido:** sellar y abrir un datagrama de 1 200 bytes (ChaCha20-Poly1305) cuesta 5,75 µs entre

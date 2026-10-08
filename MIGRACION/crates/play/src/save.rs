@@ -19,7 +19,7 @@ use glam::DVec3;
 use lunar_net::Reader;
 
 pub const MAGIC: [u8; 4] = *b"LPAR";
-pub const VERSION: u16 = 2;
+pub const VERSION: u16 = 3;
 
 /// What a game taken up again had besides its world: how many times it was kept, and its
 /// players' bodies (`Pilot::write_state`) by their keys.

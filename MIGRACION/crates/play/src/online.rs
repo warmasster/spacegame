@@ -40,7 +40,10 @@ use lunar_core::{
     },
 };
 use lunar_net::{Client, Event as NetEvent, PlayerState, Reader, Status};
-use lunar_ship::sync::{self, Digest};
+use lunar_ship::{
+    Pace,
+    sync::{self, Digest},
+};
 use std::collections::VecDeque;
 
 /// Steps of what was asked, and of where each structure was, kept.
@@ -50,6 +53,8 @@ pub const TARGET: f64 = 3.0;
 /// What this game makes of its own (pieces off what the server struck, before the server names
 /// them) is named from here up.
 pub const LOCAL_IDS: u64 = 1 << 40;
+/// What a snapshot says of how early the commands came when none came (`Snap::ahead`).
+const NONE_CAME: i32 = 1000;
 /// A piece made here that the server has not named after this many steps is not one it has.
 const ORPHAN: u64 = 90;
 /// Steps a frame takes at most (catching up).
@@ -126,8 +131,10 @@ struct Was {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct OnlineStats {
     pub steps: u64,
-    /// Times the body was put right, and steps stepped again for it.
+    /// Times the body was put right, and steps stepped again for it; the most it was moved by one
+    /// (m: where it was drawn against where it was put, after stepping again).
     pub corrections: u64,
+    pub jumped: f64,
     pub replayed: u64,
     /// Snapshots taken, structures put right from them (and put there at once).
     pub snaps: u64,
@@ -211,9 +218,19 @@ pub struct Online {
     /// What was last said of the seat and the hands (what changed of them is said: `Act`).
     seated: Option<(u64, usize)>,
     holding: Option<(u64, f64)>,
-    /// When each structure was last asked for again, and how many times in a row it did not
-    /// agree (once is a word that overtook the one that made it).
-    asked: Vec<(u64, u64, u8)>,
+    /// When each structure was last asked for again.
+    asked: Vec<(u64, u64)>,
+    /// Our ships' digests at the steps they were due (`net::checked`): the step, the ship, the
+    /// digest. What the server says of one at a step after it was taken here unmakes it (it was
+    /// taken without that); one older than `RING` steps goes.
+    digests: Vec<(u64, u64, Digest)>,
+    nums: Vec<f64>,
+    /// What a hand of the server's own does at a step to come (`Event::Control` told ahead): the
+    /// step, the ship, the control, the value.
+    later: Vec<(u64, u64, u16, f64)>,
+    /// How early the commands came, the least of what the snapshots since the last one taken said
+    /// (`NONE_CAME`: none said).
+    ahead: i32,
     // (reused)
     snap: Snap,
     snap_new: bool,
@@ -272,6 +289,10 @@ impl Online {
             seated: None,
             holding: None,
             asked: Vec::new(),
+            digests: Vec::new(),
+            nums: Vec::new(),
+            later: Vec::new(),
+            ahead: NONE_CAME,
             snap: Snap::default(),
             snap_new: false,
             events: Vec::new(),
@@ -406,6 +427,19 @@ impl Online {
         // (we step with what the server steps with: the command as it travels)
         host::apply(&cmd, me, true);
         self.cmds[(s % RING as u64) as usize] = cmd;
+        // (what the server's own hands do at this step, as the server does it)
+        if !self.later.is_empty() {
+            let mut i = 0;
+            while i < self.later.len() {
+                let (at, ship, control, value) = self.later[i];
+                if at <= s {
+                    controls::set(&mut game.ships, &game.builds.set, ship, usize::from(control), value);
+                    self.later.swap_remove(i);
+                } else {
+                    i += 1;
+                }
+            }
+        }
         self.moved.clear();
         self.drive.step(&me.pilot, self.keys, &mut game.ships, &game.builds.set, STEP as f32, &mut self.moved);
         // (the ships known only from afar, where each is at this step: for the radars)
@@ -419,6 +453,21 @@ impl Online {
         }
         game.tick(&mut [&mut *me]);
         self.stats.steps += 1;
+        // (the digests of the ships due at this step, as the server takes its own of it)
+        let now = game.step;
+        if now % net::CHECK_EVERY == 0 {
+            self.digests.retain(|d| d.0 + RING as u64 > now);
+            let aboard = me.pilot.ride.map(|r| r.id).or(me.pilot.seat.map(|x| x.structure));
+            for sh in &game.ships.list {
+                if net::checked(sh.structure, now)
+                    && sh.pace == Pace::Full
+                    && let Some(s) = game.builds.set.get(sh.structure)
+                    && net::checks_near(s, me.pilot.position, aboard)
+                {
+                    self.digests.push((now, s.id, Digest::of_with(Some(sh), s, &mut self.nums)));
+                }
+            }
+        }
         // (what came into being here this step — a piece let go by a clamp, one off what was
         // struck — is ours until the server names it, by its lineage)
         for &id in &game.out.made {
@@ -517,6 +566,11 @@ impl Online {
                 return;
             }
         };
+        // (before its clock runs, the game is at the newest step it was told of: what was told as
+        // it was then is not run on again from an older one)
+        if !self.clock && self.you.is_some() && at > game.step {
+            game.step = at;
+        }
         for e in events.drain(..) {
             self.event(e, at, game, me);
         }
@@ -548,7 +602,11 @@ impl Online {
         let mut snap = Snap::default();
         std::mem::swap(&mut snap, &mut self.snap);
         let step = snap.step;
-        match net::read_snap(&mut r, &mut snap) {
+        let read = net::read_snap(&mut r, &mut snap);
+        if read.is_ok() && snap.ahead < NONE_CAME {
+            self.ahead = self.ahead.min(snap.ahead);
+        }
+        match read {
             Ok(()) if !self.snap_new || snap.step > step => {
                 self.snap = snap;
                 self.snap_new = true;
@@ -563,7 +621,18 @@ impl Online {
         }
     }
 
+    /// What the server said of structure `id` at step `at` was not in what this game had of it
+    /// from there to now: its digests of those steps are not to be compared.
+    fn unsure(&mut self, id: u64, at: u64) {
+        self.digests.retain(|d| d.1 != id || d.0 < at);
+    }
+
     fn event(&mut self, e: Event, at: u64, game: &mut Game, me: &mut Player) {
+        match &e {
+            Event::Made { id, .. } | Event::Hold { id, .. } | Event::Gone { id } | Event::State { id, .. } | Event::Rest { id, .. } => self.unsure(*id, at),
+            Event::Control { ship, .. } | Event::Hand { ship, .. } | Event::Systems { ship, .. } => self.unsure(*ship, at),
+            _ => {}
+        }
         match e {
             Event::Hello { step, you, sun, region, key } => {
                 // (the clock is set by the first snapshot, which is never old: this may have come
@@ -578,6 +647,8 @@ impl Online {
                 }
                 self.ours.clear();
                 self.asked.clear();
+                self.digests.clear();
+                self.later.clear();
                 (self.seated, self.holding, self.pending) = (None, None, None);
                 self.given = key;
                 match self.back {
@@ -598,7 +669,7 @@ impl Online {
                 (self.you, self.region, self.fixes, self.ready) = (Some(you), region, 0, false);
                 self.tracks.clear();
                 self.bones.clear();
-                (self.due, self.rate, self.early) = (0.0, 1.0, TARGET);
+                (self.due, self.rate, self.early, self.ahead) = (0.0, 1.0, TARGET, NONE_CAME);
             }
             Event::Back { step: _, state } => {
                 // (the body as it waited: ours again, by the key we came with; or none, and we
@@ -653,6 +724,7 @@ impl Online {
                     if game.builds.set.index_of(id).is_none() {
                         continue;
                     }
+                    self.digests.retain(|d| d.1 != id || d.0 < at);
                     let s = match *s {
                         Strike::Hit { hit, .. } => Strike::Hit { id, hit },
                         Strike::Blow { part, push, energy, .. } => Strike::Blow { id, part, push, energy },
@@ -686,6 +758,8 @@ impl Online {
                     game.blasts.show(0, &s, age, &bodies, &mut game.builds);
                 }
             }
+            // (one told ahead, to be done at a step to come, waits for it)
+            Event::Control { ship, control, value } if at > game.step => self.later.push((at, ship, control, value)),
             Event::Control { ship, control, value } => {
                 controls::set(&mut game.ships, &game.builds.set, ship, usize::from(control), value);
             }
@@ -715,12 +789,19 @@ impl Online {
                 self.stats.denied += 1;
                 self.said.push((why, 1));
             }
-            Event::Rest { id, pos, rot } => {
+            Event::Rest { id, pos, rot, grounded, legs } => {
                 let world = game.builds.set.now;
                 if let Some(k) = game.builds.set.index_of(id) {
                     let s = &mut game.builds.set.list[k];
                     (s.pos, s.rot, s.vel, s.spin) = (pos, rot, DVec3::ZERO, Vec3::ZERO);
-                    (s.clock, s.resting) = (world, true);
+                    (s.clock, s.resting, s.grounded) = (world, true, grounded);
+                    // (on its legs as the server's: its weight on its feet, read by its systems)
+                    if let Some(n) = game.ships.by_structure(id) {
+                        game.ships.list[n].legs_on(s);
+                    }
+                    for (sp, (x, load)) in s.springs.iter_mut().zip(legs) {
+                        (sp.x, sp.load) = (x, load.max(0.0));
+                    }
                     self.forget_track(id);
                 }
             }
@@ -793,6 +874,11 @@ impl Online {
         (me.pilot.yaw, me.pilot.pitch) = look;
         // (drawn where it was, and brought to where it is)
         let after = (me.pilot.position, me.pilot.ride.map(|r| (r.id, r.local)));
+        let jump = match (before.1, after.1) {
+            (Some((a, la)), Some((b, lb))) if a == b => f64::from(la.distance(lb)),
+            _ => before.0.distance(after.0),
+        };
+        self.stats.jumped = self.stats.jumped.max(jump);
         match (before.1, after.1) {
             (Some((a, la)), Some((b, lb))) if a == b => {
                 let off = la - lb + me.offset.1;
@@ -922,8 +1008,14 @@ impl Online {
             };
             self.rtt = ping;
             // (the snapshot is half the way old already)
+            let was = game.step;
             game.step = game.step.max(snap.step + (ping / STEP).round() as u64 + 3 * TARGET as u64);
             (self.clock, self.due, self.set_at, self.first) = (true, 0.0, self.now, game.step);
+            // (what the ships' systems would have done in the steps jumped, done: as every other
+            // game has them)
+            for n in 0..game.ships.list.len() {
+                catch_up(game, n, was);
+            }
         }
         // ---- the clock: there and back (from when the newest command it had went), and how
         // early ours come: a little off, run a hair faster or slower; much, set at a stroke (and
@@ -934,8 +1026,11 @@ impl Online {
                 self.rtt += ((self.now - went).min(2.0) - self.rtt) * 0.1;
             }
         }
-        let early = f64::from(snap.ahead);
-        if snap.ahead > -1000 && snap.ahead < 1000 {
+        // (of every snapshot that came since, not only of the newest: at a few frames a second
+        // several come at once, and the one that says the commands came late may be any of them)
+        let ahead = std::mem::replace(&mut self.ahead, NONE_CAME);
+        let early = f64::from(ahead);
+        if ahead > -NONE_CAME && ahead < NONE_CAME {
             self.early += (early - self.early) * 0.25;
             let off = self.early - TARGET;
             if (early - TARGET).abs() > 3.0 && self.now > self.set_at + self.rtt + 0.15 {
@@ -1019,28 +1114,28 @@ impl Online {
             }
             self.stats.fixed += 1;
         }
-        // ---- a ship's systems: all of it again if ours does not agree
-        if let Some((id, d)) = snap.check
-            && let Some(s) = game.builds.set.get(id)
-        {
-            let ship = game.ships.by_structure(id).map(|n| &game.ships.list[n]);
+        // ---- the ships' systems: all of one again if ours of the same step does not agree
+        for &(id, d) in &snap.checks {
+            let Some(i) = self.digests.iter().position(|x| x.0 == snap.checks_at && x.1 == id) else { continue };
+            let (_, _, mine) = self.digests.swap_remove(i);
+            if mine.agrees(&d) {
+                continue;
+            }
+            if std::env::var("LUNAR_DEBUG").is_ok() {
+                eprintln!("ship {id} digest of {} (now {now}): hash {} levels {:?}", snap.checks_at, mine.hash == d.hash, mine.levels.iter().zip(&d.levels).map(|(a, b)| a - b).collect::<Vec<_>>());
+            }
             let i = match self.asked.iter().position(|a| a.0 == id) {
                 Some(i) => i,
                 None => {
-                    self.asked.push((id, 0, 0));
+                    self.asked.push((id, 0));
                     self.asked.len() - 1
                 }
             };
-            if Digest::of(ship, s).agrees(&d) {
-                self.asked[i].2 = 0;
-            } else {
-                self.asked[i].2 = self.asked[i].2.saturating_add(1);
-                if self.asked[i].2 >= 2 && now > self.asked[i].1 + RESYNC_EVERY {
-                    (self.asked[i].1, self.asked[i].2) = (now, 0);
-                    self.stats.resyncs += 1;
-                    net::write_act(now, &Act::Resync { id }, &mut self.out);
-                    self.client.send_game(&self.out);
-                }
+            if self.asked[i].1 == 0 || now > self.asked[i].1 + RESYNC_EVERY {
+                self.asked[i].1 = now;
+                self.stats.resyncs += 1;
+                net::write_act(now, &Act::Resync { id }, &mut self.out);
+                self.client.send_game(&self.out);
             }
         }
     }

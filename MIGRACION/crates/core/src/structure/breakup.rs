@@ -4,7 +4,7 @@
 //! flies off as a structure of its own. Reports what happened for the effects.
 use super::{
     catalog::Catalog,
-    damage::{DamageModel, Hit, JointHit, PartHit, StandardDamage},
+    damage::{DamageModel, Hit, PartHit, StandardDamage},
     fracture::{self, Fracture, Rng},
     schedule::LINGER,
     set::Structures,
@@ -102,8 +102,9 @@ impl Structures {
         let Some(k) = self.index_of(id) else {
             return false;
         };
-        self.apply(k, hit, rules, events, &mut Rng::new(seed));
-        self.tidy(rules);
+        if self.apply(k, hit, rules, events, &mut Rng::new(seed)) {
+            self.tidy(rules);
+        }
         true
     }
 
@@ -140,19 +141,26 @@ impl Structures {
             self.told.push((s.id, hit));
             return Some(at);
         }
-        self.apply(k, &hit, rules, events, &mut Rng::new(seed));
-        self.tidy(rules);
+        if self.apply(k, &hit, rules, events, &mut Rng::new(seed)) {
+            self.tidy(rules);
+        }
         Some(at)
     }
 
-    fn apply(&mut self, k: usize, hit: &Hit, rules: &Rules, events: &mut Vec<Event>, rng: &mut Rng) {
+    /// Whether anything of it broke (a part gone or chipped, a joint parted): only then is it
+    /// weighed again and looked at for what came off. Most hits only take hit points: those cost
+    /// the path through it and nothing more.
+    fn apply(&mut self, k: usize, hit: &Hit, rules: &Rules, events: &mut Vec<Event>, rng: &mut Rng) -> bool {
         let lib = self.lib.clone();
         let cat = &lib.catalog;
-        let (mut parts, mut joints): (Vec<PartHit>, Vec<JointHit>) = (Vec::new(), Vec::new());
+        let (mut parts, mut joints) = (std::mem::take(&mut self.part_hits), std::mem::take(&mut self.joint_hits));
+        (parts.clear(), joints.clear());
         rules.damage.spread(&self.list[k], cat, hit, &mut parts, &mut joints);
         if parts.is_empty() && joints.is_empty() {
-            return;
+            (self.part_hits, self.joint_hits) = (parts, joints);
+            return false;
         }
+        let mut broke = false;
         let mut pieces: Vec<Piece> = Vec::new();
         let now = self.now;
         let s = &mut self.list[k];
@@ -186,7 +194,9 @@ impl Structures {
                     events.push(Event::Burst { at: world, kind, id: s.id, local: p.center, seed: rng.seed() });
                 }
                 s.parts[i].alive = false;
+                broke = true;
             } else if let Some((keep, chip)) = rules.fracture(cat, kind).chip(&p.shape, m, at, dir, h.energy / p.max_hp, rng) {
+                broke = true;
                 let share = chip.volume() / p.shape.volume();
                 pieces.push(piece(chip, h.energy * share));
                 events.push(Event::Chipped { at: world, size: p.radius * share.cbrt(), material });
@@ -210,16 +220,25 @@ impl Structures {
         for j in s.joints.iter_mut().filter(|j| j.alive) {
             if j.hp <= 0.0 || !s.parts[j.a as usize].alive || !s.parts[j.b as usize].alive {
                 j.alive = false;
+                broke = true;
                 if j.hp <= 0.0 {
                     events.push(Event::Parted { at: s.pos + (s.rot * j.at).as_dvec3() });
                 }
             }
+        }
+        if !broke {
+            // (hurt, as it was: what is told and kept of it changed, its shape and weight not)
+            s.version += 1;
+            (self.part_hits, self.joint_hits) = (parts, joints);
+            return false;
         }
         s.refresh();
         for p in pieces {
             self.loose(k, cat, p, rules.kick, rng);
         }
         self.detach(k, &parts, rules.kick);
+        (self.part_hits, self.joint_hits) = (parts, joints);
+        true
     }
 
     /// Part `part` of structure `id` blown out whole (torn by the air behind it, burst by what it

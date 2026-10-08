@@ -34,7 +34,7 @@ pub const TRACKS: u8 = 5;
 /// fingerprint of its data, `defs::fingerprint`, as the scenario): the server lets in only its own.
 /// After the `+`, the version of what they say to each other here: a new event, act or field is
 /// a new one.
-pub const BUILD: &str = "V41+p7";
+pub const BUILD: &str = "V41+p8";
 
 /// The commands a `CMDS` message repeats (one lost datagram, or three, loses nothing).
 pub const REPEAT: usize = 4;
@@ -346,7 +346,7 @@ pub enum Act {
         pos: DVec3,
         rot: Quat,
     },
-    /// Structure `id` here does not agree with what the server says of it (`Snap::check`): all
+    /// Structure `id` here does not agree with what the server says of it (`Snap::checks`): all
     /// of it again, please (`Event::Made`).
     Resync {
         id: u64,
@@ -542,9 +542,11 @@ pub struct Snap {
     pub ahead: i32,
     /// The other players, as they are (`PlayerState`, by their id on the network).
     pub players: Vec<(u32, PlayerState)>,
-    /// What one of the structures you know is (`sync::Digest`), in turns: yours, if it does not
-    /// agree, asks for all of it (`Act::Resync`).
-    pub check: Option<(u64, Digest)>,
+    /// What some of the ships you know were at the end of step `checks_at` (`sync::Digest`): the
+    /// ones due then (`checked`). Yours of the same step, if it does not agree, asks for all of it
+    /// (`Act::Resync`).
+    pub checks_at: u64,
+    pub checks: Vec<(u64, Digest)>,
     /// The structures that move, as they are (each `RigidState`'s id is the server's).
     pub things: Vec<RigidState>,
 }
@@ -620,6 +622,39 @@ pub fn read_tracks(r: &mut Reader, out: &mut Vec<Far>) -> Wire<u64> {
     Ok(step)
 }
 
+/// Every this many steps some ships' digests are taken, in the server and in every player's game
+/// alike, of that same step (`Snap::checks`): the ones `checked` says, each one every
+/// `CHECK_EVERY * CHECK_SPREAD` steps (4.3 s). Compared at the same step, what changes by itself
+/// (a timer, a pump starting, the air warming) is the same in both; compared a few steps apart, it
+/// would not be.
+pub const CHECK_EVERY: u64 = 8;
+pub const CHECK_SPREAD: u64 = 32;
+/// The most digests a snapshot carries (more on the wire is refused).
+pub const MOST_CHECKS: u64 = 256;
+
+/// The most legs a structure at rest is told with (`Event::Rest`; more on the wire is refused).
+pub const MOST_LEGS: u64 = 16;
+
+/// Steps after it is told that what a hand of the server's own does takes effect (`Host::control`,
+/// `Event::Control` told ahead): in every game at the same step, theirs being ahead of the
+/// server's by less than this (half a second).
+pub const HAND_LEAD: u64 = 30;
+/// A ship's digest is compared only by whoever is aboard it or this near it (m): its systems
+/// matter where they are seen and worked; from further, where it is is what matters, and that
+/// the snapshots put right. In a battle every copy's autopilot and fire control work on what
+/// its own radar sees, a hair apart: what they do is told by where the ships go.
+pub const CHECK_NEAR: f64 = 100.0;
+
+/// Whether ship structure `s` is compared by one whose eye is at `eye` and who is aboard `aboard`.
+pub fn checks_near(s: &lunar_core::structure::state::Structure, eye: DVec3, aboard: Option<u64>) -> bool {
+    aboard == Some(s.id) || s.to_world(s.center).distance(eye) - f64::from(s.radius) < CHECK_NEAR
+}
+
+/// Whether ship `id`'s digest is taken at the end of step `step`.
+pub fn checked(id: u64, step: u64) -> bool {
+    step % CHECK_EVERY == 0 && (id + step / CHECK_EVERY) % CHECK_SPREAD == 0
+}
+
 /// A snapshot into `out` (as much of it as fits in `room` bytes: what is left out goes next time).
 pub fn write_snap(s: &Snap, room: usize, out: &mut Vec<u8>) -> usize {
     let mut things = 0;
@@ -633,13 +668,14 @@ pub fn write_snap(s: &Snap, room: usize, out: &mut Vec<u8>) -> usize {
             w.var(u64::from(*id));
             p.encode(w);
         }
-        match &s.check {
-            Some((id, d)) => {
-                w.var(id + 1);
+        w.var(s.checks.len() as u64);
+        if !s.checks.is_empty() {
+            w.var(s.step - s.checks_at.min(s.step));
+            for (id, d) in &s.checks {
+                w.var(*id);
                 w.u32(d.hash);
                 d.levels.iter().for_each(|l| w.f32(*l));
             }
-            None => w.var(0),
         }
         // (the things to the end of the message: as many as fit)
         for t in &s.things {
@@ -670,17 +706,23 @@ pub fn read_snap(r: &mut Reader, out: &mut Snap) -> Wire<()> {
         let id = r.var32()?;
         out.players.push((id, PlayerState::decode(r)?));
     }
-    out.check = match r.var()? {
-        0 => None,
-        id => {
+    out.checks.clear();
+    let n = r.var()?;
+    if n > MOST_CHECKS {
+        return Err(WireError::Long);
+    }
+    if n > 0 {
+        out.checks_at = out.step.checked_sub(r.var()?).ok_or(WireError::Value)?;
+        for _ in 0..n {
+            let id = r.var()?;
             let hash = r.u32()?;
             let mut levels = [0.0; lunar_ship::sync::LEVELS];
             for l in &mut levels {
                 *l = r.f32()?;
             }
-            Some((id - 1, Digest { hash, levels }))
+            out.checks.push((id, Digest { hash, levels }));
         }
-    };
+    }
     while !r.is_empty() {
         out.things.push(RigidState::decode(r)?);
     }
@@ -785,11 +827,15 @@ pub enum Event {
         from: u32,
         craters: Vec<lunar_core::deform::Crater>,
     },
-    /// Structure `id` came to rest here, exactly (snapshots no longer tell of it until it moves).
+    /// Structure `id` came to rest here, exactly (snapshots no longer tell of it until it moves),
+    /// as it stands: whether on the ground, and its legs, how far in each is and what each carries
+    /// (at rest it is not done again: a ship's flight computer reads its weight on its feet).
     Rest {
         id: u64,
         pos: DVec3,
         rot: Quat,
+        grounded: bool,
+        legs: Vec<(f32, f32)>,
     },
     /// Structure `id` is held so now (none: let go): by what, which bone of it, and where in it.
     Hold {
@@ -888,7 +934,7 @@ fn event_room(e: &Event) -> usize {
         Event::State { delta, .. } => delta.len() + 16,
         Event::Ground { craters, .. } => craters.len() * 64 + 16,
         Event::Crater { .. } => 72,
-        Event::Rest { .. } => 56,
+        Event::Rest { legs, .. } => 56 + legs.len() * 8,
         Event::Hold { .. } => 56,
         _ => 0,
     }
@@ -1036,11 +1082,17 @@ fn write_event(w: &mut Writer, e: &Event) {
             w.u32(*tag);
         }
         Event::Ready => w.u8(20),
-        Event::Rest { id, pos, rot } => {
+        Event::Rest { id, pos, rot, grounded, legs } => {
             w.u8(15);
             w.var(*id);
             pos.to_array().iter().for_each(|x| w.f64(*x));
             rot.to_array().iter().for_each(|x| w.f32(*x));
+            w.u8(u8::from(*grounded));
+            w.var(legs.len() as u64);
+            for (x, load) in legs {
+                w.f32(*x);
+                w.f32(*load);
+            }
         }
     }
 }
@@ -1121,7 +1173,24 @@ pub fn read_event(r: &mut Reader) -> Wire<Event> {
             if !pos.is_finite() || !rot.is_finite() {
                 return Err(WireError::Value);
             }
-            Event::Rest { id, pos, rot: rot.normalize() }
+            let grounded = match r.u8()? {
+                0 => false,
+                1 => true,
+                _ => return Err(WireError::Value),
+            };
+            let n = r.var()?;
+            if n > MOST_LEGS {
+                return Err(WireError::Long);
+            }
+            let mut legs = Vec::with_capacity(n as usize);
+            for _ in 0..n {
+                let (x, load) = (r.f32()?, r.f32()?);
+                if !x.is_finite() || !load.is_finite() {
+                    return Err(WireError::Value);
+                }
+                legs.push((x, load));
+            }
+            Event::Rest { id, pos, rot: rot.normalize(), grounded, legs }
         }
         16 => Event::Hold { id: r.var()?, held: read_held(r)? },
         17 => Event::Back { step: r.var()?, state: read_blob(r)? },
@@ -1256,7 +1325,7 @@ mod tests {
             Event::Denied("no llegas".into()),
             Event::State { id: 4, delta: vec![2, 0, 0] },
             Event::Crater { body: 0, crater: lunar_core::deform::Crater { dir: DVec3::Y, radius: 6.0, depth: 2.0, rim: 0.25, seed: 0.5, ground: 12.0 } },
-            Event::Rest { id: 9, pos: DVec3::new(1.7e6, 1.0, -2.0), rot: Quat::IDENTITY },
+            Event::Rest { id: 9, pos: DVec3::new(1.7e6, 1.0, -2.0), rot: Quat::IDENTITY, grounded: true, legs: vec![(0.25, 31000.0), (0.0, 0.0)] },
             Event::Hold { id: 9, held: None },
             Event::Hold { id: 9, held: Some(Held { by: 1 << 40, bone: 0, pos: Vec3::new(1.0, -2.0, 3.0), rot: Quat::from_rotation_y(0.3) }) },
             Event::Ground { body: 1, from: 800, craters: vec![lunar_core::deform::Crater { dir: DVec3::X, radius: 1.0, depth: 0.5, rim: 0.1, seed: 0.1, ground: -3.0 }; 3] },
@@ -1273,7 +1342,7 @@ mod tests {
     #[test]
     fn a_snapshot_that_does_not_fit_leaves_what_does_not_for_next_time() {
         let things: Vec<RigidState> = (0..400).map(|k| RigidState { id: k, pos: DVec3::new(4e6 + k as f64, 3e6, 2e6), vel: Vec3::X, ..RigidState::default() }).collect();
-        let snap = Snap { step: 5, took: 4, ahead: 2, players: vec![(1, PlayerState::default())], check: Some((9, Digest { hash: 77, levels: [0.5; lunar_ship::sync::LEVELS] })), things };
+        let snap = Snap { step: 5, took: 4, ahead: 2, players: vec![(1, PlayerState::default())], checks_at: 3, checks: vec![(9, Digest { hash: 77, levels: [0.5; lunar_ship::sync::LEVELS] }), (12, Digest::default())], things };
         let mut out = Vec::new();
         let sent = write_snap(&snap, 1100, &mut out);
         assert!(sent > 10 && sent < 400, "{sent} sent");
@@ -1283,7 +1352,7 @@ mod tests {
         let mut back = Snap::default();
         read_snap(&mut r, &mut back).unwrap();
         assert_eq!(back.things.len(), sent);
-        assert_eq!((back.step, back.took, back.ahead, back.check), (5, 4, 2, snap.check));
+        assert_eq!((back.step, back.took, back.ahead, back.checks_at, &back.checks), (5, 4, 2, 3, &snap.checks));
         assert_eq!(back.things[..], snap.things[..sent]);
     }
 

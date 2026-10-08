@@ -33,7 +33,10 @@ use crate::{
 use glam::Vec3;
 use lunar_core::{scenario::PlayerDef, structure::schedule::coasted, view::View};
 use lunar_net::{Frame, PlayerState, Reader, RigidState, Writer, flag};
-use lunar_ship::sync::{self, Digest, Shadow};
+use lunar_ship::{
+    Pace,
+    sync::{self, Digest, Shadow},
+};
 use rayon::prelude::*;
 use std::collections::VecDeque;
 
@@ -158,6 +161,8 @@ struct Peer {
     /// too), and the last command stepped with.
     newest: Option<u64>,
     heard: Option<u64>,
+    /// The step of the newest digests told them (`Host::checks`).
+    checked: u64,
     /// Not in the world yet and catching up with it, alone: the step the body is at.
     behind: Option<u64>,
     last: Cmd,
@@ -182,6 +187,11 @@ struct Peer {
     /// Events for them, encoded (`net::append_event`), and where each ends in it.
     events: Vec<u8>,
     ends: Vec<usize>,
+    /// The step each of them was told at (what it says is as the game was at the end of it), and
+    /// the step the game is at as they are told (`Host::stamp`): a message says one step for all
+    /// it carries, so what waits to go keeps its own.
+    at: Vec<u64>,
+    now: u64,
     /// What goes out to them this step: a snapshot, the events.
     quick: Vec<u8>,
     /// What they know only from afar (reused), its word to them this step, and whether the last
@@ -218,6 +228,7 @@ impl Peer {
             cmds: vec![Cmd::default(); RING],
             newest: None,
             heard: None,
+            checked: 0,
             behind: None,
             last: Cmd::default(),
             guessing: 0,
@@ -234,6 +245,8 @@ impl Peer {
             rested: Vec::new(),
             events: Vec::new(),
             ends: Vec::new(),
+            at: Vec::new(),
+            now: 0,
             quick: Vec::new(),
             far: Vec::new(),
             tracks: Vec::new(),
@@ -271,17 +284,20 @@ impl Peer {
     fn tell(&mut self, e: &Event) {
         net::append_event(e, &mut self.events);
         self.ends.push(self.events.len());
+        self.at.push(self.now);
     }
 
     fn tell_bytes(&mut self, encoded: &[u8]) {
         self.events.extend_from_slice(encoded);
         self.ends.push(self.events.len());
+        self.at.push(self.now);
     }
 
     /// Nothing more to tell them.
     fn untold(&mut self) {
         self.events.clear();
         self.ends.clear();
+        self.at.clear();
     }
 }
 
@@ -306,14 +322,20 @@ pub struct Host {
     far_players: Vec<(u32, glam::DVec3, Vec3)>,
     /// (reused)
     cmds_in: Vec<Cmd>,
-    due: Vec<(usize, Act)>,
+    due: Vec<(usize, u64, Act)>,
     moved: Vec<(u64, usize, f64)>,
     encoded: Vec<u8>,
     made: Vec<(u64, Vec<u8>)>,
     seen: Vec<(told::From, Seen)>,
     pinned: Vec<Vec<u64>>,
-    /// The ship whose digest goes in this step's snapshots, in turns.
-    check_turn: usize,
+    /// The ships' digests of the newest step some were due (`net::checked`), and that step; room
+    /// for what the machines keep, to take them.
+    checks: Vec<(u64, Digest)>,
+    checks_at: u64,
+    nums: Vec<f64>,
+    /// What the server's own hands do, when it takes effect: the step, the ship, the control,
+    /// the value (`control`).
+    hands: Vec<(u64, u64, u16, f64)>,
     /// What a player let fly by their hand: our number for it, who, theirs, and when (what is
     /// told of it goes to them by their number: `blasts::OWN`).
     own: Vec<(u32, u32, u32, u64)>,
@@ -360,7 +382,10 @@ impl Host {
             made: Vec::new(),
             seen: Vec::new(),
             pinned: Vec::new(),
-            check_turn: 0,
+            checks: Vec::new(),
+            checks_at: 0,
+            nums: Vec::new(),
+            hands: Vec::new(),
             own: Vec::new(),
             index: Index::default(),
             mine: Vec::new(),
@@ -423,6 +448,7 @@ impl Host {
         }
         let key = self.new_key(id);
         let mut peer = Peer::new(id, key);
+        peer.now = self.game.step;
         peer.tell(&Event::Hello { step: self.game.step, you: id, sun: self.game.sun, region: self.config.region, key });
         // (the ground as it is: every crater dug so far)
         for (b, body) in self.game.bodies.iter() {
@@ -552,6 +578,7 @@ impl Host {
     /// Something player `from`'s game said (`net::CMDS` or `net::ACT`).
     pub fn take(&mut self, from: u32, data: &[u8]) {
         let Some(k) = self.peers.iter().position(|p| p.id == from) else { return };
+        self.peers[k].now = self.game.step;
         let mut r = Reader::new(data);
         let ok = match r.u8() {
             // (no faster than a player's game sends them: the rest is not read)
@@ -597,9 +624,19 @@ impl Host {
     fn commands(&mut self, k: usize, check: Option<Check>) {
         let now = self.game.step;
         let peer = &mut self.peers[k];
-        // (how early the newest came: what their game's clock is set by)
+        // (how early the oldest of those not heard before came: what their game's clock is set
+        // by. Not the newest: a game at few frames a second sends several steps at once, and the
+        // first of them is the one that must be here in time)
+        let mut first = None;
+        for c in &self.cmds_in {
+            if peer.heard.is_none_or(|h| c.step > h) {
+                first = Some(first.map_or(c.step, |f: u64| f.min(c.step)));
+            }
+        }
+        if let Some(f) = first {
+            peer.lead = peer.lead.min(f as i64 - now as i64);
+        }
         if let Some(c) = self.cmds_in.first() {
-            peer.lead = peer.lead.min(c.step as i64 - now as i64);
             peer.heard = Some(peer.heard.map_or(c.step, |h| h.max(c.step)));
         }
         // (not in the world yet, and what it asks comes late: its game's clock was set a little
@@ -677,8 +714,17 @@ impl Host {
         self.stats.corrections += 1;
     }
 
+    /// What is told from here on is as the game is now (`Peer::at`).
+    fn stamp(&mut self) {
+        let now = self.game.step;
+        for peer in &mut self.peers {
+            peer.now = now;
+        }
+    }
+
     /// One step of the game, and what each player is to be told of it (`send`).
     pub fn step(&mut self) {
+        self.stamp();
         let s = self.game.step;
         self.forget();
         // ---- 1. what each asks of this step, and what each does that is due
@@ -725,15 +771,15 @@ impl Host {
             peer.acts_left = (peer.acts_left + ACTS_RATE).min(ACTS_BURST);
             peer.resyncs_left = (peer.resyncs_left + RESYNC_RATE).min(RESYNC_BURST);
             while peer.acts.front().is_some_and(|a| a.0 <= s) {
-                if let Some((_, a)) = peer.acts.pop_front() {
-                    self.due.push((k, a));
+                if let Some((at, a)) = peer.acts.pop_front() {
+                    self.due.push((k, at, a));
                 }
             }
         }
         let mut due = std::mem::take(&mut self.due);
-        for (k, a) in due.drain(..) {
+        for (k, at, a) in due.drain(..) {
             let fired = if let Act::Launch(_, tag) = a { Some(tag) } else { None };
-            if let Err(why) = self.act(k, a) {
+            if let Err(why) = self.act(k, at, a) {
                 self.stats.denied += 1;
                 self.peers[k].tell(&Event::Denied(why.to_string()));
                 // (what flies in their game already is gone from it)
@@ -743,7 +789,19 @@ impl Host {
             }
         }
         self.due = due;
-        // ---- 2. the seats' keys on their controls
+        // ---- 2. what the server's own hands do now, and the seats' keys on their controls
+        if !self.hands.is_empty() {
+            let mut i = 0;
+            while i < self.hands.len() {
+                let (at, ship, control, value) = self.hands[i];
+                if at <= s {
+                    controls::set(&mut self.game.ships, &self.game.builds.set, ship, usize::from(control), value);
+                    self.hands.swap_remove(i);
+                } else {
+                    i += 1;
+                }
+            }
+        }
         self.moved.clear();
         for (k, peer) in self.peers.iter_mut().enumerate() {
             let keys = peer.last.keys;
@@ -760,6 +818,7 @@ impl Host {
         // ---- 4. the step
         self.game.tick(&mut self.players);
         self.stats.steps += 1;
+        self.stamp();
         // (where each body is, kept a moment: `bodies_at`)
         let slot = &mut self.rewind[(self.game.step % REWIND as u64) as usize];
         slot.0 = self.game.step;
@@ -800,7 +859,6 @@ impl Host {
     /// whether it was taken. Events not taken (the player's connection is not through yet) are
     /// kept for the next time.
     pub fn send(&mut self, mut send: impl FnMut(u32, bool, &[u8]) -> bool) {
-        let step = self.game.step;
         for peer in &mut self.peers {
             if peer.lost.is_some() {
                 // (nobody to tell)
@@ -812,7 +870,8 @@ impl Host {
             let (mut from, mut k) = (0, 0);
             while k < peer.ends.len() {
                 let mut j = k;
-                while j < peer.ends.len() && peer.ends[j] - from <= EVENTS_ROOM && j - k < EVENTS_MOST {
+                // (of one step: each message says the step of what it carries)
+                while j < peer.ends.len() && peer.ends[j] - from <= EVENTS_ROOM && j - k < EVENTS_MOST && peer.at[j] == peer.at[k] {
                     j += 1;
                 }
                 if j == k {
@@ -822,7 +881,7 @@ impl Host {
                     continue;
                 }
                 let end = peer.ends[j - 1];
-                net::events_message(step, (j - k) as u32, &peer.events[from..end], &mut peer.sure);
+                net::events_message(peer.at[k], (j - k) as u32, &peer.events[from..end], &mut peer.sure);
                 let sent = send(peer.id, true, &peer.sure);
                 peer.sure.clear();
                 if !sent {
@@ -834,6 +893,7 @@ impl Host {
             if k > 0 {
                 peer.events.drain(..from);
                 peer.ends.drain(..k);
+                peer.at.drain(..k);
                 for e in &mut peer.ends {
                     *e -= from;
                 }
@@ -850,6 +910,23 @@ impl Host {
     }
 
     /// Event `e` to everyone who knows structure `id` but player `but`.
+    /// A hand of the server's own on control `id` of ship `ship` (a ship the world flies, a
+    /// script, a test): set to `value` as a player's would set it, `net::HAND_LEAD` steps from now,
+    /// and told now to every game that knows the ship, for that step: in all of them it is done at
+    /// the same step. False if the ship or the control is not there.
+    pub fn control(&mut self, ship: u64, id: &str, value: f64) -> bool {
+        let Some(n) = self.game.ships.by_structure(ship) else { return false };
+        let Some(c) = self.game.ships.list[n].panels.controls.iter().position(|c| c.id == id) else { return false };
+        let at = self.game.step + net::HAND_LEAD;
+        self.hands.push((at, ship, c as u16, value));
+        for peer in &mut self.peers {
+            peer.now = at;
+        }
+        self.tell_knowing(ship, &Event::Control { ship, control: c as u16, value }, None);
+        self.stamp();
+        true
+    }
+
     fn tell_knowing(&mut self, id: u64, e: &Event, but: Option<usize>) {
         self.encoded.clear();
         net::append_event(e, &mut self.encoded);
@@ -861,7 +938,16 @@ impl Host {
     }
 
     /// Act `a` of player `k`, checked: done, or why not.
-    fn act(&mut self, k: usize, a: Act) -> Result<(), &'static str> {
+    fn act(&mut self, k: usize, at: u64, a: Act) -> Result<(), &'static str> {
+        // (one that came late — said again after it was lost on the way — is judged where the body
+        // was at its step, as its game had it: kept a moment, `bodies_at`)
+        let late = self.game.step.saturating_sub(at);
+        let then = if late > 0 {
+            let id = self.peers[k].id;
+            self.bodies_at(at).and_then(|b| b.iter().find(|b| b.id == id)).map(|b| self.players[k].pilot.eye() - b.eye)
+        } else {
+            None
+        };
         let g = &mut self.game;
         let set = &g.builds.set;
         let p = &mut self.players[k];
@@ -925,9 +1011,13 @@ impl Host {
                     Some(i) => peer.fired[i].1 = now,
                     None => peer.fired.push((l.what, now)),
                 }
-                // (from the hand, going as the body goes, at the speed its kind has)
-                if l.from.distance(eye) > HAND_REACH {
+                // (from the hand, going as the body goes, at the speed its kind has; if it came late,
+                // from where the hand was then, gone on with the body since)
+                if l.from.distance(eye - then.unwrap_or(glam::DVec3::ZERO)) > HAND_REACH {
                     return Err(OUT_OF_REACH);
+                }
+                if then.is_some() {
+                    l.from += l.vel * (late as f64 * STEP);
                 }
                 let motion = p.pilot.motion_in(set);
                 if l.vel.distance(motion.vel) > LAUNCH_SLIP {
@@ -1224,7 +1314,7 @@ impl Host {
             let rested = std::mem::take(&mut self.peers[k].rested);
             for &id in &rested {
                 if let Some(s) = self.game.builds.set.get(id) {
-                    let e = Event::Rest { id, pos: s.pos, rot: s.rot };
+                    let e = Event::Rest { id, pos: s.pos, rot: s.rot, grounded: s.grounded, legs: s.springs.iter().map(|sp| (sp.x, sp.load)).collect() };
                     self.peers[k].tell(&e);
                 }
             }
@@ -1388,15 +1478,23 @@ impl Host {
             };
             self.states.push((peer.id, state_of(p, &peer.last, peer.beside, &self.game)));
         }
-        // (one ship's digest in this step's snapshots, in turns)
-        let ships = &self.game.ships.list;
-        let check = (!ships.is_empty()).then(|| {
-            self.check_turn = (self.check_turn + 1) % ships.len();
-            let sh = &ships[self.check_turn];
-            set.get(sh.structure).map(|s| (s.id, Digest::of(Some(sh), s)))
-        });
-        let check = check.flatten();
-        let (every, room, rule, step) = (self.config.snap_every.max(1), self.config.snap_room, self.config.rule, self.game.step);
+        // (the digests of the ships due this step: each player's game takes its own of the same
+        // step, and they go to each in their next snapshot)
+        let step = self.game.step;
+        if step % net::CHECK_EVERY == 0 {
+            self.checks.clear();
+            for sh in &self.game.ships.list {
+                if net::checked(sh.structure, step)
+                    && sh.pace == Pace::Full
+                    && let Some(s) = set.get(sh.structure)
+                {
+                    self.checks.push((s.id, Digest::of_with(Some(sh), s, &mut self.nums)));
+                }
+            }
+            self.checks_at = step;
+        }
+        let (checks, checks_at) = (&self.checks, self.checks_at);
+        let (every, room, rule) = (self.config.snap_every.max(1), self.config.snap_room, self.config.rule);
         let states = &self.states;
         let players = &self.players;
         let bodies = &*self.game.bodies;
@@ -1418,7 +1516,13 @@ impl Host {
                 peer.lead = i64::MAX;
                 snap.players.clear();
                 snap.players.extend(states.iter().filter(|(id, st)| *id != peer.id && st.pos.distance(me.position) < reach).cloned());
-                snap.check = check.filter(|c| peer.interest.knows(c.0));
+                snap.checks.clear();
+                if peer.checked < checks_at {
+                    let aboard = me.ride.map(|r| r.id).or(me.seat.map(|x| x.structure));
+                    let near = |id: u64| set.get(id).is_some_and(|s| net::checks_near(s, me.position, aboard));
+                    snap.checks.extend(checks.iter().filter(|c| peer.interest.knows(c.0) && near(c.0)).take(net::MOST_CHECKS as usize));
+                    (snap.checks_at, peer.checked) = (checks_at, checks_at);
+                }
                 // (the things that move, as many as fit, the most owed first)
                 peer.interest.take(set, &rule, &mut peer.order);
                 let mut things = std::mem::take(&mut snap.things);

@@ -47,6 +47,9 @@ pub struct Structures {
     /// here, kept for whoever tells them (`multi` takes them from here and every game, this one
     /// too, does them when they come back). Nothing is ever put in it with no such structure.
     pub told: Vec<(u64, super::damage::Hit)>,
+    /// (reused) who takes how much of a hit.
+    pub(crate) part_hits: Vec<super::damage::PartHit>,
+    pub(crate) joint_hits: Vec<super::damage::JointHit>,
     /// Where each structure was put back to while it is drawn between steps (`present`): its id,
     /// where it really is and its turn, for `restore`.
     shown: Vec<(u64, DVec3, glam::Quat)>,
@@ -56,7 +59,7 @@ impl Structures {
     pub fn new(lib: Arc<Library>) -> Structures {
         // checked when the library loaded
         let machines = Machines::new(&lib.catalog).unwrap_or_else(|e| panic!("{e}"));
-        Structures { list: Vec::new(), lib, next: 1, groups: Groups::default(), now: 0.0, sun: DVec3::Y, machines, solver: Solver::default(), physics: Default::default(), due: Default::default(), watch: Vec::new(), any_held: false, told: Vec::new(), shown: Vec::new() }
+        Structures { list: Vec::new(), lib, next: 1, groups: Groups::default(), now: 0.0, sun: DVec3::Y, machines, solver: Solver::default(), physics: Default::default(), due: Default::default(), watch: Vec::new(), any_held: false, told: Vec::new(), shown: Vec::new(), part_hits: Vec::new(), joint_hits: Vec::new() }
     }
 
     /// A step begins: where each structure is now is where it was, for whoever draws between

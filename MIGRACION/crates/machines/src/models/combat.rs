@@ -330,6 +330,12 @@ impl Machine for Launcher {
     fn heat(&self) -> f64 {
         if self.firing { self.power * 0.5 } else { 0.0 }
     }
+    // (how warm it is and how far spun up follow the trigger, and with automatic fire the
+    // trigger follows a solution that two copies work out a hair apart: what is left is what
+    // makes a copy right or wrong)
+    fn kept(&self, out: &mut Vec<f64>) {
+        out.push(self.rounds);
+    }
     fn save(&self, out: &mut Vec<f64>) {
         out.extend([self.rounds, self.temp, self.spin, f64::from(u8::from(self.hot))]);
     }

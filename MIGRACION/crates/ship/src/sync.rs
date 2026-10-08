@@ -685,6 +685,14 @@ pub fn write_ship(sh: &Ship, s: &Structure, net: &dyn Fn(u64) -> Option<u64>, ou
     // how far its own gravity has come on (what it carries weighs by it: a copy made while it
     // comes on, as far as the others')
     put_f32(out, s.gravity.on);
+    // whether it stands on the ground, and its legs: how far in each is and what each carries
+    // (what the ground did to it; at rest it is not done again, and its flight computer reads it)
+    out.push(u8::from(s.grounded));
+    put_var(out, s.springs.len() as u64);
+    for sp in &s.springs {
+        put_f32(out, sp.x);
+        put_f32(out, sp.load);
+    }
 }
 
 /// Ship `sh` (on its structure `s`, whose own state was read already: `read_state`) left as
@@ -768,6 +776,15 @@ pub fn read_ship(sh: &mut Ship, s: &mut Structure, local: &dyn Fn(u64) -> Option
         (a.o2, a.n2, a.co2, a.t) = (inp.num()?, inp.num()?, inp.num()?, inp.num()?);
     }
     s.gravity.on = inp.f32()?.clamp(0.0, 1.0);
+    s.grounded = inp.u8()? != 0;
+    let legs = inp.count(8)?;
+    sh.legs_on(s);
+    for k in 0..legs {
+        let (x, load) = (inp.f32()?, inp.f32()?);
+        if let Some(sp) = s.springs.get_mut(k) {
+            (sp.x, sp.load) = (x, load.max(0.0));
+        }
+    }
     sh.atmos.settled();
     sh.touch();
     Ok(())
@@ -816,6 +833,12 @@ fn level(v: f64) -> f32 {
 
 impl Digest {
     pub fn of(sh: Option<&Ship>, s: &Structure) -> Digest {
+        Digest::of_with(sh, s, &mut Vec::new())
+    }
+
+    /// The same, with `nums` for room (what the machines keep is read into it: nothing is made
+    /// anew when it already has the room).
+    pub fn of_with(sh: Option<&Ship>, s: &Structure, nums: &mut Vec<f64>) -> Digest {
         let mut h = Fnv(0x811c_9dc5);
         let mut levels = [0.0f32; LEVELS];
         let mut hp = 0.0f64;
@@ -848,11 +871,10 @@ impl Digest {
             for id in sh.store.ids().filter(|id| sh.store.meta(*id).writer == Writer::None) {
                 h.word((sh.store.get(id) * 1024.0).round() as i64);
             }
-            let mut nums = Vec::new();
             for m in &sh.machines {
                 h.byte(u8::from(m.working));
                 nums.clear();
-                m.m.save(&mut nums);
+                m.m.kept(nums);
                 nums.iter().for_each(|v| add(*v));
             }
             for a in &sh.atmos.air {

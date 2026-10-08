@@ -742,6 +742,22 @@ silueta lejana, oclusión. Falta:
   correcciones); el pasajero de pie en una nave que pilota otro
   (`the_pilot_hands_over_at_orbital_speed…`). De paso: lo que el servidor no deja volar ya no cuenta
   como empezado en el juego que lo lanzó (`Blasts::unfire`).
+- [ ] (2026-10-08) Combate: el cañón de 20 mm apenas araña al Azor. En la batalla de cien naves
+  (`online::a_battle_of_a_hundred_ships`), 5 000 impactos de cañón le quitan un 1 % de vida a diez
+  Azores; lo que los deshace son los misiles. Mirar la fragilidad de sus piezas o la energía del
+  proyectil (`shots.jsonc`, `canon_20`: 55 kJ) contra lo que debe aguantar un caza.
+- [ ] (2026-10-08) Servidor autoritativo: lo que un jugador hace en los mandos de una nave llega a
+  los demás juegos unos pasos tarde (cada uno va por delante del servidor), y sus sistemas quedan
+  un poco distintos hasta que el servidor se los cuenta. Las manos del servidor (`Host::control`:
+  una IA, un guion) ya se cuentan por adelantado y se hacen en el mismo paso en todos
+  (`net::HAND_LEAD`); para las de los jugadores, lo mismo pediría hacerlas un poco más tarde en el
+  servidor (medio segundo). Hoy solo se nota a bordo o a menos de 100 m (`net::CHECK_NEAR`): más
+  lejos los sistemas de una nave no se comparan.
+- [ ] (2026-10-08) Servidor autoritativo: una nave sin piloto con el estabilizador puesto dispara
+  sus RCS a pulsos, y cada copia los dispara un paso antes o después (ve la nave una micra
+  distinta): quien va de pie dentro puede recibir alguna corrección de 0,1 a 0,4 mm (invisible).
+  Medido en el barrido de gravedades (`on_every_body_on_foot_and_aboard…`). No pedirle nada a eso
+  salvo que se vea.
 - [ ] (2026-10-08) Servidor autoritativo: el servidor guarda la partida cada 5 minutos y con
   «salir», pero no si se cierra la ventana de la consola o con Ctrl+C (no hay manejador de señales):
   se pierde lo de desde el último guardado. ~~Y lo que vuela en el momento de guardar (balas, misiles)

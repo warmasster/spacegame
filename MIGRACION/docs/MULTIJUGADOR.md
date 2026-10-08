@@ -378,11 +378,53 @@ los guarda y los lee tras `follow`): un final cae sobre el casco ya en su sitio.
 | `net/tests/udp.rs` (3) | servidor y 2 clientes por UDP real en `127.0.0.1:0` |
 | `server/src` (10), `server/tests/programa.rs` (3) | ajustes, órdenes, fechas; el `.exe` arrancado de verdad: entra un jugador y anda, «salir» guarda, se arranca y retoma, se vuelve con la clave; 3 000 datagramas basura |
 | `play/src/keep.rs` | las ranuras: la más nueva entera se retoma, la rota o de otra versión se aparta, se escribe sobre la más vieja |
-| `play/tests/online.rs` (31), `local.rs` (2), `load.rs`, `interest.rs` | la partida por red, la propia (se guarda al cerrar y se vuelve al mismo cuerpo), muchos jugadores, el interés contra mirarlo todo: ver [`PLAN_AUTORITATIVO.md`](PLAN_AUTORITATIVO.md), «Avance» |
+| `play/tests/online.rs` (36), `local.rs` (2), `load.rs`, `interest.rs` | la partida por red, la propia (se guarda al cerrar y se vuelve al mismo cuerpo), muchos jugadores, el interés contra mirarlo todo: ver [`PLAN_AUTORITATIVO.md`](PLAN_AUTORITATIVO.md), «Avance» |
 
 Las pruebas del relevo (`app/src/multi/tests.rs`: formaciones a 7,8 km/s, armas de los datos una a
 una, guiados, tiradores a la vez) se fueron con él; lo que probaban se prueba por el servidor que
 tiene la partida a medida que llega cada fase (lo que falta, en `PENDIENTES.md`).
+
+## Otras gravedades y la batalla de cien naves (2026-10-08)
+
+**Sobre cada cuerpo** (`on_every_body_on_foot_and_aboard…`): la Luna, la Luna menor y un cuerpo
+inventado más grande y que tira más (3,7 m/s², 300 km de radio, lejos del origen). En cada uno:
+andando por el suelo, cayendo en la franja donde se desvanece su tirón y flotando fuera de su
+alcance; y de pie en un Alcotán posado en su tren y, en el aire, derecho, volcado y dando tumbos,
+de 0 a 7,8 km/s, a 10, 30, 60, 144 y 240 fotogramas por segundo. En los 30 casos: lo que el
+jugador ve saltar por una corrección, como mucho 0,35 mm; a menos de 1,1 mm de donde lo tiene el
+servidor; a 0,04 mm en lo que lo lleva. Lo que hizo falta para eso (y vale en cualquier sitio):
+
+- **El reloj a pocos fotogramas:** cuánto se adelantan los mandos lo dice el más viejo de los que
+  llegan nuevos, no el más nuevo, y el cliente toma el peor aviso de todas las instantáneas que le
+  llegan, no solo el de la última (a 10 fps le llegan seis de golpe).
+- **Los resúmenes de los sistemas, del mismo paso:** servidor y cliente toman el `Digest` de las
+  mismas naves en los mismos pasos (`net::checked`: cada 8 pasos, cada nave cada 256) y se
+  comparan esos; antes se comparaba el del servidor con el del cliente varios pasos después, y
+  los temporizadores y arranques no cuadraban nunca. Lo que dice el servidor de una nave en un paso
+  (un golpe, un mando) deshace los resúmenes que el cliente tomó desde entonces. Solo cuenta lo que
+  va a paso completo (`Ship::pace`), lo que una máquina dice que importa (`Machine::kept`: no el
+  pulso de los RCS, ni el calor y el giro de un cañón) y solo a bordo o a menos de 100 m
+  (`net::CHECK_NEAR`).
+- **Los avisos con su paso:** cada aviso lleva el paso en que se dijo, no el de cuando sale (uno
+  que esperó en la cola se ponía al día de menos); antes de que su reloj ande, el juego se pone en
+  el paso más nuevo que le dicen; y al ponerse en hora, los sistemas de las naves corren los pasos
+  que salta.
+- **Lo que llega tarde:** un acto que se perdió por el camino y llega reenviado unos pasos tarde
+  (un disparo desde una nave a 2 km/s) se juzga donde estaba el cuerpo en su paso, como lo tenía
+  su juego (`Host::bodies_at`, los últimos 300 ms), y lo que se lanza sale de donde iba la mano
+  desde entonces; antes se juzgaba donde está ahora (133 m más allá) y se denegaba.
+- **Lo que pisa el suelo:** con una nave viaja si está sobre el suelo y cuánto está metida cada
+  pata y qué carga (`write_ship`, `Event::Rest`): su ordenador de vuelo lee el peso en las ruedas,
+  y sin eso la copia creía volar y disparaba los RCS.
+
+**Batalla** (`a_small_battle…`, 5 contra 5, en la batería; `a_battle_of_a_hundred_ships`, 50 contra
+50, a mano, como mucho cuatro minutos de reloj): Azores manejados solo por sus mandos, por las
+manos del servidor (`Host::control`, lo que usará una IA o un guion: se cuenta por adelantado y se
+hace en el mismo paso en todos, `net::HAND_LEAD`). Con cien: 90 s de batalla en 98 s de reloj,
+20 000 impactos, 28 naves deshechas y 464 pedazos; el jugador que mira, 1 corrección, ninguna nave
+pedida entera; el paso del servidor, 7–10 ms de media (10 ms en el cañoneo, peor 31 ms) y hasta
+unos 600 kB/s al jugador en el cañoneo. Lo que cuesta y lo que falta, en
+[`OPTIMIZACION.md`](OPTIMIZACION.md) (V41g).
 
 ## Lo que no hace (todavía)
 

@@ -230,6 +230,9 @@ pub struct Ship {
     eval: Eval,
     pub t: f64,
     acc: f64,
+    /// The pace it was run at last (`run`): only what was run in full is the same in every copy
+    /// of it step by step (what goes slow ticks when its own count says).
+    pub pace: Pace,
     /// Something is happening in it until then (ship time): a joint moving, air rushing, thrust.
     busy_until: f64,
     /// Its lowest point (ship frame y), and the structure's version and pose it was taken from.
@@ -557,6 +560,7 @@ impl Ship {
             eval: Eval::default(),
             t: 0.0,
             acc: 0.0,
+            pace: Pace::Full,
             busy_until: BUSY,
             keel: (0.0, u64::MAX, u64::MAX),
             bursts: Vec::new(),
@@ -647,6 +651,7 @@ impl Ship {
 
     /// The same at a pace: in full, or one tick every so often with the time between settled.
     pub fn run(&mut self, s: &mut Structure, w: &World, dt: f64, pace: Pace) {
+        self.pace = pace;
         let every = match pace {
             Pace::Full => return self.update(s, w, dt),
             Pace::Slow => SLOW_EVERY,
@@ -989,6 +994,14 @@ impl Ship {
         }
     }
 
+    /// Its sprung legs on the structure as its springs, if they are not yet (a copy just made).
+    pub fn legs_on(&mut self, s: &mut Structure) {
+        if !self.legs.is_empty() && (!self.legs_set || s.springs.len() != self.legs.len()) {
+            let g = self.store.get(self.s_g) as f32;
+            self.set_legs(s, g);
+        }
+    }
+
     /// The sprung legs as the structure's springs (`lunar_core::structure::state::Spring`): each
     /// where its parent joint has it now. Built for its load if its data says one, else for its
     /// share of what the ship weighs under `g` m/s² (where it is first set down).
@@ -1303,10 +1316,7 @@ impl Ship {
         let n = self.joints.len();
         // the sprung legs: as far in as the ground has them
         if !self.legs.is_empty() {
-            if !self.legs_set || s.springs.len() != self.legs.len() {
-                let g = self.store.get(self.s_g) as f32;
-                self.set_legs(s, g);
-            }
+            self.legs_on(s);
             for (i, &(k, load)) in self.legs.iter().enumerate() {
                 let sp = s.springs[i];
                 self.store.set(load, f64::from(sp.load));

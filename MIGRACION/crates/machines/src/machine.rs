@@ -145,6 +145,13 @@ pub trait Machine: Send + Sync {
     fn rupture(&self) -> f64 {
         0.0
     }
+    /// What of its state two copies of it compare to know they agree (`lunar_ship::sync::Digest`):
+    /// all of it, but what follows from one tick to the next what it is told so closely that two
+    /// copies told apart by a hair keep apart (a pulse's phase, run by a stabiliser that sees the
+    /// ship a micron apart in each copy): not what makes a copy right or wrong.
+    fn kept(&self, out: &mut Vec<f64>) {
+        self.save(out);
+    }
     /// Plain state.
     fn save(&self, out: &mut Vec<f64>);
     fn load(&mut self, s: &[f64]);
