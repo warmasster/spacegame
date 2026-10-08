@@ -30,11 +30,12 @@ Doble clic en iniciar.bat. Se abre una consola y dice algo así:
   [12:00:01 UTC] Partida retomada de partidas\partida.b.bin (guardada 12 veces): …
   [12:00:01 UTC] Servidor «Servidor de Luna» en marcha en el puerto 47600 (UDP): hasta 16 jugadores; la partida la simula él, 60 pasos por segundo (juego V41+p7, datos 5ce0a210).
   [12:00:00 UTC] En esta red se entra con: --servidor 192.168.1.20:47600   (en esta misma máquina: --servidor 127.0.0.1:47600)
-  [12:00:00 UTC] Órdenes: jugadores · expulsar <id> [motivo] · decir <texto> · salir. Para pararlo: «salir» (o cerrar esta ventana).
+  [12:00:00 UTC] Órdenes: jugadores · expulsar <id> [motivo] · decir <texto> · salir. Para pararlo: «salir» o Ctrl+C (guardan la partida; cerrar la ventana, no).
 
 Las horas son UTC (hora universal), no la hora local.
-Para pararlo: escribir salir y pulsar Intro (guarda la partida y avisa a los jugadores). Cerrar
-la ventana también lo para, pero sin guardar: se pierde lo de desde el último guardado.
+Para pararlo: escribir salir y pulsar Intro, o pulsar Ctrl+C (las dos guardan la partida y avisan
+a los jugadores). Cerrar la ventana también lo para, pero sin guardar: Windows no le da tiempo y
+se pierde lo de desde el último guardado.
 
 La primera vez, Windows puede preguntar si se le permite el acceso a la red: hay que decir
 que sí (redes privadas, y públicas si van a entrar desde fuera).

@@ -208,8 +208,9 @@ finales): `puerto` (47600, UDP), `nombre`, `max_jugadores` (16), `espera` (10 s)
 `partida` (dónde se guarda: `partidas/partida`) y `guardar_cada` (300 s). Opciones: `--puerto N`,
 `--nombre X`, `--datos CARPETA`, `--partida RUTA`, `--nueva`, `--sin-guardar`, `--trucos`, `--ayuda`. Órdenes: `jugadores`, `expulsar <id> [motivo]`,
 `decir <texto>`, `salir`, `ayuda`. Todo lo que dice va también a `servidor.log`. Las horas son
-UTC (`std` no conoce la hora local). No hay manejador de Ctrl+C: se para con `salir` o
-cerrándolo. Ver `servidores/LEEME.txt`.
+UTC (`std` no conoce la hora local). Ctrl+C (y en Linux un `kill` sin más) es como `salir`:
+guarda y para (la dependencia `ctrlc`: lo que llama al sistema está en ella, no en nuestro
+código); cerrar la ventana en Windows lo para sin guardar. Ver `servidores/LEEME.txt`.
 
 Tras cambiar el servidor: `tools/cargo.ps1 build --release -p luna-servidor --target-dir target/red`
 y copiar `target/red/release/luna-servidor.exe` a `servidores/LunaServidor.exe`.
@@ -380,8 +381,7 @@ tiene la partida a medida que llega cada fase (lo que falta, en `PENDIENTES.md`)
 Lo que falta de cada fase está en [`PLAN_AUTORITATIVO.md`](PLAN_AUTORITATIVO.md), «Avance»; lo
 que más se nota al jugar:
 
-- **Lo que vuela al guardar se pierde** (proyectiles en el aire); Ctrl+C en la consola del
-  servidor no guarda (la orden «salir», sí).
+- **Cerrar la ventana del servidor** en Windows lo para sin guardar (Ctrl+C y «salir» guardan).
 - **Sin cifrado**: los datagramas van firmados (nadie se hace pasar por otro ni mete nada en
   una sesión ajena), pero quien ve el tráfico lo puede leer.
 - **Los jugadores no tienen vida**: no hay que rebobinar el mundo para ver a quién se dio

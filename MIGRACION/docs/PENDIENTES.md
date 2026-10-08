@@ -743,7 +743,9 @@ silueta lejana, oclusión. Falta:
 - [ ] (2026-10-08) Servidor autoritativo: el servidor guarda la partida cada 5 minutos y con
   «salir», pero no si se cierra la ventana de la consola o con Ctrl+C (no hay manejador de señales):
   se pierde lo de desde el último guardado. ~~Y lo que vuela en el momento de guardar (balas, misiles)
-  no se guarda.~~ (Hecho 2026-10-08: se guarda al bit, `Blasts::keep`.) **Decisión para Fernando:** oír Ctrl+C y el cierre de la consola pide llamar al
+  no se guarda.~~ (Hecho 2026-10-08: se guarda al bit, `Blasts::keep`.) **Ctrl+C, hecho (2026-10-08)** con la dependencia
+  `ctrlc` (sin `unsafe` en nuestro código): guarda y para como «salir». Queda: cerrar la ventana en
+  Windows para sin guardar (Windows mata el proceso al volver del aviso). **Decisión para Fernando:** oír Ctrl+C y el cierre de la consola pide llamar al
   sistema (`SetConsoleCtrlHandler` en Windows, `signal` en Linux), que es código `unsafe`, y el
   espacio de trabajo lo prohíbe (`unsafe_code = "forbid"`): o una excepción en un fichero pequeño
   del servidor, o la dependencia `ctrlc` (que en Windows no espera a que se guarde al cerrar la

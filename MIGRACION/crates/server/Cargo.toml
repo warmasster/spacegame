@@ -10,6 +10,9 @@ lunar-net = { path = "../net" }
 lunar-play = { path = "../play" }
 serde.workspace = true
 serde_json.workspace = true
+# Ctrl+C (and on Linux a polite kill) heard, to keep the game before stopping: what calls the
+# system for it is in there, not in our code (`unsafe_code` is forbidden here)
+ctrlc = { version = "3", features = ["termination"] }
 
 [dev-dependencies]
 lunar-play = { path = "../play" }

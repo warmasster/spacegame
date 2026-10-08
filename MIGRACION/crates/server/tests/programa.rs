@@ -86,7 +86,7 @@ fn the_program_takes_players_in_obeys_its_console_and_stops() {
     let line = program.expect_within("en marcha", 120.0, || {});
     assert!(line.starts_with(&format!("Servidor «La Base» en marcha en el puerto {port} (UDP): hasta 16 jugadores; la partida la simula él, 60 pasos por segundo (juego {build}, datos {scenario:08x}).")), "{line}");
     assert!(program.expect("--servidor", || {}).contains(&format!("--servidor 127.0.0.1:{port}")));
-    assert_eq!(program.expect("Órdenes", || {}), "Órdenes: jugadores · expulsar <id> [motivo] · decir <texto> · salir. Para pararlo: «salir» (o cerrar esta ventana).");
+    assert_eq!(program.expect("Órdenes", || {}), "Órdenes: jugadores · expulsar <id> [motivo] · decir <texto> · salir. Para pararlo: «salir» o Ctrl+C (guardan la partida; cerrar la ventana, no).");
     program.order("jugadores");
     program.expect("No hay nadie conectado.", || {});
 
@@ -263,5 +263,33 @@ fn the_program_has_the_game_and_a_player_walks_in_it() {
     assert!(saved.contains("partida.b.bin"), "the other slot: {saved}");
     program.expect("Servidor parado.", || online.receive(now(), &mut game, &mut me));
     assert!(program.child.wait().expect("it ends").success());
+    let _ = std::fs::remove_dir_all(&kept);
+}
+
+#[test]
+#[cfg(unix)]
+fn ctrl_c_keeps_the_game_and_stops_it_as_salir_does() {
+    // started with a game of its own, Ctrl+C (SIGINT, what the console sends) is what «salir» is:
+    // the game kept in its slot, then stopped, and it says so
+    let port = free_port();
+    let kept = std::env::temp_dir().join(format!("luna-ctrlc-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&kept);
+    let base = kept.join("partida");
+    let data = lunar_play::root().join("assets");
+    let args = ["--puerto", &port.to_string(), "--datos", data.to_str().expect("a path"), "--partida", base.to_str().expect("a path")].map(str::to_string);
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    let mut program = Program::start(&args);
+    let line = program.expect_within("en marcha", 120.0, || {});
+    assert!(line.contains("60 pasos por segundo"), "{line}");
+    program.expect("Ctrl+C", || {});
+    // (as the console does: SIGINT to it)
+    let status = Command::new("kill").args(["-INT", &program.child.id().to_string()]).status().expect("kill");
+    assert!(status.success());
+    program.expect("Ctrl+C: se para el servidor.", || {});
+    let saved = program.expect("Partida guardada en", || {});
+    program.expect("Servidor parado.", || {});
+    let exit = program.child.wait().expect("it ends");
+    assert!(exit.success(), "it ended {exit:?}");
+    assert!(saved.contains("partida.a.bin") && kept.join("partida.a.bin").exists(), "{saved}");
     let _ = std::fs::remove_dir_all(&kept);
 }

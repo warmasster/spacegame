@@ -136,7 +136,16 @@ fn main() -> ExitCode {
         None => journal.say(&format!("En esta misma máquina se entra con: --servidor 127.0.0.1:{}", config.puerto)),
     }
     notes.iter().for_each(|n| journal.say(n));
-    journal.say(&format!("{}. Para pararlo: «salir» (o cerrar esta ventana).", console::HELP));
+    // (Ctrl+C, and a polite kill on Linux: as «salir», the game kept first. Closing the window
+    // Windows gives no time for it)
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    {
+        let stop = stop.clone();
+        if let Err(e) = ctrlc::set_handler(move || stop.store(true, std::sync::atomic::Ordering::SeqCst)) {
+            journal.say(&format!("No se oye Ctrl+C ({e}): para pararlo guardando, «salir»."));
+        }
+    }
+    journal.say(&format!("{}. Para pararlo: «salir» o Ctrl+C (guardan la partida; cerrar la ventana, no).", console::HELP));
 
     let orders = console::listen();
     let (mut counted_at, mut counted) = (now(), server.stats());
@@ -190,6 +199,10 @@ fn main() -> ExitCode {
         }
         // (sent now, not at the next round)
         server.update(now(), &mut socket);
+        let mut quit = stop.load(std::sync::atomic::Ordering::SeqCst);
+        if quit {
+            journal.say("Ctrl+C: se para el servidor.");
+        }
         while let Ok(line) = orders.try_recv() {
             match console::parse(&line) {
                 Command::Players if server.player_count() == 0 => journal.say("No hay nadie conectado."),
@@ -207,23 +220,24 @@ fn main() -> ExitCode {
                     server.say(&text);
                     journal.say(&format!("<servidor> {text}"));
                 }
-                Command::Quit => {
-                    // (it keeps the game before it ends: what it says of that, said)
-                    game.stop();
-                    while let Ok(out) = game.from.try_recv() {
-                        if let sim::Out::Note(n) = out {
-                            journal.say(&n);
-                        }
-                    }
-                    server.close(&mut socket);
-                    server.events().for_each(|e| journal.say(&describe(&e)));
-                    journal.say("Servidor parado.");
-                    return ExitCode::SUCCESS;
-                }
+                Command::Quit => quit = true,
                 Command::Help => journal.say(console::HELP),
                 Command::Nothing => {}
                 Command::Wrong(how) => journal.say(&how),
             }
+        }
+        if quit {
+            // (it keeps the game before it ends: what it says of that, said)
+            game.stop();
+            while let Ok(out) = game.from.try_recv() {
+                if let sim::Out::Note(n) = out {
+                    journal.say(&n);
+                }
+            }
+            server.close(&mut socket);
+            server.events().for_each(|e| journal.say(&describe(&e)));
+            journal.say("Servidor parado.");
+            return ExitCode::SUCCESS;
         }
         if t - counted_at >= STATUS_EVERY {
             if server.player_count() > 0 {
