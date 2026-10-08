@@ -43,11 +43,14 @@ pub struct Rule {
     pub horizon: f64,
     /// Told again this many times once it is at rest (one could be lost).
     pub rest_told: u8,
+    /// Of the rounds let fly and ended farther than `near` from a player (and that do not fly
+    /// past within it), one in this many is told to them: a far cannonade, as its tracers.
+    pub tracers: u32,
 }
 
 impl Default for Rule {
     fn default() -> Rule {
-        Rule { near: 2000.0, per_metre: 500.0, most: 400_000.0, keep: 1.3, linger: 1.5, horizon: 8.0, rest_told: 3 }
+        Rule { near: 2000.0, per_metre: 500.0, most: 400_000.0, keep: 1.3, linger: 1.5, horizon: 8.0, rest_told: 3, tracers: 4 }
     }
 }
 

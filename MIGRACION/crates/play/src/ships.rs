@@ -25,6 +25,10 @@ use std::{
 /// twice a second with the rest settled (`lunar_ship::Pace`).
 const FULL_WITHIN: f64 = 120.0;
 const ASLEEP_FROM: f64 = 4000.0;
+/// The panels of a ship this near an eye (m, from its hull) are shown: their lamps, needles and
+/// screens follow what they show (they are drawn from 22 m at most, `lunar_ship::scene`; the
+/// rest so that they have settled when one comes near).
+const PANELS_SEEN: f64 = 60.0;
 /// Irradiance of the sun at 1 AU (W/m²).
 const SOLAR: f64 = 1361.0;
 /// Energy (J) that throws the pieces of a plate the air tore out.
@@ -149,9 +153,11 @@ impl Ships {
     /// each as there are cores), each at its pace: in full the ones in `awake` (the ones players
     /// ride, the one a tool works on), the ones near any of `watchers` (the players, a camera) and
     /// the ones with something going on; the rest a tick now and then.
-    /// `people`: whoever stands about (spheres in the world): what moves stops at them.
+    /// `people`: whoever stands about (spheres in the world): what moves stops at them. `eyes`:
+    /// where this game is seen from (none in a server's): the panels of the ships within
+    /// `PANELS_SEEN` of one are shown (`Ship::shown`), the rest's indicators wait.
     #[allow(clippy::too_many_arguments)]
-    pub fn update(&mut self, dt: f64, builds: &mut Builds, bodies: &BodyRegistry, fx: &mut Effects, sun: DVec3, watchers: &[DVec3], awake: &[u64], people: &[(DVec3, f32)]) {
+    pub fn update(&mut self, dt: f64, builds: &mut Builds, bodies: &BodyRegistry, fx: &mut Effects, sun: DVec3, watchers: &[DVec3], awake: &[u64], people: &[(DVec3, f32)], eyes: &[DVec3]) {
         // ships whose structure is gone are gone
         if self.list.len() != self.paired {
             let alive: HashSet<u64> = builds.set.list.iter().map(|s| s.id).collect();
@@ -180,6 +186,8 @@ impl Ships {
             // sun, the air and the cold there
             let w = World { sun: s.rot.inverse() * sun.as_vec3(), irradiance: sunlight(bodies, com, sun), pressure: ambient_pressure(bodies, com), sink: 230.0, ..World::at(s, bodies, low) };
             let p = pace(sh, s);
+            let c = s.to_world(s.center);
+            sh.shown = eyes.iter().any(|e| c.distance(*e) - f64::from(s.radius) < PANELS_SEEN);
             sh.run(s, &w, dt, p);
             u8::from(p == Pace::Full)
         };

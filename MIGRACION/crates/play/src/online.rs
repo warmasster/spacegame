@@ -238,8 +238,12 @@ pub struct Online {
     out: Vec<u8>,
     moved: Vec<(u64, usize, f64)>,
     died: Vec<u32>,
-    strikes: Vec<(Named, Strike)>,
-    poses: Vec<(Named, Vec<glam::Affine3A>)>,
+    strikes: Vec<(u64, Named, Strike)>,
+    poses: Vec<(Named, usize, u64, Vec<glam::Affine3A>)>,
+    /// How each structure the server told strikes on was posed as last told (by id): what a
+    /// strike's message says of a pose is what changed of it since.
+    told_poses: Vec<(u64, Vec<glam::Affine3A>)>,
+    group: Vec<(Strike, u64)>,
     seen: Vec<(Seen, f32)>,
 }
 
@@ -301,6 +305,8 @@ impl Online {
             died: Vec::new(),
             strikes: Vec::new(),
             poses: Vec::new(),
+            told_poses: Vec::new(),
+            group: Vec::new(),
             seen: Vec::new(),
         }
     }
@@ -649,6 +655,7 @@ impl Online {
                 self.asked.clear();
                 self.digests.clear();
                 self.later.clear();
+                self.told_poses.clear();
                 (self.seated, self.holding, self.pending) = (None, None, None);
                 self.given = key;
                 match self.back {
@@ -706,6 +713,9 @@ impl Online {
             }
             Event::Gone { id } => {
                 remove(game, id);
+                if let Ok(i) = self.told_poses.binary_search_by_key(&id, |p| p.0) {
+                    self.told_poses.remove(i);
+                }
                 self.stats.gone += 1;
             }
             Event::Strikes(bytes) => {
@@ -715,27 +725,64 @@ impl Online {
                 }
                 self.strikes.clear();
                 self.poses.clear();
-                let Ok(seed) = told::read_strikes(&mut r, &mut self.strikes, &mut self.poses) else {
+                if told::read_strikes(&mut r, &mut self.strikes, &mut self.poses).is_err() {
                     self.stats.garbled += 1;
                     return;
-                };
-                for (i, (n, s)) in self.strikes.iter().enumerate() {
-                    let Named::Built(id) = *n else { continue };
+                }
+                // (the poses as told now: what changed of each over what was told before)
+                for (named, k, mask, bones) in self.poses.drain(..) {
+                    let Named::Built(id) = named else { continue };
+                    let i = match self.told_poses.binary_search_by_key(&id, |p| p.0) {
+                        Ok(i) => i,
+                        Err(i) => {
+                            self.told_poses.insert(i, (id, Vec::new()));
+                            i
+                        }
+                    };
+                    let was = &mut self.told_poses[i].1;
+                    was.resize(k, glam::Affine3A::IDENTITY);
+                    let mut it = bones.into_iter();
+                    for (b, slot) in was.iter_mut().enumerate() {
+                        if mask == u64::MAX || mask & (1 << b) != 0 {
+                            if let Some(v) = it.next() {
+                                *slot = v;
+                            }
+                        }
+                    }
+                }
+                // (each structure's, one after another as they came, done at once in its pose)
+                let mut k = 0;
+                while k < self.strikes.len() {
+                    let named = self.strikes[k].1;
+                    let mut end = k + 1;
+                    while end < self.strikes.len() && self.strikes[end].1 == named {
+                        end += 1;
+                    }
+                    let Named::Built(id) = named else {
+                        k = end;
+                        continue;
+                    };
                     if game.builds.set.index_of(id).is_none() {
+                        k = end;
                         continue;
                     }
                     self.digests.retain(|d| d.1 != id || d.0 < at);
-                    let s = match *s {
-                        Strike::Hit { hit, .. } => Strike::Hit { id, hit },
-                        Strike::Blow { part, push, energy, .. } => Strike::Blow { id, part, push, energy },
-                    };
-                    let pose = self.poses.iter().find(|p| p.0 == *n).map_or(&[][..], |p| &p.1[..]);
+                    self.group.clear();
+                    for &(n, _, s) in &self.strikes[k..end] {
+                        let s = match s {
+                            Strike::Hit { hit, .. } => Strike::Hit { id, hit },
+                            Strike::Blow { part, push, energy, .. } => Strike::Blow { id, part, push, energy },
+                        };
+                        self.group.push((s, told::dice(n)));
+                    }
+                    let pose = self.told_poses.binary_search_by_key(&id, |p| p.0).map_or(&[][..], |i| &self.told_poses[i].1[..]);
                     let from = game.builds.set.next_free();
-                    game.builds.strike_done(&s, seed.wrapping_add(i as u64), false, pose);
-                    self.stats.strikes += 1;
+                    game.builds.strikes_done(id, &self.group, false, pose);
+                    self.stats.strikes += (end - k) as u64;
                     // (what came off it here: ours until the server names it)
                     let step = game.step;
                     self.ours.extend(game.builds.set.list.iter().filter(|x| x.id >= from).map(|x| (x.id, step)));
+                    k = end;
                 }
             }
             Event::Seen(bytes) => {
@@ -757,6 +804,7 @@ impl Online {
                 for (s, age) in self.seen.drain(..) {
                     game.blasts.show(0, &s, age, &bodies, &mut game.builds);
                 }
+                game.blasts.shown();
             }
             // (one told ahead, to be done at a step to come, waits for it)
             Event::Control { ship, control, value } if at > game.step => self.later.push((at, ship, control, value)),

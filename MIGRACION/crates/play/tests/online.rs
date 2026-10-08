@@ -1773,6 +1773,71 @@ fn a_ships_gun_fired_from_its_seat_fires_in_the_server_and_everyone_sees_it() {
 }
 
 #[test]
+fn a_control_set_by_one_hand_is_seen_by_the_others_a_round_trip_later() {
+    // two aboard the Azor, 50 ms each way: one lifts the guns' cover, and the other's game has
+    // it a round trip after the step it was set at (told as it came to the server, to be done
+    // at that step, not once the server did it); one set by a hand gone from there when its
+    // step comes is not done, and the other's game, told it first, is put back as the server has
+    // it
+    let mut t = Table::new(2, 41, Conditions { delay: 0.05, ..Conditions::default() });
+    (t.host.config.rule.near, t.host.config.rule.most) = (1.0e8, 1.0e8);
+    let far = DVec3::new(-2.0e6, 3.0e6, 1.5e6);
+    t.host.game.watchers.push(far);
+    let id = t.host.game.ships.spawn_free(&mut t.host.game.builds, "azor", far, Quat::IDENTITY).unwrap();
+    t.run(0.3, 60.0, |_, _, _| {});
+    let exit = {
+        let g = &t.host.game;
+        glam::Vec3::from_array(g.ships.list[g.ships.by_structure(id).unwrap()].kind.seats[0].def.salida)
+    };
+    for k in 0..2 {
+        let who = t.seats[k].online.you.unwrap();
+        let (game, p) = t.host.game_and_player(who).unwrap();
+        p.pilot.put_on(&game.builds.set, id, exit + glam::Vec3::X * (0.6 * k as f32));
+    }
+    t.run(2.0, 60.0, |_, _, _| {});
+    let index = |g: &Game, want: &str| g.ships.list[g.ships.by_structure(id).unwrap()].panels.controls.iter().position(|c| c.id == want).expect("the control");
+    let value = |g: &Game, k: usize| lunar_play::controls::value(&g.ships, id, k).unwrap();
+    let (cover, master) = (index(&t.host.game, "combate/armas_tapa"), index(&t.host.game, "combate/armas_maestro"));
+    // the master set for a step to come by one who is far from it when it comes
+    let step = t.seats[0].game.step + 30;
+    t.seats[0].online.act(step, &lunar_play::net::Act::Control { ship: id, control: master as u16, value: 1.0 });
+    t.run(0.1, 60.0, |_, _, _| {});
+    let you = t.seats[0].online.you.unwrap();
+    t.host.player_mut(you).unwrap().pilot.put(far + DVec3::new(0.0, 500.0, 0.0), DVec3::Y);
+    let mut told = 0.0f64;
+    for _ in 0..90 {
+        t.frame(1.0 / 60.0, |_, _, _| {});
+        told = told.max(value(&t.seats[1].game, master));
+    }
+    assert_eq!(told, 1.0, "the other was not told it as it came");
+    assert_eq!((value(&t.host.game, master), value(&t.seats[1].game, master)), (0.0, 0.0), "the master went with nobody there");
+    {
+        let (game, p) = t.host.game_and_player(you).unwrap();
+        p.pilot.put_on(&game.builds.set, id, exit);
+    }
+    t.run(1.0, 60.0, |_, _, _| {});
+    // the cover lifted by one hand: when the other's game has it
+    let step = t.seats[0].game.step;
+    {
+        let s = &mut t.seats[0];
+        assert!(lunar_play::controls::set(&mut s.game.ships, &s.game.builds.set, id, cover, 1.0));
+        s.online.act(step, &lunar_play::net::Act::Control { ship: id, control: cover as u16, value: 1.0 });
+    }
+    let mut seen = None;
+    for _ in 0..120 {
+        t.frame(1.0 / 60.0, |_, _, _| {});
+        if seen.is_none() && value(&t.seats[1].game, cover) == 1.0 {
+            seen = Some(t.seats[1].game.step);
+        }
+    }
+    let late = seen.expect("the other never saw it") as i64 - step as i64;
+    println!("a control set at step {step}: the other's game has it {late} steps later (a round trip is 6)");
+    assert!(late <= 8, "{late} steps late");
+    assert_eq!((value(&t.host.game, cover), value(&t.seats[0].game, cover), value(&t.seats[1].game, cover)), (1.0, 1.0, 1.0));
+    assert_eq!((t.seats[0].online.stats.resyncs, t.seats[1].online.stats.resyncs), (0, 0));
+}
+
+#[test]
 fn two_who_reach_for_one_crate_one_has_it_and_a_weld_is_the_same_for_all() {
     // in the hold of the Cachalote two reach for the same crate: the first has it, the other's
     // game lets it go (`Event::Unheld`). Then a part of the ship hurt, welded by one of them: it
@@ -2538,7 +2603,7 @@ fn battle(per_side: usize, most: usize, budget: u64) -> Battle {
     let wall = std::time::Instant::now();
     let budget = std::time::Duration::from_secs(budget);
     let cond = Conditions { delay: 0.04, jitter: 0.005, loss: 0.01, ..Conditions::default() };
-    let mut t = Table::new(1, 211, cond);
+    let mut t = Table::new(2, 211, cond);
     let far = DVec3::new(-2.0e6, 3.0e6, 1.5e6);
     let (gap, spacing, cols) = (2000.0, 150.0, 10usize);
     let mut sides: [Vec<u64>; 2] = [Vec::new(), Vec::new()];
@@ -2555,9 +2620,11 @@ fn battle(per_side: usize, most: usize, budget: u64) -> Battle {
         }
     }
     let ships: Vec<(usize, u64)> = sides.iter().enumerate().flat_map(|(k, l)| l.iter().map(move |&id| (k, id))).collect();
-    // the one who watches: floating in the middle, between the lines
+    // the one who watches: floating in the middle, between the lines; and another one 6 km off
     let you = t.seats[0].online.you.unwrap();
     t.host.player_mut(you).unwrap().pilot.put(far + DVec3::new(0.0, 300.0, 0.0), DVec3::Y);
+    let off = t.seats[1].online.you.unwrap();
+    t.host.player_mut(off).unwrap().pilot.put(far + DVec3::new(6000.0, 300.0, 0.0), DVec3::Y);
     t.run(1.0, 60.0, |_, _, _| {});
     // (switched on as a pilot would, and a moment for it all to come up)
     for &(side, id) in &ships {
@@ -2569,7 +2636,8 @@ fn battle(per_side: usize, most: usize, budget: u64) -> Battle {
     let alive = |g: &Game, id: u64| g.builds.set.get(id).map_or(0.0, |s| s.parts.iter().filter(|p| p.alive).count() as f64 / s.parts.len().max(1) as f64);
     let hp = |g: &Game, id: u64| g.builds.set.get(id).map_or(0.0, |s| s.parts.iter().map(|p| if p.alive { f64::from(p.hp) } else { 0.0 }).sum::<f64>() / s.parts.iter().map(|p| f64::from(p.max_hp)).sum::<f64>().max(1.0));
     let start = (t.host.game.builds.set.list.len(), t.host.game.blasts.started);
-    let mut window = (t.host.stats.snap_bytes + t.host.stats.event_bytes, t.host.game.step);
+    let mut window = (t.host.sent_to(you), t.host.sent_to(off), t.host.game.step);
+    let mut parts = (t.host.stats.snap_bytes, t.host.stats.event_bytes);
     t.took.clear();
     let (mut second, mut worst_step) = (0, 0.0f32);
     while wall.elapsed() < budget && second < most {
@@ -2627,11 +2695,14 @@ fn battle(per_side: usize, most: usize, budget: u64) -> Battle {
             let mut took = t.took.clone();
             took.sort_by(f32::total_cmp);
             worst_step = worst_step.max(took.last().copied().unwrap_or(0.0));
-            let sent = t.host.stats.snap_bytes + t.host.stats.event_bytes;
-            let rate = (sent - window.0) as f64 / ((g.step - window.1) as f64 * STEP) / 1000.0;
-            window = (sent, g.step);
+            let sent = (t.host.sent_to(you), t.host.sent_to(off));
+            let span = (g.step - window.2) as f64 * STEP * 1000.0;
+            let rate = ((sent.0 - window.0) as f64 / span, (sent.1 - window.1) as f64 / span);
+            window = (sent.0, sent.1, g.step);
+            let split = ((t.host.stats.snap_bytes - parts.0) as f64 / span, (t.host.stats.event_bytes - parts.1) as f64 / span);
+            parts = (t.host.stats.snap_bytes, t.host.stats.event_bytes);
             let line = format!(
-                "{second:>3} s: estructuras {} (+{}), disparos {}, impactos {}, piezas en pie {:.1} % / {:.1} %, vida {:.1} % / {:.1} %, deshechas {} / {}; paso del servidor {:.2} ms de media, p95 {:.2}, peor {:.2}; al jugador {:.1} kB/s, correcciones {}, peticiones de nave {}, demasiado grandes {}",
+                "{second:>3} s: estructuras {} (+{}), disparos {}, impactos {}, piezas en pie {:.1} % / {:.1} %, vida {:.1} % / {:.1} %, deshechas {} / {}; paso del servidor {:.2} ms de media, p95 {:.2}, peor {:.2}; al jugador {:.1} kB/s (al de lejos {:.1}; a los dos, {:.1} de instantáneas y {:.1} de sucesos), correcciones {}, peticiones de nave {}, demasiado grandes {}",
                 g.builds.set.list.len(),
                 g.builds.set.list.len() - start.0,
                 g.blasts.started - start.1,
@@ -2645,9 +2716,12 @@ fn battle(per_side: usize, most: usize, budget: u64) -> Battle {
                 took.iter().sum::<f32>() / took.len().max(1) as f32,
                 took[(took.len() * 95 / 100).min(took.len().saturating_sub(1))],
                 took.last().copied().unwrap_or(0.0),
-                rate,
-                t.seats[0].online.stats.corrections,
-                t.seats[0].online.stats.resyncs,
+                rate.0,
+                rate.1,
+                split.0,
+                split.1,
+                t.seats.iter().map(|s| s.online.stats.corrections).max().unwrap_or(0),
+                t.seats.iter().map(|s| s.online.stats.resyncs).sum::<u64>(),
                 t.host.stats.too_big,
             );
             println!("{line}");
@@ -2660,8 +2734,8 @@ fn battle(per_side: usize, most: usize, budget: u64) -> Battle {
         seconds: second,
         pieces: g.builds.set.list.len() - start.0,
         broken: 1.0 - ships.iter().map(|&(_, id)| alive(g, id)).sum::<f64>() / ships.len() as f64,
-        corrections: t.seats[0].online.stats.corrections,
-        resyncs: t.seats[0].online.stats.resyncs,
+        corrections: t.seats.iter().map(|s| s.online.stats.corrections).max().unwrap_or(0),
+        resyncs: t.seats.iter().map(|s| s.online.stats.resyncs).sum(),
         too_big: t.host.stats.too_big,
         worst_step,
     }

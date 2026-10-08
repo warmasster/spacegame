@@ -252,13 +252,15 @@ impl Panels {
         }
     }
 
-    /// Indicators follow their signals; controls advance (springs, pulses, breakers on the
-    /// current through them).
+    /// Indicators follow their signals (when someone may see them: `shown`; nothing else reads
+    /// them); controls advance (springs, pulses, breakers on the current through them).
     #[allow(clippy::too_many_arguments)]
-    pub fn after(&mut self, _kind: &ShipKind, _s: &Structure, store: &mut Store, _ports: &[PortIo], nets: &[Net], dt: f64, t: f64, bb: &mut BlackBox) {
-        for i in &mut self.indicators {
-            let p = &self.panels[i.panel];
-            i.ind.update(&mut i.st, store, p.alive && p.powered, dt as f32, t, &mut self.eval);
+    pub fn after(&mut self, _kind: &ShipKind, _s: &Structure, store: &mut Store, _ports: &[PortIo], nets: &[Net], dt: f64, t: f64, bb: &mut BlackBox, shown: bool) {
+        if shown {
+            for i in &mut self.indicators {
+                let p = &self.panels[i.panel];
+                i.ind.update(&mut i.st, store, p.alive && p.powered, dt as f32, t, &mut self.eval);
+            }
         }
         for c in &mut self.controls {
             let sense = match c.breaker {

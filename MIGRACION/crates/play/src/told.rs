@@ -58,31 +58,119 @@ impl Named {
     }
 }
 
-/// Seen things in one message at most (a loose message fits a datagram).
-pub const SEEN_EACH: usize = 20;
+/// The dice of the `n`-th strike the server did (`Game::struck`): what every game does it with.
+pub fn dice(n: u64) -> u64 {
+    n.wrapping_mul(0x9e37_79b9_7f4a_7c15)
+}
 
-/// Strikes into `w`: the dice they are done with (`seed`, the first; one more each), each
-/// against the structure named (the strike's own id is this game's and does not go), and how
-/// the articulated ones among those were posed here (`poses`: bones, as `Structure::bones`
-/// past the root): every game does them so.
-pub fn write_strikes(w: &mut Writer, seed: u64, strikes: &[(Named, Strike)], poses: &[(Named, &[Affine3A])]) {
+/// How a struck structure's articulations were posed, told against what was told before to the
+/// same game: its bones (past the root, `Structure::bones`), and which of them go (`mask`, bone
+/// `k` at bit `k`; all of them when there are more than 64 or none was told before).
+#[derive(Clone, Copy, Debug)]
+pub struct Posed<'a> {
+    pub named: Named,
+    pub bones: &'a [Affine3A],
+    pub mask: u64,
+    pub all: bool,
+}
+
+/// The first byte of each strike told: a plate torn out (else a hit); its dice one past the
+/// one before; on the structure the one before was on; a round (no reach: its way in 6 bytes,
+/// `as_told`); the energy, and the cross-section, of the hit before.
+const S_BLOW: u8 = 1;
+const S_NEXT: u8 = 1 << 1;
+const S_SAME_ON: u8 = 1 << 2;
+const S_ROUND: u8 = 1 << 3;
+const S_SAME_ENERGY: u8 = 1 << 4;
+const S_SAME_AREA: u8 = 1 << 5;
+const S_ALL: u8 = (1 << 6) - 1;
+
+/// The most bones a pose is told with.
+pub const MOST_BONES: u64 = 1024;
+/// The most strikes in one message.
+pub const MOST_STRIKES: u64 = 4096;
+
+/// A bone as it is, to the bit (what a strike does hangs on where each part is: decomposed and
+/// put together again, it would not be the same in the last bit).
+fn write_bone(w: &mut Writer, b: &Affine3A) {
+    b.to_cols_array().iter().for_each(|v| w.f32(*v));
+}
+
+fn read_bone(r: &mut Reader) -> Result<Affine3A, WireError> {
+    let mut c = [0.0f32; 12];
+    for v in &mut c {
+        *v = r.f32()?;
+        if !v.is_finite() {
+            return Err(WireError::Value);
+        }
+    }
+    Ok(Affine3A::from_cols_array(&c))
+}
+
+/// Bytes `write_strikes` takes at most for `strikes` strikes and poses of `bones` bones in all.
+pub fn strikes_room(strikes: usize, poses: usize, bones: usize) -> usize {
+    16 + strikes * 64 + poses * 32 + bones * 48
+}
+
+/// Strikes into `w`: each with the number of its dice (`dice`; one after another, told as what
+/// each adds to the one before), against the structure named (the strike's own id is this game's
+/// and does not go); then how the articulated ones among those were posed, what changed of each
+/// since this game was told (`Posed`): every game does them so.
+pub fn write_strikes(w: &mut Writer, strikes: &[(u64, Named, Strike)], poses: &[Posed]) {
     w.u8(STRIKES);
-    w.var(seed);
     w.var(strikes.len() as u64);
-    for (named, s) in strikes {
-        match *s {
+    let (mut last, mut on, mut energy, mut area) = (0u64, u64::MAX, None, None);
+    for &(n, named, s) in strikes {
+        let code = named.code();
+        let mut head = match s {
             Strike::Hit { hit, .. } => {
-                w.u8(0);
-                w.var(named.code());
+                let mut h = 0;
+                if hit.radius == 0.0 {
+                    h |= S_ROUND;
+                }
+                if energy == Some(hit.energy.to_bits()) {
+                    h |= S_SAME_ENERGY;
+                }
+                if area == Some(hit.area.to_bits()) {
+                    h |= S_SAME_AREA;
+                }
+                h
+            }
+            Strike::Blow { .. } => S_BLOW,
+        };
+        if n == last.wrapping_add(1) {
+            head |= S_NEXT;
+        }
+        if code == on {
+            head |= S_SAME_ON;
+        }
+        w.u8(head);
+        if head & S_NEXT == 0 {
+            w.var(n.wrapping_sub(last));
+        }
+        if head & S_SAME_ON == 0 {
+            w.var(code);
+        }
+        (last, on) = (n, code);
+        match s {
+            Strike::Hit { hit, .. } => {
                 w.vec3(hit.point);
-                w.vec3(hit.dir);
-                w.f32(hit.energy);
-                w.f32(hit.radius);
-                w.f32(hit.area);
+                if head & S_ROUND != 0 {
+                    write_unit(w, hit.dir);
+                } else {
+                    w.vec3(hit.dir);
+                    w.f32(hit.radius);
+                }
+                if head & S_SAME_ENERGY == 0 {
+                    w.f32(hit.energy);
+                    energy = Some(hit.energy.to_bits());
+                }
+                if head & S_SAME_AREA == 0 {
+                    w.f32(hit.area);
+                    area = Some(hit.area.to_bits());
+                }
             }
             Strike::Blow { part, push, energy, .. } => {
-                w.u8(1);
-                w.var(named.code());
                 w.var(u64::from(part));
                 w.vec3(push);
                 w.f32(energy);
@@ -90,37 +178,58 @@ pub fn write_strikes(w: &mut Writer, seed: u64, strikes: &[(Named, Strike)], pos
         }
     }
     w.var(poses.len() as u64);
-    for (named, bones) in poses {
-        w.var(named.code());
-        w.var(bones.len() as u64);
-        for b in *bones {
-            let (_, rot, at) = b.to_scale_rotation_translation();
-            w.vec3(at);
-            w.f32(rot.x);
-            w.f32(rot.y);
-            w.f32(rot.z);
-            w.f32(rot.w);
+    for p in poses {
+        w.var(p.named.code());
+        w.var(p.bones.len() as u64);
+        if p.all || p.bones.len() > 64 {
+            w.u8(1);
+            p.bones.iter().for_each(|b| write_bone(w, b));
+        } else {
+            w.u8(0);
+            w.var(p.mask);
+            for (k, b) in p.bones.iter().enumerate() {
+                if p.mask & (1 << k) != 0 {
+                    write_bone(w, b);
+                }
+            }
         }
     }
 }
 
-/// What `write_strikes` wrote, after its kind byte: the first seed, each strike with the
-/// structure it names (its id left 0, for whoever finds it), and the poses.
-pub fn read_strikes(r: &mut Reader, out: &mut Vec<(Named, Strike)>, poses: &mut Vec<(Named, Vec<Affine3A>)>) -> Result<u64, WireError> {
-    let seed = r.var()?;
+/// What `write_strikes` wrote, after its kind byte: each strike with the number of its dice and
+/// the structure it names (its id left 0, for whoever finds it); and each pose told, as the
+/// structure named, how many bones it has, which go (all: every bit) and those (in order).
+#[allow(clippy::type_complexity)]
+pub fn read_strikes(r: &mut Reader, out: &mut Vec<(u64, Named, Strike)>, poses: &mut Vec<(Named, usize, u64, Vec<Affine3A>)>) -> Result<(), WireError> {
     let n = r.var()?;
-    if n > 4096 {
+    if n > MOST_STRIKES {
         return Err(WireError::Long);
     }
+    let (mut last, mut on, mut energy, mut area) = (0u64, None, None, None);
     for _ in 0..n {
-        let tag = r.u8()?;
-        let named = Named::of(r.var()?);
-        let s = match tag {
-            0 => Strike::Hit { id: 0, hit: Hit { point: r.vec3()?, dir: r.vec3()?, energy: r.f32()?, radius: r.f32()?, area: r.f32()? } },
-            1 => Strike::Blow { id: 0, part: r.var32()?, push: r.vec3()?, energy: r.f32()? },
-            _ => return Err(WireError::Value),
+        let head = r.u8()?;
+        if head & !S_ALL != 0 {
+            return Err(WireError::Value);
+        }
+        last = last.wrapping_add(if head & S_NEXT != 0 { 1 } else { r.var()? });
+        if head & S_SAME_ON == 0 {
+            on = Some(Named::of(r.var()?));
+        }
+        let named = on.ok_or(WireError::Value)?;
+        let s = if head & S_BLOW != 0 {
+            Strike::Blow { id: 0, part: r.var32()?, push: r.vec3()?, energy: r.f32()? }
+        } else {
+            let point = r.vec3()?;
+            let (dir, radius) = if head & S_ROUND != 0 { (read_unit(r)?, 0.0) } else { (r.vec3()?, r.f32()?) };
+            if head & S_SAME_ENERGY == 0 {
+                energy = Some(r.f32()?);
+            }
+            if head & S_SAME_AREA == 0 {
+                area = Some(r.f32()?);
+            }
+            Strike::Hit { id: 0, hit: Hit { point, dir, energy: energy.ok_or(WireError::Value)?, radius, area: area.ok_or(WireError::Value)? } }
         };
-        out.push((named, s));
+        out.push((last, named, s));
     }
     let n = r.var()?;
     if n > 256 {
@@ -129,18 +238,23 @@ pub fn read_strikes(r: &mut Reader, out: &mut Vec<(Named, Strike)>, poses: &mut 
     for _ in 0..n {
         let named = Named::of(r.var()?);
         let k = r.var()?;
-        if k > 1024 {
+        if k > MOST_BONES {
             return Err(WireError::Long);
         }
-        let mut bones = Vec::with_capacity(k as usize);
-        for _ in 0..k {
-            let at = r.vec3()?;
-            let rot = Quat::from_xyzw(r.f32()?, r.f32()?, r.f32()?, r.f32()?).normalize();
-            bones.push(Affine3A::from_rotation_translation(rot, at));
+        let mask = match r.u8()? {
+            1 => u64::MAX,
+            0 if k <= 64 => r.var()?,
+            _ => return Err(WireError::Value),
+        };
+        let mut bones = Vec::new();
+        for b in 0..k {
+            if mask == u64::MAX || mask & (1 << b) != 0 {
+                bones.push(read_bone(r)?);
+            }
         }
-        poses.push((named, bones));
+        poses.push((named, k as usize, mask, bones));
     }
-    Ok(seed)
+    Ok(())
 }
 
 /// A structure's frame as a game has it at a moment: where it is, how it is turned, how it
@@ -202,73 +316,246 @@ fn what_of(c: u8, i: u16) -> Result<What, WireError> {
     })
 }
 
+/// The first byte of each thing seen: its kind (0 launch, 1 end, 2 where a guided one is) in its
+/// two low bits, and these, each saying what is left out as the same as in the thing before it
+/// in the message, or as nothing.
+const SAME_FRAME: u8 = 1 << 2;
+/// Its number, one past the one before (else the difference).
+const NEXT_TAG: u8 = 1 << 3;
+const SAME_WHAT: u8 = 1 << 4;
+/// Going with its frame there (slower than `STILL_UNDER` beside it).
+const STILL: u8 = 1 << 5;
+/// What let it fly (a launch) or what it struck (an end) is the structure it is told beside.
+const BY_FRAME: u8 = 1 << 6;
+/// A launch with no target; an end with nothing more in its blast.
+const PLAIN: u8 = 1 << 7;
+/// Slower than this (m/s) beside its frame, a thing seen goes with it (it is only seen).
+const STILL_UNDER: f32 = 0.01;
+/// The most one thing seen takes (bytes: everything told, in the world's own places).
+const SEEN_ONE_MOST: usize = 112;
+/// Things seen in one message at most (told whole, the smallest take 19 bytes).
+pub const SEEN_MOST: usize = 128;
+
+/// What each thing seen in a message is told against: the one before it.
+#[derive(Clone, Copy)]
+struct Prev {
+    code: u64,
+    tag: u32,
+    what: Option<What>,
+}
+
+impl Prev {
+    const NONE: Prev = Prev { code: u64::MAX, tag: 0, what: None };
+}
+
+/// The steps of each side of a unit way told in 24 bits.
+const UNIT_SIDE: f64 = ((1u32 << 24) - 1) as f64;
+
+/// A unit way as two 24-bit numbers (octahedral: what they give back is off by less than
+/// 3e-7 rad).
+fn unit_code(d: Vec3) -> [u32; 2] {
+    let d = d.as_dvec3();
+    let l1 = d.x.abs() + d.y.abs() + d.z.abs();
+    let (mut x, mut y) = if l1 > 0.0 { (d.x / l1, d.y / l1) } else { (0.0, 0.0) };
+    if d.z < 0.0 {
+        let sx = if x >= 0.0 { 1.0 } else { -1.0 };
+        let sy = if y >= 0.0 { 1.0 } else { -1.0 };
+        (x, y) = ((1.0 - y.abs()) * sx, (1.0 - x.abs()) * sy);
+    }
+    [x, y].map(|v| ((v.clamp(-1.0, 1.0) * 0.5 + 0.5) * UNIT_SIDE).round() as u32)
+}
+
+/// The unit way two 24-bit numbers give (`unit_code`): the same, to the bit, in every game.
+fn unit_of(code: [u32; 2]) -> Vec3 {
+    let [mut x, mut y] = code.map(|q| f64::from(q.min((1 << 24) - 1)) / UNIT_SIDE * 2.0 - 1.0);
+    let z = 1.0 - x.abs() - y.abs();
+    if z < 0.0 {
+        let sx = if x >= 0.0 { 1.0 } else { -1.0 };
+        let sy = if y >= 0.0 { 1.0 } else { -1.0 };
+        (x, y) = ((1.0 - y.abs()) * sx, (1.0 - x.abs()) * sy);
+    }
+    DVec3::new(x, y, z).normalize_or(DVec3::Z).as_vec3()
+}
+
+/// A unit way in 6 bytes (`unit_code`).
+fn write_unit(w: &mut Writer, d: Vec3) {
+    for q in unit_code(d) {
+        w.bytes(&q.to_le_bytes()[..3]);
+    }
+}
+
+fn read_unit(r: &mut Reader) -> Result<Vec3, WireError> {
+    let mut code = [0u32; 2];
+    for q in &mut code {
+        let b = r.bytes(3)?;
+        *q = u32::from_le_bytes([b[0], b[1], b[2], 0]);
+    }
+    Ok(unit_of(code))
+}
+
+/// A strike as every game does it: a round's way as it is told (6 bytes, `unit_code`); the
+/// server does it so as well (`Game::strike`), so all do the same to the bit.
+pub fn as_told(s: Strike) -> Strike {
+    match s {
+        Strike::Hit { id, mut hit } if hit.radius == 0.0 => {
+            hit.dir = unit_of(unit_code(hit.dir));
+            Strike::Hit { id, hit }
+        }
+        s => s,
+    }
+}
+
+/// One thing seen into `w`, told against the one before it (`prev`, then this one).
+fn write_seen_one(w: &mut Writer, prev: &mut Prev, from: &From, s: &Seen, name: &impl Fn(u64) -> Option<Named>) {
+    let code = |n: Option<Named>| n.map_or(0, |n| n.code() + 1);
+    let (here, frame) = match *from {
+        From::World => (0, None),
+        From::Beside { named, frame } => (named.code() + 1, Some(frame)),
+    };
+    let (kind, tag, what, at, vel, by, plain) = match *s {
+        Seen::Launch { tag, launch: l } => (0u8, tag, Some(l.what), l.from, l.vel, code(l.by.and_then(name)), code(l.target.and_then(name)) == 0),
+        Seen::End { tag, what, at, vel, on, extra, .. } => (1, tag, Some(what), at, vel, code(on.and_then(name)), extra == 0.0),
+        Seen::Track { tag, pos, vel, .. } => (2, tag, None, pos, vel, 0, false),
+    };
+    // (ways turned with the frame; speeds as what they add to its own there)
+    let turned = |d: DVec3| frame.map_or(d.as_vec3(), |f| f.rot.inverse() * d.as_vec3());
+    let rel = frame.map_or(vel.as_vec3(), |f| f.rot.inverse() * (vel - f.moving(at)).as_vec3());
+    let mut head = kind;
+    if here == prev.code {
+        head |= SAME_FRAME;
+    }
+    if tag == prev.tag.wrapping_add(1) {
+        head |= NEXT_TAG;
+    }
+    if what.is_some() && what == prev.what {
+        head |= SAME_WHAT;
+    }
+    if rel.length_squared() < STILL_UNDER * STILL_UNDER {
+        head |= STILL;
+    }
+    if kind != 2 && by == here {
+        head |= BY_FRAME;
+    }
+    if kind != 2 && plain {
+        head |= PLAIN;
+    }
+    w.u8(head);
+    if head & SAME_FRAME == 0 {
+        w.var(here);
+    }
+    if head & NEXT_TAG == 0 {
+        w.zig(i64::from(tag) - i64::from(prev.tag));
+    }
+    if let Some(x) = what
+        && head & SAME_WHAT == 0
+    {
+        let (c, i) = what_code(x);
+        w.u8(c);
+        w.u16(i);
+    }
+    match frame {
+        Some(f) => w.vec3(f.local(at)),
+        None => {
+            w.f64(at.x);
+            w.f64(at.y);
+            w.f64(at.z);
+        }
+    }
+    match *s {
+        Seen::Launch { launch: l, .. } => {
+            write_unit(w, turned(l.dir));
+            w.f32(l.speed);
+        }
+        Seen::End { dir, .. } => write_unit(w, turned(dir)),
+        Seen::Track { .. } => {}
+    }
+    if head & STILL == 0 {
+        w.vec3(rel);
+    }
+    match *s {
+        Seen::Launch { launch: l, .. } => {
+            if head & PLAIN == 0 {
+                w.var(code(l.target.and_then(name)));
+            }
+            if head & BY_FRAME == 0 {
+                w.var(by);
+            }
+        }
+        Seen::End { extra, .. } => {
+            if head & BY_FRAME == 0 {
+                w.var(by);
+            }
+            if head & PLAIN == 0 {
+                w.f32(extra);
+            }
+        }
+        Seen::Track { push, .. } => w.vec3(turned(push)),
+    }
+    prev.code = here;
+    prev.tag = tag;
+    if what.is_some() {
+        prev.what = what;
+    }
+}
+
 /// Things seen (`Seen`) into `w`, each told from where it says (`From`), at `stamp` (the
 /// server's clock). `name(id)`: how every game names one of our structures (a target, what
 /// let it fly, what it struck), if they all have it. Places beside a structure go as offsets in
-/// its frame, ways turned with it, speeds as what they add to its own there.
+/// its frame, ways turned with it, speeds as what they add to its own there; each one against
+/// the one before it (what is the same is left out: sorted by frame, most of it is).
 pub fn write_seen(w: &mut Writer, stamp: f64, seen: &[(From, Seen)], name: impl Fn(u64) -> Option<Named>) {
     w.u8(SEEN);
     w.f64(stamp);
     w.var(seen.len() as u64);
-    let code = |n: Option<Named>| n.map_or(0, |n| n.code() + 1);
+    let mut prev = Prev::NONE;
     for (from, s) in seen {
-        let frame = match from {
-            From::World => {
-                w.var(0);
-                None
-            }
-            From::Beside { named, frame } => {
-                w.var(named.code() + 1);
-                Some(*frame)
-            }
-        };
-        let place = |w: &mut Writer, p: DVec3| match frame {
-            Some(f) => w.vec3(f.local(p)),
-            None => {
-                w.f64(p.x);
-                w.f64(p.y);
-                w.f64(p.z);
-            }
-        };
-        let way = |w: &mut Writer, d: DVec3| w.vec3(frame.map_or(d.as_vec3(), |f| f.rot.inverse() * d.as_vec3()));
-        // (a way with a length: turned with the frame, kept as long)
-        let way_long = |w: &mut Writer, d: DVec3| w.vec3(frame.map_or(d.as_vec3(), |f| f.rot.inverse() * d.as_vec3()));
-        let speed = |w: &mut Writer, v: DVec3, at: DVec3| w.vec3(frame.map_or(v.as_vec3(), |f| f.rot.inverse() * (v - f.moving(at)).as_vec3()));
-        let what = |w: &mut Writer, x: What| {
-            let (c, i) = what_code(x);
-            w.u8(c);
-            w.u16(i);
-        };
-        match *s {
-            Seen::Launch { tag, launch: l } => {
-                w.u8(0);
-                w.var(u64::from(tag));
-                what(w, l.what);
-                place(w, l.from);
-                way(w, l.dir);
-                w.f32(l.speed);
-                speed(w, l.vel, l.from);
-                w.var(code(l.target.and_then(&name)));
-                w.var(code(l.by.and_then(&name)));
-            }
-            Seen::End { tag, what: x, at, dir, vel, on, extra } => {
-                w.u8(1);
-                w.var(u64::from(tag));
-                what(w, x);
-                place(w, at);
-                way(w, dir);
-                speed(w, vel, at);
-                w.var(code(on.and_then(&name)));
-                w.f32(extra);
-            }
-            Seen::Track { tag, pos, vel, push } => {
-                w.u8(2);
-                w.var(u64::from(tag));
-                place(w, pos);
-                speed(w, vel, pos);
-                way_long(w, push);
-            }
+        write_seen_one(w, &mut prev, from, s, &name);
+    }
+}
+
+/// Things seen told as `write_seen` does, in as many messages as it takes, none longer than
+/// `budget` bytes (nor with more than `SEEN_MOST` things): each one whole into `send`. `body`
+/// and `msg` are reused.
+pub fn write_seen_split<'a>(stamp: f64, seen: impl IntoIterator<Item = &'a (From, Seen)>, name: impl Fn(u64) -> Option<Named>, budget: usize, body: &mut Vec<u8>, msg: &mut Vec<u8>, mut send: impl FnMut(&[u8])) {
+    let mut seal = |n: usize, body: &mut Vec<u8>, msg: &mut Vec<u8>| {
+        msg.clear();
+        msg.resize(body.len() + 16, 0);
+        let mut w = Writer::new(msg);
+        w.u8(SEEN);
+        w.f64(stamp);
+        w.var(n as u64);
+        w.bytes(body);
+        let k = w.finish().unwrap_or(0);
+        msg.truncate(k);
+        send(msg);
+        body.clear();
+    };
+    body.clear();
+    let (mut prev, mut n) = (Prev::NONE, 0usize);
+    let mut one = [0u8; SEEN_ONE_MOST];
+    for (from, s) in seen {
+        let mut p = prev;
+        let mut w = Writer::new(&mut one);
+        write_seen_one(&mut w, &mut p, from, s, &name);
+        let mut len = w.finish().unwrap_or(0);
+        if len == 0 {
+            continue;
         }
+        if n > 0 && (11 + body.len() + len > budget || n == SEEN_MOST) {
+            seal(n, body, msg);
+            n = 0;
+            // (the first of a message is told whole)
+            p = Prev::NONE;
+            let mut w = Writer::new(&mut one);
+            write_seen_one(&mut w, &mut p, from, s, &name);
+            len = w.finish().unwrap_or(0);
+        }
+        body.extend_from_slice(&one[..len]);
+        prev = p;
+        n += 1;
+    }
+    if n > 0 {
+        seal(n, body, msg);
     }
 }
 
@@ -281,70 +568,75 @@ pub fn read_seen(r: &mut Reader, now: f64, find: impl Fn(Named) -> Option<(u64, 
     let stamp = r.f64()?;
     let age = (now - stamp).clamp(0.0, 10.0);
     let n = r.var()?;
-    if n > SEEN_EACH as u64 * 4 {
+    if n > SEEN_MOST as u64 {
         return Err(WireError::Long);
     }
     let id = |c: u64| if c == 0 { None } else { find(Named::of(c - 1)).map(|f| f.0) };
+    let mut prev = Prev::NONE;
+    // (the frame told, as found here: its number and how it is now; and whether it is here)
+    let (mut here, mut found, mut shown): (Option<u64>, Option<Frame>, bool) = (None, None, true);
     for _ in 0..n {
-        let code = r.var()?;
-        // (beside a structure this game does not have: read, and left)
-        let (frame, shown) = match code {
-            0 => (None, true),
-            c => match find(Named::of(c - 1)) {
-                Some((_, f)) => (Some(f), true),
-                None => (Some(Frame { pos: DVec3::ZERO, rot: Quat::IDENTITY, vel: DVec3::ZERO, spin: Vec3::ZERO }), false),
-            },
-        };
-        let kind = r.u8()?;
+        let head = r.u8()?;
+        let kind = head & 3;
+        if kind > 2 {
+            return Err(WireError::Value);
+        }
+        if head & SAME_FRAME == 0 {
+            prev.code = r.var()?;
+            // (beside a structure this game does not have: read, and left)
+            (here, found, shown) = match prev.code {
+                0 => (None, None, true),
+                c => match find(Named::of(c - 1)) {
+                    Some((k, f)) => (Some(k), Some(f), true),
+                    None => (None, Some(Frame { pos: DVec3::ZERO, rot: Quat::IDENTITY, vel: DVec3::ZERO, spin: Vec3::ZERO }), false),
+                },
+            };
+        } else if prev.code == u64::MAX {
+            return Err(WireError::Value);
+        }
+        prev.tag = if head & NEXT_TAG != 0 { prev.tag.wrapping_add(1) } else { i64::from(prev.tag).wrapping_add(r.zig()?) as u32 };
+        if kind != 2 {
+            if head & SAME_WHAT == 0 {
+                let c = r.u8()?;
+                prev.what = Some(what_of(c, r.u16()?)?);
+            } else if prev.what.is_none() {
+                return Err(WireError::Value);
+            }
+        }
+        let (tag, what) = (prev.tag, prev.what.unwrap_or(What::Shot(0)));
         // (what was let fly, where it was then; where something ended, where that is now)
-        let frame = frame.map(|f| if kind == 1 { f } else { f.before(age) });
-        let place = |r: &mut Reader| -> Result<DVec3, WireError> {
-            Ok(match frame {
-                Some(f) => f.world(r.vec3()?),
-                None => DVec3::new(r.f64()?, r.f64()?, r.f64()?),
-            })
+        let frame = found.map(|f| if kind == 1 { f } else { f.before(age) });
+        let at = match frame {
+            Some(f) => f.world(r.vec3()?),
+            None => DVec3::new(r.f64()?, r.f64()?, r.f64()?),
         };
-        let way = |r: &mut Reader| -> Result<DVec3, WireError> {
-            let d = r.vec3()?;
-            Ok(frame.map_or(d, |f| f.rot * d).as_dvec3().normalize_or(DVec3::Z))
-        };
-        let speed = |r: &mut Reader, at: DVec3| -> Result<DVec3, WireError> {
-            let v = r.vec3()?;
+        let turned = |d: Vec3| frame.map_or(d, |f| f.rot * d).as_dvec3();
+        let way = |r: &mut Reader| -> Result<DVec3, WireError> { Ok(turned(read_unit(r)?).normalize_or(DVec3::Z)) };
+        let speed = |r: &mut Reader| -> Result<DVec3, WireError> {
+            let v = if head & STILL != 0 { Vec3::ZERO } else { r.vec3()? };
             Ok(frame.map_or(v.as_dvec3(), |f| f.moving(at) + (f.rot * v).as_dvec3()))
-        };
-        let what = |r: &mut Reader| -> Result<What, WireError> {
-            let c = r.u8()?;
-            what_of(c, r.u16()?)
         };
         let s = match kind {
             0 => {
-                let tag = r.var()? as u32;
-                let what = what(r)?;
-                let from = place(r)?;
                 let dir = way(r)?;
                 let speed_own = r.f32()?;
-                let vel = speed(r, from)?;
-                let target = id(r.var()?);
-                let by = id(r.var()?);
-                Seen::Launch { tag, launch: Launch { what, from, dir, speed: speed_own, vel, target, by } }
+                let vel = speed(r)?;
+                let target = if head & PLAIN != 0 { None } else { id(r.var()?) };
+                let by = if head & BY_FRAME != 0 { here } else { id(r.var()?) };
+                Seen::Launch { tag, launch: Launch { what, from: at, dir, speed: speed_own, vel, target, by } }
             }
             1 => {
-                let tag = r.var()? as u32;
-                let what = what(r)?;
-                let at = place(r)?;
                 let dir = way(r)?;
-                let vel = speed(r, at)?;
-                let on = id(r.var()?);
-                Seen::End { tag, what, at, dir, vel, on, extra: r.f32()? }
+                let vel = speed(r)?;
+                let on = if head & BY_FRAME != 0 { here } else { id(r.var()?) };
+                let extra = if head & PLAIN != 0 { 0.0 } else { r.f32()? };
+                Seen::End { tag, what, at, dir, vel, on, extra }
             }
-            2 => {
-                let tag = r.var()? as u32;
-                let pos = place(r)?;
-                let vel = speed(r, pos)?;
-                let push = r.vec3()?;
-                Seen::Track { tag, pos, vel, push: frame.map_or(push, |f| f.rot * push).as_dvec3() }
+            _ => {
+                let vel = speed(r)?;
+                let push = turned(r.vec3()?);
+                Seen::Track { tag, pos: at, vel, push }
             }
-            _ => return Err(WireError::Value),
         };
         if shown {
             out.push((s, age as f32));
@@ -417,22 +709,45 @@ mod tests {
     #[test]
     fn strikes_go_and_come_back_as_they_were() {
         let hit = Hit { point: Vec3::new(1.5, -2.0, 7.25), dir: Vec3::new(0.0, 0.6, -0.8), energy: 4.2e5, radius: 3.0, area: 0.002 };
-        let strikes = vec![(Named::Ship(3), Strike::Hit { id: 99, hit }), (Named::Built(12), Strike::Blow { id: 5, part: 41, push: Vec3::new(0.0, 0.0, 1.0), energy: 2e4 })];
-        // (the ship's dish turned and its ramp down, where the strikes were decided)
+        // (a round: no reach, its way told short, and done so in the server too)
+        let round = Hit { point: Vec3::new(-0.3, 1.1, 2.0), dir: Vec3::new(0.48, -0.6, 0.64), radius: 0.0, energy: 5.5e4, area: 3e-4 };
+        let strikes = vec![
+            (41, Named::Ship(3), Strike::Hit { id: 99, hit }),
+            (42, Named::Ship(3), Strike::Hit { id: 99, hit }),
+            (45, Named::Built(12), Strike::Blow { id: 5, part: 41, push: Vec3::new(0.0, 0.0, 1.0), energy: 2e4 }),
+            (46, Named::Built(12), Strike::Hit { id: 5, hit: round }),
+            (47, Named::Built(12), Strike::Hit { id: 5, hit: Hit { point: Vec3::new(0.2, 1.0, 2.1), ..round } }),
+        ];
+        // (the ship's dish turned and its ramp down, where the strikes were decided: told whole
+        // the first time, and then only the bone that moved)
         let bones = [Affine3A::from_rotation_translation(Quat::from_rotation_y(0.7), Vec3::new(0.0, 2.0, -1.0)), Affine3A::from_rotation_translation(Quat::from_rotation_x(-1.2), Vec3::new(0.0, -0.5, -9.0))];
-        let bytes = written(|w| write_strikes(w, 0xdead_beef, &strikes, &[(Named::Ship(3), &bones)]));
+        let first = Posed { named: Named::Ship(3), bones: &bones, mask: u64::MAX, all: true };
+        let bytes = written(|w| write_strikes(w, &strikes, &[first]));
         let mut r = Reader::new(&bytes);
         assert_eq!(r.u8(), Ok(STRIKES));
         let (mut back, mut poses) = (Vec::new(), Vec::new());
-        assert_eq!(read_strikes(&mut r, &mut back, &mut poses), Ok(0xdead_beef));
+        assert_eq!(read_strikes(&mut r, &mut back, &mut poses), Ok(()));
         assert!(r.is_empty());
-        assert_eq!(back[0], (Named::Ship(3), Strike::Hit { id: 0, hit }));
-        assert_eq!(back[1], (Named::Built(12), Strike::Blow { id: 0, part: 41, push: Vec3::Z, energy: 2e4 }));
+        assert_eq!(back[0], (41, Named::Ship(3), Strike::Hit { id: 0, hit }));
+        assert_eq!(back[1].0, 42);
+        assert_eq!(back[2], (45, Named::Built(12), Strike::Blow { id: 0, part: 41, push: Vec3::Z, energy: 2e4 }));
+        for k in 3..5 {
+            let Strike::Hit { hit, .. } = as_told(strikes[k].2) else { unreachable!() };
+            assert_eq!(back[k], (strikes[k].0, Named::Built(12), Strike::Hit { id: 0, hit }));
+            assert!(hit.dir.angle_between(round.dir) < 1e-6 && hit.dir != round.dir);
+        }
         assert_eq!(poses.len(), 1);
-        assert!(poses[0].0 == Named::Ship(3) && poses[0].1.iter().zip(&bones).all(|(a, b)| a.abs_diff_eq(*b, 1e-6)));
-        // (one hit is 39 bytes: a gun hitting 80 times a second is 3 kB/s while it hits; a pose,
-        // 28 bytes a bone, once a message)
-        assert!(written(|w| write_strikes(w, 1, &strikes[..1], &[])).len() <= 42);
+        // (to the bit: what a strike does hangs on it)
+        assert!(poses[0].0 == Named::Ship(3) && poses[0].1 == 2 && poses[0].2 == u64::MAX && poses[0].3 == bones);
+        let moved = Posed { named: Named::Ship(3), bones: &bones, mask: 0b10, all: false };
+        let bytes = written(|w| write_strikes(w, &strikes[..1], &[moved]));
+        let (mut back, mut poses) = (Vec::new(), Vec::new());
+        assert_eq!(read_strikes(&mut Reader::new(&bytes[1..]), &mut back, &mut poses), Ok(()));
+        assert!(poses[0].1 == 2 && poses[0].2 == 0b10 && poses[0].3 == bones[1..]);
+        // (a blast's hit is some 40 bytes; another like it on the same, 29; a round after another
+        // on the same, 19; a bone, 48 bytes, only when it moved)
+        let size = |k: usize| written(|w| write_strikes(w, &strikes[..k], &[])).len();
+        assert!(size(1) <= 44 && size(2) - size(1) <= 29 && size(5) - size(4) <= 19, "{} {} {}", size(1), size(2) - size(1), size(5) - size(4));
         // cut short or with nonsense in it, it says so and never panics
         for cut in 1..bytes.len() {
             let mut r = Reader::new(&bytes[1..cut]);
@@ -502,10 +817,51 @@ mod tests {
         read_seen(&mut Reader::new(&bytes[1..]), 100.0, |n| (n == Named::Ship(5)).then_some((171, other)), &mut out).unwrap();
         assert_eq!(out.len(), 2);
         assert!(matches!(out[0].0, Seen::End { .. }));
-        // a full message of launches fits well inside what may be told at once
-        let many: Vec<(From, Seen)> = (0..SEEN_EACH).map(|_| seen[0]).collect();
-        let full = written(|w| write_seen(w, 1.0, &many, name));
-        assert!(full.len() <= lunar_net::MAX_HINT, "{} bytes", full.len());
+        // a round of a ship's gun beside it, and where one ended on the ship it struck, take
+        // little: what is the same as in the one before is left out
+        let one = |s: &[(From, Seen)]| written(|w| write_seen(w, 1.0, s, name)).len() - 10;
+        assert!(one(&seen[..1]) <= 34, "a launch: {} bytes", one(&seen[..1]));
+        let ends = [seen[1], (seen[1].0, Seen::End { tag: 8, what: What::Shot(2), at: hit + DVec3::X, dir: nose, vel: other.vel, on: Some(71), extra: 0.0 })];
+        assert!(one(&ends) - one(&ends[..1]) <= 20, "an end after another: {} bytes", one(&ends) - one(&ends[..1]));
+        // many, told in as many messages as it takes, none longer than may go in a datagram, and
+        // every one comes back as it was told
+        let many: Vec<(From, Seen)> = (0..300u32)
+            .map(|k| {
+                let mut s = seen[(k % 3) as usize];
+                match &mut s.1 {
+                    Seen::Launch { tag, launch } => {
+                        *tag = 1000 + k;
+                        launch.from += nose * f64::from(k);
+                    }
+                    Seen::End { tag, .. } | Seen::Track { tag, .. } => *tag = 1000 + k,
+                }
+                s
+            })
+            .collect();
+        let (mut body, mut msg, mut told) = (Vec::new(), Vec::new(), Vec::new());
+        write_seen_split(100.0, &many, name, lunar_net::MAX_HINT, &mut body, &mut msg, |m| told.push(m.to_vec()));
+        assert!(told.len() > 1 && told.iter().all(|m| m.len() <= lunar_net::MAX_HINT), "{:?}", told.iter().map(Vec::len).collect::<Vec<_>>());
+        let mut back = Vec::new();
+        let same = |n: Named| match n {
+            Named::Ship(4) => Some((170, ship)),
+            Named::Ship(5) => Some((171, other)),
+            _ => None,
+        };
+        for m in &told {
+            let mut r = Reader::new(m);
+            assert_eq!(r.u8(), Ok(SEEN));
+            read_seen(&mut r, 100.0, same, &mut back).unwrap();
+            assert!(r.is_empty());
+        }
+        assert_eq!(back.len(), many.len());
+        for ((_, a), (b, _)) in many.iter().zip(&back) {
+            match (a, b) {
+                (Seen::Launch { tag: t, launch: x }, Seen::Launch { tag: u, launch: y }) => assert!(t == u && x.from.distance(y.from) < 1e-3 && x.dir.distance(y.dir) < 1e-6 && x.vel.distance(y.vel) < 0.02, "{x:?} {y:?}"),
+                (Seen::End { tag: t, at: x, .. }, Seen::End { tag: u, at: y, .. }) => assert!(t == u && x.distance(*y) < 1e-3),
+                (Seen::Track { tag: t, .. }, Seen::Track { tag: u, .. }) => assert_eq!(t, u),
+                _ => panic!("{a:?} came back as {b:?}"),
+            }
+        }
         for cut in 1..bytes.len() {
             let _ = read_seen(&mut Reader::new(&bytes[1..cut]), 5.0, find, &mut Vec::new());
         }

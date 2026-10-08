@@ -38,7 +38,7 @@ use lunar_ship::{
     sync::{self, Digest, Shadow},
 };
 use rayon::prelude::*;
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 
 /// Steps of each player's commands and bodies kept (a little over 2 s).
 pub const RING: usize = 128;
@@ -98,6 +98,24 @@ const RESYNC_BURST: f32 = 16.0;
 /// Steps in a row a player's command may be guessed as the last one; past them nothing more is
 /// asked of the body (its game is not heard: it does not go on walking, or firing, on its own).
 const GUESS_MOST: u32 = 30;
+/// Controls told before they are done, waiting at most (`Host::pretell`).
+const PRETOLD_MOST: usize = 256;
+/// How long (s) the way a round was let fly counts for whether it comes near a player (it is
+/// seen whole if it passes within `rule.near` of them in that time).
+const SEEN_FLYING: f64 = 6.0;
+
+/// A thing seen this step, for whom it goes to (`Host::seen`): where it is and how fast it
+/// goes, for how long its way counts, whether it is seen from as far as anything is known, and
+/// whose it is (a player's, and their number for it).
+#[derive(Clone, Copy)]
+struct SeenHow {
+    at: glam::DVec3,
+    vel: glam::DVec3,
+    fly: f64,
+    wide: bool,
+    owner: Option<u32>,
+    theirs: u32,
+}
 
 #[derive(Clone, Debug)]
 pub struct HostConfig {
@@ -163,6 +181,11 @@ struct Peer {
     heard: Option<u64>,
     /// The step of the newest digests told them (`Host::checks`).
     checked: u64,
+    /// Bytes sent them (snapshots and events).
+    sent: u64,
+    /// How each articulated structure they were told strikes on was posed as last told (by id):
+    /// a strike's pose goes as what changed of it since.
+    told_poses: Vec<(u64, Vec<glam::Affine3A>)>,
     /// Not in the world yet and catching up with it, alone: the step the body is at.
     behind: Option<u64>,
     last: Cmd,
@@ -229,6 +252,8 @@ impl Peer {
             newest: None,
             heard: None,
             checked: 0,
+            sent: 0,
+            told_poses: Vec::new(),
             behind: None,
             last: Cmd::default(),
             guessing: 0,
@@ -327,6 +352,11 @@ pub struct Host {
     encoded: Vec<u8>,
     made: Vec<(u64, Vec<u8>)>,
     seen: Vec<(told::From, Seen)>,
+    seen_how: Vec<SeenHow>,
+    seen_ends: Vec<usize>,
+    seen_body: Vec<u8>,
+    seen_msg: Vec<u8>,
+    seen_one: Vec<u8>,
     pinned: Vec<Vec<u64>>,
     /// The ships' digests of the newest step some were due (`net::checked`), and that step; room
     /// for what the machines keep, to take them.
@@ -336,9 +366,12 @@ pub struct Host {
     /// What the server's own hands do, when it takes effect: the step, the ship, the control,
     /// the value (`control`).
     hands: Vec<(u64, u64, u16, f64)>,
-    /// What a player let fly by their hand: our number for it, who, theirs, and when (what is
-    /// told of it goes to them by their number: `blasts::OWN`).
-    own: Vec<(u32, u32, u32, u64)>,
+    /// The controls a player's hand set that were told to the others as they came, before they
+    /// were done here (`pretell`): who, the step, the ship, the control.
+    pretold: Vec<(u32, u64, u64, u16)>,
+    /// What a player let fly by their hand, by our number for it: who, theirs, and when (what
+    /// is told of it goes to them by their number: `blasts::OWN`).
+    own: HashMap<u32, (u32, u32, u64)>,
     /// Where every structure is this step, for every player's interest to ask.
     index: Index,
     /// (reused)
@@ -381,12 +414,18 @@ impl Host {
             encoded: Vec::new(),
             made: Vec::new(),
             seen: Vec::new(),
+            seen_how: Vec::new(),
+            seen_ends: Vec::new(),
+            seen_body: Vec::new(),
+            seen_msg: Vec::new(),
+            seen_one: Vec::new(),
             pinned: Vec::new(),
             checks: Vec::new(),
             checks_at: 0,
             nums: Vec::new(),
             hands: Vec::new(),
-            own: Vec::new(),
+            own: HashMap::new(),
+            pretold: Vec::new(),
             index: Index::default(),
             mine: Vec::new(),
             keys: std::hash::RandomState::new(),
@@ -427,6 +466,11 @@ impl Host {
     pub fn bodies_at(&self, step: u64) -> Option<&[BodyAt]> {
         let (at, bodies) = &self.rewind[(step % REWIND as u64) as usize];
         (*at == step).then_some(&bodies[..])
+    }
+
+    /// Bytes sent so far to player `id` (snapshots and events).
+    pub fn sent_to(&self, id: u32) -> u64 {
+        self.peers.iter().find(|p| p.id == id).map_or(0, |p| p.sent)
     }
 
     pub fn player_mut(&mut self, id: u32) -> Option<&mut Player> {
@@ -562,6 +606,8 @@ impl Host {
     /// The bodies nobody came back for in time, gone.
     fn forget(&mut self) {
         let s = self.game.step;
+        // (told before it was done by one who went before it was: nothing more to say of it)
+        self.pretold.retain(|e| e.1 + REWIND as u64 > s);
         let mut k = 0;
         while k < self.peers.len() {
             if self.peers[k].lost.is_some_and(|t| t <= s) {
@@ -604,7 +650,14 @@ impl Host {
                 Ok((step, act)) => {
                     let peer = &mut self.peers[k];
                     if peer.acts.len() < ACTS_MOST {
+                        let early = match act {
+                            Act::Control { ship, control, value } if step > self.game.step => Some((ship, control, value)),
+                            _ => None,
+                        };
                         peer.acts.push_back((step, act));
+                        if let Some((ship, control, value)) = early {
+                            self.pretell(k, step, ship, control, value);
+                        }
                     } else {
                         self.stats.denied += 1;
                         peer.tell(&Event::Denied(TOO_FAST.to_string()));
@@ -888,6 +941,7 @@ impl Host {
                     break;
                 }
                 self.stats.event_bytes += (end - from) as u64;
+                peer.sent += (end - from) as u64;
                 (from, k) = (end, j);
             }
             if k > 0 {
@@ -927,6 +981,25 @@ impl Host {
         true
     }
 
+    /// A control player `k`'s hand sets at their step `at`, told to whoever else knows the ship
+    /// as soon as it comes, to be done at that step (as `control` tells the server's own
+    /// hands): their games, which go ahead of this one, have it the margin they go ahead by
+    /// sooner than if it were told when it is done here. Not done as told after all, what it
+    /// is is told then (`act`).
+    fn pretell(&mut self, k: usize, at: u64, ship: u64, control: u16, value: f64) {
+        let p = &self.players[k].pilot;
+        let near = self.game.builds.set.get(ship).is_some_and(|s| p.ride.is_some_and(|r| r.id == ship) || s.to_world(s.center).distance(p.position) <= f64::from(s.radius) + CONTROL_REACH);
+        if !near || self.pretold.len() >= PRETOLD_MOST {
+            return;
+        }
+        for peer in &mut self.peers {
+            peer.now = at;
+        }
+        self.tell_knowing(ship, &Event::Control { ship, control, value }, Some(k));
+        self.stamp();
+        self.pretold.push((self.peers[k].id, at, ship, control));
+    }
+
     fn tell_knowing(&mut self, id: u64, e: &Event, but: Option<usize>) {
         self.encoded.clear();
         net::append_event(e, &mut self.encoded);
@@ -955,11 +1028,26 @@ impl Host {
         let near = |id: u64, extra: f64| set.get(id).is_some_and(|s| p.pilot.ride.is_some_and(|r| r.id == id) || s.to_world(s.center).distance(eye) <= f64::from(s.radius) + extra);
         match a {
             Act::Control { ship, control, value } => {
-                if !near(ship, CONTROL_REACH) {
-                    return Err(OUT_OF_REACH);
-                }
-                if controls::set(&mut g.ships, &g.builds.set, ship, usize::from(control), value) {
+                let id = self.peers[k].id;
+                let told = match self.pretold.iter().position(|e| *e == (id, at, ship, control)) {
+                    Some(i) => {
+                        self.pretold.swap_remove(i);
+                        true
+                    }
+                    None => false,
+                };
+                let reach = near(ship, CONTROL_REACH);
+                let done = reach && controls::set(&mut g.ships, &g.builds.set, ship, usize::from(control), value);
+                if done && !told {
                     self.tell_knowing(ship, &Event::Control { ship, control, value }, Some(k));
+                } else if told && !done {
+                    // (told as it came and not done as told: what it is, for whoever was told)
+                    if let Some(now) = controls::value(&g.ships, ship, usize::from(control)) {
+                        self.tell_knowing(ship, &Event::Control { ship, control, value: now }, Some(k));
+                    }
+                }
+                if !reach {
+                    return Err(OUT_OF_REACH);
                 }
             }
             Act::Hand { ship, act } => {
@@ -1035,8 +1123,7 @@ impl Host {
                 // (whose it is, and their number for it: theirs flies already in their game)
                 if let Some(&Seen::Launch { tag, .. }) = g.blasts.seen.get(told) {
                     let id = self.peers[k].id;
-                    self.own.retain(|o| o.0 != tag);
-                    self.own.push((tag, id, theirs & !crate::blasts::OWN, g.step));
+                    self.own.insert(tag, (id, theirs & !crate::blasts::OWN, g.step));
                 }
             }
             Act::Mend { structure, part, hp } => {
@@ -1202,32 +1289,83 @@ impl Host {
     }
 
     /// The strikes of the last step, to whoever knows what each struck; what they did taken as told.
+    /// The strikes of the step, to each player in one message: the ones on what they know, and
+    /// how each struck structure with articulations was posed, as what changed of it since they
+    /// were last told (most hits find a ship posed as it was: its pose does not go again).
     fn strikes(&mut self) {
         let strikes = std::mem::take(&mut self.game.out.strikes);
-        for (strike, seed, pose) in &strikes {
-            let id = match strike {
-                Strike::Hit { id, .. } | Strike::Blow { id, .. } => *id,
-            };
-            let mut bytes = vec![0u8; 256 + pose.len() * 32];
+        if strikes.is_empty() {
+            self.game.out.strikes = strikes;
+            return;
+        }
+        let posed = std::mem::take(&mut self.game.out.posed);
+        let mut picked: Vec<(u64, Named, Strike)> = Vec::new();
+        let mut poses: Vec<told::Posed> = Vec::new();
+        for peer in &mut self.peers {
+            if peer.lost.is_some() {
+                continue;
+            }
+            picked.clear();
+            picked.extend(strikes.iter().filter(|(s, _)| peer.interest.knows(s.id())).map(|&(s, n)| (n, Named::Built(s.id()), s)));
+            if picked.is_empty() {
+                continue;
+            }
+            // (each struck structure's pose: the bones that changed since it was told them)
+            poses.clear();
+            let mut bones = 0;
+            for (id, now) in &posed {
+                if !picked.iter().any(|p| p.2.id() == *id) {
+                    continue;
+                }
+                let (mask, all) = match peer.told_poses.binary_search_by_key(id, |p| p.0) {
+                    Ok(i) if peer.told_poses[i].1.len() == now.len() => {
+                        let was = &mut peer.told_poses[i].1;
+                        let mut mask = 0u64;
+                        for (k, (a, b)) in was.iter_mut().zip(now).enumerate() {
+                            if a != b {
+                                *a = *b;
+                                mask |= 1u64.checked_shl(k as u32).unwrap_or(u64::MAX);
+                            }
+                        }
+                        (mask, now.len() > 64 && mask != 0)
+                    }
+                    Ok(i) => {
+                        peer.told_poses[i].1.clone_from(now);
+                        (u64::MAX, true)
+                    }
+                    Err(i) => {
+                        peer.told_poses.insert(i, (*id, now.clone()));
+                        (u64::MAX, true)
+                    }
+                };
+                if mask != 0 {
+                    bones += if all { now.len() } else { mask.count_ones() as usize };
+                    poses.push(told::Posed { named: Named::Built(*id), bones: now, mask, all });
+                }
+            }
+            let mut bytes = vec![0u8; told::strikes_room(picked.len(), poses.len(), bones)];
             let mut w = Writer::new(&mut bytes);
-            let poses: [(Named, &[glam::Affine3A]); 1] = [(Named::Built(id), pose)];
-            told::write_strikes(&mut w, *seed, &[(Named::Built(id), *strike)], if pose.is_empty() { &[] } else { &poses });
+            told::write_strikes(&mut w, &picked, &poses);
             let n = w.finish().unwrap_or(0);
             bytes.truncate(n);
-            self.tell_knowing(id, &Event::Strikes(bytes), None);
+            peer.tell(&Event::Strikes(bytes));
         }
         // (what the strikes did is what every game does: not told again as changes)
         let set = &self.game.builds.set;
-        for (strike, ..) in &strikes {
-            let id = match strike {
-                Strike::Hit { id, .. } | Strike::Blow { id, .. } => *id,
-            };
+        let mut last = None;
+        for (strike, _) in &strikes {
+            let id = strike.id();
+            if last == Some(id) {
+                continue;
+            }
+            last = Some(id);
             if let (Ok(i), Some(s)) = (self.shadows.binary_search_by_key(&id, |sh| sh.0), set.get(id)) {
                 self.shadows[i].1 = s.version;
                 self.shadows[i].2.take(s);
             }
         }
         self.game.out.strikes = strikes;
+        self.game.out.posed = posed;
     }
 
     /// Who knows what now: each player's interest (spread over the threads), and what came and
@@ -1267,6 +1405,12 @@ impl Host {
             }
             let from = peer.came.len();
             peer.interest.update_in(&rule, set, index, p.position, p.velocity_in(set), &pinned[k], dt, &mut peer.came, &mut peer.went);
+            // (what comes anew is told whole: how it is posed too, the next time it is struck)
+            for id in peer.came[from..].iter().chain(&peer.went) {
+                if let Ok(i) = peer.told_poses.binary_search_by_key(id, |p| p.0) {
+                    peer.told_poses.remove(i);
+                }
+            }
             peer.interest.owe(set, p.position, &pinned[k], dt);
             peer.rested.clear();
             peer.interest.rests(set, &mut peer.rested);
@@ -1327,9 +1471,13 @@ impl Host {
         }
     }
 
-    /// What was let fly and where it ended this step, to whoever knows what it is told beside (or
-    /// is near it): beside what let it fly or what it struck, so that it is where it is in every
-    /// game however fast that goes.
+    /// What was let fly and where it ended this step, told beside what let it fly or what it
+    /// struck (so that it is where it is in every game however fast that goes), to whoever may
+    /// see it: what is not a round
+    /// (missiles, guided ones, decoys, blasts) as far as anything is known (`rule.most`); a
+    /// round when it is let fly, flies past or ends within `rule.near` of them; and of the
+    /// rounds farther off, one in `rule.tracers` (a far cannonade, as its tracers). To whoever
+    /// let it fly: where theirs ended and where theirs are, by their number, wherever it is.
     fn seen(&mut self) {
         if self.game.blasts.seen.is_empty() {
             return;
@@ -1345,72 +1493,118 @@ impl Host {
             let from = beside.and_then(|id| set.get(id)).map_or(told::From::World, |st| told::From::Beside { named: Named::Built(st.id), frame: told::Frame { pos: st.pos, rot: st.rot, vel: st.vel, spin: st.spin } });
             self.seen.push((from, s));
         }
-        let stamp = self.game.time();
-        let reach = self.config.rule.most;
-        // (what is a player's own, by our number: who, and theirs)
         let tag_of = |s: &Seen| match *s {
             Seen::Launch { tag, .. } | Seen::End { tag, .. } | Seen::Track { tag, .. } => tag,
         };
-        let encode = |chunk: &[(told::From, Seen)], out: &mut Vec<u8>| {
-            let mut bytes = vec![0u8; 64 + chunk.len() * 96];
-            let mut w = Writer::new(&mut bytes);
-            told::write_seen(&mut w, stamp, chunk, |id| Some(Named::Built(id)));
-            let n = w.finish().unwrap_or(0);
-            bytes.truncate(n);
-            out.clear();
-            net::append_event(&Event::Seen(bytes), out);
+        // (launches first, then where guided ones are, then ends: what a game is told of one
+        // thing comes in the order it happened; each kind by the frame it is told beside, so
+        // that most of each is left out as the same as the one before: `told::write_seen`)
+        let rank = |s: &Seen| match s {
+            Seen::Launch { .. } => 0u8,
+            Seen::Track { .. } => 1,
+            Seen::End { .. } => 2,
         };
-        let mut seen = std::mem::take(&mut self.seen);
-        for chunk in seen.chunks(told::SEEN_EACH) {
-            encode(chunk, &mut self.encoded);
-            // (to whoever is near enough to see any of it)
-            let at = |s: &Seen| match s {
-                Seen::Launch { launch, .. } => launch.from,
-                Seen::End { at, .. } => *at,
-                Seen::Track { pos, .. } => *pos,
+        let code = |f: &told::From| match f {
+            told::From::World => 0,
+            told::From::Beside { named, .. } => named.code() + 1,
+        };
+        self.seen.sort_unstable_by_key(|(f, s)| (rank(s), code(f), tag_of(s)));
+        // (where each one is and how it goes, whether it is seen from afar, and whose it is)
+        let tracers = self.config.rule.tracers.max(1);
+        self.seen_how.clear();
+        for (_, s) in &self.seen {
+            let tag = tag_of(s);
+            let (at, vel, fly, round) = match *s {
+                Seen::Launch { launch: l, .. } => (l.from, l.vel + l.dir * f64::from(l.speed), SEEN_FLYING, matches!(l.what, crate::blasts::What::Shot(_))),
+                Seen::End { at, vel, what, .. } => (at, vel, 0.0, matches!(what, crate::blasts::What::Shot(_))),
+                Seen::Track { pos, vel, .. } => (pos, vel, 0.0, false),
             };
-            let owners = chunk.iter().filter_map(|(_, s)| self.own.iter().find(|o| o.0 == tag_of(s)).map(|o| o.1)).collect::<Vec<u32>>();
-            for k in 0..self.peers.len() {
-                let eye = self.players[k].pilot.position;
-                if !chunk.iter().any(|(_, s)| at(s).distance(eye) < reach) {
-                    continue;
-                }
-                let id = self.peers[k].id;
-                if !owners.contains(&id) {
-                    self.peers[k].tell_bytes(&self.encoded);
-                    continue;
-                }
-                // (theirs, by their number: its start they have; its end and where it is, they are told)
-                self.mine.clear();
-                for &(from, s) in chunk {
-                    let Some(&(_, _, theirs, _)) = self.own.iter().find(|o| o.0 == tag_of(&s) && o.1 == id) else {
-                        self.mine.push((from, s));
-                        continue;
-                    };
-                    let t = theirs | crate::blasts::OWN;
+            let (owner, theirs) = self.own.get(&tag).map_or((None, 0), |o| (Some(o.0), o.1));
+            let tracer = round && tag != 0 && (tag.wrapping_mul(0x9e37_79b9) >> 16) % tracers == 0;
+            self.seen_how.push(SeenHow { at, vel, fly, wide: !round || tracer, owner, theirs });
+        }
+        let stamp = self.game.time();
+        let (most, near) = (self.config.rule.most, self.config.rule.near);
+        let name = |id| Some(Named::Built(id));
+        // (what goes to everyone who is told all of it is written once)
+        let mut all_written = false;
+        self.encoded.clear();
+        self.seen_ends.clear();
+        for k in 0..self.peers.len() {
+            if self.peers[k].lost.is_some() {
+                continue;
+            }
+            let id = self.peers[k].id;
+            let pilot = &self.players[k].pilot;
+            let (eye, eye_vel) = (pilot.position, pilot.velocity_in(set));
+            self.mine.clear();
+            let mut whole = true;
+            for (&(from, s), how) in self.seen.iter().zip(&self.seen_how) {
+                // (theirs, by their number: its start they have; its end and where it is, they
+                // are told)
+                if how.owner == Some(id) {
+                    whole = false;
+                    let tag = how.theirs | crate::blasts::OWN;
                     match s {
                         Seen::Launch { .. } => {}
-                        Seen::End { what, at, dir, vel, on, extra, .. } => self.mine.push((from, Seen::End { tag: t, what, at, dir, vel, on, extra })),
-                        Seen::Track { pos, vel, push, .. } => self.mine.push((from, Seen::Track { tag: t, pos, vel, push })),
+                        Seen::End { what, at, dir, vel, on, extra, .. } => self.mine.push((from, Seen::End { tag, what, at, dir, vel, on, extra })),
+                        Seen::Track { pos, vel, push, .. } => self.mine.push((from, Seen::Track { tag, pos, vel, push })),
                     }
+                    continue;
                 }
-                if !self.mine.is_empty() {
-                    let mut mine = Vec::new();
-                    encode(&self.mine, &mut mine);
-                    self.peers[k].tell_bytes(&mine);
+                let off = how.at - eye;
+                let d2 = off.length_squared();
+                let seen = d2 < most * most
+                    && (how.wide || d2 < near * near || {
+                        // (flying past: as near as it comes while it flies, as they go)
+                        let rel = how.vel - eye_vel;
+                        let t = (-off.dot(rel) / rel.length_squared().max(1e-9)).clamp(0.0, how.fly);
+                        (off + rel * t).length_squared() < near * near
+                    });
+                if seen {
+                    self.mine.push((from, s));
+                } else {
+                    whole = false;
                 }
             }
+            if self.mine.is_empty() {
+                continue;
+            }
+            let (body, msg) = (&mut self.seen_body, &mut self.seen_msg);
+            if whole {
+                if !all_written {
+                    all_written = true;
+                    let (out, ends) = (&mut self.encoded, &mut self.seen_ends);
+                    told::write_seen_split(stamp, &self.seen, name, lunar_net::MAX_HINT, body, msg, |m| {
+                        net::append_seen(m, out);
+                        ends.push(out.len());
+                    });
+                }
+                let mut from = 0;
+                for &end in &self.seen_ends {
+                    self.peers[k].tell_bytes(&self.encoded[from..end]);
+                    from = end;
+                }
+                continue;
+            }
+            let peer = &mut self.peers[k];
+            told::write_seen_split(stamp, &self.mine, name, lunar_net::MAX_HINT, body, msg, |m| {
+                self.seen_one.clear();
+                net::append_seen(m, &mut self.seen_one);
+                peer.tell_bytes(&self.seen_one);
+            });
         }
-        // (what ended is no one's any more; nor what was let fly long ago)
-        let now = self.game.step;
-        for (_, s) in &seen {
+        // (what ended is no one's any more; nor, now and then, what was let fly long ago)
+        for (_, s) in &self.seen {
             if let Seen::End { tag, .. } = s {
-                self.own.retain(|o| o.0 != *tag);
+                self.own.remove(tag);
             }
         }
-        self.own.retain(|o| now < o.3 + (600.0 / STEP) as u64);
-        seen.clear();
-        self.seen = seen;
+        let now = self.game.step;
+        if now % 60 == 0 {
+            self.own.retain(|_, o| now < o.2 + (600.0 / STEP) as u64);
+        }
+        self.seen.clear();
     }
 
     /// What the ships said, to whoever rides each.
@@ -1546,6 +1740,7 @@ impl Host {
                     let i = peer.order[slot];
                     peer.interest.told(i);
                 }
+                peer.sent += peer.quick.len() as u64;
                 peer.quick.len() as u64
             })
             .sum();

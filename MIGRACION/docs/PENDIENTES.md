@@ -752,7 +752,11 @@ silueta lejana, oclusión. Falta:
   una IA, un guion) ya se cuentan por adelantado y se hacen en el mismo paso en todos
   (`net::HAND_LEAD`); para las de los jugadores, lo mismo pediría hacerlas un poco más tarde en el
   servidor (medio segundo). Hoy solo se nota a bordo o a menos de 100 m (`net::CHECK_NEAR`): más
-  lejos los sistemas de una nave no se comparan.
+  lejos los sistemas de una nave no se comparan. **Aligerado (2026-10-08):** el servidor los cuenta
+  en cuanto le llegan, para su paso (`Host::pretell`), no cuando los hace: con 50 ms de ida el
+  otro juego lo tiene 7 pasos tarde en vez de 11 (`a_control_set_by_one_hand…`). Queda el viaje de
+  ida y vuelta de quien mira, que no se quita sin retrasar el mando también en el juego de quien lo
+  mueve; con hasta medio segundo de retraso visto desde fuera basta (2026-10-08).
 - [ ] (2026-10-08) Servidor autoritativo: una nave sin piloto con el estabilizador puesto dispara
   sus RCS a pulsos, y cada copia los dispara un paso antes o después (ve la nave una micra
   distinta): quien va de pie dentro puede recibir alguna corrección de 0,1 a 0,4 mm (invisible).

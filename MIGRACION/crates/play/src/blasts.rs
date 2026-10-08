@@ -168,7 +168,11 @@ pub struct Blasts {
     /// The number the next thing we let fly gets; what other games let fly, by (their player,
     /// their number), with the number it has here and when it came.
     next_tag: u32,
-    foreign: Vec<(u64, u32, f64)>,
+    foreign: std::collections::HashMap<u64, (u32, f64)>,
+    /// (reused) the numbers here of the others' things told ended, to be taken out of flight
+    /// at once (`shown`); and of those flying.
+    ending: Vec<u32>,
+    flying: Vec<u32>,
     /// Until where our guided missiles are is told again (s).
     track_in: f64,
     /// How many things have been let fly or set off here (ours and the others' copies).
@@ -261,7 +265,9 @@ impl Blasts {
             hits: Vec::new(),
             booms: defs.explosions.iter().map(|(id, _)| id.clone()).collect(),
             next_tag: 0,
-            foreign: Vec::new(),
+            foreign: std::collections::HashMap::new(),
+            ending: Vec::new(),
+            flying: Vec::new(),
             track_in: 0.0,
             started: 0,
             ends: 0,
@@ -801,22 +807,21 @@ impl Blasts {
                 }
                 self.next_tag = (self.next_tag + 1) % OWN;
                 let here = self.next_tag.max(1) | FOREIGN;
-                self.foreign.push((key(tag), here, self.time));
+                self.foreign.insert(key(tag), (here, self.time));
                 self.start(&launch, here, age, bodies, builds);
             }
             Seen::End { tag, what, at, dir, vel, on, extra } => {
-                // (still flying here: it ends now, where theirs did)
-                if let Some(here) = self.foreign.iter().position(|f| f.0 == key(tag)).map(|k| self.foreign.swap_remove(k).1) {
-                    self.rounds.list.retain(|r| r.tag != here);
-                    self.guests.list.retain(|m| m.tag != here);
-                    self.guided.list.retain(|m| m.tag != here);
+                // (still flying here: it ends now, where theirs did; out of flight with the others
+                // told with it, `shown`)
+                if let Some((here, _)) = self.foreign.remove(&key(tag)) {
+                    self.ending.push(here);
                 }
                 if age < STALE {
                     self.end(FOREIGN, what, at, dir, vel, on, extra, bodies, builds);
                 }
             }
             Seen::Track { tag, pos, vel, push } => {
-                let Some(here) = self.foreign.iter().find(|f| f.0 == key(tag)).map(|f| f.1) else { return };
+                let Some(&(here, _)) = self.foreign.get(&key(tag)) else { return };
                 if let Some(m) = self.guided.list.iter_mut().find(|m| m.tag == here) {
                     // where theirs is by now, carried on as it goes (what pulls it too)
                     let age = f64::from(age.min(STALE));
@@ -831,6 +836,20 @@ impl Blasts {
                 }
             }
         }
+    }
+
+    /// What was told (`show`) is done: what of the others' ended is taken out of flight here,
+    /// all at once.
+    pub fn shown(&mut self) {
+        if self.ending.is_empty() {
+            return;
+        }
+        let ending = &mut self.ending;
+        ending.sort_unstable();
+        self.rounds.list.retain(|r| ending.binary_search(&r.tag).is_err());
+        self.guests.list.retain(|m| ending.binary_search(&m.tag).is_err());
+        self.guided.list.retain(|m| ending.binary_search(&m.tag).is_err());
+        ending.clear();
     }
 
     /// The aim scattered by `spread` mrad (a cheap gaussian from the shot count).
@@ -1013,10 +1032,12 @@ impl Blasts {
                 }
             }
             if !self.foreign.is_empty() {
-                let mut flying: Vec<u32> = self.rounds.list.iter().map(|r| r.tag).chain(self.guests.list.iter().map(|m| m.tag)).chain(self.guided.list.iter().map(|m| m.tag)).filter(|t| t & FOREIGN != 0).collect();
+                let flying = &mut self.flying;
+                flying.clear();
+                flying.extend(self.rounds.list.iter().map(|r| r.tag).chain(self.guests.list.iter().map(|m| m.tag)).chain(self.guided.list.iter().map(|m| m.tag)).filter(|t| t & FOREIGN != 0));
                 flying.sort_unstable();
                 let t = self.time;
-                self.foreign.retain(|f| t - f.2 < FORGET && flying.binary_search(&f.1).is_ok());
+                self.foreign.retain(|_, f| t - f.1 < FORGET && flying.binary_search(&f.0).is_ok());
             }
         }
     }

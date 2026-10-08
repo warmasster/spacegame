@@ -33,6 +33,13 @@ pub fn set(ships: &mut Ships, set: &Structures, structure: u64, k: usize, value:
     sh.panels.intent(k, &Intent::Set { value }, s, &kind, &sh.store).changed
 }
 
+/// What control `k` of the ship on structure `structure` is at now.
+pub fn value(ships: &Ships, structure: u64, k: usize) -> Option<f64> {
+    let sh = &ships.list[ships.by_structure(structure)?];
+    let c = sh.panels.controls.get(k)?;
+    Some(c.mech.value(&c.st))
+}
+
 /// What a hand did to the ship on structure `structure` that is no control (`Act`).
 pub fn act(ships: &mut Ships, structure: u64, act: Act) {
     let Some(n) = ships.by_structure(structure) else { return };

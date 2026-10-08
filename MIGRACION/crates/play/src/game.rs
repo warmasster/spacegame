@@ -132,9 +132,11 @@ pub struct Out {
     /// its level (0 normal, 1 caution, 2 warning).
     pub said: Vec<(u64, String, String, u8)>,
     /// Said by the server (`Say::Server`): what was done to structures this step, in the order it
-    /// was done, each with its dice and, for what has articulations, how they were posed (bones
-    /// past the root; none: as they are).
-    pub strikes: Vec<(Strike, u64, Vec<Affine3A>)>,
+    /// was done (by structure: `strike`), each with the number of its dice (`told::dice`); and,
+    /// once for each struck structure that has articulations, how they were posed (bones past the
+    /// root) as it was struck.
+    pub strikes: Vec<(Strike, u64)>,
+    pub posed: Vec<(u64, Vec<Affine3A>)>,
     /// What came into being this step (pieces off what was struck, what a ship let go of), by id.
     pub made: Vec<u64>,
     /// Said by the server: the craters dug this step, in the order they were dug.
@@ -166,8 +168,12 @@ pub struct Game {
     pub say: Say,
     /// How many strikes were done here since the start (each one's dice follow from it).
     pub struck: u64,
+    /// (reused) the strikes of a step.
+    strike_list: Vec<Strike>,
     /// What a step works with (reused).
     seen_from: Vec<DVec3>,
+    /// Where this game is seen from (none in a server's: nobody looks at it).
+    eyes: Vec<DVec3>,
     awake_now: Vec<u64>,
     people: Vec<(DVec3, f32)>,
 }
@@ -208,7 +214,9 @@ impl Game {
             out: Out::default(),
             say: Say::Alone,
             struck: 0,
+            strike_list: Vec::new(),
             seen_from: Vec::new(),
+            eyes: Vec::new(),
             awake_now: Vec::new(),
             people: Vec::new(),
         })
@@ -235,6 +243,7 @@ impl Game {
         let dt = STEP;
         self.out.said.clear();
         self.out.strikes.clear();
+        self.out.posed.clear();
         self.out.made.clear();
         self.out.craters.clear();
         // (the ground is the server's: a player's game over one digs nothing of its own)
@@ -281,8 +290,12 @@ impl Game {
             self.awake_now.extend(pilot.ride.map(|r| r.id));
             pilot.body_into(&mut self.people);
         }
+        self.eyes.clear();
+        if self.say != Say::Server {
+            self.eyes.extend_from_slice(&self.seen_from);
+        }
         self.tactics.look(&mut self.ships, &self.builds, &bodies, self.traffic.as_ref(), &mut self.blasts);
-        self.ships.update(dt, &mut self.builds, &bodies, &mut self.blasts.fx, self.sun, &self.seen_from, &self.awake_now, &self.people);
+        self.ships.update(dt, &mut self.builds, &bodies, &mut self.blasts.fx, self.sun, &self.seen_from, &self.awake_now, &self.people, &self.eyes);
         // (a player's game over a server does not fire the ships' weapons: what they fire is told)
         if self.say != Say::Client {
             self.tactics.fire(&mut self.ships, &mut self.builds, &bodies, &mut self.blasts);
@@ -346,20 +359,29 @@ impl Game {
     /// player's game over a server, forgotten (the server's word comes).
     fn strike(&mut self) {
         let mut strikes = std::mem::take(&mut self.out.strikes);
-        let mut list = Vec::new();
+        let mut list = std::mem::take(&mut self.strike_list);
+        list.clear();
         self.builds.take_strikes(&mut list);
         if self.say == Say::Server {
-            for s in list {
-                let id = match s {
-                    Strike::Hit { id, .. } | Strike::Blow { id, .. } => id,
-                };
+            // (by structure, each one's in the order they came: every game does them in this
+            // order, and a game does those on one structure posed as they were at once)
+            list.sort_by_key(Strike::id);
+            for &s in &list {
+                let id = s.id();
                 self.struck += 1;
-                let seed = self.struck.wrapping_mul(0x9e37_79b9_7f4a_7c15);
-                let pose = self.builds.pose_of(id).to_vec();
-                self.builds.strike_done(&s, seed, true, &pose);
-                strikes.push((s, seed, pose));
+                // (as it is posed here now: the pose told is this one, taken once)
+                if self.out.posed.last().is_none_or(|p| p.0 != id) {
+                    let bones = self.builds.pose_of(id);
+                    if !bones.is_empty() {
+                        self.out.posed.push((id, bones.to_vec()));
+                    }
+                }
+                // (a round's way as it is told: every game does it so)
+                self.builds.strike_done(&crate::told::as_told(s), crate::told::dice(self.struck), true, &[]);
+                strikes.push((s, self.struck));
             }
         }
+        self.strike_list = list;
         self.out.strikes = strikes;
     }
 

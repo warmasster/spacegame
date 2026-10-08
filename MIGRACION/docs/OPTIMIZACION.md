@@ -33,15 +33,49 @@ contenedor de 4 núcleos. 90 s de batalla en 98 s de reloj; 28 naves deshechas, 
   (4 núcleos); luego unos 4 ms. CPU de los sistemas de nave en esos 10 s, servidor y cliente
   juntos: máquinas 4,1 s, **paneles (indicadores, luces, pantallas: `panels.after`) 2,6 s**,
   mandos que escriben (`panels.write`) 1,4 s, ordenador de vuelo 1,4 s, uniones 1,2 s, táctico
-  1,0 s, señales derivadas 0,5 s, aire 0,3 s. Lo más barato de quitar: los paneles de una nave
-  que nadie mira (nadie a bordo ni cerca) no tienen por qué refrescar sus indicadores en cada
-  paso. Falta hacerlo.
-- **B. Lo que se manda en el cañoneo.** Al jugador entre las líneas le llegaban hasta unos
-  600 kB/s mientras las cien naves se tiroteaban (los golpes de cada impacto y lo que vuela, a
-  todo el que conoce la nave), 140 kB/s después. Juntar los golpes de un mismo paso por nave, o
-  contar menos de lo que vuela lejos del jugador, está por hacer.
+  1,0 s, señales derivadas 0,5 s, aire 0,3 s.
+  - ~~Los paneles de una nave que nadie mira refrescaban sus indicadores en cada paso.~~
+    (2026-10-08) Los indicadores (luces, agujas, cifras, pantallas) y los dibujos del táctico solo
+    los lee el dibujo: ahora solo se calculan en una partida que alguien mira y para las naves a
+    menos de 60 m de quien mira (`Ship::shown`, `ships::PANELS_SEEN`; un panel se dibuja a 22 m
+    como mucho); el servidor nunca. Los mandos (muelles, pulsos, disyuntores) siguen igual.
+    Medido en los 10 primeros segundos de la batalla (servidor y dos clientes, nadie a menos de
+    1 km de una nave): `panels.after` de 2,95 s a 0,32 s de CPU, el táctico de 1,14 s a 0,77 s.
+  - Queda: las máquinas (4,1 s), los mandos que escriben su señal (`panels.write`, 1,4 s: cada
+    mando en cada paso), el ordenador de vuelo (1,4 s) y las uniones (1,2 s). Además
+    `Ships::update` reserva en cada paso un mapa y unas listas con todas las naves (poca cosa con
+    cien; basura en un camino caliente).
+- ~~**B. Lo que se manda en el cañoneo.**~~ (2026-10-08) Al jugador entre las líneas le llegaban
+  unos 1 100 kB/s en los 10 s del cañoneo (columna kB/s de `a_battle_of_a_hundred_ships`: los
+  golpes de cada impacto y lo que vuela, a todo el que conoce la nave). Ahora 195 kB/s, y a un
+  segundo jugador a 6 km, 44 kB/s; de lo que les llega a los dos, 35 kB/s son instantáneas y el
+  resto sucesos. Mismo resultado (0 peticiones de nave, 1 corrección).
+  - ~~Los golpes, uno a uno y cada uno con la postura entera de la nave.~~ (2026-10-08) Un
+    mensaje por jugador y paso con todos los golpes del paso ordenados por estructura; la tirada
+    es su número (`told::dice`) y la postura va una vez por estructura, solo con los huesos que
+    cambiaron desde la última que se le dijo a ese jugador. Medido en la batalla de cien, en los
+    10 s del cañoneo: de unos 1 100 a 333 kB/s; en la de diez, de 116 a 58 kB/s.
+  - ~~Cada golpe, entero.~~ (2026-10-08) Cada golpe contra el anterior (`told::write_strikes`):
+    la misma estructura, la tirada siguiente, la misma energía y sección se omiten; la dirección
+    de una bala va en 6 bytes y **el servidor la aplica ya así** (`told::as_told`: todas las
+    partidas hacen el mismo golpe, al bit). Una bala tras otra sobre la misma nave, de 40 a 19
+    bytes.
+  - ~~Lo que vuela, entero y a todos.~~ (2026-10-08) Cada cosa vista contra la anterior
+    (`told::write_seen`: una bala de cañón, de unos 52 a 28 bytes; su final, a 19) y a cada uno
+    lo suyo (`Host::seen`): las balas que salen, pasan o acaban a menos de 2 km de él enteras;
+    de las de más lejos, una de cada cuatro (`Rule::tracers`, las trazadoras de un cañoneo
+    lejano); misiles, guiados, señuelos y explosiones siempre. Con las dos cosas, el del medio de
+    333 a 195 kB/s en el cañoneo; el de a 6 km, 44 kB/s. En el cliente, los finales de un
+    mensaje sacan de vuelo lo suyo de una vez (`Blasts::shown`) y los números ajenos van en un
+    mapa (antes, una pasada por todo lo que vuela por cada final).
 - **C. Equilibrio, no rendimiento:** el cañón de 20 mm apenas araña al Azor (5 000 impactos le
   quitan un 1 % de vida): lo que deshace naves son los misiles. Apuntado en `PENDIENTES.md`.
+- **D. Un tic del Azor quemando cuesta casi el doble que en reposo** (2026-10-08). La prueba
+  `masa::a_ship_with_nothing_flowing_is_never_weighed…` pide que cueste menos de 1,5 veces el de
+  reposo más 5 µs. El Azor da 29–33 µs quemando contra 18–19 en reposo, justo en el borde: sola
+  pasa (3 de 3, y también con el código anterior), pero falla cuando otras pruebas cargan la
+  máquina (2 de 2 en la batería entera). Mirar qué encarece su tic quemando (ordenador de vuelo,
+  toberas, escape) antes que aflojar la prueba.
 
 ## V41f (2026-10-08): sesiones selladas
 

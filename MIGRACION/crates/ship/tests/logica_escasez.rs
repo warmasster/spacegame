@@ -357,7 +357,7 @@ fn every_breaker_trips_on_an_overload_says_so_and_is_reset_by_hand_once_cool() {
             let kind_ = r.kind.clone();
             let mut tripped = false;
             for step in 0..6000 {
-                r.ship.panels.after(&kind_, &r.s, &mut r.ship.store, &r.ship.ports, &nets, TICK, r.ship.t + f64::from(step) * TICK, &mut r.ship.blackbox);
+                r.ship.panels.after(&kind_, &r.s, &mut r.ship.store, &r.ship.ports, &nets, TICK, r.ship.t + f64::from(step) * TICK, &mut r.ship.blackbox, true);
                 if r.ship.panels.controls[k].st.has(F_TRIPPED) {
                     tripped = true;
                     break;

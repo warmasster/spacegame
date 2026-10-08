@@ -638,8 +638,10 @@ impl Tactical {
     }
 
     /// One tick: what its owner told (if new), the pilot's buttons, the solution on the track
-    /// chosen, who may fire, what was let fly, what it radiates, and its pictures.
-    pub fn step(&mut self, store: &mut Store, machines: &mut [MachineRt], s: &Structure, t: f64, dt: f64, plots: &mut Plots) {
+    /// chosen, who may fire, what was let fly, what it radiates, and its pictures (`shown`:
+    /// someone may see them; nothing else reads them).
+    #[allow(clippy::too_many_arguments)]
+    pub fn step(&mut self, store: &mut Store, machines: &mut [MachineRt], s: &Structure, t: f64, dt: f64, plots: &mut Plots, shown: bool) {
         self.looking = self.sensors.iter().any(|x| !matches!(x.what, Radio::Jammer) && store.on(x.on));
         let scanned = std::mem::take(&mut self.fresh);
         // what it holds is in its own frame: as the ship turns and speeds up between two sweeps
@@ -820,8 +822,9 @@ impl Tactical {
         store.set(o.ready, f64::from(ready));
         store.set(o.firing, if firing { 1.0 } else { 0.0 });
         store.set(o.decoys, decoys);
-        // ---- its pictures: when it has looked, or ten times a second while aiming ----
-        if scanned || (self.len > 0 && t - self.drawn >= 0.1) || (self.len == 0 && t - self.drawn >= 1.0) {
+        // ---- its pictures: when it has looked, or ten times a second while aiming; and only
+        // if someone may see them (once they may, at once) ----
+        if shown && (scanned || t - self.drawn >= if self.len > 0 { 0.1 } else { 1.0 }) {
             self.drawn = t;
             self.draw(store, plots, group, on_aim, s.rot.inverse() * s.vel.as_vec3());
         }

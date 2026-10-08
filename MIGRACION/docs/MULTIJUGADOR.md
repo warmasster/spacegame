@@ -314,6 +314,25 @@ partidas (medido: 0,000 m).
 Los mensajes vistos se leen **después** de llevar las copias a donde dice su dueño (`receive`
 los guarda y los lee tras `follow`): un final cae sobre el casco ya en su sitio.
 
+**Cómo van escritos** (`told::write_seen`): cada cosa contra la anterior del mismo mensaje. Un
+primer byte con su tipo y lo que se omite por ser igual que en la anterior o nada: el mismo marco,
+el número siguiente, el mismo `what`, quieta en su marco (menos de 1 cm/s respecto a él), lanzada
+por (o acabada en) la estructura de su marco, sin blanco o sin energía de más. Las direcciones van
+en 6 bytes (octaédricas de 24 bits por lado: menos de 3·10⁻⁷ rad). El servidor ordena las del paso
+(lanzamientos, luego guiados, luego finales; cada grupo por marco y número) y las parte en
+mensajes de un datagrama como mucho (`write_seen_split`). Una bala del cañón de una nave sale por
+unos 28 bytes y su final por 19 (antes, unos 52 cada uno).
+
+**A quién** (`Host::seen`, `interest::Rule::tracers`): a cada jugador, lo que no es una bala
+(misiles, guiados, señuelos, explosiones) hasta donde se conoce algo (`rule.most`); una bala si
+sale, pasa o acaba a menos de `rule.near` (2 km) de él (pasa: lo más cerca que llega en sus
+primeros 6 s de vuelo, con las velocidades de los dos); y de las de más lejos, una de cada
+`rule.tracers` (4), la misma para todos (por su número): un cañoneo lejano se ve por sus
+trazadoras. A quien la disparó, su final y dónde va su guiado siempre, con su número. Lo que reciben
+todos entero se escribe una vez. En la partida que lo recibe, los finales de un mensaje sacan de
+vuelo lo suyo de una vez (`Blasts::shown`; antes, una pasada por todas las balas en vuelo por cada
+final).
+
 ### En las demás partidas
 
 - El proyectil vuela igual (su número lleva la marca `FOREIGN`) y **no decide nada**: lo que
@@ -337,9 +356,21 @@ los guarda y los lee tras `follow`): un final cae sobre el casco ya en su sitio.
 - **Con la postura de quien lo decidió.** El daño depende de dónde está cada pieza, y lo
   articulado (una antena que gira, una pata que se recoge, una compuerta) no está en la misma
   postura en todas las partidas en el mismo instante. El golpe viaja con los huesos de lo golpeado
-  tal como estaban donde se decidió (`Structure::bones`, 28 bytes por hueso, una vez por mensaje)
-  y cada partida lo aplica con esa postura y vuelve a la suya (`Structures::posed`). Vale para
-  cualquier estructura articulada, no solo naves.
+  tal como estaban donde se decidió (`Structure::bones`) y cada partida lo aplica con esa postura
+  y vuelve a la suya (`Structures::posed`). Vale para cualquier estructura articulada, no solo
+  naves.
+- **Todos los golpes de un paso, juntos.** El servidor ordena los golpes del paso por estructura
+  (cada una en el orden en que llegaron) y manda a cada jugador un solo mensaje con los que caen
+  sobre lo que conoce (`told::write_strikes`): la tirada de cada uno es su número
+  (`told::dice(n)`, contado como diferencia con el anterior), y la postura va una vez por
+  estructura golpeada, exacta al bit (12 `f32` por hueso) y solo con los huesos que cambiaron
+  desde la última que se le dijo a ese jugador (una máscara; `Peer::told_poses`, que se olvida
+  cuando la estructura sale de su interés). La partida aplica los golpes seguidos sobre una misma
+  estructura poniéndola en esa postura una vez (`Builds::strikes_done`). Cada golpe va contra el
+  anterior: la misma estructura, la tirada siguiente, la misma energía y sección se omiten, y la
+  dirección de una bala va en 6 bytes (octaédrica); para que el golpe sea el mismo al bit en
+  todas, **el servidor lo aplica ya con esa dirección** (`told::as_told`, en `Game::strike`). Una
+  bala tras otra sobre la misma nave: 19 bytes (antes, unos 40 y la postura entera).
 - **Lo que depende de lo que cada partida simula por su cuenta** —si una pieza revienta o no
   según lo que llevaba dentro— lo dice una sola: el dueño de la nave golpeada
   (`Structure::owned`), o, si es del escenario, quien decidió el golpe; y lo cuenta como cualquier
@@ -422,8 +453,19 @@ servidor; a 0,04 mm en lo que lo lleva. Lo que hizo falta para eso (y vale en cu
 manos del servidor (`Host::control`, lo que usará una IA o un guion: se cuenta por adelantado y se
 hace en el mismo paso en todos, `net::HAND_LEAD`). Con cien: 90 s de batalla en 98 s de reloj,
 20 000 impactos, 28 naves deshechas y 464 pedazos; el jugador que mira, 1 corrección, ninguna nave
-pedida entera; el paso del servidor, 7–10 ms de media (10 ms en el cañoneo, peor 31 ms) y hasta
-unos 600 kB/s al jugador en el cañoneo. Lo que cuesta y lo que falta, en
+pedida entera; el paso del servidor, 7–10 ms de media (10 ms en el cañoneo, peor 33 ms). Lo que
+le llega al jugador en el cañoneo, en [`OPTIMIZACION.md`](OPTIMIZACION.md) (V41g, B). Los
+indicadores de los paneles (luces, agujas, pantallas) y los dibujos del táctico solo se calculan
+en una partida que alguien mira y para las naves a menos de 60 m de quien mira (`Ship::shown`;
+se dibujan a 22 m como mucho): el servidor no los calcula nunca. Nada más los lee: los mandos, las
+alarmas y la caja negra van aparte.
+
+**Los mandos que mueve un jugador** se cuentan a los demás en cuanto llegan al servidor, para
+hacerse en su paso (`Host::pretell`, como las manos del servidor), no cuando el servidor los hace:
+cada juego va por delante del servidor, y así les llega ese margen antes. Si al llegar su paso el
+servidor no lo hace (quien lo movió ya no está al alcance), les dice cómo quedó. Medido
+(`a_control_set_by_one_hand…`, 50 ms de ida): el otro juego lo tiene 7 pasos después del paso en
+que se movió (antes, 11); un viaje de ida y vuelta son 6. Lo que cuesta y lo que falta, en
 [`OPTIMIZACION.md`](OPTIMIZACION.md) (V41g).
 
 ## Lo que no hace (todavía)

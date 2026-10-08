@@ -60,6 +60,15 @@ pub enum Strike {
     Blow { id: u64, part: u32, push: glam::Vec3, energy: f32 },
 }
 
+impl Strike {
+    /// The structure it is done to.
+    pub fn id(&self) -> u64 {
+        match *self {
+            Strike::Hit { id, .. } | Strike::Blow { id, .. } => id,
+        }
+    }
+}
+
 impl Builds {
     /// `effects`: the explosion ids that exist (the materials' break effects must be among them).
     pub fn new(lib: Arc<Library>, scenario: &ScenarioDef, site: &Site, bodies: &BodyRegistry, effects: &[&str]) -> Result<Builds, String> {
@@ -123,6 +132,24 @@ impl Builds {
     /// `ours`: it was decided here (what it sets off round the struck structure is ours to say).
     /// `pose`: how the struck structure's articulations were where it was decided (none: as
     /// they are here).
+    /// Strikes `strikes` (each with its dice), all on structure `id`, done one after another with
+    /// its articulations posed as `pose` (put so once for all of them).
+    pub fn strikes_done(&mut self, id: u64, strikes: &[(Strike, u64)], ours: bool, pose: &[glam::Affine3A]) {
+        let from = self.events.len();
+        let (rules, events) = (&self.rules, &mut self.events);
+        self.set.posed(id, pose, |set| {
+            for &(s, seed) in strikes {
+                match s {
+                    Strike::Hit { hit, .. } => {
+                        set.hit(id, &hit, rules, events, seed);
+                    }
+                    Strike::Blow { part, push, energy, .. } => set.blow_out(id, part, push, energy, rules, events, seed),
+                }
+            }
+        });
+        self.burst_of(from, ours);
+    }
+
     pub fn strike_done(&mut self, s: &Strike, seed: u64, ours: bool, pose: &[glam::Affine3A]) {
         let from = self.events.len();
         let (rules, events) = (&self.rules, &mut self.events);

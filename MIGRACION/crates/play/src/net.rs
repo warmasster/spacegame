@@ -34,7 +34,7 @@ pub const TRACKS: u8 = 5;
 /// fingerprint of its data, `defs::fingerprint`, as the scenario): the server lets in only its own.
 /// After the `+`, the version of what they say to each other here: a new event, act or field is
 /// a new one.
-pub const BUILD: &str = "V41+p8";
+pub const BUILD: &str = "V41+p9";
 
 /// The commands a `CMDS` message repeats (one lost datagram, or three, loses nothing).
 pub const REPEAT: usize = 4;
@@ -966,6 +966,18 @@ pub fn append_event(e: &Event, out: &mut Vec<u8>) {
         }
         room *= 2;
     }
+}
+
+/// `Event::Seen(bytes)` (what `told::write_seen` wrote) appended to `out` as `append_event`
+/// appends it, without making one.
+pub fn append_seen(bytes: &[u8], out: &mut Vec<u8>) {
+    let mut head = [0u8; 12];
+    let mut w = Writer::new(&mut head);
+    w.u8(6);
+    w.var(bytes.len() as u64);
+    let n = w.finish().unwrap_or(0);
+    out.extend_from_slice(&head[..n]);
+    out.extend_from_slice(bytes);
 }
 
 /// `n` events appended by `append_event` (`bytes`), of the end of step `step` (what they say is

@@ -233,6 +233,10 @@ pub struct Ship {
     /// The pace it was run at last (`run`): only what was run in full is the same in every copy
     /// of it step by step (what goes slow ticks when its own count says).
     pub pace: Pace,
+    /// Someone may see its panels (a player aboard or near it, a camera): their indicators
+    /// follow their signals only then (nothing reads them but what draws them; the controls
+    /// work the same either way).
+    pub shown: bool,
     /// Something is happening in it until then (ship time): a joint moving, air rushing, thrust.
     busy_until: f64,
     /// Its lowest point (ship frame y), and the structure's version and pose it was taken from.
@@ -561,6 +565,7 @@ impl Ship {
             t: 0.0,
             acc: 0.0,
             pace: Pace::Full,
+            shown: true,
             busy_until: BUSY,
             keel: (0.0, u64::MAX, u64::MAX),
             bursts: Vec::new(),
@@ -790,7 +795,7 @@ impl Ship {
         let body = Body { mass: f64::from(s.mass), inertia: s.inertia, spin: s.rot.inverse() * s.spin, vel: (s.rot.inverse() * s.vel.as_vec3()), gravity: w.gravity, around: w.around as f32 };
         // (what it knows of what is round it first: the autopilot flies on it, the computer on both)
         if let Some(tac) = &mut self.tactical {
-            tac.step(&mut self.store, &mut self.machines, s, self.t, dt, &mut self.plots);
+            tac.step(&mut self.store, &mut self.machines, s, self.t, dt, &mut self.plots, self.shown);
         }
         let demand = match &mut self.autopilot {
             Some(ap) => ap.fly(&mut self.store, &self.flight, &self.machines, s, &body, self.tactical.as_ref(), self.t),
@@ -879,7 +884,7 @@ impl Ship {
             }
         }
         self.derived.tick(&mut self.store, dt, self.t);
-        self.panels.after(&kind, s, &mut self.store, &self.ports, &self.nets, dt, self.t, &mut self.blackbox);
+        self.panels.after(&kind, s, &mut self.store, &self.ports, &self.nets, dt, self.t, &mut self.blackbox, self.shown);
         // what its tanks hold weighs what their machines say they hold: a store whose machine
         // says what it said costs one comparison; one that says another amount tells its parts
         // (the structure weighs them again a quantum at a time, by their own blocks alone)
