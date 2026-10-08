@@ -44,6 +44,10 @@ pub struct Options {
     /// The server only passes on what each game says (`--relevo`, the old way): every game
     /// simulates the world. Else the server has the game and ours predicts (`lunar_play::online`).
     pub relay: bool,
+    /// Without a server, the game alone as before (`--directo`): no server in the process.
+    pub direct: bool,
+    /// The game of one's own hosted for others at this UDP port (`--anfitrion`).
+    pub host: Option<u16>,
     /// Pictures of the start-up screen at a few moments of it, into this folder, and out (no
     /// window is shown, nothing is loaded).
     pub splash_test: Option<PathBuf>,
@@ -79,6 +83,8 @@ pub const HELP: &str = "SELENE (migración Rust)
   --servidor HOST:PUERTO       jugar con otros a través de ese servidor (edición multijugador; servidores/LunaServidor.exe)
   --nombre NOMBRE              cómo te llamas en el servidor
   --relevo                     con un servidor que solo pasa lo que dice cada juego (LunaServidor --relevo)
+  --anfitrion PUERTO           alojar la partida propia: otros entran con --servidor ESTA_IP:PUERTO
+  --directo                    sin conexión, el juego solo, sin el servidor dentro del proceso (como antes)
   --prueba-carga CARPETA       fotos de la pantalla de carga en varios momentos, sin abrir ventana ni cargar nada
   --prueba-arranque            arranca como para jugar (carga en su hilo tras la pantalla de carga) sin enseñar ventana, hace unos fotogramas y sale
   --visible                    con --guion, --bench o --shot: enseña la ventana (por defecto corren sin ventana a la vista)
@@ -92,6 +98,13 @@ impl Options {
     /// be seen.
     pub fn hidden(&self) -> bool {
         !self.visible && (self.script.is_some() || self.bench.is_some() || self.shot.is_some())
+    }
+
+    /// The game of one's own goes through a server in the process (`lunar_play::local`): not with
+    /// a server elsewhere, nor for the tools that work the world by hand (a script, a bench, a
+    /// picture, a fixed camera, an explosion at the start), nor if asked not to (`--directo`).
+    pub fn local(&self) -> bool {
+        self.server.is_none() && !self.direct && self.script.is_none() && self.bench.is_none() && self.shot.is_none() && self.look.is_none() && self.explode.is_none() && self.scenarios.is_empty() && !self.gpu_test
     }
 
     pub fn parse(args: &[String]) -> Result<Options, String> {
@@ -120,6 +133,8 @@ impl Options {
             server: None,
             name: None,
             relay: false,
+            direct: false,
+            host: None,
             splash_test: None,
             boot_test: false,
             visible: false,
@@ -191,6 +206,11 @@ impl Options {
                 }
                 "--nombre" => o.name = Some(value()?.clone()),
                 "--relevo" => o.relay = true,
+                "--directo" => o.direct = true,
+                "--anfitrion" => {
+                    let v = value()?;
+                    o.host = Some(v.parse::<u16>().ok().filter(|p| *p != 0).ok_or(format!("--anfitrion: un puerto (1 a 65535), no '{v}'"))?);
+                }
                 "--visible" => o.visible = true,
                 "--prueba-carga" => o.splash_test = Some(PathBuf::from(value()?)),
                 "--prueba-arranque" => o.boot_test = true,

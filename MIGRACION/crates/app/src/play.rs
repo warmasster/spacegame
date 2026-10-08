@@ -196,6 +196,8 @@ struct State {
     /// predicts, the others drawn from its snapshots).
     multi: Option<crate::multi::Multi>,
     online: Option<lunar_play::online::Online>,
+    /// The server in the process a game of one's own goes through (`lunar_play::local`).
+    local: Option<lunar_play::local::Local>,
     others: crate::others::Others,
     /// What a server that has the game must have the same of ours: the fingerprint of the data,
     /// and how a player is made.
@@ -259,6 +261,12 @@ impl State {
         let benching = o.bench.is_some();
         let root = crate::root();
         let lap = |what: &str| boot.done(what);
+        // a game of one's own goes through a server in the process: its world made on a thread of
+        // its own while ours is (its data read again there: nothing waits for the other)
+        let local = o.local().then(|| {
+            let (dir, host) = (root.join("assets/defs"), o.host);
+            std::thread::Builder::new().name("servidor-local-arranque".to_string()).spawn(move || start_local(&dir, host))
+        });
         let defs = Defs::load(&root.join("assets/defs"))?;
         lap("defs");
         let preset_opt = o.preset;
@@ -343,11 +351,25 @@ impl State {
         renderer.set_particle_styles(&game.blasts.fx.particles.styles);
         game.traffic = traffic;
         lap("naves");
-        // with others: the server asked to let us in (it answers while we play)
-        let (multi, online) = match &o.server {
+        // with others: the server asked to let us in (it answers while we play); a game of one's
+        // own, through the one in the process
+        let (multi, mut online) = match &o.server {
             Some(addr) => connect(addr, o.name.as_deref().unwrap_or("Jugador"), o.relay, &game, defs.fingerprint, sc.player)?,
             None => (None, None),
         };
+        let local = match local {
+            Some(Ok(t)) => match t.join() {
+                Ok(Ok(l)) => Some(l),
+                Ok(Err(e)) => return Err(format!("el servidor de la partida propia: {e} (para jugar sin él: --directo)").into()),
+                Err(_) => return Err("el servidor de la partida propia se cayó al arrancar (para jugar sin él: --directo)".into()),
+            },
+            Some(Err(e)) => return Err(e.to_string().into()),
+            None => None,
+        };
+        if let Some(l) = &local {
+            online = Some(lunar_play::online::Online::new(l.client(o.name.as_deref().unwrap_or("Jugador")), sc.player));
+        }
+        lap("servidor");
         let preset_name = preset.map_or("personalizado".into(), |p| p.name().to_string());
         let player = sc.player;
         let bench = o.bench.map(|secs| Bench::new(secs, format!("{ships}+{npcs}"), &world.crowd.home, world.site, world.bodies.clone(), (player.fov.to_radians(), player.near)));
@@ -426,6 +448,7 @@ impl State {
             gear,
             multi,
             online,
+            local,
             others: Default::default(),
             fingerprint,
             player_def,
@@ -502,6 +525,17 @@ impl State {
     }
 
     /// Out of the start menu and into play, at the place chosen in it.
+    /// A game of one's own goes on here alone, without the server in the process (what is about
+    /// to be done to the world is done to this one by hand: `why`, said).
+    fn go_alone(&mut self, why: &str) {
+        if let Some(mut l) = self.local.take() {
+            l.stop();
+            self.online = None;
+            self.game.say = lunar_play::game::Say::Alone;
+            self.ui.hud.notice("red", &format!("{why}: la partida sigue en este juego, sin su servidor"), Level::Caution, 5.0);
+        }
+    }
+
     fn begin(&mut self) {
         let Some(st) = self.start.take() else { return };
         let place = st.place().unwrap_or(crate::start::Where::Here);
@@ -528,6 +562,10 @@ impl State {
                 self.aboard.aim = Some(crate::aboard::Aim { structure, target: crate::aboard::Target::Seat(seat) });
                 self.aboard.use_key(&mut self.me.pilot, &self.game.ships, &self.game.builds.set);
             }
+        }
+        // (put there here: and there, said, by the server)
+        if let (Some(o), crate::start::Where::Spawn | crate::start::Where::Beside(_)) = (&mut self.online, place) {
+            o.put(&self.game, &self.me);
         }
         self.keys.fill(false);
         self.jump = false;
@@ -662,9 +700,16 @@ impl State {
                 self.ui.hud.notice("vista", if on { "Vista desde fuera · rueda: acercar o alejar · V: volver a tus ojos" } else { "Vista desde tus ojos" }, Level::Normal, 3.5);
             }
             Action::FollowMissile => self.game.blasts.follow = !self.game.blasts.follow,
-            Action::Reset => self.me.pilot.reset(),
+            Action::Reset => {
+                self.me.pilot.reset();
+                if let Some(o) = &mut self.online {
+                    o.put(&self.game, &self.me);
+                }
+            }
             Action::Stats => self.ui.stats = !self.ui.stats,
             Action::Editor => {
+                // (what it changes is changed in this game by hand: the game goes on here alone)
+                self.go_alone("Editor");
                 let eye = self.me.pilot.position;
                 self.editor.toggle(&self.game.ships, &self.game.builds, self.me.pilot.ride.map(|r| r.id), eye);
                 if self.editor.open {
@@ -1228,6 +1273,14 @@ impl State {
             for (text, level) in o.said.drain(..) {
                 self.ui.hud.notice("red", &text, [Level::Normal, Level::Caution, Level::Warning][usize::from(level.min(2))], 5.0);
             }
+            // (who comes in to the game hosted here, and goes)
+            if let Some(l) = &self.local {
+                while let Ok(n) = l.notes.try_recv() {
+                    if l.port().is_some() {
+                        self.ui.hud.notice("red", &n, Level::Normal, 4.0);
+                    }
+                }
+            }
             // (cut off: back to the server every few seconds, to the body that waits for us there)
             let t = lunar_net::now();
             if let (lunar_net::Status::Failed(_), Some(key), Some((addr, name))) = (o.status(), o.key, &self.server_at)
@@ -1574,8 +1627,15 @@ impl State {
         }
         // with others: how the connection is, and each one's name over them in the picture
         if let (true, Some(o)) = (shown, &self.online) {
-            let (text, level) = online_status(o);
-            self.ui.hud.status.push(("Red".into(), text, [Level::Normal, Level::Caution, Level::Warning][usize::from(level.min(2))]));
+            // (a game of one's own says nothing of a network, unless it is hosted for others)
+            let hosting = self.local.as_ref().map(|l| l.port());
+            if let Some(Some(port)) = hosting {
+                let st = self.local.as_ref().and_then(|l| l.stats.lock().ok().map(|s| *s)).unwrap_or_default();
+                self.ui.hud.status.push(("Red".into(), format!("anfitrión · puerto {port} · {}", if st.players == 1 { "1 jugador".to_string() } else { format!("{} jugadores", st.players) }), Level::Normal));
+            } else if hosting.is_none() {
+                let (text, level) = online_status(o);
+                self.ui.hud.status.push(("Red".into(), text, [Level::Normal, Level::Caution, Level::Warning][usize::from(level.min(2))]));
+            }
         }
         if let (true, Some(m)) = (shown, &self.multi) {
             let (text, level) = m.status();
@@ -1629,7 +1689,10 @@ impl State {
             let eye = view.eye;
             let mut picked = false;
             let (start, menu_open, adapter) = (&mut self.start, self.ui.menu, self.adapter.as_str());
-            let net = self.multi.as_ref().map(|m| m.status().0).or_else(|| self.online.as_ref().map(|o| online_status(o).0));
+            let net = match &self.local {
+                Some(l) => l.port().map(|p| format!("anfitrión · puerto {p}")),
+                None => self.multi.as_ref().map(|m| m.status().0).or_else(|| self.online.as_ref().map(|o| online_status(o).0)),
+            };
             let mut chosen = None;
             let frame = self.ui.frame(&self.window, &info, |ctx| {
                 if let Some(st) = start.as_mut().filter(|_| !menu_open) {
@@ -1659,14 +1722,14 @@ impl State {
                         let name = if name.is_empty() { "Jugador".to_string() } else { name };
                         match connect(&addr, &name, self.relay, &self.game, self.fingerprint, self.player_def) {
                             Ok((m, o)) => {
-                                (self.multi, self.online) = (m, o);
+                                (self.multi, self.online, self.local) = (m, o, None);
                                 self.server_at = Some((addr, name));
                             }
                             Err(e) => self.ui.hud.notice("red", &format!("No se puede conectar a {addr}: {e}"), Level::Warning, 6.0),
                         }
                     }
                 }
-                Some(crate::start::Action::Disconnect) => (self.multi, self.online, self.server_at) = (None, None, None),
+                Some(crate::start::Action::Disconnect) => (self.multi, self.online, self.server_at, self.local) = (None, None, None, None),
                 None => {}
             }
             // what the menu's own foot asks: back to the start menu, or out
@@ -2006,8 +2069,18 @@ impl ApplicationHandler for App {
         event_loop.set_control_flow(winit::event_loop::ControlFlow::Poll);
         if self.opts.boot_test {
             self.test_frames += 1;
-            if self.test_frames == 41 {
-                println!("arranque: el juego hecho en su hilo y {} fotogramas dibujados; menú de inicio {}", self.test_frames - 1, if s.start.is_some() { "puesto" } else { "quitado" });
+            // (and, through a server, until in the game)
+            let live = s.online.as_ref().is_none_or(|o| o.live());
+            if (self.test_frames >= 41 && live) || self.test_frames >= 1200 {
+                let net = match (&s.online, &s.local) {
+                    (Some(o), Some(l)) => {
+                        let ls = l.stats.lock().map(|x| *x).unwrap_or_default();
+                        format!("; partida propia por el servidor del proceso: {} · {} correcciones · su paso {:.2} ms de media ({:.0} % de un núcleo)", if o.live() { "dentro" } else { "sin entrar" }, o.stats.corrections, ls.mean_ms, ls.busy * 100.0)
+                    }
+                    (Some(o), None) => format!("; con servidor: {}", if o.live() { "dentro" } else { "sin entrar" }),
+                    _ => String::new(),
+                };
+                println!("arranque: el juego hecho en su hilo y {} fotogramas dibujados; menú de inicio {}{net}", self.test_frames - 1, if s.start.is_some() { "puesto" } else { "quitado" });
                 event_loop.exit();
                 return;
             }
@@ -2024,6 +2097,23 @@ impl ApplicationHandler for App {
     }
 }
 
+
+/// The server in the process a game of one's own goes through (`lunar_play::local`): its own data
+/// and world (of the scenario), let be what a game of one's own lets be (`HostConfig::cheats`:
+/// free flight, ships put anywhere); for others too at UDP port `host`, if asked.
+fn start_local(dir: &std::path::Path, host: Option<u16>) -> Result<lunar_play::local::Local, String> {
+    let defs = Defs::load(dir).map_err(|e| format!("{}: {}", e.file, e.message))?;
+    let game = Game::new_apart(&defs, dir, 256, |_| true)?;
+    let config = lunar_play::local::LocalConfig {
+        host: lunar_play::host::HostConfig { cheats: true, ..Default::default() },
+        udp: host,
+        name: "Partida propia".to_string(),
+        max_players: 16,
+        build: lunar_play::net::BUILD.to_string(),
+        fingerprint: defs.fingerprint,
+    };
+    lunar_play::local::Local::start(game, defs.scenario.player, config)
+}
 
 /// Seconds between two tries to come back to a server whose connection was lost.
 const RETRY_EVERY: f64 = 4.0;
